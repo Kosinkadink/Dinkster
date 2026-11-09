@@ -2421,6 +2421,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         assert "candidate-head engine dependency pins" not in capsys.readouterr().out
     assert jobs["sources"]["if"] == (
         "needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'"
+        " && !needs.select.outputs.recovery_run"
     )
     assert jobs["locks"]["needs"] == ["select", "sources"]
     assert jobs["locks"]["runs-on"] == "${{ matrix.runner }}"
@@ -2436,12 +2437,17 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         "${{ github.event_name != 'workflow_run' && github.event_name != 'workflow_dispatch' }}"
     )
     assert "version=" not in prepare["run"]
-    assert jobs["publish"]["needs"] == ["select", "sources", "locks"]
+    assert jobs["publish"]["needs"] == ["select", "sources", "locks", "recovery"]
     for job in ("sources", "locks", "publish"):
         checkout = next(
             step for step in jobs[job]["steps"] if step.get("uses") == "actions/checkout@v4"
         )
-        assert checkout["with"]["ref"] == "${{ needs.select.outputs.engine }}"
+        assert checkout["with"]["ref"] == (
+            "${{ github.event_name == 'workflow_dispatch' && github.sha"
+            " || needs.select.outputs.engine }}"
+            if job == "publish"
+            else "${{ needs.select.outputs.engine }}"
+        )
     [submission] = [
         step for job in jobs.values() for step in job["steps"] if "secrets." in json.dumps(step)
     ]
@@ -2462,6 +2468,48 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "--publish" not in preflight["run"]
     assert "--check-published" in preflight["run"]
     assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+def test_official_publication_recovery_reuses_inputs_without_resolving_locks(
+    recovery: bool, failed: bool
+) -> None:
+    from types import SimpleNamespace
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    jobs = workflow["jobs"]
+    needs = SimpleNamespace(
+        select=SimpleNamespace(result="success"),
+        recovery=SimpleNamespace(
+            result="failure" if failed else "success" if recovery else "skipped"
+        ),
+        sources=SimpleNamespace(result="skipped" if recovery else "success"),
+        locks=SimpleNamespace(result="skipped" if recovery else "failure" if failed else "success"),
+    )
+    condition = (
+        jobs["publish"]["if"].replace("&&", " and ").replace("||", " or ").replace("!", "not ")
+    )
+    assert eval(
+        condition, {"needs": needs, "always": lambda: True, "cancelled": lambda: False}
+    ) is (not failed)
+    steps = jobs["recovery"]["steps"]
+    assert all("run" not in step for step in steps)
+    downloads = [step["with"] for step in steps if step["uses"] == "actions/download-artifact@v4"]
+    assert [step["artifact-ids"] for step in downloads] == [
+        "${{ inputs.recovery_artifact }}",
+        "${{ needs.select.outputs.recovery_locks }}",
+    ]
+    assert all(step["run-id"] == "${{ needs.select.outputs.recovery_run }}" for step in downloads)
+    assert downloads[0]["path"] == ".official-publication"
+    assert downloads[1]["path"] == ".official-publication/locks"
+    uploads = [step["with"] for step in steps if step["uses"] == "actions/upload-artifact@v4"]
+    assert uploads[0]["path"].splitlines() == [
+        ".official-publication/sources/",
+        ".official-publication/bases/",
+        ".official-publication/engine/",
+    ]
+    assert uploads[1]["path"] == ".official-publication/locks/*.pack-lock.json"
 
 
 @pytest.mark.parametrize(
