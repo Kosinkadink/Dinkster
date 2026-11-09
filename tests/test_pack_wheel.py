@@ -285,16 +285,25 @@ def test_static_release_refuses_nonuniversal_or_missing_wheel_array(problem: str
         static_release_wheel(NamedRegistry("demo", "https://registry.example"), row)
 
 
-@pytest.mark.parametrize("publisher", ["demo", None])
+@pytest.mark.parametrize(
+    "publisher,compression", [("demo", zipfile.ZIP_STORED), (None, zipfile.ZIP_DEFLATED)]
+)
 def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
     tmp_path: Path,
     publisher: str | None,
+    compression: int,
 ) -> None:
     root = wheel_pack(tmp_path / "source")
     (root / "src/demo_nodes/__init__.py").write_text("from demo_core import VALUE\nNODES = []\n")
     output = tmp_path / "output"
     build_pack_archive(root, output)
     pack_file = output / "demo_nodes-1.2.3-py3-none-any.whl"
+    if compression == zipfile.ZIP_DEFLATED:
+        with zipfile.ZipFile(pack_file) as archive:
+            members = [(name, archive.read(name)) for name in reversed(archive.namelist())]
+        with zipfile.ZipFile(pack_file, "w", compression=compression) as archive:
+            for name, data in members:
+                archive.writestr(name, data)
     library_file = output / "demo_core-2.4-py3-none-any.whl"
     with zipfile.ZipFile(library_file, "w") as wheel:
         files = {
@@ -475,6 +484,19 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
         assert spec.packs is not None and spec.packs[entry.pack].publisher == (publisher or "")
         assert not spec.trust_reserved
         assert requested and all(path.startswith("/static/") for path in requested)
+        from dinkster.compose import CompositionError
+
+        installed_module = Path(spec.manifest).parent / "__init__.py"
+        original = installed_module.read_bytes()
+        installed_module.write_bytes(b"VALUE = 999\n")
+        with pytest.raises(CompositionError, match="artifact digest differs"):
+            generation_pack_specs(generation)
+        installed_module.write_bytes(original)
+        extra = installed_module.parent / "unexpected.py"
+        extra.write_bytes(b"VALUE = 999\n")
+        with pytest.raises(CompositionError, match="artifact digest differs"):
+            generation_pack_specs(generation)
+        extra.unlink()
         routes[str(wheel_rows[0]["url"]).removeprefix(endpoint)] = b"corrupt"
         with pytest.raises(InstallError, match="wheel.hash-mismatch"):
             http_registry_fetcher(endpoint)(entry)

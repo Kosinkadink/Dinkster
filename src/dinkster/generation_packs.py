@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -18,7 +19,6 @@ from dinkster_registry import (
     InstallError,
     LockedPack,
     Lockfile,
-    artifact_digest,
     build_artifact,
     unpack_artifact,
 )
@@ -27,7 +27,7 @@ from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.pack_lock import resolve_pack_lock
-from dinkster_workers.pack_wheel import build_pack_archive, pack_manifest_path, wheel_filename
+from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
 
 from . import __version__ as engine_version
@@ -64,7 +64,9 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
     for entry in lock.packs:
         root = sources / entry.pack
         unpack_artifact(artifacts[entry.pack], root, entry.artifact_digest)
-        _manifest(root, entry)
+        manifest = _manifest(root, entry)
+        if manifest.root != root:
+            shutil.copyfile(artifacts[entry.pack], sources / f"{entry.pack}.whl")
     (generation / "dinkster.lock").write_text(
         lock.record_json() + "\n", encoding="utf-8", newline="\n"
     )
@@ -159,12 +161,31 @@ def generation_pack_specs(
         manifest = _manifest(root, entry)
         with tempfile.TemporaryDirectory(prefix="dinkster-generation-verify-") as directory:
             if manifest.root == root:
-                actual = build_artifact(root, Path(directory) / "pack.zip")
+                matches = (
+                    build_artifact(root, Path(directory) / "pack.zip") == entry.artifact_digest
+                )
             else:
-                output = Path(directory) / wheel_filename(manifest)
-                build_pack_archive(manifest.root, output)
-                actual = artifact_digest(output.read_bytes())
-        if actual != entry.artifact_digest:
+                # Repacking changes compression and ZIP metadata, not the admitted content.
+                admitted = unpack_artifact(
+                    root.parent / f"{entry.pack}.whl",
+                    Path(directory) / "admitted",
+                    entry.artifact_digest,
+                )
+                files = {}
+                for tree in (root, admitted):
+                    paths = tuple(tree.rglob("*"))
+                    if any(path.is_symlink() for path in paths):
+                        raise CompositionError(f"generation pack {entry.pack!r} contains a symlink")
+                    files[tree] = {
+                        path.relative_to(tree)
+                        for path in paths
+                        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
+                    }
+                matches = files[root] == files[admitted] and all(
+                    (root / path).read_bytes() == (admitted / path).read_bytes()
+                    for path in files[admitted]
+                )
+        if not matches:
             raise CompositionError(
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
