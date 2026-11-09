@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
-from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
 from dinkster_supervisor.environment_artifacts import validate_manifest
 from dinkster_supervisor.environment_channels import engine_publication_names
 from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
@@ -18,7 +19,7 @@ from dinkster_workers.boundary import PROTOCOL_VERSION
 from dinkster_workers.pack_wheel import pack_manifest_path
 
 from scripts.acquire_engine_bases import acquire
-from scripts.build_official_packs import build
+from scripts.build_official_packs import build, library_metadata
 from scripts.build_release import development_version, select_dependency_wheels
 
 
@@ -55,9 +56,20 @@ def prepare_inputs(
     build(root, sources, packs=packs)
     catalog = Lockfile.from_record_json((sources / "official-packs.lock").read_text())
     for pack in catalog.packs:
+        archive = sources / (
+            f"{pack.pack.replace('-', '_').replace('.', '_')}-{pack.version}-py3-none-any.whl"
+        )
+        if artifact_digest(archive.read_bytes()) != pack.artifact_digest:
+            raise ValueError(f"publication source digest mismatch: {pack.pack}")
+        with zipfile.ZipFile(archive) as wheel:
+            library = not any(Path(name).name == "dinkster-pack.toml" for name in wheel.namelist())
+        if library:
+            name, version, _ = library_metadata(archive)
+            if (name, version) != (pack.pack, pack.version) or pack.claims:
+                raise ValueError(f"publication library identity mismatch: {pack.pack}")
+            continue
         tree = unpack_artifact(
-            sources
-            / f"{pack.pack.replace('-', '_').replace('.', '_')}-{pack.version}-py3-none-any.whl",
+            archive,
             work / "admission" / pack.pack,
             pack.artifact_digest,
         )
