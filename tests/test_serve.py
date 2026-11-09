@@ -3394,7 +3394,6 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
     serve.main()
 
 
-@pytest.mark.timeout(360)
 @pytest.mark.parametrize(
     ("failed_pack", "surviving_pack", "present_node", "missing_node"),
     [
@@ -3418,6 +3417,7 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
         ),
     ],
 )
+@pytest.mark.timeout(360)
 def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
     monkeypatch: pytest.MonkeyPatch,
     failed_pack: str,
@@ -3444,8 +3444,7 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                # Like the full-catalog test above, this composes all defaults:
-                # coverage measured 78 s, so keep its 300 s readiness bound.
+                # Full default composition under hosted coverage can exceed 120 s.
                 async with asyncio.timeout(300):
                     while True:
                         report = await (await client.get("/api/composition")).json()
@@ -3458,9 +3457,10 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
                         ):
                             observed.update(entry)
                             break
-                        await asyncio.sleep(0)
+                        await asyncio.sleep(0.05)
+                async with asyncio.timeout(300):
                     while "composing" in await (await client.get("/api/composition")).json():
-                        await asyncio.sleep(0)
+                        await asyncio.sleep(0.05)
                 nodes = await (await client.get("/api/nodes")).json()
                 assert missing_node not in nodes["nodes"]
                 assert nodes["nodes"][present_node]["pack"] == surviving_pack

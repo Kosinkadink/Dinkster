@@ -165,7 +165,11 @@ def test_lora_hook_revalidates_local_path_before_resident_lookup(tmp_path: Path)
     _write_lora(checkpoint)
     asset = _asset(checkpoint, verified=False)
     CreateHookLoraModelOnly.execute(lora_name=asset, strength_model=1.0)
-    checkpoint.write_bytes(b"changed")
+    stamp = checkpoint.stat()
+    # Windows forbids truncating the file while resident tensors map its storage.
+    with checkpoint.open("r+b") as stream:
+        stream.write(b"changed")
+    os.utime(checkpoint, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 2_000_000_000))
     with pytest.raises(AssetError, match="unavailable|revoked|changed"):
         CreateHookLoraModelOnly.execute(lora_name=asset, strength_model=1.0)
 
