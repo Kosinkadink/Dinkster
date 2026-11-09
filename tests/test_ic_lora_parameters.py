@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_ltx import register_types
+from dinkster_ltx import register_types
 from dinkster_values import EncodedLatentTensor, encode_latent
 
 from dinkster.compose import PackInfo, PackSpec, ServingComposer
@@ -81,7 +81,7 @@ def test_ic_lora_parameters_public_registration_is_cold_and_idempotent() -> None
         (
             "import sys",
             "from dinkster_api.v1 import IC_LORA_PARAMETERS_TYPE, TypeRegistry",
-            "from dinkster_nodes_ltx import register_types",
+            "from dinkster_ltx import register_types",
             "registry = TypeRegistry()",
             "first = register_types(registry)",
             "second = register_types(registry)",
@@ -154,7 +154,7 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
         source_root = Path(__file__).resolve().parents[1] / "packages"
         (tmp_path / f"{module}.py").write_text(
             "from test_ic_lora_parameters import ICLoRAParametersConsumer, ICLoRAParametersSource\n"
-            "from dinkster_nodes_ltx import register_types as register_ltx_types\n"
+            "from dinkster_ltx import register_types as register_ltx_types\n"
             "def register_types(registry):\n"
             "    with registry.registering_pack(\n"
             "        'ic-lora-parameters-source', ('IC_LORA_PARAMETERS',), allow_bare=True\n"
