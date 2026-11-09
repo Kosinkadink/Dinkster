@@ -345,6 +345,7 @@ class _ProbeProcessResult:
     stderr: bytes
     output_limit: str | None
     timed_out: bool
+    elapsed_seconds: float
 
 
 def _probe_environment() -> dict[str, str]:
@@ -398,6 +399,7 @@ def _run_probe_process(
     output_limit_bytes: int,
     pass_fds: tuple[int, ...] = (),
 ) -> _ProbeProcessResult:
+    started = time.monotonic()
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -435,6 +437,7 @@ def _run_probe_process(
             timed_out = True
             break
         time.sleep(0.01)
+    elapsed_seconds = time.monotonic() - started
     _kill_probe_group(process)
     for thread in threads:
         thread.join(timeout=5)
@@ -442,7 +445,7 @@ def _run_probe_process(
         "stdout" if stdout_exceeded.is_set() else "stderr" if stderr_exceeded.is_set() else None
     )
     return _ProbeProcessResult(
-        process.returncode, bytes(stdout), bytes(stderr), output_limit, timed_out
+        process.returncode, bytes(stdout), bytes(stderr), output_limit, timed_out, elapsed_seconds
     )
 
 
@@ -452,6 +455,7 @@ def _probe_operator_details(
     return {
         "jail": jail,
         "returnCode": result.returncode,
+        "elapsedSeconds": result.elapsed_seconds,
         "stdoutTail": result.stdout[-tail_limit_bytes:].decode("utf-8", errors="replace"),
         "stderrTail": result.stderr[-tail_limit_bytes:].decode("utf-8", errors="replace"),
     }
@@ -662,7 +666,8 @@ def _run_executable_probe(
             (
                 _block(
                     "probe.timeout",
-                    f"Executable probe exceeded {configured.probe_timeout_seconds}s.",
+                    f"Executable probe exceeded {configured.probe_timeout_seconds}s "
+                    f"(elapsed {completed.elapsed_seconds:.6f}s).",
                 ),
             ),
             operator_details=operator_details,
