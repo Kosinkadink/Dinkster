@@ -465,7 +465,7 @@ def test_inline_media_has_no_external_asset_dependencies(type_id, registration) 
             "dev": register_dev_types,
         }[registration](registry)
     else:
-        importlib.import_module(f"dinkster_nodes_{registration}").register_types(registry)
+        importlib.import_module(f"dinkster_{registration}").register_types(registry)
     array = np.arange(6, dtype=np.float32).reshape((1, 2, 3) if type_id == "MASK" else (1, 1, 2, 3))
     wrapped = registry.wrap(type_id, array)
     assert value_asset_references({"media": wrapped}, complete_registry=registry) == {}

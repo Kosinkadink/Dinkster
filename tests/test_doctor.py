@@ -1261,7 +1261,11 @@ NODES = [Slot]
 
 def test_empty_pack_warns(tmp_path: Path) -> None:
     source = HEALTHY_NODES + "\n\nNODES = []\n"
-    manifest = write_pack(tmp_path / "empty", HEALTHY_MANIFEST, "healthy_nodes", source)
+    root = tmp_path / "empty"
+    (root / "healthy").mkdir(parents=True)
+    manifest = write_pack(
+        root, HEALTHY_MANIFEST.replace("healthy_nodes:", "healthy:"), "healthy/__init__", source
+    )
     report = diagnose(manifest)
     assert "entry.no-nodes" in codes(report)
 
@@ -1274,9 +1278,11 @@ def test_catalog_driven_node_source_is_reported_without_hiding_entry_errors(
         "[pack]\n", '[pack]\nnode-source = "remote-gateway-catalog"\n'
     )
     source = 'raise RuntimeError("broken entry")\n' if broken else "NODES = []\n"
-    manifest = write_pack(tmp_path / "dynamic", manifest_text, "healthy_nodes", source)
-    manifest.write_text(
-        manifest.read_text().replace('types = "healthy_nodes:register_types"\n', "")
+    root = tmp_path / "dynamic"
+    (root / "healthy").mkdir(parents=True)
+    manifest_text = manifest_text.replace('types = "healthy_nodes:register_types"\n', "")
+    manifest = write_pack(
+        root, manifest_text.replace("healthy_nodes:", "healthy:"), "healthy/__init__", source
     )
     report = diagnose(manifest)
     assert report.ok is not broken, render_text(report)

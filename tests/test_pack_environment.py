@@ -318,6 +318,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
 ) -> None:
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_workers import load_manifest
+    from dinkster_workers.pack_wheel import pack_manifest_path
 
     from scripts.build_official_packs import build
 
@@ -341,13 +342,16 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         root.mkdir(parents=True)
         (root / "dinkster-pack.toml").write_text(
             f'[pack]\nname="dinkster-nodes-{family}"\npublisher="dinkster"\n'
+            'version="1.2.3"\nengine=">=0.0.2"\n'
             'requires = ["fixture-extra<3"]\n'
             '[pack.dependencies]\ndinkster-nodes-foundation=">=0.0.1"\n'
-            '[pack.entry]\nnodes="nodes:NODES"\n'
+            f'[pack.entry]\nnodes="dinkster_nodes_{family.replace("-", "_")}:NODES"\n'
         )
-        (root / "nodes.py").write_text("raise AssertionError('node bodies must not load')\n")
+        module = root / f"dinkster_nodes_{family.replace('-', '_')}"
+        module.mkdir()
+        (module / "__init__.py").write_text("raise AssertionError('node bodies must not load')\n")
         (root / "pyproject.toml").write_text(
-            '[project]\nrequires-python=">=3.12"\n'
+            f'[project]\nname="dinkster-nodes-{family}"\nversion="1.2.3"\nrequires-python=">=3.12"\n'
             'dependencies=["fixture-extra>=2", "dinkster-nodes-foundation>=0.0.1"]\n'
         )
     subprocess.run(["git", "init", "--quiet", str(source)], check=True)
@@ -403,11 +407,11 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     assert {entry.pack for entry in inventory.packs} == {
         "dinkster-nodes-comfy",
         "dinkster-nodes-foundation",
-        "dinkster-image",
+        "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
-        "dinkster-text",
-        "dinkster-upscale",
+        "dinkster-nodes-text",
+        "dinkster-nodes-upscale",
     }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"
@@ -423,11 +427,11 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         ]
         assert lock.packages[0].wheels == (pinned,)
         extracted = unpack_artifact(
-            output / f"{entry.pack}-1.2.3.zip",
+            output / f"{entry.pack.replace('-', '_')}-1.2.3-py3-none-any.whl",
             tmp_path / "unpacked" / entry.pack,
             entry.artifact_digest,
         )
-        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        manifest = load_manifest(pack_manifest_path(extracted))
         assert set(manifest.requires) == set(lock.requirements)
         assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
 

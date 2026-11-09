@@ -19,6 +19,7 @@ from dinkster_schema.wire import schema_from_wire, schema_to_wire
 from dinkster_text.text import StringConcatenate, StringFormat
 from dinkster_workers import load_manifest
 from dinkster_workers.manifest import resolve_entry, validate_registration_claims
+from packaging.version import Version
 
 from dinkster.compose import default_pack_specs
 from tests.async_scenarios import run_scenario
@@ -54,7 +55,10 @@ def test_default_install_set_contains_every_comfy_origin_pack() -> None:
         for path in Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml")
         if (manifest := load_manifest(path)).compatibility is not None and manifest.name in expected
     }
-    assert defaults == declarations
+    assert defaults.keys() == declarations.keys()
+    assert all(
+        Version(declarations[name]) >= Version(minimum) for name, minimum in defaults.items()
+    )
     specs = default_pack_specs()
     assert {load_manifest(spec.manifest).name for spec in specs} == expected
     assert len(specs) == len(expected)

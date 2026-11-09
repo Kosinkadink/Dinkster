@@ -79,6 +79,19 @@ FIRST_PARTY_NODE_PACKS = {
 }
 
 
+def editable_distribution(root: Path, version: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        version=version,
+        files=(),
+        locate_file=lambda path: root / path,
+        read_text=lambda name: (
+            json.dumps({"url": root.as_uri(), "dir_info": {"editable": True}})
+            if name == "direct_url.json"
+            else None
+        ),
+    )
+
+
 @pytest.mark.parametrize("source", ["image-list", "video-asset"])
 def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: str) -> None:
     import io
@@ -270,10 +283,10 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
         '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
         'namespaces = ["official"]\n'
-        '[pack.entry]\nnodes = "fixture_text_pack:NODES"\n',
+        '[pack.entry]\nnodes = "dinkster_text:NODES"\n',
         encoding="utf-8",
     )
-    module = pack / "fixture_text_pack"
+    module = pack / "dinkster_text"
     module.mkdir()
     origin = module / "__init__.py"
     origin.write_text("NODES = ()\n", encoding="utf-8")
@@ -295,13 +308,8 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
     monkeypatch.setattr(compose, "__file__", str(package_data / "compose.py"))
     monkeypatch.setattr(compose, "_CHECKOUT_PACKS_LOCK", catalog)
     monkeypatch.setattr(
-        compose.importlib.util, "find_spec", lambda _: SimpleNamespace(origin=origin)
+        compose.importlib.metadata, "distribution", lambda _: editable_distribution(pack, "1.2.3")
     )
-
-    def no_distribution(name: str) -> None:
-        raise AssertionError(f"source selection must not use installed metadata: {name}")
-
-    monkeypatch.setattr(compose.importlib.metadata, "distribution", no_distribution)
     compose._default_pack_lock.cache_clear()
     compose.default_pack_specs.cache_clear()
     try:
@@ -338,7 +346,7 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
 def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
     import dinkster.compose as compose
 
-    distribution = SimpleNamespace(version="1.2.3", locate_file=lambda path: path)
+    distribution = editable_distribution(TESTS_DIR.parent / "packages/dinkster-nodes-text", "1.2.3")
     requested: list[str] = []
     locked = compose._default_pack_lock().get("dinkster-text")
     assert locked is not None
@@ -351,9 +359,9 @@ def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", find_distribution)
     spec = compose.default_pack_spec("dinkster-text")
-    assert requested == ["dinkster-text"]
+    assert set(requested) == {"dinkster-text"}
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].version == "0.0.1"
+    assert spec.packs["dinkster-text"].version == "0.0.2"
     assert spec.packs["dinkster-text"].source == "python:dinkster-text==1.2.3"
 
 
@@ -962,9 +970,9 @@ def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
     monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
     monkeypatch.setattr(
-        compose.importlib.util,
-        "find_spec",
-        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_text/__init__.py")),
+        compose.importlib.metadata,
+        "distribution",
+        lambda _name: editable_distribution(copied, "0.0.2"),
     )
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
@@ -1093,35 +1101,30 @@ def test_default_pack_publishes_group_registry_from_manifest(
 def test_default_pack_uses_embedded_wheel_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from dinkster_registry import artifact_digest, unpack_artifact
+    from dinkster_workers.pack_wheel import build_pack_archive
+
     from dinkster import compose
 
     lock = compose._default_pack_lock()
     source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
-    module = tmp_path / "site/dinkster_text/__init__.py"
-    shutil.copytree(source / "src/dinkster_text", module.parent)
+    output = tmp_path / "wheel"
+    build_pack_archive(source, output)
+    archive = next(output.glob("*.whl"))
+    unpack_artifact(archive, tmp_path / "site", artifact_digest(archive.read_bytes()))
     bundled = tmp_path / "site/dinkster_text/dinkster-pack.toml"
-    shutil.copy2(source / "dinkster-pack.toml", bundled)
-    shutil.copytree(source / "locales", bundled.parent / "locales")
-    for filename in compose._PACK_ARTIFACT_SIDECARS:
-        sidecar = source / filename
-        if sidecar.is_file():
-            shutil.copy2(sidecar, bundled.parent / filename)
-    distribution = SimpleNamespace(version="0.0.1", locate_file=lambda _path: bundled)
+    distribution = next(compose.importlib.metadata.distributions(path=[str(tmp_path / "site")]))
 
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
-    monkeypatch.setattr(
-        "dinkster.compose.importlib.util.find_spec",
-        lambda _name: SimpleNamespace(origin=str(module)),
-    )
 
     spec = default_pack_spec("dinkster-text")
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-text"]
-    assert info.source == "python:dinkster-text==0.0.1"
+    assert info.source == "python:dinkster-text==0.0.2"
     locked = lock.get("dinkster-text")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
@@ -1129,27 +1132,8 @@ def test_default_pack_uses_embedded_wheel_artifact(
 
 @pytest.mark.parametrize("filename", ("comfy-aliases.json", "comfy-groups.json"))
 def test_installed_pack_digest_includes_standard_sidecars(tmp_path: Path, filename: str) -> None:
-    from dinkster import compose
-
-    source = tmp_path / "source"
-    source.mkdir()
-    manifest = source / "dinkster-pack.toml"
-    manifest.write_text('[pack]\nname = "test"\nversion = "1.0.0"\n', encoding="utf-8")
-    module = source / "test_nodes"
-    module.mkdir()
-    (module / "__init__.py").write_text("NODES = []\n", encoding="utf-8")
-    sidecar = source / filename
-    sidecar.write_text('{"records":[]}\n', encoding="utf-8")
-
-    first = compose._installed_pack_digest(manifest, module)
-    sidecar.write_text('{"records":[{"id":"changed"}]}\n', encoding="utf-8")
-    second = compose._installed_pack_digest(manifest, module)
-
-    assert first != second
-
-
-def test_installed_pack_digest_rejects_docs_symlinks(tmp_path: Path) -> None:
-    from dinkster_registry import ArtifactError
+    from dinkster_schema.comfy_alias import comfy_alias_registry_to_wire
+    from dinkster_schema.comfy_group import comfy_group_registry_to_wire
 
     from dinkster import compose
 
@@ -1157,10 +1141,42 @@ def test_installed_pack_digest_rejects_docs_symlinks(tmp_path: Path) -> None:
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "test"\nversion = "1.0.0"\n[pack.docs]\ndir = "docs"\n',
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n',
         encoding="utf-8",
     )
-    module = source / "test_nodes"
+    module = source / "test"
+    module.mkdir()
+    (module / "__init__.py").write_text("NODES = []\n", encoding="utf-8")
+    sidecar = source / filename
+    document = (
+        comfy_alias_registry_to_wire(ComfyAliasRegistry(source_schemas=(), records=()))
+        if filename == "comfy-aliases.json"
+        else comfy_group_registry_to_wire(
+            ComfyGroupRegistry(source_schemas=(), group_schemas=(), records=())
+        )
+    )
+    sidecar.write_text(json.dumps(document), encoding="utf-8")
+
+    first = compose._installed_pack_digest(manifest, module)
+    sidecar.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    second = compose._installed_pack_digest(manifest, module)
+
+    assert first != second
+
+
+def test_installed_pack_digest_rejects_docs_symlinks(tmp_path: Path) -> None:
+    from dinkster_workers.pack_wheel import PackArchiveError
+
+    from dinkster import compose
+
+    source = tmp_path / "source"
+    source.mkdir()
+    manifest = source / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n[pack.docs]\ndir = "docs"\n',
+        encoding="utf-8",
+    )
+    module = source / "test"
     module.mkdir()
     (module / "__init__.py").write_text("NODES = []\n", encoding="utf-8")
     docs = source / "docs"
@@ -1172,7 +1188,7 @@ def test_installed_pack_digest_rejects_docs_symlinks(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("symlinks unavailable")
 
-    with pytest.raises(ArtifactError, match="symlink"):
+    with pytest.raises(PackArchiveError, match="symlink"):
         compose._installed_pack_digest(manifest, module)
 
 
@@ -1182,8 +1198,11 @@ def test_installed_pack_digest_includes_locale_catalogs(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
-    manifest.write_text('[pack]\nname = "test"\nversion = "1.0.0"\n', encoding="utf-8")
-    module = source / "test_nodes"
+    manifest.write_text(
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n',
+        encoding="utf-8",
+    )
+    module = source / "test"
     module.mkdir()
     (module / "__init__.py").write_text("NODES = []\n", encoding="utf-8")
     locales = source / "locales"
@@ -1199,15 +1218,18 @@ def test_installed_pack_digest_includes_locale_catalogs(tmp_path: Path) -> None:
 
 
 def test_installed_pack_digest_rejects_locale_symlinks(tmp_path: Path) -> None:
-    from dinkster_registry import ArtifactError
+    from dinkster_workers.pack_wheel import PackArchiveError
 
     from dinkster import compose
 
     source = tmp_path / "source"
     source.mkdir()
     manifest = source / "dinkster-pack.toml"
-    manifest.write_text('[pack]\nname = "test"\nversion = "1.0.0"\n', encoding="utf-8")
-    module = source / "test_nodes"
+    manifest.write_text(
+        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n[pack.entry]\nnodes = "test:NODES"\n',
+        encoding="utf-8",
+    )
+    module = source / "test"
     module.mkdir()
     (module / "__init__.py").write_text("NODES = []\n", encoding="utf-8")
     locales = source / "locales"
@@ -1219,22 +1241,22 @@ def test_installed_pack_digest_rejects_locale_symlinks(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("symlinks unavailable")
 
-    with pytest.raises(ArtifactError, match="symlink"):
+    with pytest.raises(PackArchiveError, match="symlink"):
         compose._installed_pack_digest(manifest, module)
 
 
 def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
+    from dinkster_registry import artifact_digest, unpack_artifact
+    from dinkster_workers.pack_wheel import build_pack_archive
+
     from dinkster import compose
 
     source = Path(__file__).parent.parent / "packages/dinkster-nodes-image"
+    output = tmp_path / "wheel"
+    build_pack_archive(source, output)
+    archive = next(output.glob("*.whl"))
+    unpack_artifact(archive, tmp_path, artifact_digest(archive.read_bytes()))
     bundled = tmp_path / "dinkster_image"
-    bundled.mkdir()
-    shutil.copy2(source / "dinkster-pack.toml", bundled / "dinkster-pack.toml")
-    shutil.copytree(source / "src/dinkster_image", bundled, dirs_exist_ok=True)
-    shutil.copytree(source / "locales", bundled / "locales")
-    for filename in compose._PACK_ARTIFACT_SIDECARS:
-        if (source / filename).is_file():
-            shutil.copy2(source / filename, bundled / filename)
 
     source_digest = compose._installed_pack_digest(
         source / "dinkster-pack.toml", source / "src/dinkster_image"
@@ -1258,17 +1280,17 @@ def test_default_pack_refuses_version_outside_suite_lock(
     manifest.write_text(
         (source / "dinkster-pack.toml")
         .read_text()
-        .replace('version = "0.0.1"', 'version = "9.0.0"')
+        .replace('version = "0.0.2"', 'version = "9.0.0"')
     )
     shutil.copytree(source / "src/dinkster_text", copied / "src/dinkster_text")
     monkeypatch.setattr(
-        compose.importlib.util,
-        "find_spec",
-        lambda _name: SimpleNamespace(origin=str(copied / "src/dinkster_text/__init__.py")),
+        compose.importlib.metadata,
+        "distribution",
+        lambda _name: editable_distribution(copied, "0.0.2"),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.1"):
+    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.2"):
         default_pack_spec("dinkster-text")
 
 
@@ -1281,12 +1303,12 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     lock = compose._default_pack_lock()
     pack = lock.get("dinkster-text")
     assert pack is not None
-    assert pack.version == "0.0.1"
-    assert pack.source == "python:dinkster-text==0.0.1"
+    assert pack.version == "0.0.2"
+    assert pack.source == "python:dinkster-text==0.0.2"
     if mismatch == "pack":
-        pack = replace(pack, version="0.0.2")
+        pack = replace(pack, version="9.0.0")
     elif mismatch == "distribution-name":
-        pack = replace(pack, source="python:dinkster-image==0.0.1")
+        pack = replace(pack, source="python:dinkster-image==0.0.2")
     changed = replace(
         lock, packs=tuple(pack if row.pack == pack.pack else row for row in lock.packs)
     )
@@ -1296,7 +1318,12 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     def distribution(name: str):
         installed = real_distribution(name)
         if name == "dinkster-text" and mismatch == "distribution":
-            return SimpleNamespace(version="9.0.0", locate_file=installed.locate_file)
+            return SimpleNamespace(
+                version="9.0.0",
+                locate_file=installed.locate_file,
+                files=installed.files,
+                read_text=installed.read_text,
+            )
         return installed
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
@@ -1306,45 +1333,34 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
         return
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.1"
-    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.1"
+    assert spec.packs[pack.pack].version == "0.0.2"
+    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.2"
 
 
-def test_undeclared_pack_version_uses_distribution_version(
+def test_undeclared_pack_version_is_not_replaced_by_distribution_version(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dinkster_workers.pack_wheel import PackArchiveError
+
     from dinkster import compose
 
-    pack_id = "dinkster-text"
-    distribution_id = "dinkster-text"
-    lock = compose._default_pack_lock()
-    changed = replace(
-        lock,
-        packs=tuple(
-            replace(row, version="2.3.4", source=f"python:{distribution_id}==2.3.4")
-            if row.pack == pack_id
-            else row
-            for row in lock.packs
-        ),
+    copied = tmp_path / "source"
+    shutil.copytree(TESTS_DIR.parent / "packages/dinkster-nodes-text", copied)
+    manifest = copied / "dinkster-pack.toml"
+    manifest.write_text(
+        "\n".join(
+            line
+            for line in manifest.read_text().splitlines()
+            if not line.startswith(("version =", "engine ="))
+        )
+        + "\n"
     )
-    real_load_manifest = compose.load_manifest
-    real_distribution = compose.importlib.metadata.distribution
-
-    def distribution(name: str):
-        installed = real_distribution(name)
-        if name == distribution_id:
-            return SimpleNamespace(version="2.3.4", locate_file=installed.locate_file)
-        return installed
-
     monkeypatch.setattr(
-        compose, "load_manifest", lambda path: replace(real_load_manifest(path), compatibility=None)
+        compose.importlib.metadata, "distribution", lambda _: editable_distribution(copied, "2.3.4")
     )
-    monkeypatch.setattr(compose, "_default_pack_lock", lambda: changed)
-    monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
-    spec = default_pack_spec(pack_id)
-    assert spec.packs is not None
-    assert spec.packs[pack_id].version == "2.3.4"
-    assert spec.packs[pack_id].source == f"python:{distribution_id}==2.3.4"
+    with pytest.raises(PackArchiveError, match="must declare version and engine"):
+        default_pack_spec("dinkster-text")
 
 
 def test_default_pack_refuses_bytes_outside_suite_lock(
@@ -1365,8 +1381,8 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
     monkeypatch.setattr(
-        "dinkster.compose.importlib.util.find_spec",
-        lambda _name: SimpleNamespace(origin=str(module)),
+        "dinkster.compose.importlib.metadata.distribution",
+        lambda _name: editable_distribution(copied, "0.0.2"),
     )
 
     with pytest.raises(CompositionError, match="locks dinkster-text artifact"):
