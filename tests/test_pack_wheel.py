@@ -53,7 +53,7 @@ def wheel_pack(root: Path, *, requires: str = "demo-core>=2") -> Path:
     )
     (root / "pyproject.toml").write_text('[project]\nname = "demo-nodes"\nversion = "9.9"\n')
     (root / "locales").mkdir()
-    (root / "locales" / "en.json").write_text('{"hello":"world"}\n')
+    (root / "locales" / "en.json").write_bytes(b'{"hello":"world"}\n')
     return root
 
 
