@@ -38,7 +38,7 @@ def test_template_is_doctor_clean(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_template_imports_only_public_api_and_stdlib() -> None:
-    source = ast.parse((TEMPLATE / "my_pack_nodes.py").read_text(encoding="utf-8"))
+    source = ast.parse((TEMPLATE / "my_pack/__init__.py").read_text(encoding="utf-8"))
     for node in ast.walk(source):
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
@@ -84,9 +84,9 @@ import dinkster_api.v1
 
 baseline = set(sys.modules)
 sys.path.insert(0, sys.argv[1])
-importlib.import_module("my_pack_nodes")
+importlib.import_module("my_pack")
 added = {name.split(".")[0] for name in set(sys.modules) - baseline}
-unexpected = added - sys.stdlib_module_names - {"my_pack_nodes"}
+unexpected = added - sys.stdlib_module_names - {"my_pack"}
 assert not unexpected, sorted(unexpected)
 """
     result = subprocess.run(
@@ -112,7 +112,7 @@ def test_template_nodes_execute_and_types_register() -> None:
     try:
         # Resolved off sys.path at runtime, as the worker host resolves
         # manifest entries; invisible to static analysis by design.
-        from my_pack_nodes import (  # pyright: ignore[reportMissingImports]
+        from my_pack import (  # pyright: ignore[reportMissingImports]
             NODES,
             Shout,
             Tally,

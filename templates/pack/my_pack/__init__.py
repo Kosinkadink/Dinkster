@@ -1,4 +1,4 @@
-"""Template pack: a minimal, doctor-clean Dinkster pack.
+"""Template package: a minimal, doctor-clean Dinkster pack.
 
 Everything a standard pack needs, in one module: two nodes, a custom value
 type with a declared codec and a rendition, and progress reporting. The

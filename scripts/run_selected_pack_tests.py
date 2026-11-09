@@ -127,6 +127,12 @@ def run_selected_tests(
                 f'[project]\nname = "{pack.pack}"\n', encoding="utf-8"
             )
             shutil.copy2(manifest.path, package / "dinkster-pack.toml")
+            # Source-layout contract tests read resources beside the manifest.
+            # Their bytes must still come from the selected wheel, not the checkout.
+            for resource in manifest.root.iterdir():
+                target = package / resource.name
+                if not target.exists():
+                    target.symlink_to(resource, target_is_directory=resource.is_dir())
             module_roots.append(str(destination))
             entry = manifest.nodes_entry.partition(":")[0]
             modules[entry] = str(destination / entry.replace(".", "/"))
