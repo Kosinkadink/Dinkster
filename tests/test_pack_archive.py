@@ -743,6 +743,11 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "prepare-only",
         "published-identical",
         "check-published",
+        "dependency-active",
+        "dependency-levels",
+        "dependency-external",
+        "dependency-rejected",
+        "dependency-timeout",
         "published-digest",
         "published-size",
         "published-lock",
@@ -794,7 +799,10 @@ def test_official_publication_requires_complete_supported_base_bindings(
     sources = tmp_path / "sources"
     sources.mkdir()
     packs = []
-    for name, version in (("first-pack", "1.2.3"), ("second-pack", "7.4.0rc1")):
+    versions = [("first-pack", "1.2.3"), ("second-pack", "7.4.0rc1")]
+    if problem == "dependency-levels":
+        versions.extend([("third-pack", "2.0"), ("fourth-pack", "3.0")])
+    for name, version in versions:
         tree = tmp_path / name
         tree.mkdir()
         observed = "9.9" if name == "second-pack" and problem == "source-version" else version
@@ -808,6 +816,15 @@ def test_official_publication_requires_complete_supported_base_bindings(
             f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
             + declaration
             + f'[pack.entry]\nnodes = "{name.replace("-", "_")}:NODES"\n'
+            + (
+                '[pack.dependencies]\nthird-pack = ">=2,<3"\n'
+                if name == "first-pack" and problem == "dependency-external"
+                else '[pack.dependencies]\nsecond-pack = ">=7,<8"\n'
+                if name == "first-pack" and problem and problem.startswith("dependency-")
+                else '[pack.dependencies]\nthird-pack = ">=2,<3"\n'
+                if name == "second-pack" and problem == "dependency-levels"
+                else ""
+            )
         )
         module = tree / name.replace("-", "_")
         module.mkdir()
@@ -917,6 +934,16 @@ def test_official_publication_requires_complete_supported_base_bindings(
         ).encode()
         for pack in packs
     }
+    if problem == "dependency-external":
+        files["/v1/packs/third-pack/versions?limit=100"] = json.dumps(
+            {"items": [{"version": "9.0", "state": "active"}], "nextCursor": "next"}
+        ).encode()
+        files["/v1/packs/third-pack/versions?limit=100&cursor=next"] = json.dumps(
+            {"items": [{"version": "2.3", "state": "active"}], "nextCursor": None}
+        ).encode()
+        files["/v1/packs/third-pack/versions/2.3"] = json.dumps(
+            {"packName": "third-pack", "version": "2.3", "state": "active"}
+        ).encode()
     if problem and (problem.startswith("published-") or problem == "check-published"):
         for pack in packs:
             record = {
@@ -962,8 +989,48 @@ def test_official_publication_requires_complete_supported_base_bindings(
             files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(record).encode()
     server = _serve_artifacts(files, requests)
     respond = vars(server.RequestHandlerClass)["respond"]
+    submitted = []
+    clock = [0.0]
+    polls = [0]
+    if problem and problem.startswith("dependency-"):
+        monkeypatch.setenv("PUBLICATION_TEST_TOKEN", "test-token")
+        monkeypatch.setattr("scripts.publish_official_packs.time.monotonic", lambda: clock[0])
+
+        def advance(seconds):
+            clock[0] += seconds
+
+        monkeypatch.setattr("scripts.publish_official_packs.time.sleep", advance)
 
     def registry_response(handler):
+        if handler.command == "POST":
+            submitted.append(handler.path)
+        if problem and problem.startswith("dependency-") and submitted:
+            if handler.path in {"/v1/publish/second-pack", "/v1/publish/third-pack"}:
+                assert handler.headers.get("Authorization") == "Bearer test-token"
+                polls[0] += 1
+                files[handler.path] = json.dumps(
+                    {
+                        "status": "rejected" if problem == "dependency-rejected" else "scanning",
+                        "reason": "scanner refused" if problem == "dependency-rejected" else None,
+                        "findings": [{"code": "manifest.invalid", "message": "missing dependency"}],
+                    }
+                ).encode()
+                if problem in {"dependency-active", "dependency-levels"}:
+                    name = handler.path.rsplit("/", 1)[1]
+                    version = dict(versions)[name]
+                    files[f"/v1/packs/{name}/versions/{version}"] = json.dumps(
+                        {"packName": name, "version": version, "state": "active"}
+                    ).encode()
+            if handler.command == "POST" and "first-pack" in handler.path:
+                assert polls[0] == (
+                    2
+                    if problem == "dependency-levels"
+                    else 0
+                    if problem == "dependency-external"
+                    else 1
+                )
+        if handler.path.startswith("/v1/packs/"):
+            assert handler.headers.get("Authorization") is None
         if (
             problem == "lookup-failed"
             or problem == "publish-conflict"
@@ -980,9 +1047,66 @@ def test_official_publication_requires_complete_supported_base_bindings(
     output = tmp_path / "publication"
     before = {path: path.read_bytes() for path in [*sources.iterdir(), *locks, *bases]}
     try:
-        registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+        registry = NamedRegistry(
+            "", f"http://127.0.0.1:{server.server_port}", token_env="PUBLICATION_TEST_TOKEN"
+        )
         lookup_paths = [f"/v1/packs/{pack.pack}/versions/{pack.version}" for pack in packs]
-        if problem in {"lookup-failed", "publish-conflict"}:
+        if problem and problem.startswith("dependency-"):
+            if problem == "dependency-external":
+                result = publish_official_packs(
+                    tmp_path, sources, bases, locks, output, registry=registry, activation_timeout=5
+                )
+                assert submitted == [
+                    "/v1/publish/first-pack/versions/1.2.3",
+                    "/v1/publish/second-pack/versions/7.4.0rc1",
+                ]
+                assert [path for path, _ in requests][2:5] == [
+                    "/v1/packs/third-pack/versions?limit=100",
+                    "/v1/packs/third-pack/versions?limit=100&cursor=next",
+                    "/v1/packs/third-pack/versions/2.3",
+                ]
+            elif problem in {"dependency-active", "dependency-levels"}:
+                result = publish_official_packs(
+                    tmp_path, sources, bases, locks, output, registry=registry, activation_timeout=5
+                )
+                assert [row["pack"] for row in result] == (
+                    ["fourth-pack", "third-pack", "second-pack", "first-pack"]
+                    if problem == "dependency-levels"
+                    else ["second-pack", "first-pack"]
+                )
+                assert submitted == [
+                    *(
+                        [
+                            "/v1/publish/fourth-pack/versions/3.0",
+                            "/v1/publish/third-pack/versions/2.0",
+                        ]
+                        if problem == "dependency-levels"
+                        else []
+                    ),
+                    "/v1/publish/second-pack/versions/7.4.0rc1",
+                    "/v1/publish/first-pack/versions/1.2.3",
+                ]
+            else:
+                with pytest.raises(
+                    RegistryPublishError,
+                    match=(
+                        "second-pack@7.4.0rc1.*manifest.invalid.*missing dependency"
+                        if problem == "dependency-rejected"
+                        else "second-pack@7.4.0rc1.*timed out"
+                    ),
+                ):
+                    publish_official_packs(
+                        tmp_path,
+                        sources,
+                        bases,
+                        locks,
+                        output,
+                        registry=registry,
+                        activation_timeout=5,
+                    )
+                assert submitted == ["/v1/publish/second-pack/versions/7.4.0rc1"]
+                assert clock[0] <= 5
+        elif problem in {"lookup-failed", "publish-conflict"}:
             with pytest.raises(
                 RegistryPublishError,
                 match="first-pack@1.2.3.*"
@@ -1032,14 +1156,16 @@ def test_official_publication_requires_complete_supported_base_bindings(
                         "artifactDigest": pack.artifact_digest,
                         "lock": expected_locks[pack.pack, variant],
                     }
-                if problem in {None, "published-identical"}:
+                if problem is None:
                     assert row["state"] == "queued" and row["candidateId"] == pack.pack
+                elif problem == "published-identical":
+                    assert row["state"] == "published" and "candidateId" not in row
             assert [path for path, _ in requests] == (
                 lookup_paths
                 + [f"/v1/publish/{pack.pack}/versions/{pack.version}" for pack in packs]
-                if problem in {None, "published-identical"}
+                if problem is None
                 else lookup_paths
-                if problem == "check-published"
+                if problem in {"check-published", "published-identical"}
                 else []
             )
         assert {path: path.read_bytes() for path in before} == before

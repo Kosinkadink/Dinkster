@@ -7,6 +7,10 @@ on:
         description: Full commit SHA on main with a successful published engine release
         required: true
         type: string
+      recovery_artifact:
+        description: Original official-publication-inputs artifact ID; reuse its wheels and same-run native locks
+        required: false
+        type: string
   workflow_run:
     workflows: ["Versioned wheel release"]
     types: [completed]
@@ -46,6 +50,8 @@ jobs:
       packs: ${{ steps.select.outputs.packs }}
       engine: ${{ steps.select.outputs.engine }}
       applicable: ${{ steps.select.outputs.applicable }}
+      recovery_run: ${{ steps.engine_release.outputs.recovery_run }}
+      recovery_locks: ${{ steps.engine_release.outputs.recovery_locks }}
     steps:
       - name: Check whether the exact commit published an engine
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
@@ -85,6 +91,35 @@ jobs:
             }
             if (context.eventName === 'workflow_dispatch' && !published) {
               throw new Error('Catch-up publication requires a successful same-commit engine release');
+            }
+            const artifactId = context.payload.inputs?.recovery_artifact;
+            if (context.eventName === 'workflow_dispatch' && artifactId) {
+              if (!/^[1-9][0-9]*$/.test(artifactId) || !Number.isSafeInteger(Number(artifactId))) {
+                throw new Error('Recovery requires an artifact ID');
+              }
+              const { data: artifact } = await github.rest.actions.getArtifact({
+                ...context.repo, artifact_id: Number(artifactId),
+              });
+              const { data: run } = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: artifact.workflow_run.id,
+              });
+              if (artifact.name !== 'official-publication-inputs' || artifact.expired
+                  || run.head_sha !== context.payload.inputs.head || run.head_branch !== 'main'
+                  || run.head_repository.full_name !== 'Kosinkadink/Dinkster'
+                  || run.path !== '.github/workflows/official-packs.yml'
+                  || run.event !== 'workflow_run' || run.conclusion !== 'success') {
+                throw new Error('Recovery requires original successful main publication inputs at head');
+              }
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                ...context.repo, run_id: run.id, per_page: 100,
+              });
+              const locks = artifacts.filter(item => item.name.startsWith('publication-locks-'));
+              if (!locks.length || locks.some(item => item.expired)
+                  || new Set(locks.map(item => item.name)).size !== locks.length) {
+                throw new Error('Recovery requires unexpired unique native lock artifacts');
+              }
+              core.setOutput('recovery_run', run.id);
+              core.setOutput('recovery_locks', locks.map(item => item.id).join(','));
             }
             core.setOutput('published', published);
       - uses: actions/checkout@v4
@@ -133,7 +168,7 @@ jobs:
 
   sources:
     needs: select
-    if: needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'
+    if: needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true' && !needs.select.outputs.recovery_run
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -172,6 +207,45 @@ jobs:
             .official-publication/sources/
             .official-publication/bases/
             .official-publication/engine/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  recovery:
+    needs: select
+    if: needs.select.outputs.recovery_run != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ inputs.recovery_artifact }}
+          run-id: ${{ needs.select.outputs.recovery_run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: .official-publication
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.select.outputs.recovery_locks }}
+          run-id: ${{ needs.select.outputs.recovery_run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: .official-publication/locks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: |
+            .official-publication/sources/
+            .official-publication/bases/
+            .official-publication/engine/
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: publication-locks-recovered
+          path: .official-publication/locks/*.pack-lock.json
           include-hidden-files: true
           if-no-files-found: error
 
@@ -221,13 +295,14 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [select, sources, locks]
+    needs: [select, sources, locks, recovery]
+    if: always() && !cancelled() && needs.select.result == 'success' && (needs.recovery.result == 'success' || (needs.sources.result == 'success' && needs.locks.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.select.outputs.engine }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.select.outputs.engine }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:

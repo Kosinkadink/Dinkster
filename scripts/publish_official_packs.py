@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -12,14 +13,105 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from blake3 import blake3
-from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_registry import LockedPack, Lockfile, unpack_artifact
 from dinkster_workers import load_manifest
+from dinkster_workers.manifest import PackDependency
 from dinkster_workers.pack_lock import PackLock
 from dinkster_workers.pack_wheel import pack_manifest_path
 from packaging.specifiers import SpecifierSet
 
 from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
 from scripts.build_release import read_base_manifest
+
+
+def _wait_active(
+    registry: NamedRegistry,
+    dependency: PackDependency,
+    version: str | None,
+    candidate_id: str | None,
+    deadline: float,
+) -> None:
+    subject = f"{dependency.pack}@{version or dependency.version}"
+    last = "no active public version"
+    while (remaining := deadline - time.monotonic()) > 0:
+        path = f"/v1/packs/{quote(dependency.pack, safe='')}/versions"
+        if version is not None:
+            path += "/" + quote(version, safe="")
+        else:
+            path += "?limit=100"
+        while path:
+            try:
+                request = urllib.request.Request(
+                    registry.endpoint.rstrip("/") + path,
+                    headers={"Cache-Control": "no-cache"},
+                )
+                with urllib.request.urlopen(request, timeout=min(60, remaining)) as response:
+                    document = json.load(response)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    raise RegistryPublishError(
+                        f"{subject}: activation lookup failed: {exc}"
+                    ) from exc
+                document = {}
+            except (OSError, ValueError) as exc:
+                raise RegistryPublishError(f"{subject}: activation lookup failed: {exc}") from exc
+            if version is not None:
+                if (
+                    document.get("state") == "active"
+                    and document.get("version") == version
+                    and document.get("packName") == dependency.pack
+                ):
+                    return
+                last = document.get("stateReason") or document.get("state") or last
+                break
+            for release in document.get("items", []):
+                if release.get("state") == "active" and dependency.accepts(release["version"]):
+                    # A listing is not the public version page required by admission.
+                    _wait_active(
+                        registry,
+                        dependency,
+                        release["version"],
+                        None,
+                        deadline,
+                    )
+                    return
+            cursor = document.get("nextCursor")
+            path = (
+                f"/v1/packs/{quote(dependency.pack, safe='')}/versions?limit=100"
+                f"&cursor={quote(cursor, safe='')}"
+                if cursor
+                else ""
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+        if candidate_id is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            headers = {"Cache-Control": "no-cache"}
+            if token := registry.token():
+                headers["Authorization"] = f"Bearer {token}"
+            request = urllib.request.Request(
+                registry.endpoint.rstrip("/") + "/v1/publish/" + quote(candidate_id, safe=""),
+                headers=headers,
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=min(60, remaining)) as response:
+                    candidate = json.load(response)
+            except (OSError, ValueError) as exc:
+                raise RegistryPublishError(f"{subject}: candidate lookup failed: {exc}") from exc
+            last = str(candidate.get("reason") or candidate.get("status"))
+            if candidate.get("status") in {"rejected", "review"}:
+                findings = "; ".join(
+                    f"{finding.get('code')}: {finding.get('message')}"
+                    for finding in candidate.get("findings", [])
+                )
+                raise RegistryPublishError(
+                    f"{subject}: activation refused (not retried): {last}; {findings}"
+                )
+        time.sleep(max(0, min(2, deadline - time.monotonic())))
+    raise RegistryPublishError(f"{subject}: activation timed out (not retried): {last}")
 
 
 def publish_official_packs(
@@ -31,6 +123,7 @@ def publish_official_packs(
     *,
     registry: NamedRegistry | None = None,
     preflight_registry: str | None = None,
+    activation_timeout: float = 600,
 ) -> list[dict[str, object]]:
     """Validate the entire publication set before exposing maps or making a request.
 
@@ -55,6 +148,7 @@ def publish_official_packs(
     catalog = Lockfile.from_record_json((sources / "official-packs.lock").read_text())
     if not catalog.packs:
         raise ValueError("official publication requires selected packs")
+    dependencies: dict[str, tuple[PackDependency, ...]] = {}
     required = {
         f"{pack.pack}-{pack.version}-{variant}.pack-lock.json": (pack.pack, variant)
         for pack in catalog.packs
@@ -74,6 +168,7 @@ def publish_official_packs(
             archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
             extracted = unpack_artifact(archive, work / pack.pack, pack.artifact_digest)
             manifest = load_manifest(pack_manifest_path(extracted))
+            dependencies[pack.pack] = manifest.dependencies
             if (
                 pack.publisher != "dinkster"
                 or manifest.publisher != "dinkster"
@@ -119,6 +214,25 @@ def publish_official_packs(
                 encoding="ascii",
             )
         staged.rename(output)
+    selected = {pack.pack: pack for pack in catalog.packs}
+    ordered: list[LockedPack] = []
+    pending = list(catalog.packs)
+    while pending and registry is not None:
+        pending_names = {pack.pack for pack in pending}
+        ready = [
+            pack
+            for pack in pending
+            if all(dep.pack not in pending_names for dep in dependencies[pack.pack])
+        ]
+        if not ready:
+            raise ValueError("official publication has cyclic pack dependencies")
+        for pack in ready:
+            for dep in dependencies[pack.pack]:
+                if dep.pack in selected and not dep.accepts(selected[dep.pack].version):
+                    raise ValueError(f"{pack.pack}: selected {dep.pack} excludes {dep.version}")
+        ordered.extend(ready)
+        pending = [pack for pack in pending if pack not in ready]
+    public = set()
     endpoint = registry.endpoint if registry is not None else preflight_registry
     if endpoint is not None:
         for pack in catalog.packs:
@@ -171,8 +285,11 @@ def publish_official_packs(
                     f"{pack.pack}@{pack.version}: published archive or install locks differ; "
                     "bump the pack version"
                 )
+            public.add(pack.pack)
     result: list[dict[str, object]] = []
-    for pack in catalog.packs:
+    candidates: dict[str, str] = {}
+    deadline = time.monotonic() + activation_timeout
+    for pack in ordered if registry is not None else catalog.packs:
         locks = output / f"{pack.pack}-{pack.version}.json"
         row: dict[str, object] = {
             "pack": pack.pack,
@@ -181,6 +298,18 @@ def publish_official_packs(
             "locks": str(locks),
         }
         if registry is not None:
+            if pack.pack in public:
+                row.update(state="published")
+                result.append(row)
+                continue
+            for dep in dependencies[pack.pack]:
+                _wait_active(
+                    registry,
+                    dep,
+                    selected[dep.pack].version if dep.pack in selected else None,
+                    candidates.get(dep.pack),
+                    deadline,
+                )
             try:
                 verdict = publish_release(
                     registry,
@@ -195,6 +324,7 @@ def publish_official_packs(
                     f"if archive or install locks changed, bump the pack version: {exc}"
                 ) from exc
             row.update(state=verdict.state, candidateId=verdict.candidate_id)
+            candidates[pack.pack] = verdict.candidate_id
         result.append(row)
     return result
 
