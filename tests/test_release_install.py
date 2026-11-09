@@ -2327,6 +2327,7 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         "main-failure",
         "main-skipped",
         "main-workflow",
+        "workflow_dispatch",
     ],
 )
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
@@ -2340,7 +2341,9 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         "types": ["completed"],
         "branches": ["main"],
     }
-    assert "pull_request_target" not in trigger and "workflow_dispatch" not in trigger
+    assert "pull_request_target" not in trigger
+    assert trigger["workflow_dispatch"]["inputs"]["head"]["required"] is True
+    assert trigger["workflow_dispatch"]["inputs"]["head"]["type"] == "string"
     jobs = workflow["jobs"]
     checkout = next(
         step for step in jobs["sources"]["steps"] if step.get("uses") == "actions/checkout@v4"
@@ -2389,6 +2392,8 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         if event.startswith("main-")
         else "push"
         if event == "tag"
+        else "workflow_dispatch"
+        if event == "workflow_dispatch"
         else "pull_request",
     )
     monkeypatch.setenv("CONCLUSION", "failure" if event == "main-failure" else "success")
@@ -2411,12 +2416,13 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         assert "candidate-head engine dependency pins" in capsys.readouterr().out
     if event in {"main-failure", "main-skipped"}:
         assert "same-commit engine release did not succeed" in capsys.readouterr().out
-    if event in {"main-success", "main-workflow"}:
+    if event in {"main-success", "main-workflow", "workflow_dispatch"}:
         assert outputs["engine"] == after
+        assert "candidate-head engine dependency pins" not in capsys.readouterr().out
     assert jobs["sources"]["if"] == (
         "needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'"
     )
-    assert jobs["locks"]["needs"] == "sources"
+    assert jobs["locks"]["needs"] == ["select", "sources"]
     assert jobs["locks"]["runs-on"] == "${{ matrix.runner }}"
     native = next(step for step in jobs["locks"]["steps"] if "--sources" in step.get("run", ""))
     assert "--release .official-publication/engine" in native["run"]
@@ -2426,18 +2432,26 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "scripts.build_release import" not in prepare["run"]
     assert "prepare_inputs(" in prepare["run"]
     assert "ENGINE_COMMIT" in prepare["env"]
-    assert prepare["env"]["CANDIDATE"] == "${{ github.event_name != 'workflow_run' }}"
+    assert prepare["env"]["CANDIDATE"] == (
+        "${{ github.event_name != 'workflow_run' && github.event_name != 'workflow_dispatch' }}"
+    )
     assert "version=" not in prepare["run"]
-    assert jobs["publish"]["needs"] == ["sources", "locks"]
+    assert jobs["publish"]["needs"] == ["select", "sources", "locks"]
+    for job in ("sources", "locks", "publish"):
+        checkout = next(
+            step for step in jobs[job]["steps"] if step.get("uses") == "actions/checkout@v4"
+        )
+        assert checkout["with"]["ref"] == "${{ needs.select.outputs.engine }}"
     [submission] = [
         step for job in jobs.values() for step in job["steps"] if "secrets." in json.dumps(step)
     ]
     assert submission["if"] == (
         "github.repository == 'Kosinkadink/Dinkster' && "
-        "github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && "
+        "((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || "
+        "(github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && "
         "github.event.workflow_run.head_branch == 'main' && "
         "github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && "
-        "github.event.workflow_run.conclusion == 'success'"
+        "github.event.workflow_run.conclusion == 'success'))"
     )
     assert "--publish" in submission["run"]
     preflight = next(
@@ -2454,6 +2468,10 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     ("repository", "event", "ref", "allowed"),
     [
         ("Kosinkadink/Dinkster", "workflow_run", "refs/heads/main", True),
+        ("Kosinkadink/Dinkster", "workflow_dispatch", "refs/heads/main", True),
+        ("someone/Dinkster", "workflow_dispatch", "refs/heads/main", False),
+        ("Kosinkadink/Dinkster", "workflow_dispatch", "refs/heads/feature", False),
+        ("Kosinkadink/Dinkster", "workflow_dispatch", "refs/tags/pack/demo/v1.0", False),
         ("Kosinkadink/Dinkster", "push", "refs/heads/main", False),
         ("Kosinkadink/Dinkster", "pull_request", "refs/heads/main", False),
         ("someone/Dinkster", "push", "refs/heads/main", False),
@@ -2483,7 +2501,18 @@ def test_official_publication_submits_only_from_trusted_main(
             )
         ),
     )
-    assert eval(submission["if"].replace("&&", " and "), {"github": github}) is allowed
+    assert (
+        eval(submission["if"].replace("&&", " and ").replace("||", " or "), {"github": github})
+        is allowed
+    )
+    if event == "workflow_dispatch":
+        assert (
+            eval(
+                workflow["jobs"]["select"]["if"].replace("&&", " and ").replace("||", " or "),
+                {"github": github},
+            )
+            is allowed
+        )
 
 
 def test_official_publication_refuses_missing_credential_before_submission(tmp_path: Path) -> None:
