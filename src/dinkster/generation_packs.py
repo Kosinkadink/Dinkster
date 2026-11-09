@@ -154,6 +154,7 @@ def generation_pack_specs(
     if set(in_process_packs) - {entry.pack for entry in lock.packs}:
         raise CompositionError("generation hosting names packs absent from dinkster.lock")
     specs: list[PackSpec] = []
+    manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
         root = generation / "pack-sources" / entry.pack
         if not root.resolve().is_relative_to(generation / "pack-sources"):
@@ -189,6 +190,7 @@ def generation_pack_specs(
             raise CompositionError(
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
+        manifests[entry.pack] = manifest
         in_process = entry.pack in in_process_packs
         python = (
             generation
@@ -223,6 +225,27 @@ def generation_pack_specs(
                     and not in_process
                 ),
             )
+        )
+    entries = {entry.pack: entry for entry in lock.packs}
+    for index, entry in enumerate(lock.packs):
+        reachable = [entry.pack]
+        for name in reachable:
+            for dependency in manifests[name].dependencies:
+                provider = entries.get(dependency.pack)
+                if provider is None or not dependency.accepts(provider.version):
+                    raise CompositionError(
+                        f"generation pack {name!r} requires {dependency.pack!r} "
+                        f"{dependency.version}, but the generation has no matching pack"
+                    )
+                if dependency.pack not in reachable:
+                    reachable.append(dependency.pack)
+        specs[index] = replace(
+            specs[index],
+            env={
+                "PYTHONPATH": os.pathsep.join(
+                    str(generation / "pack-sources" / name) for name in reachable
+                )
+            },
         )
     return tuple(specs)
 

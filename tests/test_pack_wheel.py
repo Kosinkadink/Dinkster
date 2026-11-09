@@ -6,6 +6,7 @@ import hashlib
 import importlib.metadata
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -16,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from dinkster_registry import InstallError, Lockfile, artifact_digest
+from dinkster_registry import InstallError, LockedPack, Lockfile, artifact_digest
 from dinkster_registry.archive_admission import extracted_archive, run_ingest_integrity
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import diagnose_static
@@ -55,6 +56,74 @@ def wheel_pack(root: Path, *, requires: str = "demo-core>=2") -> Path:
     (root / "locales").mkdir()
     (root / "locales" / "en.json").write_bytes(b'{"hello":"world"}\n')
     return root
+
+
+def test_managed_catalog_imports_only_declared_pack_dependency_closure(tmp_path: Path) -> None:
+    from dinkster_workers.doctor import prepare_catalog
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    entries = []
+    artifacts = {}
+    definitions = {
+        "helper-consumer": ("helper-middle", "from helper_middle import VALUE\n"),
+        "helper-middle": ("helper-base", "from helper_base import VALUE\n"),
+        "helper-base": (None, "VALUE = 83\n"),
+        "helper-unrelated": (None, "VALUE = -17\n"),
+    }
+    for name, (dependency, source) in definitions.items():
+        root = tmp_path / name
+        package = root / "src" / name.replace("-", "_")
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(source + "NODES = []\n")
+        (root / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\nversion = "1.2.3"\n'
+            'engine = ">=0.0.2"\npublisher = "demo"\n'
+            f'[pack.entry]\nnodes = "{package.name}:NODES"\n'
+            + (f'[pack.dependencies]\n{dependency} = ">=1,<2"\n' if dependency else "")
+        )
+        (root / "pyproject.toml").write_text(f'[project]\nname = "{name}"\nversion = "1.2.3"\n')
+        archive = tmp_path / f"{package.name}-1.2.3-py3-none-any.whl"
+        build_pack_archive(root, archive)
+        artifacts[name] = archive
+        entries.append(
+            LockedPack(
+                name, "1.2.3", artifact_digest(archive.read_bytes()), "demo", (name,), "registry"
+            )
+        )
+    stage_generation_packs(generation, Lockfile.of(entries), artifacts)
+    specs = generation_pack_specs(generation, tuple(definitions))
+    consumer = next(
+        spec for spec in specs if load_manifest(spec.manifest).name == "helper-consumer"
+    )
+    report = prepare_catalog(
+        consumer.manifest, interpreter=sys.executable, environment=consumer.env
+    )
+    assert report.ok, report.findings
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import helper_consumer; from importlib.util import find_spec; "
+            "print(helper_consumer.VALUE); print(find_spec('helper_unrelated'))",
+        ],
+        env={**os.environ, **consumer.env},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines() == ["83", "None"]
+
+    from dinkster.compose import CompositionError
+
+    for provider_version in (None, "2.0.0"):
+        invalid_entries = [entry for entry in entries if entry.pack != "helper-base"]
+        if provider_version is not None:
+            provider = next(entry for entry in entries if entry.pack == "helper-base")
+            invalid_entries.append(replace(provider, version=provider_version))
+        (generation / "dinkster.lock").write_text(Lockfile.of(invalid_entries).record_json())
+        with pytest.raises(CompositionError, match="has no matching pack"):
+            generation_pack_specs(generation, tuple(entry.pack for entry in invalid_entries))
 
 
 def test_manifest_drives_installable_wheel_and_record(tmp_path: Path) -> None:
