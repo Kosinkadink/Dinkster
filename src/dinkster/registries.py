@@ -192,7 +192,11 @@ def publish_release(
         document = cast("dict[str, object]", decoded)
         state = document["status"]
         candidate_id = document["candidateId"]
-        if not isinstance(state, str) or state != "queued" or not isinstance(candidate_id, str):
+        if (
+            not isinstance(state, str)
+            or state not in {"queued", "scanning", "accepted"}
+            or not isinstance(candidate_id, str)
+        ):
             raise TypeError
     except (ValueError, KeyError, TypeError) as exc:
         raise RegistryPublishError(
