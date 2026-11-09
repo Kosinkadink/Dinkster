@@ -919,10 +919,10 @@ def test_compose_serving_default_resolution_is_atomic(
 @pytest.mark.parametrize(
     ("pack_id", "directory", "expected_version"),
     [
-        ("dinkster-text", "dinkster-nodes-text", "0.0.1"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.1"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.1"),
-        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.3"),
+        ("dinkster-text", "dinkster-nodes-text", "0.0.2"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.2"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.2"),
+        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
 )
 def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(

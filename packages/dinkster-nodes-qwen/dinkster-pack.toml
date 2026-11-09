@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-qwen"
-version = "0.0.1"
+version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.qwen"]

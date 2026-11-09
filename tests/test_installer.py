@@ -23,6 +23,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_registry import (
@@ -2694,6 +2695,25 @@ def _static_release(entry: LockedPack, data: bytes) -> dict[str, object]:
     }
 
 
+def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
+    from dinkster.registries import NamedRegistry, prepare_registry_sources
+
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts({}, requests)
+    try:
+        lock, unavailable = prepare_registry_sources(
+            NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
+            {},
+            tmp_path / "artifacts",
+            engine_version="0.0.3",
+        )
+        assert lock.packs == ()
+        assert unavailable == {}
+        assert requests == []
+    finally:
+        server.shutdown()
+
+
 def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> None:
     """Index and wheel requests stay under the static prefix with exact hash checks."""
     installer = make_installer(tmp_path)
@@ -2705,7 +2725,8 @@ def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> Non
     requests: list[tuple[str, str | None]] = []
     record = _static_release(release, data)
     index_path = "/static/packs/index.json"
-    artifact_path = "/static/" + record["wheels"][0]["url"]
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    artifact_path = f"/static/{wheel['url']}"
     server = _serve_artifacts(
         {
             index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
@@ -2754,7 +2775,7 @@ def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malforme
     release = LockedPack("demo", "1.0.0", "blake3:" + "1" * 64, "acme", ())
     data = b"ab"
     record = _static_release(release, data)
-    wheel = record["wheels"][0]
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     if size == "missing":
         del wheel["size"]
     else:
@@ -2764,7 +2785,7 @@ def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malforme
     server = _serve_artifacts(
         {
             index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
-            "/static/" + wheel["url"]: data,
+            f"/static/{wheel['url']}": data,
         },
         requests,
     )
@@ -2810,7 +2831,8 @@ def test_cli_restore_downloads_registry_sources(
     record = _static_release(locked, data)
     index_path = "/static/packs/index.json"
     index_data = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
-    artifact_path = "/static/" + record["wheels"][0]["url"]
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    artifact_path = f"/static/{wheel['url']}"
     server = _serve_artifacts({index_path: index_data, artifact_path: data}, requests)
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -3990,73 +4012,25 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         routing_registry_fetcher(RegistryConfig(), None)(replace(release, source="registry"))
 
 
-def test_cli_install_resolves_pack_version_from_named_registry(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("no_venv", [False, True])
+def test_cli_registry_install_requires_managed_generation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], no_venv: bool
 ) -> None:
-    """End to end: 'dinkster-pack install demo@1.0.0' resolves the digest
-    from the configured default registry's index, records
-    registry:<name> provenance, and apply downloads + verifies the exact
-    bytes. An unknown version refuses naming the miss; with several
-    registries and no default, resolution refuses naming the choices."""
-    scratch = make_installer(tmp_path / "scratch")
-    demo = write_pack(tmp_path / "demo", "demo")
-    entry, archive = lock_local_pack(demo, scratch.artifacts_dir)
-    data = archive.read_bytes()
-    release = replace(entry, version="1.0.0", publisher="acme")
-    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
-    artifact_path = f"/v1/artifacts/{entry.artifact_digest}"
-
-    requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts(
-        {
-            "/v1/packs/demo/versions/1.0.0": _release_record(release),
-            ticket_path: _download_ticket(release, data),
-            artifact_path: data,
-        },
-        requests,
-    )
-    try:
-        endpoint = f"http://127.0.0.1:{server.server_port}"
-        root = tmp_path / "root"
-        write_registries(
-            root / "registries.toml",
-            f'[registries.corp]\nendpoint = "{endpoint}"\n'
-            f'token-env = "CORP_TOKEN"\ndefault = true\n',
+    root = tmp_path / "root"
+    with pytest.raises(SystemExit):
+        run_cli(
+            "--root",
+            str(root),
+            "install",
+            "--yes",
+            *(["--no-venv"] if no_venv else []),
+            "demo@1.0.0",
         )
-        monkeypatch.setenv("CORP_TOKEN", "corp-secret")
-
-        run_cli("--root", str(root), "install", "--no-venv", "--yes", "demo@1.0.0")
-        out = capsys.readouterr().out
-        assert "add: demo" in out and "activated generation 1" in out
-        lockfile = Installer(root).current_lockfile()
-        assert lockfile is not None
-        [locked] = lockfile.packs
-        assert locked.source == "registry:corp"
-        assert locked.version == "1.0.0" and locked.publisher == "acme"
-        assert locked.artifact_digest == entry.artifact_digest
-        # both the index lookup and the artifact download carried the credential
-        assert [(path, auth) for path, auth in requests] == [
-            ("/v1/packs/demo/versions/1.0.0", "Bearer corp-secret"),
-            (ticket_path, "Bearer corp-secret"),
-            (artifact_path, None),
-        ]
-
-        with pytest.raises(SystemExit):
-            run_cli("--root", str(root), "install", "--no-venv", "--yes", "demo@9.9.9")
-        assert "publishes no release demo@9.9.9" in capsys.readouterr().err
-
-        # several registries, no default: refuse naming the choices
-        write_registries(
-            root / "registries.toml",
-            f'[registries.corp]\nendpoint = "{endpoint}"\n\n'
-            f'[registries.other]\nendpoint = "http://other.example"\n',
-        )
-        with pytest.raises(SystemExit):
-            run_cli("--root", str(root), "install", "--no-venv", "--yes", "demo@1.0.0")
-        err = capsys.readouterr().err
-        assert "none is the default" in err and "corp, other" in err
-    finally:
-        server.shutdown()
+    error = capsys.readouterr().err
+    assert "registry.managed-generation-required" in error
+    assert "base and variant" in error
+    assert "dinkster-env setup" in error
+    assert Installer(root).current_lockfile() is None
 
 
 # -- shared content store ----------------------------------------------

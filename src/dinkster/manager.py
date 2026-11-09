@@ -106,7 +106,6 @@ from .registries import (
     prepare_registry_sources,
     prepare_registry_update_sources,
     publish_release,
-    resolve_release,
     routing_registry_fetcher,
     select_registry,
     static_pack_releases,
@@ -375,10 +374,11 @@ def _cmd_install(args: argparse.Namespace) -> None:
             url, ref = _parse_git_spec(raw)
             entry, _ = lock_git_pack(url, installer.artifacts_dir, ref=ref)
         elif spec is not None:
-            # pack@version: resolved against exactly ONE registry - the
-            # named/default one - never a search across registries.
-            registry = select_registry(_registry_config(args), args.registry)
-            entry = resolve_release(registry, *spec)
+            raise InstallError(
+                "registry.managed-generation-required: registry installs are bound to a base "
+                "and variant; use dinkster-env setup with --catalog-lock, --artifacts and "
+                "--pack-lock inputs instead of dinkster-pack install"
+            )
         else:
             pack_dir = resolve_manifest_path(raw).parent
             entry, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
