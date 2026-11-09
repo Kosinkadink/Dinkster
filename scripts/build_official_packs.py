@@ -172,6 +172,7 @@ def build(
             if version is not None and version != library_version:
                 raise ValueError("official library version cannot be overridden")
             payload = output / f"{name.replace('-', '_')}-{library_version}-py3-none-any.whl"
+            library_output = staged / "library-wheels" / name
             subprocess.run(
                 [
                     uv,
@@ -179,12 +180,13 @@ def build(
                     "--wheel",
                     "--no-sources",
                     "--out-dir",
-                    str(output.resolve()),
+                    str(library_output),
                     str(library_root),
                 ],
                 check=True,
                 env={**os.environ, "SOURCE_DATE_EPOCH": "315532800"},
             )
+            shutil.copyfile(library_output / payload.name, payload)
             built_name, built_version, requirements = library_metadata(payload)
             if (built_name, built_version) != (name, library_version):
                 raise ValueError("official library wheel identity mismatch")
