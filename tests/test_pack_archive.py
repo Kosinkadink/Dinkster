@@ -1654,6 +1654,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
 
 @pytest.mark.parametrize("selected_value", [17, 29])
 @pytest.mark.parametrize("vision", [False, True])
+@pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
 def test_selected_pack_runtime_id_uses_distribution_layout(
     tmp_path: Path, selected_value: int, vision: bool
 ) -> None:

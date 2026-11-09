@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     TypeRegistry,
-    register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_3d import register_types
 from dinkster_values import LATENT_TYPE, EncodedLatentTensor, RenditionUnavailable, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -81,8 +81,8 @@ MODEL_INFO = [
 )
 def test_camera_metadata_json_renditions(type_id: str, value: object, expected: object) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
-    register_inference_types(registry)
+    register_types(registry)
+    register_types(registry)
     wrapped = registry.wrap(type_id, value)
     rendered = registry.render(wrapped, "json")
     assert rendered.kind == "json"
@@ -93,7 +93,7 @@ def test_camera_metadata_json_renditions(type_id: str, value: object, expected: 
 
 def test_camera_metadata_json_refuses_tensor_extensions_without_changing_portability() -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     extension = EncodedLatentTensor("float32", (1,), b"\x00\x00\x80?")
     for type_id, value in (
         (LOAD3D_CAMERA_TYPE, {**PERSPECTIVE, "extension": extension}),
@@ -109,9 +109,9 @@ def test_camera_metadata_json_refuses_tensor_extensions_without_changing_portabi
 @pytest.mark.parametrize("value", (None, [], MODEL_INFO))
 def test_load3d_model_info_preserves_order_and_transform_values(value: list[object] | None) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
-    register_inference_types(registry)
+    register_types(registry)
     assert registry.spec(LOAD3D_MODEL_INFO_TYPE) is spec
     payload = spec.encode(value)
     assert payload == encode_latent({"samples": value})
@@ -140,7 +140,7 @@ def test_load3d_model_info_preserves_order_and_transform_values(value: list[obje
 )
 def test_load3d_model_info_rejects_malformed_transforms(value: object) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
     assert spec.validate_encoded is not None
     payload = encode_latent({"samples": value})
@@ -157,9 +157,9 @@ def test_load3d_camera_roundtrip_preserves_complete_structure(
     value: dict[str, object] | None,
 ) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(LOAD3D_CAMERA_TYPE)
-    register_inference_types(registry)
+    register_types(registry)
     assert registry.spec(LOAD3D_CAMERA_TYPE) is spec
     assert spec.validate_encoded is not None
     payload = spec.encode(value)
@@ -190,7 +190,7 @@ def test_load3d_camera_roundtrip_preserves_complete_structure(
 )
 def test_load3d_camera_rejects_malformed_payloads(value: dict[str, object]) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(LOAD3D_CAMERA_TYPE)
     assert spec.validate_encoded is not None
     payload = encode_latent({"samples": value})
@@ -208,14 +208,13 @@ def test_load3d_camera_public_registration_is_cold_and_shared() -> None:
             sys.executable,
             "-c",
             "import sys\n"
-            "from dinkster_api.v1 import (\n"
-            "    LOAD3D_CAMERA_TYPE, TypeRegistry, register_inference_types,\n"
-            ")\n"
+            "from dinkster_api.v1 import LOAD3D_CAMERA_TYPE, TypeRegistry\n"
+            "from dinkster_nodes_3d import register_types\n"
             "from dinkster_values.builtin_types import LOAD3D_CAMERA_TYPE as canonical\n"
             "assert LOAD3D_CAMERA_TYPE is canonical\n"
             "registry = TypeRegistry()\n"
-            "register_inference_types(registry)\n"
-            "register_inference_types(registry)\n"
+            "register_types(registry)\n"
+            "register_types(registry)\n"
             "value = {'position': {'x': 0, 'y': 1, 'z': 2},\n"
             "         'target': {'x': 0, 'y': 0, 'z': 0},\n"
             "         'zoom': 1, 'cameraType': 'perspective'}\n"
@@ -302,10 +301,8 @@ class CameraTransportConsumer(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        package = Path(__file__).resolve().parents[1] / "packages" / "dinkster-nodes-comfy"
         (tmp_path / "load3d_camera_fixture.py").write_text(
             "from test_load3d_camera_codec import CameraConsumer, CameraSource\n"
-            "from dinkster_api.v1 import register_inference_types\n"
             "NODES = (CameraSource, CameraConsumer)\n",
             encoding="ascii",
         )
@@ -313,27 +310,26 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
         fixture.write_text(
             '[pack]\nname="load3d-camera-fixture"\npublisher="dinkster"\n'
             'namespaces=["load3d-camera-fixture"]\n[pack.entry]\n'
-            'nodes="load3d_camera_fixture:NODES"\ntypes="load3d_camera_fixture:register_inference_types"\n',
+            'nodes="load3d_camera_fixture:NODES"\n',
             encoding="ascii",
         )
-        native = package / "dinkster-pack.toml"
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
                 "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"))
+                    (str(tmp_path), str(Path(__file__).parent))
                 ),
             }
         )
         try:
-            for manifest in (native, fixture):
+            for manifest in (fixture,):
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
                         in_process=in_process,
                         worker_group=None if in_process else "load3d-camera-fixture",
-                        group_manifests=() if in_process else (native, fixture),
+                        group_manifests=() if in_process else (fixture,),
                     )
                 )
             graph = Graph(
@@ -372,7 +368,6 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
         for module, (node, namespace) in modules.items():
             (tmp_path / f"{module}.py").write_text(
                 f"from test_load3d_camera_codec import {node}\n"
-                "from dinkster_api.v1 import register_inference_types\n"
                 f"NODES = ({node},)\n",
                 encoding="ascii",
             )
@@ -380,7 +375,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
             manifest.write_text(
                 f'[pack]\nname="{module}"\npublisher="dinkster"\n'
                 f'namespaces=["{namespace}"]\n[pack.entry]\n'
-                f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+                f'nodes="{module}:NODES"\n',
                 encoding="ascii",
             )
             manifests[module] = manifest
@@ -390,7 +385,13 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(test_directory))),
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(tmp_path),
+                        str(test_directory),
+                        str(test_directory.parents[1] / "packages/dinkster-nodes-3d/src"),
+                    )
+                ),
             },
         )
         try:

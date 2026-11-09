@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     TypeRegistry,
-    register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_ltx import register_types
 from dinkster_values import EncodedLatentTensor, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -35,11 +35,11 @@ def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> No
         "tensor": EncodedLatentTensor("float16", (1, 2), b"\x00\x3c\x00\xc0"),
     }
     registry = TypeRegistry()
-    registered = register_inference_types(registry)
+    registered = register_types(registry)
     spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
 
     assert spec in registered
-    assert register_inference_types(registry) == registered
+    assert register_types(registry) == registered
     encoded = spec.encode(value)
     assert spec.decode(encoded) == value
     assert list(cast("Mapping[str, object]", spec.decode(encoded))) == list(value)
@@ -50,7 +50,7 @@ def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> No
 
 def test_ic_lora_parameters_rejects_non_mapping_and_invalid_frames() -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
     assert spec.validate_encoded is not None
 
@@ -66,7 +66,7 @@ def test_ic_lora_parameters_rejects_non_mapping_and_invalid_frames() -> None:
 @pytest.mark.parametrize("entry", ("ab", 12, None, {"a": 1}, ("a",), ("a", 1, 2)))
 def test_ic_lora_parameters_rejects_malformed_mapping_entries(entry: object) -> None:
     registry = TypeRegistry()
-    register_inference_types(registry)
+    register_types(registry)
     spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
     assert spec.validate_encoded is not None
     payload = encode_latent({"samples": [entry]})
@@ -80,12 +80,11 @@ def test_ic_lora_parameters_public_registration_is_cold_and_idempotent() -> None
     script = "\n".join(
         (
             "import sys",
-            "from dinkster_api.v1 import (",
-            "    IC_LORA_PARAMETERS_TYPE, TypeRegistry, register_inference_types,",
-            ")",
+            "from dinkster_api.v1 import IC_LORA_PARAMETERS_TYPE, TypeRegistry",
+            "from dinkster_nodes_ltx import register_types",
             "registry = TypeRegistry()",
-            "first = register_inference_types(registry)",
-            "second = register_inference_types(registry)",
+            "first = register_types(registry)",
+            "second = register_types(registry)",
             "assert first == second",
             "spec = registry.spec(IC_LORA_PARAMETERS_TYPE)",
             "value = {'reference_downscale_factor': 2, 'extra': {'preserve': True}}",
@@ -155,9 +154,23 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
         source_root = Path(__file__).resolve().parents[1] / "packages"
         (tmp_path / f"{module}.py").write_text(
             "from test_ic_lora_parameters import ICLoRAParametersConsumer, ICLoRAParametersSource\n"
-            "from dinkster_api.v1 import register_inference_types\n"
             "SOURCE_NODES = (ICLoRAParametersSource,)\n"
             "CONSUMER_NODES = (ICLoRAParametersConsumer,)\n",
+            encoding="ascii",
+        )
+        owner = tmp_path / "ic_lora_parameters_owner.py"
+        owner.write_text(
+            "from dinkster_inference_wire.ic_lora_parameters import register_ic_lora_parameters_type\n"
+            "def register_types(registry):\n"
+            "    return (register_ic_lora_parameters_type(registry),)\n"
+            "NODES = ()\n",
+            encoding="ascii",
+        )
+        owner_manifest = tmp_path / "owner-dinkster-pack.toml"
+        owner_manifest.write_text(
+            '[pack]\nname = "ic-lora-parameters-owner"\npublisher = "dinkster"\n'
+            'type-namespaces = ["IC_LORA_PARAMETERS"]\n[pack.entry]\n'
+            'nodes = "ic_lora_parameters_owner:NODES"\ntypes = "ic_lora_parameters_owner:register_types"\n',
             encoding="ascii",
         )
         source_manifest = tmp_path / "source-dinkster-pack.toml"
@@ -179,8 +192,7 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
             manifest.write_text(
                 f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
                 f'namespaces = ["{namespace}"]\n\n[pack.entry]\n'
-                f'nodes = "{module}:{nodes}"\n'
-                f'types = "{module}:register_inference_types"\n',
+                f'nodes = "{module}:{nodes}"\n',
                 encoding="ascii",
             )
         composer = ServingComposer(
@@ -195,6 +207,7 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
             },
         )
         try:
+            await composer.add_pack(PackSpec(manifest=owner_manifest, in_process=True))
             if in_process:
                 specs = (
                     PackSpec(manifest=source_manifest, in_process=True),
@@ -205,12 +218,12 @@ def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
                     PackSpec(
                         manifest=source_manifest,
                         worker_group="ic-lora-producer",
-                        group_manifests=(source_manifest,),
+                        group_manifests=(owner_manifest, source_manifest),
                     ),
                     PackSpec(
                         manifest=consumer_manifest,
                         worker_group="ic-lora-consumer",
-                        group_manifests=(consumer_manifest,),
+                        group_manifests=(owner_manifest, consumer_manifest),
                     ),
                 )
             for spec in specs:

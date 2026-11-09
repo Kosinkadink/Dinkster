@@ -34,8 +34,9 @@ def measure(path: Path) -> dict[str, object]:
     import numpy as np
     import psutil
     from dinkster_assets import AssetRef, MountSnapshotResolver, digest_file
-    from dinkster_nodes_media_io.audio import LoadAudio, SaveAudio
-    from dinkster_nodes_media_io.audio_ops import TrimAudio
+    from dinkster_nodes_audio.audio_io import LoadAudio
+    from dinkster_nodes_audio.audio_save import SaveAudio
+    from dinkster_nodes_audio.audio_transform import TrimAudio
     from dinkster_schema.reporting import capture_saved_artifacts
     from dinkster_values.audio_codec import audio_window, effective_audio_facts
 
