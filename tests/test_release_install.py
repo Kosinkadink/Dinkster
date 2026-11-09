@@ -567,7 +567,7 @@ def test_release_install_launches_without_private_registry_inputs() -> None:
     wheel_install = next(
         step for step in steps if step.get("name") == "Install and launch from wheels"
     )
-    assert "scripts/verify_release_install.py" in wheel_install["run"]
+    assert "scripts/verify_release_launch.py" in wheel_install["run"]
     assert "--require-frontend" in wheel_install["run"]
     assert "--registry-command" not in wheel_install["run"]
 
@@ -575,7 +575,7 @@ def test_release_install_launches_without_private_registry_inputs() -> None:
 def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path) -> None:
     import sys
 
-    from scripts.verify_release_install import verify_launch
+    from scripts.verify_release_launch import verify_launch
 
     state = tmp_path / "release"
     verify_launch(state, Path(sys.executable))
@@ -587,7 +587,7 @@ def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path)
 def test_release_http_check_requires_the_application_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, has_root: bool
 ) -> None:
-    from scripts.verify_release_install import verify_launch
+    from scripts.verify_release_launch import verify_launch
 
     module = tmp_path / "dinkster"
     shutil.copytree(ROOT / "src/dinkster", module)
@@ -604,18 +604,16 @@ def test_release_http_check_requires_the_application_root(
             verify_launch(state, Path(sys.executable), require_frontend=True)
 
 
-def test_release_failure_prints_service_and_publication_log_tails(
+def test_release_failure_prints_backend_log_tail(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from scripts.verify_release_install import print_log_tails
+    from scripts.verify_release_launch import print_log_tails
 
-    (tmp_path / "registry.log").write_text("\n".join(f"line {i}" for i in range(125)))
-    (tmp_path / "backend.log").write_text("backend failed\n")
-    (tmp_path / "publish.log").write_text("publication result\n")
-    (tmp_path / "registry.db").write_text("not a log")
+    (tmp_path / "backend.log").write_text("\n".join(f"line {i}" for i in range(125)))
+    (tmp_path / "nodes.json").write_text("not a log")
     print_log_tails(tmp_path)
     output = capsys.readouterr().err
-    assert "backend failed" in output and "publication result" in output
+    assert "backend.log" in output
     assert "line 24\n" not in output and "line 25\n" in output and "line 124\n" in output
     assert "not a log" not in output
 
@@ -637,22 +635,9 @@ def test_windows_runtime_admits_the_pinned_interpreter_before_installing_depende
     assert "if" not in steps[admission_index]
 
 
-def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
+def test_probe_jail_is_configured_before_live_tests_and_required_by_main() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
-    steps = workflow["jobs"]["registry-install"]["steps"]
-    command = next(
-        step["run"] for step in steps if "scripts/verify_release_install.py" in step.get("run", "")
-    )
-    assert '--state "$RUNNER_TEMP/registry-install-state"' in command
-    upload = steps[-1]
-    assert upload["uses"] == "actions/upload-artifact@v4"
-    assert upload["if"] == "always()"
-    assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
-
-
-def test_probe_jail_is_configured_before_registry_validation_only() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
-    steps = workflow["jobs"]["registry-install"]["steps"]
+    steps = workflow["jobs"]["probe-jail"]["steps"]
     setup_index = next(
         index
         for index, step in enumerate(steps)
@@ -663,6 +648,14 @@ def test_probe_jail_is_configured_before_registry_validation_only() -> None:
     )
     assert setup_index < validation_index
     assert "if" not in steps[setup_index]
+    command = steps[validation_index]["run"]
+    assert "tests/test_sandbox.py::TestLiveJail" in command
+    assert "tests/test_doctor.py::TestLiveJailedProbe" in command
+    main_status = workflow["jobs"]["main-status"]
+    assert "probe-jail" in main_status["needs"]
+    gate = main_status["steps"][-1]
+    assert gate["env"]["PROBE_JAIL_RESULT"] == "${{ needs.probe-jail.result }}"
+    assert 'test "$PROBE_JAIL_RESULT" = success' in gate["run"]
     fast = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     assert all(
         "setup_probe_jail.sh" not in step.get("run", "") for step in fast["jobs"]["fast"]["steps"]

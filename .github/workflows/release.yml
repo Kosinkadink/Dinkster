@@ -16,7 +16,7 @@ on:
       - scripts/base_bundles.json
       - scripts/download_frontend.py
       - scripts/release_sources.json
-      - scripts/verify_release_install.py
+      - scripts/verify_release_launch.py
       - packages/dinkster-supervisor/**
       - src/dinkster/frontend.py
       - tests/test_environment_archives.py
@@ -231,7 +231,7 @@ jobs:
           "$python" -m pip check
           "$python" -m dinkster.cli --help
           "$python" -c "from dinkster.frontend import discover_frontend_bundle; assert discover_frontend_bundle() is not None"
-          "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
+          "$python" scripts/verify_release_launch.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
       - name: Verify streaming base extraction on the host filesystem
         shell: bash
         run: |
