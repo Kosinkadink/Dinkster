@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from dinkster_api.v1 import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr
-from dinkster_nodes_models import model_selections
+from dinkster_models import model_selections
 
 class VAE:
     def __init__(self, **kwargs):
