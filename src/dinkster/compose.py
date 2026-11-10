@@ -200,6 +200,8 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_values import (
+    CORE_COMBO,
+    CORE_STRING,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
@@ -5026,7 +5028,9 @@ class ServingComposer:
         for pack_id, detail in sorted(self._inference_unavailable.items()):
             declared = {provider.id for provider in detail.providers}
             for input_name, value in inputs.items():
-                selected = value.resolve() if isinstance(value, Value) else value
+                if value.type_id not in (CORE_COMBO, CORE_STRING):
+                    continue
+                selected = value.resolve()
                 if isinstance(selected, str) and selected in declared:
                     raise RuntimeError(
                         f"input {input_name!r} selects {selected!r} from pack "

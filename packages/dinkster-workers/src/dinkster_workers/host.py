@@ -490,7 +490,13 @@ def load_pack(
             register = resolve_pack_entry(manifest.types_entry)
             if not callable(register):
                 raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
-            register(registry)
+            try:
+                register(registry)
+            except Exception as exc:
+                raise ManifestError(
+                    f"pack {manifest.name!r} value type registration failed "
+                    f"at registry stage: {exc}"
+                ) from exc
         node_classes = _node_classes(manifest.nodes_entry, resolve_pack_entry(manifest.nodes_entry))
         # The same startup enumeration as the isolated worker path: static
         # lists are validated now, lazy providers are held uninvoked and

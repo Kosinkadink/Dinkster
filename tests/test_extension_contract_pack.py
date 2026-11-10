@@ -13,6 +13,8 @@ from pathlib import Path
 import aiohttp
 import pytest
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_workers.host import load_pack
+from dinkster_workers.manifest import ManifestError, load_manifest
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -29,24 +31,23 @@ def free_port() -> int:
         return listener.getsockname()[1]
 
 
-def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
-    port = free_port()
-    route_manifest = tmp_path / "route-pack.toml"
-    route_manifest.write_text(
-        PACK.read_text(encoding="utf-8")
-        .replace('inference = "dinkster-inference/1"\n', "")
-        .replace(
-            '[pack.provides.registry]\n"dinkster.model-families" = ["fixture.toy-image"]\n\n',
-            "",
-        )
-        .replace('inference = "extension_contract_pack:register_inference"\n', "")
-        .replace(
-            'capabilities = ["model-family-registration", "routes"]',
-            'capabilities = ["routes"]',
-        ),
-        encoding="utf-8",
+def fixture_graph() -> Graph:
+    return Graph(
+        nodes={
+            "value": GraphNode("fixture.extension.value", {"width": 13, "height": 7}),
+            "proof": GraphNode(
+                "fixture.extension.contract",
+                {"sample": Link("value", "sample")},
+            ),
+        }
     )
-    shutil.copy(PACK.parent / "frontend.js", route_manifest.parent / "frontend.js")
+
+
+@pytest.mark.parametrize("_serving_process", range(2))
+def test_ordinary_pack_exercises_the_extension_contract(
+    tmp_path: Path, _serving_process: int
+) -> None:
+    port = free_port()
     process = subprocess.Popen(
         [
             sys.executable,
@@ -61,7 +62,7 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
             "--no-default-packs",
             "--disable-p2p",
             "--pack",
-            str(route_manifest),
+            str(PACK),
         ],
         cwd=tmp_path,
         env={
@@ -134,21 +135,12 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
                 )
 
             async with session.ws_connect(base + "/api/events?clientId=extension-contract") as ws:
-                graph = Graph(
-                    nodes={
-                        "value": GraphNode("fixture.extension.value", {"width": 13, "height": 7}),
-                        "proof": GraphNode(
-                            "fixture.extension.contract",
-                            {"sample": Link("value", "sample")},
-                        ),
-                    }
-                )
                 async with session.post(
                     base + "/api/jobs",
                     json={
                         "clientId": "extension-contract",
                         "jobId": "ordinary-pack-proof",
-                        "graph": graph_to_wire(graph),
+                        "graph": graph_to_wire(fixture_graph()),
                         "targets": ["proof"],
                     },
                 ) as response:
@@ -185,6 +177,86 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=30)
+
+
+def test_type_registration_failure_names_pack_type_and_stage(tmp_path: Path) -> None:
+    pack_root = tmp_path / "duplicate-type-pack"
+    shutil.copytree(PACK.parent, pack_root)
+    module = pack_root / "duplicate_contract_pack.py"
+    module.write_text(
+        (pack_root / "extension_contract_pack.py").read_text(encoding="utf-8")
+        + "\n\ndef register_duplicate_types(registry):\n"
+        "    registry.register(VALUE_TYPE)\n"
+        "    registry.register(VALUE_TYPE)\n",
+        encoding="utf-8",
+    )
+    manifest_path = pack_root / "dinkster-pack.toml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace(
+            "extension_contract_pack:", "duplicate_contract_pack:"
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace(
+            "duplicate_contract_pack:register_types",
+            "duplicate_contract_pack:register_duplicate_types",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError) as raised:
+        load_pack(load_manifest(manifest_path), import_from_pack_root=True)
+
+    message = str(raised.value)
+    assert PACK_ID in message
+    assert "fixture.extension.value" in message
+    assert "registry stage" in message
+
+
+def test_type_registration_requires_a_manifest_entry(tmp_path: Path) -> None:
+    pack_root = tmp_path / "source-only-pack"
+    pack_root.mkdir()
+    (pack_root / "source_only_pack.py").write_text(
+        'VALUE_TYPE = "fixture.source-only.value"\n'
+        "NODES = ()\n\n"
+        "def register_types(registry):\n"
+        "    registry.register(VALUE_TYPE)\n",
+        encoding="utf-8",
+    )
+    manifest_path = pack_root / "dinkster-pack.toml"
+    manifest_path.write_text(
+        '[pack]\nname = "fixture-source-only-pack"\n'
+        'namespaces = ["fixture"]\n\n'
+        '[pack.entry]\nnodes = "source_only_pack:NODES"\n',
+        encoding="utf-8",
+    )
+
+    worker, registry, _nodes, _arms = load_pack(
+        load_manifest(manifest_path), import_from_pack_root=True
+    )
+    try:
+        assert "fixture.source-only.value" not in registry
+    finally:
+        asyncio.run(worker.close())
+
+
+def test_full_manifest_executes_after_pack_reload() -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(PACK.parent)})
+        try:
+            await composer.add_pack(PackSpec(PACK))
+            for reload_pack in (False, True):
+                if reload_pack:
+                    await composer.reload_pack(PACK_ID)
+                result = await composer.composition.make_engine(lambda _event: None).run(
+                    fixture_graph(), ["proof"]
+                )
+                assert result.outputs["proof"]["mean"].resolve() == pytest.approx(0.5)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def test_pack_composes_model_family_into_sampling_worker(tmp_path: Path) -> None:
