@@ -141,10 +141,10 @@ def test_parse_file_shard_accepts_two_shards(value: str, expected: int) -> None:
         ("6/6", (6, 6)),
         ("1/8", (1, 8)),
         ("8/8", (8, 8)),
-        ("1/10", (1, 10)),
-        ("10/10", (10, 10)),
         ("1/12", (1, 12)),
         ("12/12", (12, 12)),
+        ("1/10", (1, 10)),
+        ("10/10", (10, 10)),
     ),
 )
 def test_parse_file_shard_accepts_supported_counts(value: str, expected: tuple[int, int]) -> None:
