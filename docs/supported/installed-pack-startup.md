@@ -123,6 +123,10 @@
   upper bound for pack wheel bytes. Unavailable releases and invalid locks are
   reported together. Offline metadata discovery reads only retained channel,
   engine and base records and reports missing engine/base records together.
+- Managed setup and update can require a reviewed published engine and base
+  using paired `--engine-release` and `--base-id` arguments. A changed channel
+  selection refuses before creating project or store state rather than applying
+  different software. These selections cannot use a locally resolved base.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.
