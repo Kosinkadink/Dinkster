@@ -331,6 +331,7 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
 
 def test_discovery_reuses_verified_acquisition_metadata_without_network_or_writes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     mirror, store = tmp_path / "mirror", tmp_path / "store"
     base, engine, channel = _mirror(mirror)
@@ -340,6 +341,18 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
     before = {
         path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
     }
+    with monkeypatch.context() as patch:
+        read = environment_artifacts.read_metadata
+
+        def cache_only(root: str, path: str) -> bytes:
+            assert Path(root).is_relative_to(store / "metadata")
+            return read(root, path)
+
+        patch.setattr(environment_artifacts, "read_metadata", cache_only)
+        offline = discover((str(mirror),), "main", store=store, offline=True)
+        assert offline.document == channel
+        assert offline.engine == engine
+        assert offline.bases == {"fixture-cpu": base}
     cached = discover((str(mirror),), "main", store=store)
     assert cached.document == channel
     assert cached.engine == engine
@@ -356,6 +369,19 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
     (store / "metadata" / f"{base['id'][7:]}.json").write_text("{}")
     with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
         discover((str(mirror),), "main", store=store)
+    (store / "metadata" / f"{channel['engine']['release'][7:]}.json").unlink()
+    before = {
+        path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
+    }
+    with monkeypatch.context() as patch:
+        patch.setattr(environment_artifacts, "read_metadata", cache_only)
+        with pytest.raises(EnvironmentError) as refused:
+            discover((str(mirror),), "main", store=store, offline=True)
+    assert channel["engine"]["release"] in str(refused.value)
+    assert base["id"] in str(refused.value)
+    assert {
+        path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
+    } == before
 
 
 def test_acquisition_retains_published_base_metadata_without_replacing_custom_provenance(

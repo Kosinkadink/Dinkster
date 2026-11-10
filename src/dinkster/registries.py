@@ -474,11 +474,14 @@ class StaticPackIndex:
     Credentials are hashed into filenames, never written to the snapshot.
     """
 
-    def __init__(self, directory: Path | None = None, *, offline: bool = False) -> None:
+    def __init__(
+        self, directory: Path | None = None, *, offline: bool = False, read_only: bool = False
+    ) -> None:
         self._documents: dict[tuple[str, str, str], dict[str, object]] = {}
         self._locks: dict[tuple[str, str, str], bytes] = {}
         self._directory = directory
         self._offline = offline
+        self._read_only = read_only
 
     def _cache_path(self, key: tuple[str, str, str], suffix: str) -> Path | None:
         return (
@@ -524,7 +527,12 @@ class StaticPackIndex:
                 raise InstallError(
                     "registry static index has an unsupported schema or missing items"
                 )
-            if cached is not None and not self._offline and not cached.exists():
+            if (
+                cached is not None
+                and not self._offline
+                and not self._read_only
+                and not cached.exists()
+            ):
                 cached.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 cached.write_text(json.dumps(document), encoding="utf-8")
             self._documents[key] = document
@@ -553,7 +561,7 @@ class StaticPackIndex:
                 payload = response.read(size + 1)
         if len(payload) != size or artifact_digest(payload) != digest:
             raise InstallError("published lock bytes differ from binding")
-        if cached is not None and not self._offline and not cached.exists():
+        if cached is not None and not self._offline and not self._read_only and not cached.exists():
             cached.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             cached.write_bytes(payload)
         self._locks[key] = payload
@@ -1059,6 +1067,39 @@ def read_registry_pack_locks(
     if errors:
         raise InstallError("published dependency locks refused:\n" + "\n".join(errors))
     return tuple(locks)
+
+
+def plan_registry_sources(
+    config: RegistryConfig,
+    registry: NamedRegistry,
+    minimums: Mapping[str, str],
+    *,
+    engine_version: str,
+    variant: str,
+    base_id: str,
+    index: StaticPackIndex,
+) -> tuple[Lockfile, tuple[PackLock, ...]]:
+    """Select sources and bound locks from metadata without acquiring pack archives."""
+    entries: list[LockedPack] = []
+    errors: list[str] = []
+    for pack, minimum in minimums.items():
+        try:
+            entries.append(
+                resolve_compatible_release(registry, pack, minimum, engine_version, index=index)
+            )
+        except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
+            errors.append(f"{pack}: {exc}")
+    sources = Lockfile.of(entries)
+    locks: tuple[PackLock, ...] = ()
+    try:
+        locks = read_registry_pack_locks(
+            config, sources, variant=variant, base_id=base_id, selected=registry, index=index
+        )
+    except InstallError as exc:
+        errors.append(str(exc))
+    if errors:
+        raise InstallError("registry plan refused:\n" + "\n".join(errors))
+    return sources, locks
 
 
 def prepare_registry_pack_locks(

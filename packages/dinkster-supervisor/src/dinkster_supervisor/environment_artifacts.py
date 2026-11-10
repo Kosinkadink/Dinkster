@@ -233,10 +233,16 @@ def discover_manifest(
     variant: str | None = None,
     *,
     store: Path | None = None,
+    offline: bool = False,
 ) -> tuple[dict[str, object], tuple[str, ...], bytes]:
     sources = _sources(locations, mirrors)
+    if offline and store is None:
+        raise EnvironmentError("offline discovery requires a local store")
     candidates = (
-        ((str(store / "metadata"), f"{expected[7:]}.json"), *sources)
+        (
+            (str(store / "metadata"), f"{expected[7:]}.json"),
+            *(() if offline else sources),
+        )
         if store is not None
         else sources
     )
@@ -286,7 +292,11 @@ def _channel_cache(store: Path, mirrors: tuple[str, ...], channel_name: str) -> 
 
 
 def discover(
-    mirrors: tuple[str, ...], channel_name: str, *, store: Path | None = None
+    mirrors: tuple[str, ...],
+    channel_name: str,
+    *,
+    store: Path | None = None,
+    offline: bool = False,
 ) -> EnvironmentCatalog:
     """Read channel and exact manifests without creating project or store files."""
     if channel_name not in {"stable", "main"}:
@@ -294,7 +304,7 @@ def discover(
     document: dict[str, object] | None = None
     channel: Channel | None = None
     cached_channel = False
-    for mirror in mirrors:
+    for mirror in () if offline else mirrors:
         try:
             trusted_metadata(mirror)
             document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
@@ -311,21 +321,43 @@ def discover(
         except (OSError, ValueError, HTTPException):
             pass
     if channel is None or document is None:
-        raise EnvironmentError("no mirror supplied a valid trusted channel")
-    engine, engine_sources, engine_bytes = discover_manifest(
-        channel.engine_locations, mirrors, channel.engine_release, store=store
-    )
-    if engine["version"] != channel.engine_version:
+        raise EnvironmentError(
+            "offline channel metadata missing or invalid"
+            if offline
+            else "no mirror supplied a valid trusted channel"
+        )
+    errors: list[str] = []
+    engine = None
+    engine_sources: tuple[str, ...] = ()
+    engine_bytes = b""
+    try:
+        engine, engine_sources, engine_bytes = discover_manifest(
+            channel.engine_locations, mirrors, channel.engine_release, store=store, offline=offline
+        )
+    except EnvironmentError as exc:
+        if not offline:
+            raise
+        errors.append(f"engine {channel.engine_release}: {exc}")
+    if engine is not None and engine["version"] != channel.engine_version:
         raise EnvironmentError("engine manifest version disagrees with channel")
     bases: dict[str, dict[str, object]] = {}
     sources: dict[str, tuple[str, ...]] = {}
     for variant, locations in channel.base_locations:
-        base, roots, _ = discover_manifest(
-            locations, mirrors, channel.base_for(variant), variant, store=store
-        )
-        if base["workerProtocol"] != engine["workerProtocol"]:
+        try:
+            base, roots, _ = discover_manifest(
+                locations, mirrors, channel.base_for(variant), variant, store=store, offline=offline
+            )
+        except EnvironmentError as exc:
+            if not offline:
+                raise
+            errors.append(f"base {variant} {channel.base_for(variant)}: {exc}")
+            continue
+        if engine is not None and base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError("base and engine workerProtocol mismatch")
         bases[variant], sources[variant] = base, roots
+    if errors:
+        raise EnvironmentError("offline metadata inputs missing or invalid:\n" + "\n".join(errors))
+    assert engine is not None
     return EnvironmentCatalog(
         channel_name,
         document,

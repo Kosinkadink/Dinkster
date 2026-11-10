@@ -143,6 +143,9 @@ class PackLock:
                     )
 
     def write(self, path: Path) -> None:
+        path.write_text(self.to_json(), encoding="ascii")
+
+    def to_json(self) -> str:
         data = asdict(self)
         data["format"] = (
             "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
@@ -150,7 +153,7 @@ class PackLock:
         if self.engine is None:
             data.pop("engine")
         data["requiresPython"] = data.pop("requires_python")
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="ascii")
+        return json.dumps(data, indent=2, sort_keys=True) + "\n"
 
     @classmethod
     def read(cls, path: Path) -> PackLock:

@@ -103,6 +103,7 @@ from .registries import (
     default_pack_minimums,
     load_registries,
     parse_registry_spec,
+    plan_registry_sources,
     prepare_registry_pack_locks,
     prepare_registry_sources,
     prepare_registry_update_sources,
@@ -1088,6 +1089,54 @@ def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
 
 
+def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
+    from dinkster_supervisor.environment_artifacts import validate_manifest
+
+    try:
+        engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)
+    except (OSError, ValueError) as exc:
+        raise InstallError(f"target engine metadata refused: {exc}") from exc
+    defaults = engine.get("defaultPacks")
+    if not isinstance(defaults, dict) or not defaults:
+        raise InstallError("target engine has no default pack declaration")
+    config = _registry_config(args)
+    selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
+    sources, locks = plan_registry_sources(
+        config,
+        select_registry(config, selector),
+        cast("dict[str, str]", defaults),
+        engine_version=cast("str", engine["version"]),
+        variant=args.variant,
+        base_id=args.base_id,
+        index=StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True),
+    )
+    payloads = {
+        (wheel.sha256, wheel.filename): wheel.size
+        for lock in locks
+        for package in lock.packages
+        for wheel in package.wheels
+    }
+    print(
+        json.dumps(
+            {
+                "engineVersion": engine["version"],
+                "engineRelease": args.engine_release,
+                "variant": args.variant,
+                "baseId": args.base_id,
+                "sources": json.loads(sources.record_json()),
+                "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+                "maximumPackPayloadBytes": sum(payloads.values()),
+                "plan": [
+                    f"select {entry.pack}@{entry.version} from {entry.source} "
+                    f"({entry.artifact_digest}) using its published {args.variant} lock"
+                    for entry in sources.packs
+                ],
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     if args.installed_lock and args.allow_missing:
@@ -1395,6 +1444,18 @@ def main() -> None:
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
     archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
+
+    source_plan = commands.add_parser(
+        "plan-registry-sources",
+        help="inspect target-release default packs and locks without acquiring archives",
+    )
+    source_plan.add_argument("--engine-manifest", type=Path, required=True)
+    source_plan.add_argument("--engine-release", required=True)
+    source_plan.add_argument("--variant", required=True)
+    source_plan.add_argument("--base-id", required=True)
+    source_plan.add_argument("--index-snapshot", type=Path)
+    source_plan.add_argument("--offline", action="store_true")
+    source_plan.set_defaults(handler=_cmd_plan_registry_sources)
 
     sources = commands.add_parser(
         "prepare-registry-sources",

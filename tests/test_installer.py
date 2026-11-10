@@ -3802,6 +3802,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 "version": "1.2.3",
                 "library": False,
                 "publisher": "acme",
+                "engine": ">=0.4,<0.5",
                 "requires": [],
                 "wheels": [
                     {
@@ -3866,7 +3867,67 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         args += ("--pack", "demo", "--pack", "demo")
     elif problem == "local-selection":
         args += ("--pack", "local-only", "--registry-only")
+    planned: dict | None = None
+    plan_args: tuple[str, ...] = ()
     try:
+        if problem in {None, "multiple"}:
+            engine = {
+                "format": "dinkster.engine/1",
+                "version": "0.4.0",
+                "commit": "d" * 40,
+                "workerProtocol": 1,
+                "artifacts": [{"name": "constraints.txt", "size": 0, "sha256": "a" * 64}],
+                "defaultPacks": {"demo": "1.2.0", "z-other": "1.2.3"},
+            }
+            if problem == "multiple":
+                engine["defaultPacks"]["absent-pack"] = "2.0.0"
+            engine_file = tmp_path / "engine.json"
+            payload = json.dumps(engine).encode()
+            engine_file.write_bytes(payload)
+            release = "sha256:" + hashlib.sha256(payload).hexdigest()
+            plan_args = (
+                *args[:4],
+                "plan-registry-sources",
+                "--engine-manifest",
+                str(engine_file),
+                "--engine-release",
+                release,
+                "--variant",
+                "linux-cpu",
+                "--base-id",
+                base,
+                "--index-snapshot",
+                str(snapshot),
+            )
+            if problem == "multiple":
+                with pytest.raises(SystemExit):
+                    run_cli(*plan_args)
+                error = capsys.readouterr().err
+                assert "demo@1.2.3" in error and "z-other@1.2.3" in error
+                assert "absent-pack" in error
+            else:
+                run_cli(*plan_args)
+                planned = json.loads(capsys.readouterr().out)
+                assert planned is not None
+                assert planned["engineVersion"] == "0.4.0"
+                assert planned["engineRelease"] == release
+                assert planned["sources"] == json.loads(
+                    Lockfile.of(
+                        [replace(entry, source="registry:" + args[3]) for entry in entries]
+                    ).record_json()
+                )
+                assert set(planned["dependencyLocks"]) == {"demo", "z-other"}
+                assert planned["maximumPackPayloadBytes"] == 24
+                assert len(planned["plan"]) == 2
+                engine_file.write_bytes(payload + b" ")
+                with pytest.raises(SystemExit):
+                    run_cli(*plan_args)
+                assert "manifest digest mismatch" in capsys.readouterr().err
+                engine_file.write_bytes(payload)
+            assert not snapshot.exists()
+            assert not output.parent.exists()
+            assert all(not path.endswith(".whl") for path, _ in requests)
+            requests.clear()
         if problem and problem not in {"local", "selected"}:
             with pytest.raises(SystemExit):
                 run_cli(*args)
@@ -3913,6 +3974,12 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                     ],
                 }
                 assert PackLock.read(path).pack == pack
+            if problem is None:
+                assert planned is not None
+                assert planned["dependencyLocks"] == {
+                    pack: json.loads((output / f"{pack}.pack-lock.json").read_bytes())
+                    for pack in expected
+                }
             if problem == "selected":
                 assert requests and all(
                     path in {"/static/packs/index.json", "/static/" + lock_path}
@@ -3929,6 +3996,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 offline_args = list(args)
                 offline_args[offline_args.index("--output") + 1] = str(offline)
                 before = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+                run_cli(*plan_args, "--offline")
+                assert json.loads(capsys.readouterr().out) == planned
                 run_cli(*offline_args, "--offline")
                 capsys.readouterr()
                 assert {path.name: path.read_bytes() for path in offline.iterdir()} == {

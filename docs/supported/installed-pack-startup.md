@@ -117,6 +117,12 @@
   `--offline --index-snapshot PATH` form uses retained index and lock metadata
   without network access or dependency resolution; missing or corrupt inputs
   refuse without creating the output or repairing the snapshot.
+- Registry source planning can inspect an exact engine release's default pack
+  declaration and published locks without acquiring archives or writing a cache.
+  Its plan includes selected versions, provenance, archive identities and an
+  upper bound for pack wheel bytes. Unavailable releases and invalid locks are
+  reported together. Offline metadata discovery reads only retained channel,
+  engine and base records and reports missing engine/base records together.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.
