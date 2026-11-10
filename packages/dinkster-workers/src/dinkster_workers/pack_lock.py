@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import email
 import hashlib
-import io
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -15,6 +15,7 @@ import urllib.request
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
@@ -78,6 +79,36 @@ class LockedDistribution:
             wheel_name, wheel_version, _, _ = parse_wheel_filename(wheel.filename)
             if wheel_name != self.name or wheel_version != version:
                 raise ProvisionError(f"wheel identity disagrees with {self.name}=={self.version}")
+
+
+@lru_cache(maxsize=512)
+def _wheel_requirements(wheel: LockedWheel) -> tuple[str, ...]:
+    """Read dependency metadata from verified bytes, once per publication artifact."""
+    with tempfile.TemporaryDirectory(prefix="dinkster-wheel-metadata-") as directory:
+        parsed = urlparse(wheel.url)
+        if parsed.scheme == "file":
+            path = Path(urllib.request.url2pathname(parsed.path))
+        else:
+            path = Path(directory) / wheel.filename
+            with urllib.request.urlopen(wheel.url, timeout=30) as source, path.open("wb") as output:
+                shutil.copyfileobj(source, output)
+        with path.open("rb") as source:
+            if (
+                path.stat().st_size != wheel.size
+                or hashlib.file_digest(source, "sha256").hexdigest() != wheel.sha256
+            ):
+                raise ProvisionError(f"resolved wheel hash mismatch: {wheel.url}")
+            source.seek(0)
+            with zipfile.ZipFile(source) as archive:
+                names = [
+                    name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+                ]
+                if len(names) != 1:
+                    raise ProvisionError(
+                        f"wheel requires one distribution metadata: {wheel.filename}"
+                    )
+                metadata = email.message_from_bytes(archive.read(names[0]))
+        return tuple(metadata.get_all("Requires-Dist", []))
 
 
 @dataclass(frozen=True)
@@ -364,34 +395,17 @@ def resolve_pack_lock(
     if engine is not None and any(package.name == "dinkster-api" for package in packages):
         # Preserve transitive API constraints when replacing the resolved build
         # with the generation's API. Other dependencies stay exactly locked.
-        api_requirements = set()
+        api = next(package for package in packages if package.name == "dinkster-api")
+        if not SpecifierSet(engine).contains(api.version, prereleases=True):
+            raise ProvisionError(
+                f"resolved dinkster-api {api.version} does not satisfy engine {engine}"
+            )
+        api_requirements: set[str] = set()
         for package in packages:
             if package.name == "dinkster-api":
                 continue
             for wheel in package.wheels:
-                parsed = urlparse(wheel.url)
-                archive_source: Path | io.BytesIO
-                if parsed.scheme == "file":
-                    archive_source = Path(urllib.request.url2pathname(parsed.path))
-                else:
-                    with urllib.request.urlopen(wheel.url) as stream:
-                        content = stream.read()
-                    if (
-                        len(content) != wheel.size
-                        or hashlib.sha256(content).hexdigest() != wheel.sha256
-                    ):
-                        raise ProvisionError(f"resolved wheel hash mismatch: {wheel.url}")
-                    archive_source = io.BytesIO(content)
-                with zipfile.ZipFile(archive_source) as archive:
-                    metadata_names = [
-                        name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
-                    ]
-                    if len(metadata_names) != 1:
-                        raise ProvisionError(
-                            f"wheel requires one distribution metadata: {wheel.filename}"
-                        )
-                    metadata = email.message_from_bytes(archive.read(metadata_names[0]))
-                for text in metadata.get_all("Requires-Dist", []):
+                for text in _wheel_requirements(wheel):
                     if canonicalize_name(Requirement(text).name) == "dinkster-api":
                         api_requirements.add(normalize_requirement(text))
         normalized = tuple(dict.fromkeys((*normalized, *sorted(api_requirements))))

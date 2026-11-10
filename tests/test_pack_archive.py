@@ -1573,8 +1573,14 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.1",
-                ("dinkster-api", "dinkster-inference==0.1.1", "numpy>=1.26", "pillow>=10", "torch"),
+                "0.0.2",
+                (
+                    "dinkster-api<0.1,>=0.0.2.dev0",
+                    "dinkster-inference==0.1.1",
+                    "numpy>=1.26",
+                    "pillow>=10",
+                    "torch",
+                ),
             )
             assert f"blake3:{blake3(data).hexdigest()}" == pack.artifact_digest
             continue

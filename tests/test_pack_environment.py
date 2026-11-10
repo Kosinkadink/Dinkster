@@ -41,14 +41,18 @@ from dinkster_workers.provision import ProvisionError
 from packaging.tags import Tag
 
 
-def _wheel(root: Path, name: str, version: str, module: str, body: str) -> LockedWheel:
+def _wheel(
+    root: Path, name: str, version: str, module: str, body: str, *, requires: tuple[str, ...] = ()
+) -> LockedWheel:
     filename = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
     path = root / filename
     info = f"{name.replace('-', '_')}-{version}.dist-info"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(f"{module}.py", body)
         archive.writestr(
-            f"{info}/METADATA", f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            f"{info}/METADATA",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            + "".join(f"Requires-Dist: {requirement}\n" for requirement in requires),
         )
         archive.writestr(
             f"{info}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
@@ -517,6 +521,43 @@ def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_pa
     assert not (generation / "dinkster.lock").exists()
 
 
+def test_transitive_api_constraints_and_legacy_exact_locks_remain_binding(tmp_path: Path) -> None:
+    api = _wheel(tmp_path, "dinkster-api", "0.0.3.dev235", "dinkster_api", "value = 235\n")
+    _wheel(
+        tmp_path,
+        "fixture-extra",
+        "1.2",
+        "fixture_extra",
+        "value = 13\n",
+        requires=("dinkster-api==0.0.3.dev235",),
+    )
+    parent = _generation(tmp_path / "generation", [api])
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("dinkster-api==0.0.3.dev235\n")
+    facts = GenerationPackages.inspect(parent)
+    for engine in (None, ">=0.0.3.dev0,<0.1"):
+        lock = resolve_pack_lock(
+            pack="example",
+            variant="linux-cpu",
+            requirements=["fixture-extra>=1"],
+            python=parent,
+            constraints=constraints,
+            find_links=[tmp_path],
+            engine=engine,
+        )
+        path = tmp_path / "lock.json"
+        lock.write(path)
+        restored = PackLock.read(path)
+        assert restored == lock
+        assert not plan_pack(
+            restored, facts, variant="linux-cpu", own_environment_size=100
+        ).conflicts
+        newer = replace(facts, versions={**facts.versions, "dinkster-api": "0.0.3.dev240"})
+        refused = plan_pack(restored, newer, variant="linux-cpu", own_environment_size=100)
+        assert any("dinkster-api" in conflict for conflict in refused.conflicts)
+        assert ("dinkster-api" in {package.name for package in lock.packages}) == (engine is None)
+
+
 def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_path: Path) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
     _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
@@ -804,17 +845,19 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 73\n")
+    api = _wheel(tmp_path, "dinkster-api", "0.0.3.dev240", "dinkster_api", "value = 240\n")
     target = tmp_path / "generations/2"
-    python = _generation(target / "python", [])
+    python = _generation(target / "python", [api])
     constraints = target / "constraints.txt"
     constraints.write_text("")
     lock = PackLock(
         "in-process",
         "linux-cpu",
         ">=3.12",
-        ("fixture-extra==1.2",),
+        ("fixture-extra==1.2", "dinkster-api<0.1,>=0.0.3.dev0"),
         (),
         (LockedDistribution("fixture-extra", "1.2", (extra,)),),
+        engine=">=0.0.3.dev0,<0.1",
     )
     paths = []
     for name in ("in-process", "shared", "isolated"):
@@ -850,9 +893,14 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
         ]
     isolated = venv_python(target / "packs/isolated")
     result = subprocess.check_output(
-        [str(isolated), "-c", "import fixture_extra; print(fixture_extra.value)"], text=True
+        [
+            str(isolated),
+            "-c",
+            "import fixture_extra, dinkster_api; print(fixture_extra.value, dinkster_api.value)",
+        ],
+        text=True,
     )
-    assert result.strip() == "73"
+    assert result.strip() == "73 240"
     assert doctor_generation(context) == ()
     args = [
         "--generation",

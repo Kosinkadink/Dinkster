@@ -110,6 +110,7 @@ def prepare_pack_locks(
                 constraints=constraints,
                 indexes=indexes,
                 find_links=find_links,
+                engine=manifest.compatibility.engine if manifest.compatibility else None,
                 uv=uv,
             )
             path = output / f"{manifest.name}.pack-lock.json"

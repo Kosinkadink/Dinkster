@@ -1,10 +1,10 @@
 [project]
 name = "dinkster-pack-helpers"
-version = "0.0.1"
+version = "0.0.2"
 description = "Shared conditioning, model asset and latent helpers for node packs"
 requires-python = ">=3.12"
 dependencies = [
-    "dinkster-api",
+    "dinkster-api>=0.0.2.dev0,<0.1",
     "dinkster-inference==0.1.1",
     "numpy>=1.26",
     "pillow>=10",
@@ -20,6 +20,7 @@ packages = ["src/dinkster_pack_helpers"]
 
 [tool.dinkster]
 official-library = true
+engine = ">=0.0.2.dev0,<0.1"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
