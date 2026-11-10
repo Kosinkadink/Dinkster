@@ -17,6 +17,8 @@ permissions:
 env:
   # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
   FRONTEND_REF: 388ba9794cb02fde8f88c49f24e44267a70be2d4
+  # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
+  PYTEST_ADDOPTS: "-n0"
 
 # Superseded pushes cancel; scheduled and release validation always finish.
 concurrency:
