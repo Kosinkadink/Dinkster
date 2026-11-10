@@ -2336,7 +2336,7 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
         (Finding("error", "entry.unresolvable", "broken import"),),
     )
     monkeypatch.setattr(manager, "diagnose", lambda *_args, **_kwargs: report)
-    monkeypatch.setattr(manager, "static_pack_releases", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(manager.StaticPackIndex, "catalog", lambda *_args, **_kwargs: ())
     submitted: list[str] = []
 
     def publish(
@@ -3320,8 +3320,9 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         ("1.0", "0.3", None),
     ],
 )
+@pytest.mark.parametrize("schema", [1, 2])
 def test_registry_resolves_newest_compatible_pack_across_all_pages(
-    minimum: str, engine: str, expected: str | None
+    minimum: str, engine: str, expected: str | None, schema: int
 ) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
@@ -3340,7 +3341,30 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
         entry = LockedPack("demo", version, digests[version], "dinkster", ())
         rows.append({**_static_release(entry, b"wheel"), "engine": bounds})
     files = {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}
-    server = _serve_artifacts(files, [])
+    if schema == 2:
+        files["/static/packs/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": "demo",
+                        "publisher": "dinkster",
+                        "latestVersion": "12.0",
+                        "library": False,
+                        "url": "packs/demo/index.json",
+                    }
+                ],
+            }
+        ).encode()
+        files["/static/packs/demo/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "name": "demo",
+                "items": rows,
+            }
+        ).encode()
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
         if expected is None:
@@ -3352,12 +3376,15 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
             assert selected.artifact_digest == digests[expected]
             assert selected.pack == "demo"
             assert selected.source == registry.source
+        assert requests == [("/static/packs/index.json", None)] + (
+            [("/static/packs/demo/index.json", None)] if schema == 2 else []
+        )
     finally:
         server.shutdown()
 
 
 @pytest.mark.parametrize("removed", [True, False])
-def test_registry_selection_rechecks_exact_release_before_install(
+def test_registry_selection_snapshot_refreshes_between_operations(
     removed: bool,
 ) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
@@ -3371,11 +3398,14 @@ def test_registry_selection_rechecks_exact_release_before_install(
     files = {
         "/static/packs/index.json": responses.__next__,
     }
-    server = _serve_artifacts(files, [])
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
-        with pytest.raises(InstallError, match="demo@3.1"):
+        assert resolve_compatible_release(registry, "demo", "1.0", "0.5").version == "3.1"
+        with pytest.raises(InstallError, match="no active demo"):
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
+        assert requests == [("/static/packs/index.json", None)] * 2
     finally:
         server.shutdown()
 
@@ -3390,7 +3420,7 @@ def test_registry_selection_rechecks_exact_release_before_install(
             {"schemaVersion": 1, "items": [{"name": "demo", "version": "1.0"}]},
             "one universal wheel",
         ),
-        ({"schemaVersion": 2, "items": []}, "unsupported schema"),
+        ({"schemaVersion": 3, "items": []}, "unsupported schema 3; update Dinkster"),
         ({"items": []}, "unsupported schema"),
     ],
 )
@@ -3407,6 +3437,128 @@ def test_registry_compatible_selection_refuses_malformed_pages(
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
     finally:
         server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "problem", [None, "url", "name", "duplicate", "identity", "substitution", "missing", "schema"]
+)
+def test_split_registry_reads_only_selected_packs_and_refuses_substitution(
+    problem: str | None,
+) -> None:
+    from dinkster.registries import NamedRegistry, StaticPackIndex, resolve_release
+
+    entry = LockedPack("demo", "1.0", "blake3:" + "b" * 64, "acme", ())
+    row = _static_release(entry, b"wheel")
+    catalog_row = {
+        "name": "demo",
+        "latestVersion": "1.0",
+        "publisher": "acme",
+        "library": False,
+        "url": "packs/demo/index.json",
+    }
+    other = {**catalog_row, "name": "other", "url": "packs/other/index.json"}
+    if problem == "url":
+        catalog_row["url"] = "../private/index.json"
+    if problem == "name":
+        catalog_row["name"] = "Demo"
+    catalog = {"schemaVersion": 2, "items": [catalog_row, other]}
+    if problem == "duplicate":
+        catalog["items"] = [catalog_row, catalog_row]
+    document = {
+        "schemaVersion": 9 if problem == "schema" else 2,
+        "name": "other" if problem == "identity" else "demo",
+        "items": []
+        if problem == "missing"
+        else [
+            _static_release(replace(entry, pack="other"), b"wheel")
+            if problem == "substitution"
+            else row
+        ],
+    }
+    files = {
+        "/static/packs/index.json": json.dumps(catalog).encode(),
+        "/static/packs/demo/index.json": json.dumps(document).encode(),
+    }
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+        index = StaticPackIndex()
+        if problem:
+            with pytest.raises(
+                InstallError,
+                match={
+                    "url": "invalid pack fields",
+                    "name": "invalid pack fields",
+                    "duplicate": "repeats demo",
+                    "identity": "identity differs",
+                    "substitution": "substitutes another pack",
+                    "missing": "publishes no release demo@1.0",
+                    "schema": "unsupported schema 9; update Dinkster",
+                }[problem],
+            ):
+                resolve_release(registry, "demo", "1.0", index=index)
+        else:
+            assert [row["name"] for row in index.catalog(registry)] == ["demo", "other"]
+            assert requests == [("/static/packs/index.json", None)]
+            assert (
+                resolve_release(registry, "demo", "1.0", index=index).artifact_digest
+                == entry.artifact_digest
+            )
+            assert resolve_release(registry, "demo", "1.0", index=index).version == "1.0"
+            assert requests == [
+                ("/static/packs/index.json", None),
+                ("/static/packs/demo/index.json", None),
+            ]
+        assert all(path.startswith("/static/packs/") for path, _ in requests)
+        assert not any("other/index.json" in path for path, _ in requests)
+    finally:
+        server.shutdown()
+
+
+def test_registry_preparation_snapshot_isolates_endpoints_and_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster.registries import NamedRegistry, StaticPackIndex, resolve_release
+
+    entry = LockedPack("demo", "1.0", "blake3:" + "b" * 64, "acme", ())
+    payload = json.dumps({"schemaVersion": 1, "items": [_static_release(entry, b"wheel")]}).encode()
+    requests: list[tuple[str, str | None]] = []
+    path = "/static/packs/index.json"
+    first = _serve_artifacts({path: payload}, requests)
+    second = _serve_artifacts({path: payload}, requests)
+    snapshot = tmp_path / "operation-index"
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{first.server_port}", "FIXTURE_TOKEN")
+        monkeypatch.setenv("FIXTURE_TOKEN", "first-fixture-credential")
+        for _ in range(2):
+            assert (
+                resolve_release(
+                    registry, "demo", "1.0", index=StaticPackIndex(snapshot)
+                ).artifact_digest
+                == entry.artifact_digest
+            )
+        monkeypatch.setenv("FIXTURE_TOKEN", "second-fixture-credential")
+        resolve_release(registry, "demo", "1.0", index=StaticPackIndex(snapshot))
+        resolve_release(
+            replace(registry, endpoint=f"http://127.0.0.1:{second.server_port}"),
+            "demo",
+            "1.0",
+            index=StaticPackIndex(snapshot),
+        )
+        assert requests == [
+            (path, "Bearer first-fixture-credential"),
+            (path, "Bearer second-fixture-credential"),
+            (path, "Bearer second-fixture-credential"),
+        ]
+        assert len(list(snapshot.iterdir())) == 3
+        assert all("fixture-credential" not in p.name + p.read_text() for p in snapshot.iterdir())
+        resolve_release(registry, "demo", "1.0", index=StaticPackIndex(tmp_path / "next-operation"))
+        assert len(requests) == 4
+    finally:
+        first.shutdown()
+        second.shutdown()
 
 
 @pytest.mark.parametrize("engine", [None, "", "not-a-range"])
@@ -3818,6 +3970,7 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         "corrupt",
         "retained-corrupt",
         "retained-missing",
+        "update-retained-missing",
     ],
 )
 def test_cli_adds_exact_pack_without_reresolving_installed_sources(
@@ -3836,15 +3989,25 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         source = tmp_path / name
         (source / name).mkdir(parents=True)
         (source / name / "__init__.py").write_text("raise RuntimeError('must not import')\n")
+        manifest_publisher = (
+            "third-party"
+            if name == "retained" and problem == "update-retained-missing"
+            else "dinkster"
+        )
         (source / "dinkster-pack.toml").write_text(
-            f'[pack]\nname="{name}"\npublisher="dinkster"\n'
+            f'[pack]\nname="{name}"\npublisher="{manifest_publisher}"\n'
             f'version="{version}"\nengine=">=0"\nnamespaces=["{name}"]\n'
             f'[pack.entry]\nnodes="{name}:NODES"\n'
         )
         (source / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="{version}"\n')
         archive = tmp_path / f"{name}-{version}-py3-none-any.whl"
         build_pack_archive(source, archive)
-        publisher = "third-party" if name == "added" and problem == "third-party" else "dinkster"
+        publisher = (
+            "third-party"
+            if (name == "added" and problem == "third-party")
+            or (name == "retained" and problem == "update-retained-missing")
+            else "dinkster"
+        )
         entries.append(
             LockedPack(name, version, artifact_digest(archive.read_bytes()), publisher, (name,))
         )
@@ -3858,24 +4021,47 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
         ),
     }
-    if problem == "retained-missing":
+    if problem in {"retained-missing", "update-retained-missing"}:
         old_release = {**_static_release(old, archives["retained"]), "engine": ">=0"}
         old_wheel = cast("list[dict[str, object]]", old_release["wheels"])[0]
         files["/static/packs/index.json"] = json.dumps(
-            {"schemaVersion": 1, "items": [old_release, release]}
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": row["name"],
+                        "publisher": row["publisher"],
+                        "latestVersion": row["version"],
+                        "library": False,
+                        "url": f"packs/{row['name']}/index.json",
+                    }
+                    for row in (old_release, release)
+                ],
+            }
         ).encode()
+        for row in (old_release, release):
+            files[f"/static/packs/{row['name']}/index.json"] = json.dumps(
+                {"schemaVersion": 2, "name": row["name"], "items": [row]}
+            ).encode()
         files[f"/static/{old_wheel['url']}"] = archives["retained"]
-    server = _serve_artifacts(files, [])
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
     generation = tmp_path / "generation"
     generation.mkdir()
+    installed_entries = [old, added] if problem == "update-retained-missing" else [old]
     stage_generation_packs(
-        generation, Lockfile.of([old]), {"retained": tmp_path / "retained-1.0-py3-none-any.whl"}
+        generation,
+        Lockfile.of(installed_entries),
+        {
+            "retained": tmp_path / "retained-1.0-py3-none-any.whl",
+            "added": tmp_path / "added-1.2-py3-none-any.whl",
+        },
     )
     installed = generation / "dinkster.lock"
     original = installed.read_bytes()
     if problem == "retained-corrupt":
         (generation / "pack-sources/retained.whl").write_bytes(b"corrupt retained wheel")
-    elif problem == "retained-missing":
+    elif problem in {"retained-missing", "update-retained-missing"}:
         (generation / "pack-sources/retained.whl").unlink()
     before = {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()}
     # Only a missing retained archive permits retrieval of the pinned old release.
@@ -3894,13 +4080,13 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         str(output),
         "--artifacts",
         str(artifacts),
-        "--add",
-        requested,
     ]
+    if problem != "update-retained-missing":
+        args.extend(["--add", requested])
     if problem == "duplicate":
         args.extend(["--add", requested])
     try:
-        if problem is not None and problem != "retained-missing":
+        if problem is not None and problem not in {"retained-missing", "update-retained-missing"}:
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err
@@ -3929,6 +4115,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 pack_archive_path(artifacts, old.artifact_digest).read_bytes()
                 == archives["retained"]
             )
+            if problem in {"retained-missing", "update-retained-missing"}:
+                paths = [path for path, _ in requests]
+                assert paths.count("/static/packs/index.json") == 1
+                assert paths.count("/static/packs/added/index.json") == 1
+                assert paths.count("/static/packs/retained/index.json") == 1
+                assert len(paths) == 5
         assert installed.read_bytes() == original
         assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
     finally:
@@ -3936,8 +4128,9 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
 
 
 @pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])
+@pytest.mark.parametrize("schema", [1, 2])
 def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, schema: int
 ) -> None:
     from dinkster import __version__
     from dinkster.registries import default_pack_minimums
@@ -3964,7 +4157,30 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
             b"x" * archive.stat().st_size if mode == "corrupt" else archive.read_bytes()
         ),
     }
-    server = _serve_artifacts({} if mode == "offline" else files, [])
+    if schema == 2:
+        files["/static/packs/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": pack_name,
+                        "latestVersion": "0.0.4",
+                        "publisher": "audit-actor",
+                        "library": False,
+                        "url": f"packs/{pack_name}/index.json",
+                    }
+                ],
+            }
+        ).encode()
+        files[f"/static/packs/{pack_name}/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "name": pack_name,
+                "items": [newer, record],
+            }
+        ).encode()
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts({} if mode == "offline" else files, requests)
     root = tmp_path / "project"
     root.mkdir()
     (root / "current").write_text("7\n")
@@ -4017,6 +4233,9 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
                     ),
                 )
                 assert report["packs"] == [pack_name]
+                assert requests == [("/static/packs/index.json", None)] + (
+                    [(f"/static/packs/{pack_name}/index.json", None)] if schema == 2 else []
+                ) + [(artifact_path, None)]
                 cached = pack_archive_path(artifacts, digest)
                 assert cached.read_bytes() == archive.read_bytes()
                 if mode == "partial":
@@ -4326,8 +4545,10 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         ]
         assert fetch(replace(release, source="registry")) == data  # default
         assert fetch(replace(release, source=f"registry:{endpoint}")) == data
-        assert requests[-2:] == [
+        assert requests == [
             (index_path, "Bearer corp-secret"),
+            (artifact_path, "Bearer corp-secret"),
+            (artifact_path, "Bearer corp-secret"),
             (artifact_path, "Bearer corp-secret"),
         ]
 

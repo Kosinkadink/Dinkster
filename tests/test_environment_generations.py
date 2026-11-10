@@ -133,8 +133,10 @@ def test_registry_preparation_allows_custom_locks_from_selected_inputs(
     assert explicit.read_text() == "explicit input bytes"
 
 
+@pytest.mark.parametrize("schema", [1, 2])
 def test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks(
     tmp_path: Path,
+    schema: int,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
@@ -204,6 +206,24 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         "/static/" + lock_url: lock_bytes,
         "/static/" + wheel_record["url"]: payloads["added"],
     }
+    if schema == 2:
+        files["/static/packs/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": "added",
+                        "publisher": "dinkster",
+                        "latestVersion": "1.2",
+                        "library": False,
+                        "url": "packs/added/index.json",
+                    }
+                ],
+            }
+        ).encode()
+        files["/static/packs/added/index.json"] = json.dumps(
+            {"schemaVersion": 2, "name": "added", "items": [release]}
+        ).encode()
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     (project / "registries.toml").write_text(
@@ -256,7 +276,12 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
                 == payloads["added"]
             )
         assert not catalog.exists() and not artifacts.exists() and not locks[0].exists()
-        assert requests and all("retained" not in path for path, _ in requests)
+        assert requests == [
+            ("/static/packs/index.json", None),
+            *([("/static/packs/added/index.json", None)] if schema == 2 else []),
+            ("/static/" + wheel_record["url"], None),
+            ("/static/" + lock_url, None),
+        ]
         assert {p: p.read_bytes() for p in project.rglob("*") if p.is_file()} == before
         assert not list(store.glob(".registry-*"))
     finally:
@@ -1181,7 +1206,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             try:
                 monkeypatch.setenv("DINKSTER_REGISTRY", f"http://127.0.0.1:{server.server_port}")
                 rebuilt = invoke(number=2, artifacts=retained, acquire_pack_sources=True)
-                assert len(requests) == 4
+                assert [path for path, _ in requests] == [
+                    "/static/packs/index.json",
+                    *(wheel_urls[entry.pack] for entry in entries),
+                ]
                 assert rebuilt.drift(root / "generations/2") == ()
                 assert (root / "generations/2/dinkster.lock").read_bytes() == (
                     target / "dinkster.lock"
