@@ -26,7 +26,7 @@ from packaging.utils import parse_wheel_filename
 
 from .environment_artifacts import base_label, engine_label
 from .environment_constraints import effective_constraints, requirement_hashes
-from .environment_downloads import fetch_artifact
+from .environment_downloads import DownloadError, fetch_artifact
 from .environment_state import (
     EnvironmentError,
     content_digest,
@@ -472,14 +472,15 @@ def prepare_local_packs(
     catalog_lock = artifacts / "official-packs.lock"
     catalog = json.loads(catalog_lock.read_text(encoding="utf-8"))
     libraries: set[str] = set()
-    library_wheels: set[str] = set()
+    library_wheels: dict[str, tuple[str, int]] = {}
     for archive in artifacts.glob("*.whl"):
-        digest = blake3(archive.read_bytes()).hexdigest()
+        data = archive.read_bytes()
+        digest = blake3(data).hexdigest()
         pack, version, _, _ = parse_wheel_filename(archive.name)
         with zipfile.ZipFile(archive) as wheel_file:
             if not any(Path(name).name == "dinkster-pack.toml" for name in wheel_file.namelist()):
                 libraries.add(pack)
-                library_wheels.add(archive.name)
+                library_wheels[archive.name] = (hashlib.sha256(data).hexdigest(), len(data))
         cached = pack_archive_path(
             artifacts,
             "blake3:" + digest,
@@ -497,6 +498,8 @@ def prepare_local_packs(
         for distribution in dependency_lock["packages"]:
             for wheel in distribution["wheels"]:
                 if wheel["filename"] in library_wheels:
+                    if library_wheels[wheel["filename"]] != (wheel["sha256"], wheel["size"]):
+                        raise DownloadError(f"corrupt locally built library: {wheel['filename']}")
                     cached = object_path(store / "wheels", "sha256:" + wheel["sha256"])
                     fetch_artifact(
                         (str(artifacts),),

@@ -564,10 +564,13 @@ def test_checkout_pack_build_preserves_independent_manifest_versions(
         assert pack_archive_path(artifacts, pack.artifact_digest).read_bytes() == wheel.read_bytes()
 
 
-@pytest.mark.parametrize("corrupt", [False, True])
+@pytest.mark.parametrize("case", ["clean", "corrupt", "corrupt-cached"])
 def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, case: str
 ) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_supervisor import environment_local
     from dinkster_supervisor.environment_downloads import DownloadError
@@ -580,13 +583,36 @@ def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
 
     from tests.fixtures.environments.build import standalone_tree
 
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_error(404)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def close_server() -> None:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    request.addfinalizer(close_server)
     store = tmp_path / "store"
     release = "sha256:" + "a" * 64
     artifacts = object_path(store / "engines", release) / "artifacts"
     artifacts.mkdir(parents=True)
     helper, sha = _wheel(artifacts, "fixture_helper", "1.0", 73)
     dependency = LockedWheel(
-        helper.name, helper.stat().st_size, sha, "https://registry.invalid/" + helper.name
+        helper.name,
+        helper.stat().st_size,
+        sha,
+        f"http://127.0.0.1:{server.server_port}/" + helper.name,
     )
     source = tmp_path / "source"
     source.mkdir()
@@ -635,7 +661,11 @@ def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
     PackLock("fixture-helper", "linux-cpu", ">=3.12", (), (), ()).write(
         artifacts / "fixture-helper.pack-lock.json"
     )
-    if corrupt:
+    if case == "corrupt-cached":
+        cached = object_path(store / "wheels", "sha256:" + sha) / helper.name
+        cached.parent.mkdir(parents=True)
+        shutil.copyfile(helper, cached)
+    if case != "clean":
         helper.write_bytes(helper.read_bytes().replace(b"VALUE = 73", b"VALUE = 74"))
     generation = tmp_path / "generation"
     generation.mkdir()
@@ -670,12 +700,14 @@ def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
             },
         )
 
-    if corrupt:
+    if case != "clean":
         with pytest.raises(DownloadError, match="corrupt"):
             prepare()
         assert not (generation / "pack-sources").exists()
+        assert requests == []
         return
     prepare()
+    assert requests == []
     assert {path.name for path in (generation / "packs").iterdir()} == {"healthy-nodes"}
     assert {path.name for path in (generation / "pack-sources").iterdir()} == {
         "healthy-nodes",
