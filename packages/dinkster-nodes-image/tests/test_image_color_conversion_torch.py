@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import platform
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +20,6 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_image.ported import image_color_conversion as color_math
 from dinkster_image.ported.image_color_conversion import ImageColorSpace, ImageSDRToHDR
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -89,45 +87,40 @@ def test_color_conversion_returns_intermediate_float32_for_identity_and_hdr() ->
         assert result.dtype == torch.float32
         assert result.device == torch.device("cpu")
     assert torch.equal(identity, image.float())
-    rgb = image[..., :3].float()
-    decoded = color_math._srgb_to_linear(rgb, torch)
-    primaries = color_math._convert_primaries(decoded, color_math._REC709_TO_REC2020, torch)
-    scaled = primaries * color_math._SDR_WHITE_NITS
-    unscaled = scaled / color_math._SDR_WHITE_NITS
-    diagnostic = {
-        "machine": platform.machine(),
-        "python": platform.python_version(),
-        "torch": torch.__version__,
-        "capability": torch.backends.cpu.get_cpu_capability(),
-        "input": rgb.tolist(),
-        "high_base": ((rgb.clamp(min=0.0) + 0.055) / 1.055).tolist(),
-        "decoded": decoded.tolist(),
-        "primaries": primaries.tolist(),
-        "scaled": scaled.tolist(),
-        "unscaled": unscaled.tolist(),
-        "linear": linear.tolist(),
-        "scalar_decoded": [
-            value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
-            for value in rgb.flatten().tolist()
-        ],
-    }
-    torch.testing.assert_close(
-        linear[:, 0, 0],
-        torch.tensor(
+    # Direct sRGB decoding of float32 inputs, evaluated with 80-digit Decimal,
+    # independently of the implementation's Rec.2020 primaries round trip.
+    expected = torch.tensor(
+        [
             [
                 [
-                    0.00015480443835258484,
-                    0.0031308052130043507,
-                    0.4919051229953766,
-                    0.12999999523162842,
+                    [0.00015479876896245376, 0.003130804897277348, 0.4919050695416527],
+                    [2.163043551516219, 0.033104767499448746, 0.00024232198844660916],
                 ],
-                [0.01164543628692627, 0.34239163994789124, 0.0592535175383091, 0.4699999988079071],
-            ]
-        ),
-        rtol=0,
-        atol=0,
-        msg=lambda message: f"{message}\nColor conversion intermediates: {diagnostic!r}",
+                [
+                    [0.6038273590607631, 0.01002282580612334, 0.21404114048223244],
+                    [0.0007739937907494258, 0.7874122422164633, 0.003935939571117615],
+                ],
+            ],
+            [
+                [
+                    [0.011645430804880955, 0.34239164539758316, 0.059253525811831645],
+                    [0.8900053816569532, 1.2427703420684366, 0.07828832086604431],
+                ],
+                [
+                    [0.0, 7.739938448122688e-05, 0.0030959751629977034],
+                    [0.16264719178799114, 0.5704815485625002, 0.036306481962325006],
+                ],
+            ],
+        ],
+        dtype=torch.float64,
     )
+    # AVX2/AVX512 pow differs by up to 2 ULP before the float32 matrix round trip.
+    # Whole-fixture error is <= 3.47 unit roundoffs times the pixel maximum;
+    # 16 allows accumulated rounding without dividing by near-zero channels.
+    error = (linear[..., :3].double() - expected).abs()
+    bound = 8 * torch.finfo(torch.float32).eps * expected.amax(dim=-1, keepdim=True)
+    assert torch.all(error <= bound), error / bound
+    assert torch.equal(linear[..., 3], image.float()[..., 3])
     _assert_hdr(hdr)
     assert torch.equal(image, before)
 
@@ -141,9 +134,14 @@ def _assert_hdr(result: Any) -> None:
             [0.3791734576225281, 0.5923642516136169, 0.3126797378063202, 0.469970703125],
         ]
     )
-    # Positive float32 Lottes/HLG output differs by one ULP across AMD/Intel CPU runs.
-    ulp_error = result[:, 0, 0].view(torch.int32).to(torch.int64) - expected.view(torch.int32)
-    assert ulp_error.abs().max().item() <= 1, ulp_error
+    # Lottes/HLG CUDA compute with CPU output differs by up to 2 ULP from CPU
+    # compute. Four float32 epsilons give 3x the measured relative-error margin.
+    torch.testing.assert_close(
+        result[:, 0, 0, :3],
+        expected[..., :3],
+        rtol=4 * torch.finfo(torch.float32).eps,
+        atol=0,
+    )
     assert torch.equal(result[..., 3], _image().half().float()[..., 3])
 
 
