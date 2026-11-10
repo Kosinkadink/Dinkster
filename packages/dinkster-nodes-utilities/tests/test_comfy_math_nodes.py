@@ -7,12 +7,9 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_engine.testing import load_pack
 from dinkster_utilities.math import ComfyMathExpression
 from simpleeval import FeatureNotAvailable
-
-from dinkster.compose import PackSpec, ServingComposer
-from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize(
@@ -91,34 +88,25 @@ def test_expression_keeps_simpleeval_attribute_access_restrictions() -> None:
 
 
 def test_isolated_manifest_evaluates_ordered_numeric_union_family() -> None:
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            await composer.add_pack(PackSpec(manifest=manifest, trust_reserved=True))
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "int": GraphNode("dinkster.utilities.primitive_int", {"value": 9}),
-                        "float": GraphNode("dinkster.utilities.primitive_float", {"value": -2.5}),
-                        "bool": GraphNode("dinkster.utilities.primitive_boolean", {"value": True}),
-                        "math": GraphNode(
-                            "dinkster.utilities.comfy_math_expression",
-                            {
-                                "expression": "a - b * c",
-                                "values.a": Link("int", "INT"),
-                                "values.b": Link("float", "FLOAT"),
-                                "values.c": Link("bool", "BOOLEAN"),
-                            },
-                        ),
-                    }
-                ),
-                ["math"],
-            )
-            assert result.outputs["math"]["FLOAT"].resolve() == 11.5
-            assert result.outputs["math"]["INT"].resolve() == 11
-            assert result.outputs["math"]["BOOL"].resolve() is True
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
+    manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+    with load_pack(manifest) as pack:
+        graph = {
+            "int": ("dinkster.utilities.primitive_int", {"value": 9}),
+            "float": ("dinkster.utilities.primitive_float", {"value": -2.5}),
+            "bool": ("dinkster.utilities.primitive_boolean", {"value": True}),
+            "math": (
+                "dinkster.utilities.comfy_math_expression",
+                {
+                    "expression": "a - b * c",
+                    "values.a": pack.link("int", "INT"),
+                    "values.b": pack.link("float", "FLOAT"),
+                    "values.c": pack.link("bool", "BOOLEAN"),
+                },
+            ),
+        }
+        result = pack.run(graph, ["math"])
+        assert result.value("math", "FLOAT") == 11.5
+        assert result.value("math", "INT") == 11
+        assert result.value("math", "BOOL") is True
+        assert result.executed == {"int", "float", "bool", "math"}
+        assert pack.run(graph, ["math"]).cached == {"int", "float", "bool", "math"}
