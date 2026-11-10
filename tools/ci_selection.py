@@ -39,6 +39,9 @@ def runtime_path(path: str) -> bool:
 
 
 def select(root: Path, paths: list[str]) -> dict[str, object]:
+    code = [
+        path for path in paths if not (path.endswith((".md", ".rst")) or path.startswith("docs/"))
+    ]
     projects = {
         path.parent: tomllib.loads(path.read_text(encoding="utf-8"))
         for path in (root / "packages").glob("*/pyproject.toml")
@@ -47,7 +50,7 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     changed = {
         path
         for path in projects
-        if any(name.startswith(f"{path.relative_to(root)}/") for name in paths)
+        if any(name.startswith(f"{path.relative_to(root)}/") for name in code)
     }
     library_paths = {
         path
@@ -71,9 +74,6 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     selected |= changed
     pack_paths = {path for path in projects if (path / "dinkster-pack.toml").is_file()}
     owned = pack_paths | library_paths
-    code = [
-        path for path in paths if not (path.endswith((".md", ".rst")) or path.startswith("docs/"))
-    ]
     shared = any(
         path
         in {
@@ -86,15 +86,20 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
         or path.startswith((".github/workflows/ci.yml", ".github/actions/"))
         for path in code
     )
-    engine = shared or any(
-        not any(path.startswith(f"{package.relative_to(root)}/") for package in owned)
-        for path in code
+    engine = (
+        shared
+        or bool(changed & library_paths)
+        or any(
+            not any(path.startswith(f"{package.relative_to(root)}/") for package in owned)
+            for path in code
+        )
     )
+    tested = pack_paths | {path for path in library_paths if (path / "tests").is_dir()}
     return {
         "docs": not code,
         "engine": engine,
         "runtime": shared or any(runtime_path(path) for path in code),
-        "packs": sorted(str(path.relative_to(root)) for path in selected & owned),
+        "packs": sorted(str(path.relative_to(root)) for path in selected & tested),
     }
 
 

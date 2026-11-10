@@ -380,7 +380,7 @@ jobs:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
     needs: [validation-plan, test, windows-runtime]
-    if: always() && needs.validation-plan.outputs.run-heavy == 'true'
+    if: ${{ !cancelled() && needs.validation-plan.outputs.run-heavy == 'true' }}
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 5
     steps:
@@ -417,7 +417,7 @@ jobs:
 
   main-status:
     name: main validation status
-    if: always()
+    if: ${{ !cancelled() }}
     needs:
       - validation-plan
       - test

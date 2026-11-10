@@ -165,7 +165,7 @@ jobs:
 
   tests:
     needs: [checks, torch-cpu]
-    if: always()
+    if: ${{ !cancelled() }}
     name: tests
     runs-on: ubuntu-latest
     # Hosted pytest has taken 24m21s before catalog export and frontend decode.
