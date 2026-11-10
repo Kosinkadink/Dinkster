@@ -1,12 +1,14 @@
 """Public schema for native Anima LLLite model patching."""
 
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy.anima_lllite import AnimaLLLiteApply
+from dinkster_misc_models import NODES
+from dinkster_misc_models.anima_lllite import AnimaLLLiteApply
 
 
 def test_anima_lllite_preserves_input_order_bounds_and_optional_mask() -> None:
     schema = AnimaLLLiteApply.schema()
-    assert schema.node_type == "AnimaLLLiteApply"
+    assert AnimaLLLiteApply in NODES
+    assert schema.node_type == "dinkster.misc.models.anima_ll_lite_apply"
     assert schema.display_name == "Apply Anima LLLite"
     assert schema.category == "model/patch/anima"
     assert [item.id for item in schema.inputs] == [

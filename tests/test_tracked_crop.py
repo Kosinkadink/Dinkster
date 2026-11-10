@@ -7,7 +7,7 @@ from fractions import Fraction
 from typing import Any, cast
 
 import av
-import dinkster_nodes_image.support as image_support
+import dinkster_image.support as image_support
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
@@ -24,16 +24,17 @@ from dinkster_api.v1 import (
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
-from dinkster_nodes_image import (
+from dinkster_image._draft_initialization import (
     IMAGE_NODES,
     MakeImage,
     TrackedCrop,
     TrackedUncrop,
     register_image_types,
 )
-from dinkster_nodes_media_io import AssembleVideo, register_media_types
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
+from dinkster_video import register_types as register_video_types
+from dinkster_video.video_components import CreateVideo
 from dinkster_workers import InProcessWorker
 
 from tests.async_scenarios import run_scenario
@@ -369,9 +370,9 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_media_types(registry)
+        register_video_types(registry)
         register_image_types(registry)
-        nodes = (MakeImage, AssembleVideo, TrackedCrop, TrackedUncrop)
+        nodes = (MakeImage, CreateVideo, TrackedCrop, TrackedUncrop)
         engine = Engine(
             schemas=build_schemas(nodes),
             registry=registry,
@@ -394,7 +395,7 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
                     slot_variants={"color_source": "hex", "operation": "solid"},
                 ),
                 "assemble": GraphNode(
-                    "dinkster.video.assemble", {"images": Link("generate", "image")}
+                    "dinkster.video.create_video", {"images": Link("generate", "image")}
                 ),
                 "crop": GraphNode(
                     "dinkster.image.tracked_crop",

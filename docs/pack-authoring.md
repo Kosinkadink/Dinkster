@@ -19,23 +19,73 @@ resources it needs, but that declaration grants nothing by itself. Dinkster-owne
 packs may run in-process in the same environment, where sandbox declarations
 do not apply and updating one may require restarting the inference process.
 
-Start from the template in [`templates/pack/`](../templates/pack/) - it is a
-complete working pack (manifest, nodes, custom type, rendition, tests, CI)
-kept healthy by this repo's own test suite.
+Start from [dinkster-pack-template](https://github.com/Kosinkadink/dinkster-pack-template).
+Click **Use this template**, clone your new repository, and follow its README.
+It includes a node, tests, a wheel build and guarded registry publication,
+checked against published Dinkster packages without an engine checkout.
 
-## Building a registry archive
+For a complete build, test, submission and withdrawal example, follow
+[Submit a node pack](registry-submission.md).
 
-Build the deterministic ZIP submitted to a registry with:
+## Building a registry wheel
+
+The distribution name equals `[pack].name`. Each pack, first-party or
+third-party, ships exactly one top-level import package: the pack name with
+`-` and `.` replaced by `_`. For example, `my-pack` is distribution `my-pack`
+and package `my_pack`. A types-only pack follows the same rule with zero nodes.
+
+Build a deterministic pure-Python wheel from the manifest and package sources:
 
 ```console
-dinkster pack archive ./my-pack --output ./my-pack.zip
+dinkster pack archive ./my-pack --output ./dist
 ```
 
-The command validates `dinkster-pack.toml`, writes the archive, and prints its
-`blake3:<hex>` digest. Registry archive size, file count, path, and expanded
-size limits are checked before output is written. Symlinks are rejected;
+`[pack] version` and `engine` are required for publication. The command writes
+`my_pack-<version>-py3-none-any.whl` and prints its whole-file `sha256:<hex>`.
+An explicit output filename must be the canonical wheel filename. METADATA
+Name, Version and Requires-Dist derive from the manifest, not a separate
+release identity in `pyproject.toml`. The wheel contains
+`my_pack/dinkster-pack.toml` and its relative resources inside `my_pack`,
+plus standard METADATA, WHEEL and SHA-256 RECORD files. Installed discovery
+reads distribution metadata without importing node code.
+
+Wheels are the only publishable format: no source distributions or Dinkster
+ZIP archives. A release contains one `py3-none-any` wheel; admission refuses
+Python ABI and platform tags with `wheel.platform-tag`. Admission refuses `.pth` files,
+entry points (including console scripts), and import names already owned by
+another admitted pack or library. Doctor reports `wheel.distribution-name`
+and `wheel.import-name` for identity violations.
+
+Registry archive size, file count, path, and expanded size limits are checked
+before output is written. Symlinks are rejected;
 version-control, environment, cache, dependency, and build directories are
 omitted at every depth.
+
+The registry alone writes `/static/<variant>/simple/<normalized-name>/`.
+Its PEP 503 links identify wheel filenames and whole-file `#sha256=` hashes.
+Pack metadata, schemas, locales, replacements and install locks share the
+`/static/` prefix. The host installs the registry's exact pins with uv and
+hash verification; it does not freely resolve dependencies against the index.
+Per-pack virtual environments remain isolated.
+The schema 2 `/static/packs/index.json` catalog lists one entry per pack:
+`name`, `publisher`, `latestVersion`, `library` and a static-relative `url`
+such as `packs/my-pack/index.json`. That per-pack file has `schemaVersion: 2`,
+`name` and `items` listing only that pack's active public releases.
+Each release contains engine requirements, install lock pointers and a `wheels` array with
+`filename`, `sha256`, `url`, `size`, `digest` and `tags` on its single wheel.
+The host selects compatible tags and verifies the selected wheel's hashes.
+The reader also accepts the schema 1 all-releases catalog during the registry
+transition. Each operation caches its catalog and reads only selected per-pack
+files; no dynamic API is needed, including on a static file-copy mirror.
+Managed preparation shares the snapshot between source selection and dependency
+lock acquisition in disposable scratch storage, removed when preparation ends.
+
+Shared implementation belongs in a library wheel without a pack manifest or
+node/type claims, such as `my-core`, listed in the pack's `requires`.
+`requires` must never name a published pack (`wheel.requires-pack`).
+`[pack.dependencies]` expresses pack composition requirements and permits
+imports of that pack's public helpers. Private modules and names remain
+forbidden. No first-party library is required to publish a pack.
 
 Store pack resources in a form the admission scanner can read; compressed
 resource files (gzip, ZIP, zstd, xz, tar) are held for review.
@@ -69,10 +119,10 @@ api = "dinkster-api/v1"             # author API imported by the pack
 # "my-pack.image-operations" = "1.0.0" # exact provider release version
 
 [pack.entry]
-nodes = "my_pack_nodes:NODES"    # module:attr -> sequence of Node classes
-types = "my_pack_nodes:register_types"   # optional: fn(TypeRegistry) -> None
-# reservations = "my_pack_nodes:PLANNER" # optional: memory policy (advanced)
-# consumers = "my_pack_nodes:CONSUMERS"  # optional: governed memory (advanced)
+nodes = "my_pack:NODES"    # module:attr -> sequence of Node classes
+types = "my_pack:register_types"   # optional: fn(TypeRegistry) -> None
+# reservations = "my_pack:PLANNER" # optional: memory policy (advanced)
+# consumers = "my_pack:CONSUMERS"  # optional: governed memory (advanced)
 
 [pack.presentation]              # all optional; badge data, never identity
 display_name = "My Pack"
@@ -747,12 +797,12 @@ chooses default installations, not which publishers are official. Every
 other publisher uses each pack's own pack-name prefix, for example
 `my-pack.SEGS`, not `SEGS` or `IMAGE`.
 
-For packs loaded from a repository checkout, the host trusts the manifest's
-`publisher` field. An omitted publisher grants no first-party privileges.
-Registry-installed packs must instead use the registry's authenticated
-publisher record, carried into local registration by the installer. That
-installer authority is not implemented by the checkout manifest contract;
-do not treat a downloaded manifest's self-declared publisher as authenticated.
+Registry-installed packs use the registry's authenticated publisher record,
+carried into registration by the installer. Only registry entries published
+by `dinkster` receive reserved-namespace trust. Local-path and git installs
+never receive that trust from a manifest's self-declared publisher.
+An operator release with no authenticated principal keeps an empty publisher
+in the install lock and receives no first-party privileges.
 
 A shared type has one definition and one owner. Request promotion of a
 widely shared concept to a bare built-in with an official codec in
@@ -946,6 +996,28 @@ in-process, in another venv, and on another machine.
 
 ## Running and testing
 
+From your template clone, choose your permanent pack name and run the same
+checks as its README:
+
+```sh
+uv run --no-project --python 3.12 tools/rename.py maple-text
+uv sync --python 3.12
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv build --wheel
+uv pip install --no-deps --reinstall dist/*.whl
+uv run --no-sync pytest -q
+uv run --no-sync dinkster-doctor .
+```
+
+Tests call nodes directly over plain values; doctor runs independently.
+For disposable submission and version-tag publication, follow the
+[template README](https://github.com/Kosinkadink/dinkster-pack-template#publish)
+and [registry submission guide](registry-submission.md).
+
+To run a pack in an installed engine:
+
 ```bash
 uv run dinkster-serve --pack path/to/dinkster-pack.toml   # isolated worker, repeatable flag
 ```
@@ -962,8 +1034,9 @@ def test_shout():
     assert out == {"shouted": "HEY!HEY!"}
 ```
 
-and gate CI on `dinkster-doctor .` as its own step (see the template's
-workflow). Don't import the doctor from your tests: tests live in the pack
+and gate CI on `uv run --no-sync dinkster-doctor .` as its own step (see the
+[template workflow](https://github.com/Kosinkadink/dinkster-pack-template/blob/main/.github/workflows/ci.yml)).
+Don't import the doctor from your tests: tests live in the pack
 directory, so they hold to the same one-door rule as the rest of your code,
 and `dinkster_workers` is host machinery. For golden-file testing of schema
 wire output, encode with `schema_to_wire` (exported through

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -26,6 +27,7 @@ from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
 from dinkster_workers.pack_lock import resolve_pack_lock
+from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
 
 from . import __version__ as engine_version
@@ -34,12 +36,16 @@ from .packs import pack_info_from_manifest
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
-    manifest = load_manifest(root / "dinkster-pack.toml")
+    manifest = load_manifest(pack_manifest_path(root))
     if canonical_name(manifest.name) != entry.pack:
         raise CompositionError(f"generation pack {entry.pack!r} manifest names {manifest.name!r}")
     if tuple(canonical_claim(claim) for claim in manifest.namespaces) != entry.claims:
         raise CompositionError(f"generation pack {entry.pack!r} manifest claims differ from lock")
-    if manifest.publisher and canonical_name(manifest.publisher) != entry.publisher:
+    if (
+        entry.publisher
+        and manifest.publisher
+        and canonical_name(manifest.publisher) != entry.publisher
+    ):
         raise CompositionError(f"generation pack {entry.pack!r} publisher differs from lock")
     if manifest.compatibility is not None:
         try:
@@ -58,7 +64,9 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
     for entry in lock.packs:
         root = sources / entry.pack
         unpack_artifact(artifacts[entry.pack], root, entry.artifact_digest)
-        _manifest(root, entry)
+        manifest = _manifest(root, entry)
+        if manifest.root != root:
+            shutil.copyfile(artifacts[entry.pack], sources / f"{entry.pack}.whl")
     (generation / "dinkster.lock").write_text(
         lock.record_json() + "\n", encoding="utf-8", newline="\n"
     )
@@ -102,6 +110,7 @@ def prepare_pack_locks(
                 constraints=constraints,
                 indexes=indexes,
                 find_links=find_links,
+                engine=manifest.compatibility.engine if manifest.compatibility else None,
                 uv=uv,
             )
             path = output / f"{manifest.name}.pack-lock.json"
@@ -130,11 +139,13 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
         or len(set(hosting)) != len(hosting)
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
-    return variant, generation_pack_specs(generation, tuple(hosting))
+    return variant, generation_pack_specs(
+        generation, tuple(hosting), local_build=record.get("source") == "local"
+    )
 
 
 def generation_pack_specs(
-    generation: Path, in_process_packs: tuple[str, ...] = ()
+    generation: Path, in_process_packs: tuple[str, ...] = (), *, local_build: bool = False
 ) -> tuple[PackSpec, ...]:
     """Select verified admitted sources and their already-provisioned interpreters."""
     if not generation.is_absolute():
@@ -146,17 +157,43 @@ def generation_pack_specs(
     if set(in_process_packs) - {entry.pack for entry in lock.packs}:
         raise CompositionError("generation hosting names packs absent from dinkster.lock")
     specs: list[PackSpec] = []
+    manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
         root = generation / "pack-sources" / entry.pack
         if not root.resolve().is_relative_to(generation / "pack-sources"):
             raise CompositionError(f"generation pack {entry.pack!r} source escapes generation")
+        manifest = _manifest(root, entry)
         with tempfile.TemporaryDirectory(prefix="dinkster-generation-verify-") as directory:
-            actual = build_artifact(root, Path(directory) / "pack.zip")
-        if actual != entry.artifact_digest:
+            if manifest.root == root:
+                matches = (
+                    build_artifact(root, Path(directory) / "pack.zip") == entry.artifact_digest
+                )
+            else:
+                # Repacking changes compression and ZIP metadata, not the admitted content.
+                admitted = unpack_artifact(
+                    root.parent / f"{entry.pack}.whl",
+                    Path(directory) / "admitted",
+                    entry.artifact_digest,
+                )
+                files = {}
+                for tree in (root, admitted):
+                    paths = tuple(tree.rglob("*"))
+                    if any(path.is_symlink() for path in paths):
+                        raise CompositionError(f"generation pack {entry.pack!r} contains a symlink")
+                    files[tree] = {
+                        path.relative_to(tree)
+                        for path in paths
+                        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
+                    }
+                matches = files[root] == files[admitted] and all(
+                    (root / path).read_bytes() == (admitted / path).read_bytes()
+                    for path in files[admitted]
+                )
+        if not matches:
             raise CompositionError(
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
-        manifest = _manifest(root, entry)
+        manifests[entry.pack] = manifest
         in_process = entry.pack in in_process_packs
         python = (
             generation
@@ -182,7 +219,18 @@ def generation_pack_specs(
                 env={"PYTHONPATH": str(root)},
                 packs={entry.pack: info},
                 in_process=in_process,
-                trust_reserved=entry.publisher == "dinkster",
+                trust_reserved=entry.publisher == "dinkster"
+                and (
+                    entry.source == "registry"
+                    or entry.source.startswith("registry:")
+                    or (
+                        local_build
+                        and re.fullmatch(
+                            r"local-build:git:Kosinkadink/Dinkster@[0-9a-f]{40}", entry.source
+                        )
+                        is not None
+                    )
+                ),
                 require_catalog=True,
                 asset_vault_write=(
                     entry.pack == "dinkster-nodes-remote"
@@ -190,6 +238,27 @@ def generation_pack_specs(
                     and not in_process
                 ),
             )
+        )
+    entries = {entry.pack: entry for entry in lock.packs}
+    for index, entry in enumerate(lock.packs):
+        reachable = [entry.pack]
+        for name in reachable:
+            for dependency in manifests[name].dependencies:
+                provider = entries.get(dependency.pack)
+                if provider is None or not dependency.accepts(provider.version):
+                    raise CompositionError(
+                        f"generation pack {name!r} requires {dependency.pack!r} "
+                        f"{dependency.version}, but the generation has no matching pack"
+                    )
+                if dependency.pack not in reachable:
+                    reachable.append(dependency.pack)
+        specs[index] = replace(
+            specs[index],
+            env={
+                "PYTHONPATH": os.pathsep.join(
+                    str(generation / "pack-sources" / name) for name in reachable
+                )
+            },
         )
     return tuple(specs)
 

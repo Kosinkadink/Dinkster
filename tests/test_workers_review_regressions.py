@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 import time
 from collections.abc import Mapping
@@ -17,6 +18,7 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     ExportSnapshot,
     Invocation,
+    LazyStatusInvocation,
     derive_attention_route_token,
 )
 from dinkster_schema import (
@@ -29,7 +31,14 @@ from dinkster_schema import (
     build_schemas,
     report_event,
 )
-from dinkster_values import CORE_COMBO, CORE_STRING, TypeRegistry, register_core_types
+from dinkster_values import (
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_INT,
+    CORE_STRING,
+    TypeRegistry,
+    register_core_types,
+)
 from dinkster_workers import (
     DeviceMap,
     InProcessWorker,
@@ -461,3 +470,93 @@ def test_worker_mapping_dataclasses_snapshot_input(tmp_path: Path) -> None:
     spec = LaunchSpec(("python",), env, tmp_path, tmp_path, "python", False)
     env["TOKEN"] = "changed"
     assert spec.env["TOKEN"] == "original"
+
+
+def test_async_lazy_hooks_await_in_pack_and_execution_contexts() -> None:
+    pack_active = False
+
+    @contextlib.contextmanager
+    def pack_context():  # noqa: ANN202 - local worker context fixture
+        nonlocal pack_active
+        assert not pack_active
+        pack_active = True
+        try:
+            yield
+        finally:
+            pack_active = False
+
+    class AsyncLazyNode(Node):
+        behavior = "request"
+        seen: list[tuple[bool, str | None]] = []
+
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.async-lazy",
+                inputs=(
+                    InputSpec("selector", TypeExpr.concrete(CORE_BOOLEAN)),
+                    InputSpec("value", TypeExpr.concrete(CORE_INT), lazy=True),
+                ),
+                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_INT)),),
+            )
+
+        @classmethod
+        async def check_lazy_status(cls, *, selector: bool, value: int | None) -> object:
+            context = current_execution_context()
+            cls.seen.append((pack_active, context.node_id if context else None))
+            await asyncio.sleep(0)
+            context = current_execution_context()
+            cls.seen.append((pack_active, context.node_id if context else None))
+            if cls.behavior == "error":
+                raise RuntimeError("async lazy failure")
+            if cls.behavior == "malformed":
+                return "value"
+            if selector and value is None:
+                return ["value"]
+            return None
+
+        @classmethod
+        def execute(cls, *, selector: bool, value: int | None) -> Mapping[str, object]:
+            del selector
+            return cls.outputs(value=value)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    worker = InProcessWorker(
+        build_node_types((AsyncLazyNode,)), registry, pack_context=pack_context
+    )
+    schema = AsyncLazyNode.schema()
+
+    def invocation(request_id: str, *, with_value: bool = False) -> LazyStatusInvocation:
+        available = {"selector": registry.wrap(CORE_BOOLEAN, True)}
+        connected = ("value",)
+        if with_value:
+            available["value"] = registry.wrap(CORE_INT, 7)
+            connected = ()
+        return LazyStatusInvocation(
+            request_id=request_id,
+            node_id="async-lazy",
+            node_type=schema.node_type,
+            available_inputs=available,
+            connected_undemanded_inputs=connected,
+            effective_schema=schema,
+        )
+
+    first = run_scenario(worker.check_lazy_status(invocation("round-1")))
+    second = run_scenario(worker.check_lazy_status(invocation("round-2", with_value=True)))
+    assert first.requested_inputs == ("value",)
+    assert second.requested_inputs == ()
+    assert AsyncLazyNode.seen == [(True, "async-lazy")] * 4
+
+    AsyncLazyNode.behavior = "error"
+    failed = run_scenario(worker.check_lazy_status(invocation("error")))
+    assert failed.error is not None
+    assert failed.error.message == "lazy-hook-failed: async lazy failure"
+    assert "RuntimeError: async lazy failure" in failed.error.traceback
+
+    AsyncLazyNode.behavior = "malformed"
+    malformed = run_scenario(worker.check_lazy_status(invocation("malformed")))
+    assert malformed.error is not None
+    assert malformed.error.message == (
+        "lazy-hook-failed: check_lazy_status must return a list or tuple"
+    )

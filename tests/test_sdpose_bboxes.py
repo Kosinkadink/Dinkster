@@ -19,7 +19,8 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.sdpose import SDPoseFaceBBoxes
+from dinkster_server import PackInfo
+from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -87,12 +88,14 @@ def test_sdpose_bbox_schema_and_execution_are_torch_free() -> None:
             "sys.modules['torch'] = None\n"
             "sys.modules['dinkster_inference'] = None\n"
             "from dinkster_api.v1 import BOUNDING_BOX_TYPE, POSE_KEYPOINT_TYPE, TypeExpr\n"
-            "from dinkster_nodes_comfy import COMFY_NODES\n"
-            "from dinkster_nodes_comfy.sdpose import SDPoseFaceBBoxes\n"
+            "from dinkster_vision_sdpose import NODES\n"
+            "from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes\n"
             "from dinkster_workers import load_manifest\n"
-            "manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')\n"
+            "manifest = load_manifest('packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml')\n"
             "schema = SDPoseFaceBBoxes.define_schema()\n"
-            "assert SDPoseFaceBBoxes in COMFY_NODES and schema.node_type in manifest.namespaces\n"
+            "assert SDPoseFaceBBoxes in NODES\n"
+            "assert schema.node_type == 'dinkster.vision.sdpose.sd_pose_face_b_boxes'\n"
+            "assert manifest.namespaces == ('dinkster.vision.sdpose',)\n"
             "assert [p.id for p in schema.inputs] == ['keypoints', 'scale', 'force_square']\n"
             "assert schema.inputs[0].type == TypeExpr.concrete(POSE_KEYPOINT_TYPE)\n"
             "assert schema.outputs[0].type == TypeExpr.concrete(BOUNDING_BOX_TYPE)\n"
@@ -160,7 +163,7 @@ class FaceObserver(Node):
 @pytest.mark.parametrize("in_process", (True, False))
 def test_native_face_boxes_cross_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
-        native = Path("packages/dinkster-nodes-comfy/dinkster-pack.toml").resolve()
+        native = Path("packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml").resolve()
         module = "sdpose_fixture"
         (tmp_path / f"{module}.py").write_text(
             "from test_sdpose_bboxes import FaceSource, FaceObserver\n"
@@ -185,20 +188,25 @@ def test_native_face_boxes_cross_ordinary_hosts_twice(tmp_path: Path, in_process
             },
         )
         try:
-            for manifest in (native, fixture):
+            for dependency in ("latent", "conditioning", "qwen", "misc-models", "image"):
+                manifest = native.parent.parent / f"dinkster-nodes-{dependency}/dinkster-pack.toml"
                 await composer.add_pack(
                     PackSpec(
                         manifest=manifest,
                         in_process=in_process,
-                        worker_group=None if in_process else manifest.stem,
-                        group_manifests=() if in_process else (manifest,),
+                        trust_reserved=True,
+                        packs={f"dinkster-{dependency}": PackInfo(dependency, version="0.0.1")},
                     )
+                )
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
                 )
             graph = Graph(
                 nodes={
                     "source": GraphNode("sdpose-fixture.source"),
                     "boxes": GraphNode(
-                        "SDPoseFaceBBoxes",
+                        "dinkster.vision.sdpose.sd_pose_face_b_boxes",
                         {
                             "keypoints": Link("source", "keypoints"),
                             "scale": 1.0,

@@ -315,20 +315,20 @@ def test_station_refuses_management_port_collision(tmp_path: Path) -> None:
 
 # -- two real engines over one shared store ----------------------------
 
-MANIFEST_TEMPLATE = '[pack]\nname = "{name}"\n\n[pack.entry]\nnodes = "{name}_nodes:NODES"\n'
+MANIFEST_TEMPLATE = '[pack]\nname = "{name}"\n\n[pack.entry]\nnodes = "{name}:NODES"\n'
 
 
 def write_pack(directory: Path, name: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "dinkster-pack.toml").write_text(MANIFEST_TEMPLATE.format(name=name))
-    (directory / f"{name}_nodes.py").write_text("NODES = []\n")
+    (directory / name).mkdir(exist_ok=True)
+    (directory / name / "__init__.py").write_text("NODES = []\n")
     return directory
 
 
 def test_station_two_real_engines_share_one_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    installed_default_catalogs: None,
 ) -> None:
     """The Comfy Desktop role, live: two install roots on one shared
     content store, each generation different, one station managing both.

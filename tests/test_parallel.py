@@ -36,6 +36,20 @@ from tests.async_scenarios import run_scenario
 STRING = TypeExpr.concrete("STRING")
 
 
+class Join(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.join",
+            inputs=(InputSpec("a", STRING), InputSpec("b", STRING), InputSpec("separator", STRING)),
+            outputs=(OutputSpec("text", STRING),),
+        )
+
+    @classmethod
+    def execute(cls, *, a: str, b: str, separator: str) -> Mapping[str, object]:
+        return cls.outputs(text=a + separator + b)
+
+
 class Sleeper(Node):
     """Async node that records how many of itself run concurrently."""
 
@@ -153,7 +167,7 @@ def make_engine(max_concurrency: int | None = None) -> tuple[Engine, CountingWor
     registry = TypeRegistry()
     register_core_types(registry)
     register_scaffold_types(registry)
-    nodes = list(SCAFFOLD_NODES) + EXTRA_NODES
+    nodes = [*SCAFFOLD_NODES, *EXTRA_NODES, Join]
     worker = CountingWorker(InProcessWorker(build_node_types(nodes), registry))
     engine = Engine(
         schemas=build_schemas(nodes),
@@ -204,11 +218,11 @@ def test_dependencies_are_respected_under_parallelism() -> None:
                 "root": GraphNode("test.sleeper", {"tag": "root"}),
                 "left": GraphNode("test.sleeper", {"tag": Link("root", "out")}),
                 "right": GraphNode(
-                    "std.string.concat",
+                    "test.join",
                     {"a": Link("root", "out"), "b": "!", "separator": ""},
                 ),
                 "join": GraphNode(
-                    "std.string.concat",
+                    "test.join",
                     {"a": Link("left", "out"), "b": Link("right", "text"), "separator": " "},
                 ),
             }
@@ -225,17 +239,17 @@ def test_parallel_and_serial_schedules_produce_identical_results() -> None:
     def diamond() -> Graph:
         return Graph(
             nodes={
-                "root": GraphNode("std.string.concat", {"a": "x", "b": "y", "separator": ""}),
+                "root": GraphNode("test.join", {"a": "x", "b": "y", "separator": ""}),
                 "l": GraphNode(
-                    "std.string.concat",
+                    "test.join",
                     {"a": Link("root", "text"), "b": "l", "separator": "-"},
                 ),
                 "r": GraphNode(
-                    "std.string.concat",
+                    "test.join",
                     {"a": Link("root", "text"), "b": "r", "separator": "-"},
                 ),
                 "join": GraphNode(
-                    "std.string.concat",
+                    "test.join",
                     {"a": Link("l", "text"), "b": Link("r", "text"), "separator": " "},
                 ),
             }

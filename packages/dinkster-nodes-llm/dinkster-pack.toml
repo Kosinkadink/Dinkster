@@ -1,0 +1,22 @@
+[pack]
+name = "dinkster-llm"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.llm"]
+requires = ["torch"]
+
+[pack.inference]
+imports = []
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_llm:NODES"
+types = "dinkster_llm:register_types"

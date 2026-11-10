@@ -1,0 +1,59 @@
+{
+  "nodes": {
+    "dinkster.vision.mediapipe.load_media_pipe_face_landmarker": {
+      "displayName": "Load Face Detection Model (MediaPipe)"
+    },
+    "dinkster.vision.mediapipe.media_pipe_face_landmarker": {
+      "displayName": "Detect Face Landmarks (MediaPipe)"
+    },
+    "dinkster.vision.mediapipe.media_pipe_face_mask": {
+      "displayName": "Draw Face Mask (MediaPipe)"
+    },
+    "dinkster.vision.mediapipe.media_pipe_face_mesh_visualize": {
+      "displayName": "Visualize Face Landmarks (MediaPipe)"
+    }
+  },
+  "searchTerms": {
+    "dinkster.vision.mediapipe.load_media_pipe_face_landmarker": [
+      "face",
+      "facial",
+      "mediapipe",
+      "face landmark",
+      "face mesh",
+      "blazeface",
+      "face detection",
+      "LoadMediaPipeFaceLandmarker"
+    ],
+    "dinkster.vision.mediapipe.media_pipe_face_landmarker": [
+      "face",
+      "facial",
+      "mediapipe",
+      "face landmark",
+      "face mesh",
+      "blazeface",
+      "face detection",
+      "MediaPipeFaceLandmarker"
+    ],
+    "dinkster.vision.mediapipe.media_pipe_face_mask": [
+      "face",
+      "facial",
+      "mediapipe",
+      "face mask",
+      "blazeface",
+      "face detection",
+      "visualize",
+      "MediaPipeFaceMask"
+    ],
+    "dinkster.vision.mediapipe.media_pipe_face_mesh_visualize": [
+      "face",
+      "facial",
+      "mediapipe",
+      "face landmark",
+      "face mesh",
+      "blazeface",
+      "face detection",
+      "visualize",
+      "MediaPipeFaceMeshVisualize"
+    ]
+  }
+}

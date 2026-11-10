@@ -1,0 +1,31 @@
+{
+  "nodes": {
+    "dinkster.hidream.clip_text_encode_hi_dream": {
+      "displayName": "CLIP Text Encode (HiDream)"
+    },
+    "dinkster.hidream.empty_hi_dream_o1_latent_image": {
+      "displayName": "Empty HiDream-O1 Latent Image"
+    },
+    "dinkster.hidream.hi_dream_o1_patch_seam_smoothing": {
+      "displayName": "HiDream-O1 Patch Seam Smoothing"
+    },
+    "dinkster.hidream.hi_dream_o1_reference_images": {
+      "displayName": "HiDream-O1 Reference Images"
+    }
+  },
+  "searchTerms": {
+    "dinkster.hidream.clip_text_encode_hi_dream": [
+      "hidream prompt",
+      "CLIPTextEncodeHiDream"
+    ],
+    "dinkster.hidream.empty_hi_dream_o1_latent_image": [
+      "EmptyHiDreamO1LatentImage"
+    ],
+    "dinkster.hidream.hi_dream_o1_patch_seam_smoothing": [
+      "HiDreamO1PatchSeamSmoothing"
+    ],
+    "dinkster.hidream.hi_dream_o1_reference_images": [
+      "HiDreamO1ReferenceImages"
+    ]
+  }
+}

@@ -5,8 +5,8 @@ What this proves: the bytes round-trip losslessly through numpy alone (the
 torchless-engine half of the IMAGE story), torch tensors are accepted
 by duck type without this interpreter ever importing torch, fingerprints
 are runtime-form-independent (hazard H4: a tensor fingerprinted in a worker
-keys the same cache entry as its numpy twin here), and the host-side compat
-registration (register_comfy_host_types) declares and serves the PNG
+keys the same cache entry as its numpy twin here), and the image pack
+registration declares and serves the PNG
 rendition from encoded payloads - the /api/values path in miniature."""
 
 from __future__ import annotations
@@ -26,6 +26,9 @@ from typing import Any
 import dinkster_values.image_codec as image_codec_module
 import numpy as np
 import pytest
+from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
+from dinkster_api.v1 import MASK_TYPE as COMFY_MASK_TYPE
+from dinkster_image import register_types as register_image_types
 from dinkster_values import (
     PNG_CONTAINER_VERSION,
     EncodedPayload,
@@ -44,8 +47,6 @@ from dinkster_values import (
     stable_hash,
 )
 from PIL import Image
-
-from dinkster.comfy_compose import COMFY_IMAGE_TYPE, COMFY_MASK_TYPE, register_comfy_host_types
 
 
 @dataclass
@@ -398,7 +399,7 @@ def test_render_rejects_unrenderable_shapes() -> None:
 
 def make_host_registry() -> TypeRegistry:
     registry = TypeRegistry()
-    register_comfy_host_types(registry)
+    register_image_types(registry)
     return registry
 
 
@@ -487,7 +488,7 @@ def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
 
 def test_comfy_host_types_registration_is_idempotent() -> None:
     registry = make_host_registry()
-    register_comfy_host_types(registry)  # second spec / reload: no raise
+    register_image_types(registry)  # second spec / reload: no raise
     assert "ASSET" in registry
     assert len(registry.renditions_of(COMFY_IMAGE_TYPE)) == 1
 
@@ -495,8 +496,8 @@ def test_comfy_host_types_registration_is_idempotent() -> None:
 def test_comfy_host_base_asset_registration_is_independent_of_image() -> None:
     registry = TypeRegistry()
     registry.register(COMFY_IMAGE_TYPE)
-    register_comfy_host_types(registry)
-    register_comfy_host_types(registry)
+    register_image_types(registry)
+    register_image_types(registry)
     assert "ASSET" in registry
 
 
@@ -804,36 +805,3 @@ def test_merge_image_batches_concatenates_and_reconciles() -> None:
     assert np.array_equal(np.asarray(merge_image_batches([first])), first)
     with pytest.raises(ValueError, match="zero image batches"):
         merge_image_batches([])
-
-
-def test_worker_image_type_decodes_to_torch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The worker half (dinkster_compat_comfy.image): same bytes, torch
-    runtime form. torch is faked through sys.modules - the point is the
-    codec calls torch.from_numpy on the decoded array, not torch itself."""
-    import sys
-    import types
-
-    from dinkster_compat_comfy.image import register_image_type
-
-    captured: list[np.ndarray] = []
-
-    def from_numpy(array: Any) -> Any:
-        captured.append(array)
-        return FakeTensor(array)
-
-    fake_torch = types.ModuleType("torch")
-    fake_torch.from_numpy = from_numpy  # pyright: ignore[reportAttributeAccessIssue]
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-
-    registry = TypeRegistry()
-    register_image_type(registry, COMFY_IMAGE_TYPE)
-    array = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 2, 3)
-    spec = registry.spec(COMFY_IMAGE_TYPE)
-    decoded = spec.decode(spec.encode(FakeTensor(array)))
-    assert isinstance(decoded, FakeTensor)
-    assert np.array_equal(captured[0], array)
-    assert spec.prepare_buffer_encoding is prepare_image_array_encoding
-    # Both halves agree on identity: worker wrap and host fingerprint match.
-    assert registry.wrap(COMFY_IMAGE_TYPE, array).fingerprint == (
-        image_array_fingerprint(COMFY_IMAGE_TYPE)(array)
-    )

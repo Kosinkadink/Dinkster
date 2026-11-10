@@ -1,18 +1,49 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from importlib import import_module
 from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import TypeRegistry
-from dinkster_nodes_image import DETECTION_TYPE, Detection, Region, register_image_types
+from dinkster_api.v1 import (
+    DETECTION_TYPE,
+    REGION_TYPE,
+    Detection,
+    Region,
+    TypeRegistry,
+    coerce_detection,
+    coerce_region,
+    decode_detection,
+    decode_region,
+    detection_meta,
+    encode_detection,
+    encode_region,
+    region_meta,
+    validate_detection_encoded,
+    validate_region_encoded,
+)
 
 
 def _registry() -> TypeRegistry:
     registry = TypeRegistry()
-    register_image_types(registry)
+    registry.register(
+        REGION_TYPE,
+        encode=encode_region,
+        decode=decode_region,
+        coerce=coerce_region,
+        meta=region_meta,
+        validate_encoded=validate_region_encoded,
+        asset_references_complete=True,
+    )
+    registry.register(
+        DETECTION_TYPE,
+        encode=encode_detection,
+        decode=decode_detection,
+        coerce=coerce_detection,
+        meta=detection_meta,
+        validate_encoded=validate_detection_encoded,
+        asset_references_complete=True,
+    )
     return registry
 
 
@@ -133,25 +164,13 @@ def test_detection_codec_round_trip_with_mask() -> None:
     assert decoded.mask.shape == (3, 4)
 
 
-@pytest.mark.parametrize(
-    ("module", "register"),
-    [
-        ("dinkster_nodes_image", "register_image_types"),
-        ("dinkster_nodes_vision.detr.nodes", "register_types"),
-        ("dinkster_nodes_vision.efficient_sam.nodes", "register_types"),
-        ("dinkster_nodes_vision.rtdetr.nodes", "register_types"),
-        ("dinkster_nodes_vision.sam31.nodes", "register_types"),
-    ],
-)
-def test_spatial_registration_dependencies_survive_encoded_admission(module, register) -> None:
+def test_spatial_codecs_survive_encoded_admission() -> None:
     from dinkster_assets import AssetRef, digest_bytes
     from dinkster_assets.value import value_asset_references
     from dinkster_values import default_encode
     from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
-    registry = TypeRegistry()
-    register_types = getattr(import_module(module), register)
-    register_types(registry)
+    registry = _registry()
     reference = AssetRef(digest_bytes(b"source"), "source.bin", 6)
     for type_id, item in (
         ("REGION", Region(-2, 1.5, 0, 4)),
@@ -180,11 +199,6 @@ def test_spatial_registration_dependencies_survive_encoded_admission(module, reg
         blobs[cast(int, payload["blob"])] = b"invalid spatial payload"
         with pytest.raises(EncodedPayloadValidationError):
             codec.decode(wire, blobs, [])
-        first = TypeRegistry()
-        first_spec = first.register(type_id)
-        register_types(first)
-        assert first.spec(type_id) is first_spec
-        assert not first.spec(type_id).asset_references_complete
 
 
 def test_detection_codec_rejects_invalid_frames() -> None:

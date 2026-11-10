@@ -1,12 +1,32 @@
 """Torch-free schemas for native bound model-file loaders."""
 
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from dinkster_api.v1 import ASSET_TYPE, AssetRef, AssetWidget, ComboWidget, TypeExpr, digest_bytes
-from dinkster_nodes_comfy import model_file_loaders
-from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
+from dinkster_ltx import model_file_loaders as ltx_loaders
+from dinkster_models import model_file_loaders
+from dinkster_pack_helpers import model_file_loaders as loader_helpers
+from dinkster_sd import model_file_loaders as sd_loaders
+
+MODEL_FILE_LOADER_NODES = (
+    model_file_loaders.CheckpointLoaderSimple,
+    model_file_loaders.CheckpointLoader,
+    sd_loaders.unCLIPCheckpointLoader,
+    model_file_loaders.ControlNetLoader,
+    model_file_loaders.DiffControlNetLoader,
+    model_file_loaders.UNETLoader,
+    model_file_loaders.CLIPLoader,
+    model_file_loaders.DualCLIPLoader,
+    model_file_loaders.CLIPVisionLoader,
+    model_file_loaders.StyleModelLoader,
+    sd_loaders.GLIGENLoader,
+    sd_loaders.ImageOnlyCheckpointLoader,
+    ltx_loaders.LTXVAudioVAELoader,
+    ltx_loaders.LTXAVTextEncoderLoader,
+)
 
 
 class _Resolver:
@@ -23,28 +43,32 @@ def _asset(path: Path) -> AssetRef:
 
 
 def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> None:
-    schemas = {node.schema().node_type: node.schema() for node in MODEL_FILE_LOADER_NODES}
+    schemas = {node.__name__: node.schema() for node in MODEL_FILE_LOADER_NODES}
 
-    assert tuple(schemas) == (
-        "CheckpointLoaderSimple",
-        "CheckpointLoader",
-        "unCLIPCheckpointLoader",
-        "ControlNetLoader",
-        "DiffControlNetLoader",
-        "UNETLoader",
-        "CLIPLoader",
-        "DualCLIPLoader",
-        "CLIPVisionLoader",
-        "StyleModelLoader",
-        "GLIGENLoader",
-        "ImageOnlyCheckpointLoader",
-        "LTXVAudioVAELoader",
-        "LTXAVTextEncoderLoader",
+    assert tuple(schema.node_type for schema in schemas.values()) == (
+        "dinkster.models.checkpoint_loader_simple",
+        "dinkster.models.checkpoint_loader",
+        "dinkster.sd.un_clip_checkpoint_loader",
+        "dinkster.models.control_net_loader",
+        "dinkster.models.diff_control_net_loader",
+        "dinkster.models.unet_loader",
+        "dinkster.models.clip_loader",
+        "dinkster.models.dual_clip_loader",
+        "dinkster.models.clip_vision_loader",
+        "dinkster.models.style_model_loader",
+        "dinkster.sd.gligen_loader",
+        "dinkster.sd.image_only_checkpoint_loader",
+        "dinkster.ltx.ltxv_audio_vae_loader",
+        "dinkster.ltx.ltxav_text_encoder_loader",
     )
     assert schemas["CheckpointLoader"].display_name == "Load Checkpoint With Config (DEPRECATED)"
     assert schemas["CheckpointLoader"].deprecation is not None
     assert schemas["GLIGENLoader"].display_name == "Load GLIGEN Model"
-    assert schemas["CheckpointLoader"].search_terms == ("load model", "model loader")
+    assert schemas["CheckpointLoader"].search_terms == (
+        "load model",
+        "model loader",
+        "CheckpointLoader",
+    )
     assert schemas["CheckpointLoaderSimple"].description == (
         "Loads a diffusion model checkpoint, diffusion models are used to denoise latents."
     )
@@ -55,6 +79,7 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
         "load checkpoint",
         "ckpt",
         "model",
+        "CheckpointLoaderSimple",
     )
     assert tuple(output.id for output in schemas["CheckpointLoaderSimple"].outputs) == (
         "MODEL",
@@ -103,7 +128,7 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
 
 
 def test_model_file_loader_defaults_match_comfyui() -> None:
-    schemas = {node.schema().node_type: node.schema() for node in MODEL_FILE_LOADER_NODES}
+    schemas = {node.__name__: node.schema() for node in MODEL_FILE_LOADER_NODES}
     assert schemas["UNETLoader"].inputs[1].default == "default"
     assert schemas["CLIPLoader"].inputs[1].default == "stable_diffusion"
     clip_type_widget = schemas["CLIPLoader"].inputs[1].widget
@@ -123,11 +148,12 @@ def test_ltx_text_encoder_admits_omitted_device_with_default(tmp_path: Path) -> 
     path = tmp_path / "fixture.safetensors"
     path.write_bytes(b"fixture")
     asset = _asset(path).to_wire()
-    schema = model_file_loaders.LTXAVTextEncoderLoader.schema()
+    schema = ltx_loaders.LTXAVTextEncoderLoader.schema()
     graph = Graph(
         nodes={
             "loader": GraphNode(
-                "LTXAVTextEncoderLoader", {"text_encoder": asset, "ckpt_name": asset}
+                "dinkster.ltx.ltxav_text_encoder_loader",
+                {"text_encoder": asset, "ckpt_name": asset},
             )
         }
     )
@@ -168,11 +194,13 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         ),
         "torch": SimpleNamespace(float8_e4m3fn="fp8-e4m3fn", float8_e5m2="fp8-e5m2"),
     }
-    monkeypatch.setattr(model_file_loaders, "initialize_inference_process", lambda: None)
-    monkeypatch.setattr(model_file_loaders, "mount_roots_for_kind", lambda kind: (tmp_path,))
-    real_import = model_file_loaders.importlib.import_module
+    for module in (model_file_loaders, sd_loaders):
+        monkeypatch.setattr(module, "initialize_inference_process", lambda: None)
+    for module in (loader_helpers, sd_loaders):
+        monkeypatch.setattr(module, "mount_roots_for_kind", lambda kind: (tmp_path,))
+    real_import = importlib.import_module
     monkeypatch.setattr(
-        model_file_loaders.importlib,
+        importlib,
         "import_module",
         lambda name: modules.get(name) or real_import(name),
     )
@@ -187,7 +215,7 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         "CLIP": clip,
         "VAE": vae,
     }
-    assert model_file_loaders.unCLIPCheckpointLoader.execute(ckpt_name=asset) == {
+    assert sd_loaders.unCLIPCheckpointLoader.execute(ckpt_name=asset) == {
         "MODEL": model,
         "CLIP": clip,
         "VAE": vae,
@@ -212,7 +240,7 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
     assert model_file_loaders.StyleModelLoader.execute(style_model_name=asset) == {
         "STYLE_MODEL": style_model
     }
-    assert model_file_loaders.GLIGENLoader.execute(gligen_name=asset) == {"GLIGEN": gligen}
+    assert sd_loaders.GLIGENLoader.execute(gligen_name=asset) == {"GLIGEN": gligen}
 
     root = str(tmp_path)
     assert calls == [

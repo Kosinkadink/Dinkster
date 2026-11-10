@@ -1,0 +1,11 @@
+[pack]
+name = "latent-upscale-fixture"
+publisher = "dinkster"
+namespaces = ["latent-upscale-fixture"]
+
+[pack.dependencies]
+dinkster-models = ">=0.0.1,<1"
+
+[pack.entry]
+nodes = "latent_upscale_fixture:NODES"
+types = "latent_upscale_fixture:register_inference_types"

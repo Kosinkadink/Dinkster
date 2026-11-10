@@ -10,14 +10,18 @@ on:
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
-      - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
-      - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
+      - tests/first_party_runtime/test_model_advanced_torch.py
+      - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
-      - packages/dinkster-video/pyproject.toml
+      - packages/dinkster-video-runtime/pyproject.toml
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   opentimelineio-index:
@@ -101,7 +105,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install the locked released OpenTimelineIO wheel
-        run: uv sync --locked --package dinkster-video --no-dev
+        run: uv sync --locked --package dinkster-video-runtime --no-dev
         env:
           UV_NO_BUILD_PACKAGE: dinkster-opentimelineio
       - name: Verify released native extension and external timelines
@@ -114,7 +118,7 @@ jobs:
           import opentimelineio as otio
           import opentimelineio._otio
           from dinkster_values.video_document import decode_document, encode_document
-          from dinkster_video.document import export_otio, import_otio
+          from dinkster_video_runtime.document import export_otio, import_otio
 
           assert importlib.metadata.version('dinkster-opentimelineio') == '0.19.0'
           assert otio.__version__ == '0.19.0.dev1'
@@ -185,5 +189,5 @@ jobs:
         shell: bash
         run: |
           uv run --no-sync python -m pytest -q \
-            packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
-            packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
+            packages/dinkster-nodes-void/tests/test_void_sampler_torch.py \
+            tests/first_party_runtime/test_model_advanced_torch.py

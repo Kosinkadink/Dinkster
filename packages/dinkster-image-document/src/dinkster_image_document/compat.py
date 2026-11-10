@@ -161,7 +161,7 @@ def register_comfy_layers(registry: TypeRegistry) -> None:
 
     if "comfy.LAYERS" not in registry:
         with registry.registering_pack(
-            "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+            "dinkster-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
         ):
             registry.register(
                 "comfy.LAYERS",
@@ -207,7 +207,7 @@ def register_comfy_compositor(registry: TypeRegistry) -> None:
 
     if "comfy.COMPOSITOR" not in registry:
         with registry.registering_pack(
-            "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+            "dinkster-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
         ):
             registry.register(
                 "comfy.COMPOSITOR",

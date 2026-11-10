@@ -10,14 +10,21 @@ import pytest
 
 torch = cast("Any", pytest.importorskip("torch"))
 
-from dinkster_assets import AssetRef, AssetVault, MountDef, MountTable, digest_file  # noqa: E402
-from dinkster_inference_wire.process import initialize_inference_process  # noqa: E402
-from dinkster_native.fork_nodes import (  # noqa: E402
-    GenerationLoadCheckpoint,
-    GenerationLoadDiffusionModel,
-    NativeLoadClip,
-    NativeLoadVae,
+from dinkster_assets import (  # noqa: E402
+    AssetError,
+    AssetRef,
+    AssetVault,
+    MountDef,
+    MountTable,
+    digest_file,
 )
+from dinkster_inference_wire.process import initialize_inference_process  # noqa: E402
+from dinkster_models.model_file_loaders import (  # noqa: E402
+    CheckpointLoaderSimple,
+    CLIPLoader,
+    UNETLoader,
+)
+from dinkster_models.model_selections import VAELoader  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -125,19 +132,34 @@ def test_native_diffusion_model_real_checkpoint(tmp_path: Path, vault_backed: bo
     save_file(_diffusion_state(), path)
     assert path.stat().st_size < 2_000_000
     asset = _asset(path, "model/diffusion", vault_backed)
-    loaded = GenerationLoadDiffusionModel.execute(diffusion_model=asset, weight_dtype="default")
-    _check_diffusion(loaded["model"])
+    loaded = UNETLoader.execute(unet_name=asset, weight_dtype="default")
+    _check_diffusion(loaded["MODEL"])
 
 
-@pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
-def test_native_vae_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None:
+@pytest.mark.parametrize("mode", ("named-mount", "verified-mount", "vault"))
+def test_native_vae_real_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
     save_file = importlib.import_module("safetensors.torch").save_file
 
     path = tmp_path / "vae.safetensors"
     save_file(_vae_state(), path)
     assert path.stat().st_size < 10_000_000
-    asset = _asset(path, "model/vae", vault_backed)
-    _check_vae(NativeLoadVae.execute(vae=asset)["vae"])
+    snapshot = tmp_path / "mounts.json"
+    mounts = MountTable(snapshot)
+    mounts.add(MountDef(id="weights", path=tmp_path), kind="model/vae")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    if mode == "vault":
+        asset = _asset(path, "model/vae", vault_backed=True)
+        with pytest.raises(AssetError, match="not an admitted selection"):
+            VAELoader.execute(vae_name=asset)
+        return
+    if mode == "verified-mount":
+        mounts.scan("weights")
+    asset = mounts.bind_name(path.name, "model/vae")
+    assert asset is not None
+    assert isinstance(asset, AssetRef) == (mode == "verified-mount")
+    _check_vae(VAELoader.execute(vae_name=asset)["VAE"])
 
 
 @pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
@@ -150,10 +172,10 @@ def test_native_combined_real_checkpoint(tmp_path: Path, vault_backed: bool) -> 
     save_file(state, path)
     assert path.stat().st_size < 12_000_000
     asset = _asset(path, "model/checkpoint", vault_backed)
-    loaded = GenerationLoadCheckpoint.execute(checkpoint=asset)
-    _check_diffusion(loaded["model"])
-    _check_vae(loaded["vae"])
-    assert loaded["clip"] is None
+    loaded = CheckpointLoaderSimple.execute(ckpt_name=asset)
+    _check_diffusion(loaded["MODEL"])
+    _check_vae(loaded["VAE"])
+    assert loaded["CLIP"] is None
 
 
 @pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
@@ -174,8 +196,8 @@ def test_native_clip_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None
     torch.save(state, path)
     assert path.stat().st_size < 100_000
     asset = _asset(path, "model/text-encoder", vault_backed)
-    loaded = NativeLoadClip.execute(text_encoder=asset, type="stable_diffusion", device="cpu")
-    clip = cast("Any", loaded["clip"])
+    loaded = CLIPLoader.execute(clip_name=asset, type="stable_diffusion", device="cpu")
+    clip = cast("Any", loaded["CLIP"])
     transformer = clip.cond_stage_model.clip_l.transformer
     assert torch.equal(transformer.text_model.final_layer_norm.bias, bias)
     assert torch.count_nonzero(transformer.text_model.encoder.layers[11].mlp.fc2.weight) == 0

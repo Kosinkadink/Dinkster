@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import LATENT_TYPE, encode_latent
 from dinkster_workers import load_manifest
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 from tests.async_scenarios import run_scenario
 
 PERSON = {
@@ -113,14 +114,14 @@ def test_public_pose_registration_preserves_first_authority_and_existing_pose() 
     registry = TypeRegistry()
     pose = registry.register(POSE_TYPE)
     keypoints = registry.register(POSE_KEYPOINT_TYPE)
-    from dinkster_nodes_comfy import register_inference_types as register_native_types
+    from dinkster_vision_sdpose import register_types
 
-    register_native_types(registry)
-    register_native_types(registry)
+    register_types(registry)
+    register_types(registry)
     assert registry.spec(POSE_KEYPOINT_TYPE) is keypoints
     assert registry.spec(POSE_TYPE) is pose
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert manifest.types_entry == "dinkster_nodes_comfy:register_inference_types"
+    manifest = load_manifest("packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml")
+    assert manifest.types_entry == "dinkster_vision_sdpose:register_types"
 
 
 def test_public_pose_keypoint_registration_and_codec_are_torch_free() -> None:
@@ -131,10 +132,10 @@ def test_public_pose_keypoint_registration_and_codec_are_torch_free() -> None:
             "import sys\n"
             "from dinkster_api.v1 import POSE_KEYPOINT_TYPE, TypeRegistry\n"
             "from dinkster_values.builtin_types import POSE_KEYPOINT_TYPE as canonical\n"
-            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_vision_sdpose import register_types\n"
             "assert POSE_KEYPOINT_TYPE is canonical\n"
             "registry = TypeRegistry()\n"
-            "register_inference_types(registry)\n"
+            "register_types(registry)\n"
             "value = [{'canvas_width': 7, 'canvas_height': 13, 'people': []}]\n"
             "spec = registry.spec(canonical)\n"
             "data = spec.encode(value)\n"
@@ -180,10 +181,16 @@ class PoseObserver(Node):
 def test_pose_keypoints_cross_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         checkout = Path(__file__).resolve().parents[1]
-        native = checkout / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        native_spec = default_pack_spec("dinkster-vision-sdpose")
+        native = Path(native_spec.manifest)
+        dependencies = tuple(
+            default_pack_spec(f"dinkster-{name}")
+            for name in ("latent", "conditioning", "qwen", "misc-models", "image")
+        )
         manifests = []
         for name, node in (("source", "PoseSource"), ("observer", "PoseObserver")):
-            (tmp_path / f"pose_{name}.py").write_text(
+            module = f"pose_{name}_{in_process}"
+            (tmp_path / f"{module}.py").write_text(
                 f"from test_pose_keypoint_type import {node}\n"
                 "from dinkster_api.v1 import register_inference_types\n"
                 f"NODES = ({node},)\n",
@@ -193,7 +200,7 @@ def test_pose_keypoints_cross_ordinary_hosts_twice(tmp_path: Path, in_process: b
             manifest.write_text(
                 f'[pack]\nname="pose-keypoint-{name}"\npublisher="dinkster"\n'
                 f'namespaces=["pose-keypoint-{name}"]\n[pack.entry]\n'
-                f'nodes="pose_{name}:NODES"\ntypes="pose_{name}:register_inference_types"\n',
+                f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
                 encoding="ascii",
             )
             manifests.append(manifest)
@@ -212,11 +219,13 @@ def test_pose_keypoints_cross_ordinary_hosts_twice(tmp_path: Path, in_process: b
             },
         )
         try:
+            for spec in dependencies:
+                await composer.add_pack(replace(spec, in_process=in_process))
             for manifest in (native, source, observer):
                 group = (observer,) if manifest == observer else (native, source)
                 await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest,
+                    replace(
+                        native_spec if manifest == native else PackSpec(manifest),
                         in_process=in_process,
                         worker_group=None if in_process else f"pose-{group[0].stem}",
                         group_manifests=() if in_process else group,

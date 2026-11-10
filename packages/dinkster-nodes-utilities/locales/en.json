@@ -1,0 +1,172 @@
+{
+  "nodes": {
+    "dinkster.utilities.make_list": {
+      "displayName": "Create List"
+    },
+    "dinkster.utilities.list_element": {
+      "displayName": "List Element"
+    },
+    "dinkster.utilities.color_to_rgb_int": {
+      "displayName": "Color Picker"
+    },
+    "dinkster.utilities.resolution_selector": {
+      "displayName": "Resolution Selector"
+    },
+    "dinkster.utilities.curve_editor": {
+      "displayName": "Curve Editor"
+    },
+    "dinkster.utilities.primitive_bounding_box": {
+      "displayName": "Bounding Box"
+    },
+    "dinkster.utilities.create_list": {
+      "displayName": "Create List"
+    },
+    "dinkster.utilities.get_item_from_list": {
+      "displayName": "Get Item From List"
+    },
+    "dinkster.utilities.comfy_not_node": {
+      "displayName": "Not"
+    },
+    "dinkster.utilities.comfy_and_node": {
+      "displayName": "And"
+    },
+    "dinkster.utilities.comfy_or_node": {
+      "displayName": "Or"
+    },
+    "dinkster.utilities.custom_combo": {
+      "displayName": "Custom Combo"
+    },
+    "dinkster.utilities.start_loop": {
+      "displayName": "Start Loop"
+    },
+    "dinkster.utilities.loop_iteration": {
+      "displayName": "Loop Iteration"
+    },
+    "dinkster.utilities.loop_progress": {
+      "displayName": "Loop Progress"
+    },
+    "dinkster.utilities.loop_result": {
+      "displayName": "Loop Result"
+    },
+    "dinkster.utilities.end_loop": {
+      "displayName": "End Loop"
+    },
+    "dinkster.utilities.comfy_math_expression": {
+      "displayName": "Math Expression"
+    },
+    "dinkster.utilities.primitive_string": {
+      "displayName": "Text"
+    },
+    "dinkster.utilities.primitive_string_multiline": {
+      "displayName": "Text (Multiline)"
+    },
+    "dinkster.utilities.primitive_int": {
+      "displayName": "Int"
+    },
+    "dinkster.utilities.primitive_float": {
+      "displayName": "Float"
+    },
+    "dinkster.utilities.primitive_boolean": {
+      "displayName": "Boolean"
+    },
+    "dinkster.utilities.comfy_switch_node": {
+      "displayName": "If/Else Switch"
+    },
+    "dinkster.utilities.comfy_number_convert": {
+      "displayName": "Convert Number"
+    },
+    "dinkster.utilities.seed_node": {
+      "displayName": "Seed"
+    },
+    "dinkster.utilities.preview_any": {
+      "displayName": "Preview as Text"
+    }
+  },
+  "searchTerms": {
+    "dinkster.utilities.color_to_rgb_int": [
+      "ColorToRGBInt"
+    ],
+    "dinkster.utilities.resolution_selector": [
+      "ResolutionSelector"
+    ],
+    "dinkster.utilities.curve_editor": [
+      "CurveEditor"
+    ],
+    "dinkster.utilities.primitive_bounding_box": [
+      "PrimitiveBoundingBox"
+    ],
+    "dinkster.utilities.create_list": [
+      "Image Iterator",
+      "Text Iterator",
+      "Iterator",
+      "CreateList"
+    ],
+    "dinkster.utilities.get_item_from_list": [
+      "GetItemFromList"
+    ],
+    "dinkster.utilities.comfy_not_node": [
+      "ComfyNotNode"
+    ],
+    "dinkster.utilities.comfy_and_node": [
+      "ComfyAndNode"
+    ],
+    "dinkster.utilities.comfy_or_node": [
+      "ComfyOrNode"
+    ],
+    "dinkster.utilities.custom_combo": [
+      "CustomCombo"
+    ],
+    "dinkster.utilities.start_loop": [
+      "StartLoop"
+    ],
+    "dinkster.utilities.loop_iteration": [
+      "LoopIteration"
+    ],
+    "dinkster.utilities.loop_progress": [
+      "LoopProgress"
+    ],
+    "dinkster.utilities.loop_result": [
+      "LoopResult"
+    ],
+    "dinkster.utilities.end_loop": [
+      "EndLoop"
+    ],
+    "dinkster.utilities.comfy_math_expression": [
+      "ComfyMathExpression"
+    ],
+    "dinkster.utilities.primitive_string": [
+      "PrimitiveString"
+    ],
+    "dinkster.utilities.primitive_string_multiline": [
+      "PrimitiveStringMultiline"
+    ],
+    "dinkster.utilities.primitive_int": [
+      "PrimitiveInt"
+    ],
+    "dinkster.utilities.primitive_float": [
+      "PrimitiveFloat"
+    ],
+    "dinkster.utilities.primitive_boolean": [
+      "PrimitiveBoolean"
+    ],
+    "dinkster.utilities.comfy_switch_node": [
+      "ComfySwitchNode"
+    ],
+    "dinkster.utilities.comfy_number_convert": [
+      "ComfyNumberConvert"
+    ],
+    "dinkster.utilities.seed_node": [
+      "SeedNode"
+    ],
+    "dinkster.utilities.preview_any": [
+      "preview",
+      "preview text",
+      "show output",
+      "inspect",
+      "debug",
+      "print value",
+      "show text",
+      "PreviewAny"
+    ]
+  }
+}

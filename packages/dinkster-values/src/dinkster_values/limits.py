@@ -13,6 +13,9 @@ GIBIBYTE = 1024 * MEBIBYTE
 # Format-integrity limits.
 CONDITIONING_HEADER_LIMIT_BYTES = 64 * MEBIBYTE
 WORKER_FRAME_HEADER_LIMIT_BYTES = 64 * MEBIBYTE
+PACK_WHEEL_ARCHIVE_LIMIT_BYTES = 64 * MEBIBYTE
+PACK_WHEEL_EXPANDED_LIMIT_BYTES = 256 * MEBIBYTE
+PACK_WHEEL_MANIFEST_LIMIT_BYTES = MEBIBYTE
 # Explicit saved-file claims accommodate the admitted image batch size.
 SAVED_ARTIFACT_CLAIM_LIMIT = 4096
 # Protect the engine JSON parser from unbounded request materialization.

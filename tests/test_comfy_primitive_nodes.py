@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_comfy.primitive import (
+from dinkster_utilities.primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
     PrimitiveInt,

@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_comfy.text import (
+from dinkster_text.text import (
     CaseConverter,
     ConvertArrayToString,
     ConvertDictionaryToString,

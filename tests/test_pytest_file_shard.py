@@ -48,7 +48,7 @@ def test_file_shards_are_stable_disjoint_and_complete() -> None:
     assert first | second == set(expected)
 
 
-@pytest.mark.parametrize("count", (3, 4, 6, 8))
+@pytest.mark.parametrize("count", (3, 4, 6, 8, 10, 12))
 def test_file_shards_support_extended_counts(count: int) -> None:
     expected = {
         3: {
@@ -67,9 +67,19 @@ def test_file_shards_support_extended_counts(count: int) -> None:
             "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 2,
         },
         8: {
+            "tests/test_serve.py": 3,
+            "tests/test_compose.py": 2,
+            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 4,
+        },
+        10: {
             "tests/test_serve.py": 2,
-            "tests/test_compose.py": 5,
+            "tests/test_compose.py": 3,
             "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 8,
+        },
+        12: {
+            "tests/test_serve.py": 9,
+            "tests/test_compose.py": 12,
+            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 3,
         },
     }
 
@@ -87,7 +97,25 @@ def test_file_shards_support_extended_counts(count: int) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ("0/2", "3/2", "0/3", "4/3", "0/4", "5/4", "0/6", "7/6", "0/8", "9/8", "1/5", "one/two", "1"),
+    (
+        "0/2",
+        "3/2",
+        "0/3",
+        "4/3",
+        "0/4",
+        "5/4",
+        "0/6",
+        "7/6",
+        "0/8",
+        "9/8",
+        "0/10",
+        "11/10",
+        "0/12",
+        "13/12",
+        "1/5",
+        "one/two",
+        "1",
+    ),
 )
 def test_parse_file_shard_refuses_invalid_values(value: str) -> None:
     with pytest.raises(ValueError, match="file shard"):
@@ -113,6 +141,10 @@ def test_parse_file_shard_accepts_two_shards(value: str, expected: int) -> None:
         ("6/6", (6, 6)),
         ("1/8", (1, 8)),
         ("8/8", (8, 8)),
+        ("1/12", (1, 12)),
+        ("12/12", (12, 12)),
+        ("1/10", (1, 10)),
+        ("10/10", (10, 10)),
     ),
 )
 def test_parse_file_shard_accepts_supported_counts(value: str, expected: tuple[int, int]) -> None:
@@ -158,7 +190,32 @@ def test_pytest_plugin_selects_whole_files_and_explicit_shared_tests(tmp_path: P
 
     malformed = _run_pytest(tmp_path, "--file-shard", "3/2")
     assert malformed.returncode == pytest.ExitCode.USAGE_ERROR
-    assert "file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, or 8" in malformed.stderr
+    assert "file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, 8, 10, or 12" in malformed.stderr
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_empty_shard_succeeds_without_hiding_empty_collection_or_failures(
+    tmp_path: Path, workers: int
+) -> None:
+    empty = _run_pytest(tmp_path, "-n", str(workers), "--file-shard", "2/2")
+    assert empty.returncode == pytest.ExitCode.NO_TESTS_COLLECTED
+
+    source = tmp_path / "test_alpha.py"
+    source.write_text("def test_alpha(): assert False\n", encoding="ascii")
+    other_shard = _run_pytest(tmp_path, "-n", str(workers), "--file-shard", "2/2")
+    assert other_shard.returncode == 0, other_shard.stdout + other_shard.stderr
+    if workers == 0:
+        assert "1 deselected" in other_shard.stdout
+    owning_shard = _run_pytest(tmp_path, "-n", str(workers), "--file-shard", "1/2")
+    assert owning_shard.returncode == pytest.ExitCode.TESTS_FAILED
+    filtered = _run_pytest(tmp_path, "-n", str(workers), "--file-shard", "2/2", "-k", "missing")
+    assert filtered.returncode == pytest.ExitCode.NO_TESTS_COLLECTED
+
+    source.write_text("import nonexistent_shard_dependency\n", encoding="ascii")
+    broken = _run_pytest(tmp_path, "-n", str(workers), "--file-shard", "2/2")
+    expected = pytest.ExitCode.TESTS_FAILED if workers else pytest.ExitCode.INTERRUPTED
+    assert broken.returncode == expected
+    assert "nonexistent_shard_dependency" in broken.stdout
 
 
 def test_case_sharding_sorts_node_ids_and_keeps_other_files_whole(tmp_path: Path) -> None:

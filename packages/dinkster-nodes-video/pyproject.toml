@@ -1,0 +1,28 @@
+[project]
+name = "dinkster-video"
+version = "0.0.3"
+description = "Dinkster video input, editing, interpolation and output nodes"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-api",
+    "av>=14",
+    "numpy>=1.26",
+    "torch",
+    "torchvision",
+    "dinkster-inference==0.1.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_video"]
+
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_video/dinkster-pack.toml"
+"locales" = "dinkster_video/locales"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }

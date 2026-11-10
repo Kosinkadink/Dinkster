@@ -17,11 +17,13 @@ permissions:
 env:
   # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
   FRONTEND_REF: 388ba9794cb02fde8f88c49f24e44267a70be2d4
+  # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
+  PYTEST_ADDOPTS: "-n0"
 
-# Pushes batch behind the active run while scheduled and release validation always finish.
+# Superseded pushes cancel; scheduled and release validation always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   validation-plan:
@@ -36,18 +38,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            let runTorch = true;
-            if (context.eventName === 'push' && !/^0+$/.test(context.payload.before)) {
-              const comparison = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${context.payload.before}...${context.sha}`,
-              });
-              const files = comparison.data.files || [];
-              // The compare API caps files at 300. A capped response must run everything.
-              const relevant = /^(packages\/dinkster-(nodes-(comfy|vision)|inference[^/]*|compat-comfy)\/|tests\/test_(comfy_|vision_)|\.github\/(actions\/torch-cpu-suite\/|workflows\/full-validation\.yml$)|uv\.lock$)/;
-              runTorch = files.length >= 300 || files.some(file => relevant.test(file.filename) || relevant.test(file.previous_filename || ''));
-            }
-            core.setOutput('run-torch', String(runTorch));
+            core.setOutput('run-torch', 'true');
             if (context.eventName !== 'schedule') {
               core.setOutput('run-heavy', 'true');
               return;
@@ -74,16 +65,15 @@ jobs:
         # Windows keeps the tcp boundary transport and the shm
         # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
         # user OS, not a nice-to-have.
-        # Whole-file shards keep each complete lane within its main-validation
-        # budget. Checks and generated-contract validation run once per OS;
-        # every root test file still runs in exactly one shard.
+        # Linux splits expensive histories and generations by case; other files
+        # stay whole. Checks and generated contracts run once per OS.
         include:
           - os: linux
             runner: linux
             python-version: "3.12"
             shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/12"
             run_checks: true
             timeout-minutes: 30
           - os: linux
@@ -91,7 +81,7 @@ jobs:
             python-version: "3.12"
             shard: 2
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -99,7 +89,7 @@ jobs:
             python-version: "3.12"
             shard: 3
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -107,7 +97,7 @@ jobs:
             python-version: "3.12"
             shard: 4
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -115,7 +105,7 @@ jobs:
             python-version: "3.12"
             shard: 5
             shard_name: ", shard 5"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -123,49 +113,135 @@ jobs:
             python-version: "3.12"
             shard: 6
             shard_name: ", shard 6"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 7
+            shard_name: ", shard 7"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 7/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 8
+            shard_name: ", shard 8"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 8/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 9
+            shard_name: ", shard 9"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 9/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 10
+            shard_name: ", shard 10"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 10/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 11
+            shard_name: ", shard 11"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 11/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 12
+            shard_name: ", shard 12"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 12/12"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
-            run_checks: false
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/10"
+            run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 2
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/10"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 3
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
-            run_checks: true
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/10"
+            run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 4
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/10"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 5
             shard_name: ", shard 5"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/10"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 6
             shard_name: ", shard 6"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 7
+            shard_name: ", shard 7"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 7/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 8
+            shard_name: ", shard 8"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 8/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 9
+            shard_name: ", shard 9"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 9/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 10
+            shard_name: ", shard 10"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 10/10"
             run_checks: false
             timeout-minutes: 30
     steps:
@@ -210,12 +286,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Verify bounded VIDEO save memory
         if: matrix.os == 'linux' && matrix.run_checks
-        run: uv run --locked python tools/video_conformance.py --rss
-      - name: Verify bounded AUDIO trim and save memory
-        if: matrix.os == 'linux' && matrix.run_checks
-        run: |
-          mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
-          uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
+        run: uv run --locked pytest tests/test_video_conformance_tool.py::test_full_resolution_rss_gate -q -rx
       - run: >
           uv run python -m pytest -q ${{ matrix.pytest_args }}
           --ignore-glob=tests/test_environment_*.py
@@ -224,17 +295,23 @@ jobs:
           --ignore-glob=tests/test_supervisor*.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
+          --durations=0 --durations-min=0
+          --junitxml=test-results/windows-${{ matrix.shard }}.xml
         if: runner.os == 'Windows'
         env:
           DINKSTER_SLOW_TESTS: "1"
       - run: >
           uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --case-shard-file tests/test_environment_history.py
+          --case-shard-file tests/test_environment_generations.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
+          --durations=0 --durations-min=0
+          --junitxml=test-results/linux-${{ matrix.shard }}.xml
           --cov=dinkster_api --cov=dinkster_assets
-          --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
-          --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
-          --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
+          --cov=dinkster_caches --cov=dinkster_engine
+          --cov=dinkster_graph --cov=dinkster_memory
+          --cov=dinkster_image
           --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
           --cov=dinkster_workers --cov-branch --cov-report=
         if: runner.os == 'Linux'
@@ -247,6 +324,20 @@ jobs:
           name: coverage-shard-${{ matrix.shard }}
           path: .coverage.${{ matrix.shard }}
           include-hidden-files: true
+          if-no-files-found: error
+      - name: Retain Linux test timings
+        uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Linux'
+        with:
+          name: test-timings-linux-${{ matrix.shard }}
+          path: test-results/linux-${{ matrix.shard }}.xml
+          if-no-files-found: error
+      - name: Retain Windows test timings
+        uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: test-timings-windows-${{ matrix.shard }}
+          path: test-results/windows-${{ matrix.shard }}.xml
           if-no-files-found: error
       - run: uv run dinkster demo
         if: matrix.run_checks
@@ -332,12 +423,12 @@ jobs:
     if: needs.validation-plan.outputs.run-heavy == 'true'
     name: Windows environment and supervisor runtime (shard ${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).windows }}
-    # Shard 3 tests take 28 minutes; allow setup and coverage upload to finish.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Measured Windows phase totals balance to 445-531s before job setup.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -374,13 +465,20 @@ jobs:
             $_.Name -like 'test_supervisor*.py'
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
+          $caseShardArgs = @(
+            '--case-shard-file', 'tests/test_environment_artifacts.py',
+            '--case-shard-file', 'tests/test_environment_cli.py',
+            '--case-shard-file', 'tests/test_environment_generations.py',
+            '--case-shard-file', 'tests/test_environment_history.py',
+            '--case-shard-file', 'tests/test_environment_transactions.py'
+          )
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=0 `
-            --case-shard-file tests/test_environment_generations.py `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/8 --durations=0 `
+            @caseShardArgs `
             --cov=dinkster_api --cov=dinkster_assets `
-            --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
-            --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
-            --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io `
+            --cov=dinkster_caches --cov=dinkster_engine `
+            --cov=dinkster_graph --cov=dinkster_memory `
+            --cov=dinkster_image `
             --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values `
             --cov=dinkster_workers --cov-branch --cov-report=
           exit $LASTEXITCODE
@@ -396,7 +494,7 @@ jobs:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
     needs: [validation-plan, test, windows-runtime]
-    if: always() && needs.validation-plan.outputs.run-heavy == 'true'
+    if: ${{ !cancelled() && needs.validation-plan.outputs.run-heavy == 'true' }}
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 5
     steps:
@@ -421,49 +519,26 @@ jobs:
           merge-multiple: true
       - name: Combine coverage and enforce the unchanged branch floor
         run: |
-          for shard in 1 2 3 4 5 6; do
+          for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do
             test -f "coverage-data/.coverage.$shard"
           done
-          for shard in 1 2 3; do
+          for shard in 1 2 3 4 5 6 7 8; do
             test -f "coverage-data/.coverage.windows-runtime-$shard"
           done
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
           uv run coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
           uv run coverage report --fail-under=80
 
-  video-template-replay:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/prepare-validation-inputs
-        with:
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --all-packages
-      - name: Replay VIDEO template shapes
-        run: uv run --locked pytest -q tests/test_video_alias_templates.py
-
   main-status:
     name: main validation status
-    if: always()
+    if: ${{ !cancelled() }}
     needs:
       - validation-plan
       - test
       - torch-cpu
       - windows-runtime
       - coverage-gate
-      - video-template-replay
-      - registry-install
+      - probe-jail
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
     steps:
@@ -474,10 +549,11 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+          PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s"}}\n' \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s","probeJail":"%s"}}\n' \
             "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
-            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" \
+            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" "$PROBE_JAIL_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -495,8 +571,7 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
-          REGISTRY_RESULT: ${{ needs.registry-install.result }}
-          VIDEO_RESULT: ${{ needs.video-template-replay.result }}
+          PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
@@ -507,10 +582,9 @@ jobs:
           fi
           test "$RUNTIME_RESULT" = success
           test "$COVERAGE_RESULT" = success
-          test "$REGISTRY_RESULT" = success
-          test "$VIDEO_RESULT" = success
+          test "$PROBE_JAIL_RESULT" = success
 
-  registry-install:
+  probe-jail:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
@@ -519,16 +593,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: ./.github/actions/configure-private-repository
-        with:
-          repository: Kosinkadink/dinkster-registry
-          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
-      - uses: actions/checkout@v4
-        with:
-          repository: Kosinkadink/dinkster-registry
-          ref: 5d844ae53616f88756a98eb6dc3aa73fefb92622
-          path: registry
-          persist-credentials: false
       - name: Configure and verify the Linux probe jail
         run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
@@ -536,15 +600,6 @@ jobs:
           python-version: "3.12"
       - run: |
           uv sync --locked --all-packages
-          uv sync --project registry --frozen
           uv run --no-sync python -m pytest -v \
-            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe
-          uv run --no-sync python scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
-            --state "$RUNNER_TEMP/registry-install-state" \
-            --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: registry-install-state
-          path: ${{ runner.temp }}/registry-install-state
-          retention-days: 7
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
+            'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'

@@ -743,11 +743,14 @@ def test_default_doctor_uses_configured_remote_catalog(
     from dinkster.installer import InstallError
 
     spec = compose.default_pack_spec("dinkster-nodes-remote")
-    manifest = tmp_path / "dinkster-pack.toml"
+    # Doctor scans sibling packs; keep that scan inside this test's tree.
+    pack = tmp_path / "packs" / "remote"
+    pack.mkdir(parents=True)
+    manifest = pack / "dinkster-pack.toml"
     manifest.write_bytes(Path(spec.manifest).read_bytes())
     # Published archives omit tests, so provide an explicit authoring defect
     # instead of relying on this test module's host imports being scanned.
-    (tmp_path / "invalid_authoring.py").write_text("import dinkster_workers\n", encoding="utf-8")
+    (pack / "invalid_authoring.py").write_text("import dinkster_workers\n", encoding="utf-8")
     spec = replace(spec, manifest=manifest)
 
     def prepared(spec: compose.PackSpec, **kwargs: object) -> compose.PackSpec:
@@ -788,7 +791,7 @@ def test_isolated_worker_announces_catalog_epoch_and_composer_replaces_it(
     async def scenario() -> None:
         from dinkster_workers import diagnose
 
-        from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
+        from dinkster.compose import PackSpec, ServingComposer
 
         async with FakeGateway() as gateway:
             token = tmp_path / "token"
@@ -815,8 +818,8 @@ def test_isolated_worker_announces_catalog_epoch_and_composer_replaces_it(
             try:
                 if spec.require_catalog:
                     await asyncio.to_thread(diagnose, spec.manifest, environment=spec.env)
-                await composer.add_pack(default_pack_spec("dinkster-nodes-media-io"))
                 initial = await composer.add_pack(spec)
+                assert set(composer.composition.packs) == {"dinkster-nodes-remote"}
                 assert "dinkster.remote.image" in composer.composition.schemas
                 assert initial.execution_arms == {"dinkster.remote.image": ("native",)}
                 if spec.require_catalog:

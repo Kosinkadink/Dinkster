@@ -10,10 +10,14 @@ from typing import BinaryIO, cast
 
 import numpy as np
 import pytest
-from dinkster_nodes_foundation import Curve
-from dinkster_nodes_image import DEFAULT_FRAGMENT_SHADER, IMAGE_NODES, GlslShader
-from dinkster_nodes_image import glsl as glsl_module
-from dinkster_nodes_image.glsl import NativeGlslShader
+from dinkster_api.v1 import Curve
+from dinkster_image import glsl as glsl_module
+from dinkster_image.glsl import (
+    DEFAULT_FRAGMENT_SHADER,
+    GLSL_NODES,
+    GlslShader,
+    NativeGlslShader,
+)
 from dinkster_schema import use_reporter
 from numpy.lib.format import write_array_header_1_0
 
@@ -41,9 +45,9 @@ def _run_angle_renderer_or_skip(
         raise
 
 
-def test_glsl_shader_schema_is_fixed_bounded_and_discoverable() -> None:
+def test_glsl_shader_support_schema_is_fixed_and_bounded() -> None:
     schema = GlslShader.schema()
-    assert GlslShader in IMAGE_NODES
+    assert GlslShader in GLSL_NODES
     assert schema.node_type == "dinkster.image.glsl_shader"
     assert schema.output_node is True
     assert schema.emits_previews is True
@@ -64,7 +68,7 @@ def test_exact_glsl_schema_preserves_source_members_and_output_positions() -> No
     from dinkster_schema import elaborate, schema_from_wire, schema_to_wire
 
     schema = NativeGlslShader.schema()
-    assert NativeGlslShader in IMAGE_NODES
+    assert NativeGlslShader in GLSL_NODES
     assert schema.node_type == "GLSLShader" and not schema.aliases
     assert not schema.output_node
     assert schema.input_order == (
@@ -318,7 +322,7 @@ def test_parent_translates_child_refusals(
         (tmp_path / "status.json").write_text(json.dumps(status), encoding="utf-8")
         return subprocess.CompletedProcess([], 2, "", "")
 
-    monkeypatch.setattr("dinkster_nodes_image.glsl.subprocess.run", run)
+    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", run)
     with pytest.raises(error_type, match=message):
         glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
 
@@ -330,7 +334,7 @@ def test_parent_translates_child_timeout(monkeypatch: pytest.MonkeyPatch, tmp_pa
     def timeout(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(["python"], 30)
 
-    monkeypatch.setattr("dinkster_nodes_image.glsl.subprocess.run", timeout)
+    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", timeout)
     with pytest.raises(RuntimeError, match="exceeded 30 seconds"):
         glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
 
@@ -352,7 +356,7 @@ def test_parent_refuses_unbounded_child_output_before_loading(
             file.write(bytes(16))
         return subprocess.CompletedProcess([], 0, "", "")
 
-    monkeypatch.setattr("dinkster_nodes_image.glsl.subprocess.run", run)
+    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", run)
     monkeypatch.setattr(
         np,
         "load",

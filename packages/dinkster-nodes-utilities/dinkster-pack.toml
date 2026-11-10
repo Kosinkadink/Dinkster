@@ -1,0 +1,21 @@
+[pack]
+name = "dinkster-utilities"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.utilities"]
+requires = ["simpleeval==1.0.8"]
+
+[pack.inference]
+imports = []
+tested-version = "0.1.1"
+
+[pack.sandbox]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_utilities:NODES"
+types = "dinkster_utilities:register_types"

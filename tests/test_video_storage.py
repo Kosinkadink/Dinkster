@@ -13,7 +13,6 @@ import av
 import numpy as np
 import pytest
 from dinkster_assets.value import bind_video_value
-from dinkster_nodes_media_io import video as media_video
 from dinkster_values import (
     annotate_image,
     decode_image_array,
@@ -25,21 +24,13 @@ from dinkster_values import (
     video_from_source,
 )
 from dinkster_values.storage import BFLOAT16_FIELD, image_input
-from dinkster_video import (
+from dinkster_video_runtime import (
     assemble_video,
     concatenate_video,
     disassemble_video,
     runtime,
     save_video_stream,
 )
-
-
-class _Source:
-    def __init__(self, data: bytes):
-        self.data = data
-
-    def open(self) -> io.BytesIO:
-        return io.BytesIO(self.data)
 
 
 def test_nested_complete_soundtrack_precedence_roundtrip_and_fingerprint() -> None:
@@ -166,18 +157,6 @@ def _gray_source(depth: int, transfer: int = 16) -> bytes:
     return data.getvalue()
 
 
-def _decode_legacy(data: bytes) -> np.ndarray:
-    return media_video.decode_video_frames(
-        _Source(data),
-        force_rate=0,
-        custom_width=0,
-        custom_height=0,
-        frame_load_cap=0,
-        start_time=0,
-        select_every_nth=1,
-    )[0]
-
-
 @pytest.mark.parametrize("depth", [8, 10])
 def test_decoded_storage_retains_source_precision_and_color_math(depth: int) -> None:
     data = _gray_source(depth)
@@ -201,12 +180,8 @@ def test_decoded_storage_retains_source_precision_and_color_math(depth: int) -> 
             ).to_ndarray()
             expected = np.rint(np.clip(reference, 0, 1) * maximum).astype(dtype)
             np.testing.assert_array_equal(actual, expected)
-    legacy = _decode_legacy(data)
-    assert legacy.dtype == dtype
-    assert legacy.shape == images.shape
     if depth == 10:
         assert images[1].mean() > images[0].mean()
-        assert legacy[1].mean() > legacy[0].mean()
         assert np.unique(np.rint(images / 257)).size == 1
 
 
@@ -382,11 +357,12 @@ def test_decode_limits_charge_compact_array_bytes(
 ) -> None:
     data = _gray_source(depth)
     size = 2 * 32 * 64 * 3 * (1 if depth == 8 else 2)
-    monkeypatch.setattr(media_video, "MAX_DECODED_FRAME_BYTES", size)
-    assert _decode_legacy(data).nbytes == size
-    monkeypatch.setattr(media_video, "MAX_DECODED_FRAME_BYTES", size - 1)
+    monkeypatch.setattr(runtime, "VIDEO_DECODE_WORKING_SET_LIMIT_BYTES", size)
+    images = cast(np.ndarray, disassemble_video(video_from_source(data))["images"])
+    assert images.nbytes == size
+    monkeypatch.setattr(runtime, "VIDEO_DECODE_WORKING_SET_LIMIT_BYTES", size - 1)
     with pytest.raises(ValueError, match="decoded video frames exceed"):
-        _decode_legacy(data)
+        disassemble_video(video_from_source(data))
 
 
 def test_pcm16_components_encode_like_normalized_audio(

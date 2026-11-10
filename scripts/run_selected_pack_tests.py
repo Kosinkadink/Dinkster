@@ -10,34 +10,39 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import tomllib
 import venv
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 
-from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
+from dinkster_registry.archive_admission import ARCHIVE_LIMIT
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
+from dinkster_workers.pack_wheel import pack_import_name, pack_manifest_path
 
-from dinkster.compose import _installed_pack_digest
+from dinkster.compose import _FIRST_PARTY_PACK_DISTRIBUTIONS, _installed_pack_digest
+from scripts.build_official_packs import library_metadata
+from scripts.build_release import is_official_library
 
+_PACK_DIRECTORIES = {
+    pack: distribution
+    if distribution.startswith("dinkster-nodes-")
+    else distribution.replace("dinkster-", "dinkster-nodes-", 1)
+    for pack, distribution in _FIRST_PARTY_PACK_DISTRIBUTIONS.items()
+}
 _SUITES = {
-    "dinkster-nodes-foundation": (
-        "tests/test_primitives.py",
-        "tests/test_numeric_stdlib.py",
-        "tests/test_string_stdlib.py",
-        "tests/test_routing_stdlib.py",
-        "tests/test_conversion_curve_stdlib.py",
-        "tests/test_lists.py",
-        "tests/test_regions.py",
-        "tests/test_foundation_guide.py",
-        "tests/test_combo_nodes.py",
-        "tests/test_string_comfy_aliases.py",
+    **{
+        pack: (f"packages/{directory}/tests/test_*.py",)
+        for pack, directory in _PACK_DIRECTORIES.items()
+    },
+    "dinkster-utilities": (
+        "packages/dinkster-nodes-utilities/tests/test_*.py",
         "tests/test_comfy_loops.py",
-        "tests/test_output_descriptors.py",
-        "tests/test_composed_schema.py",
-        "tests/test_editor_roles.py",
     ),
-    "dinkster-nodes-image": (
+    "dinkster-image": (
+        "packages/dinkster-nodes-image/tests/test_*.py",
         "tests/test_image_*.py",
         "tests/test_mask_operations.py",
         "tests/test_detection_nodes.py",
@@ -50,38 +55,52 @@ _SUITES = {
         "tests/test_storage_inputs.py",
         "tests/test_vision_line_edge_schema.py",
     ),
-    "dinkster-nodes-media-io": (
-        "tests/test_video_*.py",
+    "dinkster-audio": (
+        "packages/dinkster-nodes-audio/tests/test_*.py",
         "tests/test_audio_*.py",
         "tests/test_media_*.py",
-        "tests/test_text_io.py",
-        "tests/test_latent_codec.py",
+    ),
+    "dinkster-video": (
+        "packages/dinkster-nodes-video/tests/test_*.py",
+        "tests/test_video_*.py",
+        "tests/test_media_*.py",
+        "tests/test_capture_io.py",
+        "tests/test_workflow_library.py",
+    ),
+    "dinkster-3d": (
+        "packages/dinkster-nodes-3d/tests/test_*.py",
         "tests/test_model3d_*.py",
         "tests/test_splat_*.py",
         "tests/test_layer_documents.py",
-        "tests/test_capture_io.py",
-        "tests/test_workflow_library.py",
+    ),
+    "dinkster-latent": (
+        "packages/dinkster-nodes-latent/tests/test_*.py",
+        "tests/test_latent_codec.py",
+    ),
+    "dinkster-text": (
+        "tests/test_comfy_text_nodes.py",
+        "tests/test_save_text.py",
         "tests/test_text_comfy_goldens.py",
     ),
-    "dinkster-nodes-comfy": ("packages/dinkster-nodes-comfy/tests/test_*.py",),
-    "dinkster-nodes-remote": ("packages/dinkster-nodes-remote/tests/test_*.py",),
-    **{
-        f"dinkster-vision-{name.replace('_', '-')}": (
-            f"packages/dinkster-nodes-vision/tests/test_{name}.py",
-        )
-        for name in (
-            "birefnet",
-            "depth_anything_v2",
-            "depth_anything_v3",
-            "detr",
-            "efficient_sam",
-            "hed",
-            "rtdetr",
-            "sam31",
-            "upscale",
-        )
-    },
 }
+
+
+def selected_library_wheels(catalog: Lockfile, artifacts: Path) -> dict[str, Path]:
+    """Identify manifestless entries and verify the publisher's locked library identity."""
+    libraries = {}
+    for pack in catalog.packs:
+        archive = pack_archive_path(artifacts, pack.artifact_digest)
+        with zipfile.ZipFile(archive) as wheel:
+            if any(Path(name).name == "dinkster-pack.toml" for name in wheel.namelist()):
+                continue
+        data = archive.read_bytes()
+        if not 1 <= len(data) <= ARCHIVE_LIMIT or artifact_digest(data) != pack.artifact_digest:
+            raise ValueError(f"selected library {pack.pack} size or digest mismatch")
+        name, version, _ = library_metadata(archive)
+        if (name, version) != (pack.pack, pack.version) or pack.claims:
+            raise ValueError(f"selected library {pack.pack} identity mismatch")
+        libraries[pack.pack] = archive
+    return libraries
 
 
 def run_selected_tests(
@@ -90,32 +109,35 @@ def run_selected_tests(
     """Test only the scanner's verified selection through a disposable checkout layout."""
     if sys.platform != "linux":
         raise RuntimeError("selected pack admission tests require the Linux CI environment")
-    unknown = {pack.pack for pack in catalog.packs} - _SUITES.keys()
+    libraries = selected_library_wheels(catalog, artifacts)
+    unknown = {pack.pack for pack in catalog.packs} - libraries.keys() - _SUITES.keys()
     if unknown:
         raise ValueError(f"selected packs have no engine test suite: {sorted(unknown)}")
     if not catalog.packs:
         raise ValueError("selected pack tests require a nonempty catalog")
     if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
         raise ValueError(f"requested test packs are not in the selected catalog: {sorted(missing)}")
+    directories = set(_PACK_DIRECTORIES.values())
+    directories.update(
+        path.parent.name
+        for path in (root / "packages").glob("*/pyproject.toml")
+        if is_official_library(tomllib.loads(path.read_text()))
+    )
+    import_packages = {pack_import_name(pack) for pack in _PACK_DIRECTORIES}
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
         work = Path(directory)
         checkout = work / "engine"
         tracked = subprocess.check_output(
             ["git", "-C", str(root), "ls-files", "-z"], text=True
         ).split("\0")
-        # Tests retain their checkout-relative manifests and helpers, but no
-        # official implementation or manifest is copied from the engine tree.
+        # Tests and build fixtures come from the engine; runtime bytes come from wheels.
         for name in filter(None, tracked):
             relative = Path(name)
-            official = len(relative.parts) > 1 and relative.parts[1] in {
-                "dinkster-nodes-comfy",
-                "dinkster-nodes-foundation",
-                "dinkster-nodes-image",
-                "dinkster-nodes-media-io",
-                "dinkster-nodes-remote",
-                "dinkster-nodes-vision",
-            }
-            if official and "tests" not in relative.parts:
+            official = len(relative.parts) > 1 and relative.parts[1] in directories
+            test_metadata = relative.name == "pyproject.toml" or (
+                relative.name.startswith("draft-") and relative.suffix == ".json"
+            )
+            if official and "tests" not in relative.parts and not test_metadata:
                 continue
             source = root / relative
             destination = checkout / relative
@@ -123,60 +145,75 @@ def run_selected_tests(
             shutil.copy2(source, destination)
         module_roots: list[str] = []
         modules: dict[str, str] = {}
+        if libraries:
+            wheels = work / "wheels"
+            wheels.mkdir()
+            paths = []
+            for archive in libraries.values():
+                identity, version, _ = library_metadata(archive)
+                wheel_path = wheels / f"{identity.replace('-', '_')}-{version}-py3-none-any.whl"
+                shutil.copyfile(archive, wheel_path)
+                paths.append(str(wheel_path))
+                with zipfile.ZipFile(archive) as wheel:
+                    for member in wheel.namelist():
+                        if member.endswith(".py") and ".dist-info/" not in member:
+                            module = member.split("/")[0].removesuffix(".py")
+                            import_packages.add(module)
+                            modules[module] = str(work / "libraries")
+            subprocess.run(
+                [
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--no-deps",
+                    "--target",
+                    str(work / "libraries"),
+                    *paths,
+                ],
+                check=True,
+            )
+            module_roots.append(str(work / "libraries"))
         checkout_packs = []
         for pack in catalog.packs:
-            if pack.pack.startswith("dinkster-vision-"):
-                package = checkout / "packages/dinkster-nodes-vision"
-                destination = package / (pack.pack.replace("-", "_") + "_pack")
-            else:
-                package = checkout / "packages" / pack.pack
-                destination = work / "packs" / pack.pack
+            if pack.pack in libraries:
+                continue
+            package = checkout / "packages" / _PACK_DIRECTORIES[pack.pack]
+            destination = package / "src"
             archive = pack_archive_path(artifacts, pack.artifact_digest)
             unpack_artifact(archive, destination, pack.artifact_digest)
-            manifest = load_manifest(destination / "dinkster-pack.toml")
+            manifest = load_manifest(pack_manifest_path(destination))
             if manifest.name != pack.pack:
                 raise ValueError(f"selected test archive names {manifest.name}, not {pack.pack}")
-            if not pack.pack.startswith("dinkster-vision-"):
-                package.mkdir(parents=True, exist_ok=True)
-                for source in destination.iterdir():
-                    if source.name == "tests":
-                        raise ValueError(f"selected {pack.pack} cannot replace engine tests")
-                    target = package / source.name
-                    if source.is_dir():
-                        shutil.copytree(source, target)
-                    else:
-                        shutil.copy2(source, target)
-                destination = package
-            # Keep manifest-relative assets and src imports on the same selected bytes.
-            src = package / "src"
-            src.mkdir(exist_ok=True)
-            for module in destination.glob("dinkster_*"):
-                if module.name == "dinkster_nodes_vision":
-                    namespace = src / module.name
-                    namespace.mkdir(exist_ok=True)
-                    for provider in module.iterdir():
-                        if provider.is_dir():
-                            target = namespace / provider.name
-                            shutil.move(provider, target)
-                            provider.symlink_to(target, target_is_directory=True)
-                elif module.is_dir() and not (src / module.name).exists():
-                    target = src / module.name
-                    shutil.move(module, target)
-                    module.symlink_to(target, target_is_directory=True)
-            module_roots.append(str(src))
+            # Build configuration is engine test data, never installed. Runtime
+            # identity and implementation come from the wheel's RECORD and manifest.
+            shutil.copy2(manifest.path, package / "dinkster-pack.toml")
+            # Source-layout contract tests read resources beside the manifest.
+            # Keep Python modules inside their import package so cwd cannot shadow
+            # standard-library modules such as types in spawned workers.
+            for resource in manifest.root.iterdir():
+                target = package / resource.name
+                if target.exists() or resource.suffix in {".py", ".pyc"}:
+                    continue
+                if resource.is_dir():
+                    shutil.copytree(
+                        resource,
+                        target,
+                        ignore=shutil.ignore_patterns("*.py", "*.pyc", "__pycache__"),
+                    )
+                else:
+                    shutil.copy2(resource, target)
+            module_roots.append(str(destination))
             entry = manifest.nodes_entry.partition(":")[0]
-            modules[entry] = str(src / entry.replace(".", "/"))
+            modules[entry] = str(destination / entry.replace(".", "/"))
             if not Path(modules[entry]).is_dir():
                 raise ValueError(f"selected {pack.pack} archive is missing declared module {entry}")
-            # A checkout excludes publication metadata and relocates modules.
-            # Its local identity is not the selected registry archive identity.
             checkout_packs.append(
                 replace(
                     pack,
-                    artifact_digest=_installed_pack_digest(
-                        destination / "dinkster-pack.toml", Path(modules[entry])
-                    ),
-                    source=f"local:{destination}",
+                    artifact_digest=_installed_pack_digest(manifest.path, Path(modules[entry])),
+                    source=f"local:{package}",
                 )
             )
         (checkout / "src/dinkster/checkout-packs.lock").write_text(
@@ -201,14 +238,17 @@ def run_selected_tests(
                         continue
                     if candidate.is_relative_to(root):
                         candidate = checkout / candidate.relative_to(root)
-                    elif any(
-                        part in {*_SUITES, "dinkster-nodes-vision"} for part in candidate.parts
-                    ):
+                    elif any(part in directories for part in candidate.parts):
                         continue
                     if candidate.exists():
                         paths.append(str(candidate))
                 continue
-            if source.name.startswith(("dinkster_nodes_", "dinkster_vision_", "_editable_")):
+            if source.name.startswith("_editable_") or any(
+                source.name == name
+                or source.name.startswith(name + "-")
+                and source.name.endswith(".dist-info")
+                for name in import_packages
+            ):
                 continue
             (site / source.name).symlink_to(source, target_is_directory=source.is_dir())
         (site / "selected.pth").write_text("\n".join(paths) + "\n", encoding="utf-8")
@@ -220,10 +260,14 @@ def run_selected_tests(
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         child_env["CUDA_VISIBLE_DEVICES"] = ""
         child_env["DINKSTER_ACCELERATOR"] = "cpu"
+        # Historical evidence is read from Git, never added to the import search path.
+        child_env["DINKSTER_TEST_HISTORY_ROOT"] = str(root)
         child = work / "test-child.py"
         shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
         shutil.copy2(child, checkout / "_selected_pack_test_child.py")
         for pack in catalog.packs:
+            if pack.pack in libraries:
+                continue
             if test_packs and pack.pack not in test_packs:
                 continue
             tests = sorted(
@@ -239,7 +283,11 @@ def run_selected_tests(
             config = work / "test-selection.json"
             config.write_text(
                 json.dumps(
-                    {"modules": modules, "tests": tests, "packs": [p.pack for p in catalog.packs]}
+                    {
+                        "modules": modules,
+                        "tests": tests,
+                        "packs": [p.pack for p in catalog.packs if p.pack not in libraries],
+                    }
                 ),
                 encoding="utf-8",
             )

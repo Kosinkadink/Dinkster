@@ -6,10 +6,10 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.logic import ComfyAndNode, ComfyNotNode, ComfyOrNode, CustomCombo
-from dinkster_nodes_comfy.primitive import PrimitiveInt
-from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_schema import build_node_types, build_schemas
+from dinkster_utilities.logic import ComfyAndNode, ComfyNotNode, ComfyOrNode, CustomCombo
+from dinkster_utilities.primitive import PrimitiveInt
+from dinkster_utilities.switch import ComfySwitchNode
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -91,9 +91,9 @@ def test_switch_only_demands_the_selected_connected_arm(
             inputs[selected] = Link("selected", "INT")
         graph = Graph(
             {
-                "unused": GraphNode("PrimitiveInt", {"value": 29}),
-                "selected": GraphNode("PrimitiveInt", {"value": -17}),
-                "switch": GraphNode("ComfySwitchNode", inputs),
+                "unused": GraphNode("dinkster.utilities.primitive_int", {"value": 29}),
+                "selected": GraphNode("dinkster.utilities.primitive_int", {"value": -17}),
+                "switch": GraphNode("dinkster.utilities.comfy_switch_node", inputs),
             }
         )
         for _ in range(2):

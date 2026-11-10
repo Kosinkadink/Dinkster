@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.minimax_h3_sampling import MiniMaxH3SigmaShift
+from dinkster_minimax import NODES
+from dinkster_minimax.minimax_h3_sampling import MiniMaxH3SigmaShift
 
 
 def test_minimax_h3_sigma_shift_public_schema() -> None:
     schema = MiniMaxH3SigmaShift.schema()
-    assert MiniMaxH3SigmaShift in COMFY_NODES
-    assert schema.node_type == "MiniMaxH3SigmaShift"
+    assert NODES.count(MiniMaxH3SigmaShift) == 1
+    assert schema.node_type == "dinkster.minimax.mini_max_h3_sigma_shift"
     assert schema.display_name == "ModelSamplingMiniMaxH3"
     assert schema.category == "model/patch/minimax"
     assert tuple(i.id for i in schema.inputs) == ("model", "shift_video", "shift_audio")

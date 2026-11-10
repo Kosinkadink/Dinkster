@@ -19,22 +19,7 @@ from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetError, AssetIntegrityError, AssetRef, AssetVault, digest_bytes
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import value_asset_references
-from dinkster_nodes_foundation.types import Curve
-from dinkster_nodes_media_io.audio import LoadAudio, SaveAudio, SaveAudioMP3, SaveAudioOpus
-from dinkster_nodes_media_io.audio_ops import (
-    AdjustAudioVolume,
-    AudioOnsets,
-    ConcatAudio,
-    DownmixAudio,
-    EqualizeAudio,
-    ExtractAudioEnvelope,
-    FadeAudio,
-    JoinAudioChannels,
-    MergeAudio,
-    ResampleAudio,
-    SplitAudioChannels,
-    TrimAudio,
-)
+from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 from dinkster_values import TypeRegistry
 from dinkster_values.audio_codec import (
     AUDIO_INLINE_LIMIT,
@@ -62,7 +47,7 @@ from dinkster_values.audio_codec import (
 from PIL import Image
 
 from tests.async_scenarios import run_scenario
-from tests.test_audio_io import _bound, _mount
+from tests.test_audio_io import _bound, _mount, _save
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -164,7 +149,9 @@ def test_unknown_duration_probe_does_not_decode_outside_audio_webm_fallback(
     assert metadata["frames"] is None
 
 
-def test_load_trim_gain_and_metadata_do_not_decode(source, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_source_trim_gain_and_metadata_do_not_decode(
+    source, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import dinkster_values.audio_lazy as runtime
 
     def forbidden(*args, **kwargs):
@@ -172,8 +159,10 @@ def test_load_trim_gain_and_metadata_do_not_decode(source, monkeypatch: pytest.M
 
     monkeypatch.setattr(runtime, "_decode_source_window", forbidden)
     asset, _ = source
-    value = LoadAudio.execute(audio=asset, start_time=0.5, duration=1)["audio"]
-    value = AdjustAudioVolume.execute(audio=value, gain_db=-6)["audio"]
+    value = append_audio_edit(
+        audio_from_source(asset), {"trim": {"start_sample": 4000, "sample_count": 8000}}
+    )
+    value = append_audio_edit(value, {"gain": 10 ** (-6 / 20)})
     assert audio_meta(value)["shape"] == (1, 2, 8000)
     wire = encode_audio(value)
     assert len(wire) < 1024
@@ -313,7 +302,7 @@ def test_canonical_audio_binding_preserves_asset_errors(source, tmp_path, failur
 @pytest.mark.parametrize("target_rate", [4000, 11025, 48000])
 def test_resampled_windows_are_exact_slices_not_restarted_filters(source, target_rate) -> None:
     asset, _ = source
-    value = ResampleAudio.execute(audio=audio_from_source(asset), sample_rate=target_rate)["audio"]
+    value = append_audio_edit(audio_from_source(asset), {"resample": target_rate})
     full = audio_window(value, 0, effective_audio_facts(value)["frames"])["waveform"]
     windows = [
         audio_window(value, start, min(311, full.shape[-1] - start))["waveform"]
@@ -505,10 +494,9 @@ def test_window_allocation_guard_fires_before_source_decode(source, monkeypatch)
         audio_window(value, 0, 48000 * 7200)
 
 
-def test_surround_wav_volume_flac_and_channel_ops(
+def test_surround_wav_gain_and_channel_edits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _, snapshot = _mount(tmp_path, monkeypatch)
     waveform = np.zeros((1, 6, 24000), dtype=np.float32)
     frame_samples = 2400
     for frame in range(10):
@@ -524,40 +512,34 @@ def test_surround_wav_volume_flac_and_channel_ops(
         writer.commit()
     original = audio_from_source(AssetRef(digest, "surround.wav", len(data), resolver=vault))
     assert effective_audio_facts(original)["channels"] == 6
-    scaled = AdjustAudioVolume.execute(audio=original, gain_db=-6.020599913279624)["audio"]
-    saved = cast(list[AssetRef], SaveAudio.execute(audio=scaled)["audios"])[0]
-    loaded = LoadAudio.execute(audio=_bound(saved, snapshot))["audio"]
+    loaded = decode_audio(encode_audio(append_audio_edit(original, {"gain": 0.5})))
+    loaded = bind_audio_value(loaded, vault)
     assert effective_audio_facts(loaded)["channels"] == 6
     expected = audio_window(original, 0, 24000)["waveform"] * 0.5
     actual = audio_window(loaded, 0, 24000)["waveform"]
-    assert float(np.abs(actual - expected).max()) <= 1 / 32768
-    for node in (FadeAudio, EqualizeAudio):
-        assert effective_audio_facts(node.execute(audio=loaded)["audio"])["channels"] == 6
-    assert (
-        effective_audio_facts(ConcatAudio.execute(audio1=loaded, audio2=loaded)["audio"])[
-            "channels"
-        ]
-        == 6
+    np.testing.assert_array_equal(actual, expected)
+    concatenated = append_audio_edit(loaded, {"concat": [loaded]})
+    np.testing.assert_array_equal(
+        audio_window(concatenated, 23997, 6)["waveform"],
+        np.concatenate((actual[..., -3:], actual[..., :3]), axis=-1),
     )
-    assert (
-        effective_audio_facts(
-            JoinAudioChannels.execute(audio_left=loaded, audio_right=loaded)["audio"]
-        )["channels"]
-        == 12
+    selected = append_audio_edit(
+        loaded, {"channel_map": {"matrix": [[0, 0, 0, 0, 1, 0]], "layout": "mono"}}
     )
-    split = SplitAudioChannels.execute(audio=loaded, left_index=4, right_index=5)
-    np.testing.assert_array_equal(audio_window(split["left"], 0, 24000)["waveform"], actual[:, 4:5])
-    downmixed = DownmixAudio.execute(audio=loaded, layout="mono")["audio"]
+    np.testing.assert_array_equal(audio_window(selected, 0, 24000)["waveform"], actual[:, 4:5])
+    downmixed = append_audio_edit(
+        loaded, {"channel_map": {"matrix": [[1 / 6] * 6], "layout": "mono"}}
+    )
     np.testing.assert_allclose(
         audio_window(downmixed, 0, 24000)["waveform"],
         actual.mean(axis=1, keepdims=True),
         atol=3e-8,
         rtol=0,
     )
-    trimmed = TrimAudio.execute(audio=loaded, start=0.013, duration=0.101)["audio"]
+    trimmed = append_audio_edit(loaded, {"trim": {"start_sample": 624, "sample_count": 4848}})
     assert effective_audio_facts(trimmed)["channels"] == 6
     np.testing.assert_array_equal(audio_window(trimmed, 0, 4848)["waveform"], actual[..., 624:5472])
-    resampled = ResampleAudio.execute(audio=loaded, sample_rate=32000)["audio"]
+    resampled = append_audio_edit(loaded, {"resample": 32000})
     assert effective_audio_facts(resampled)["sample_rate"] == 32000
     assert effective_audio_facts(resampled)["channels"] == 6
     assert effective_audio_facts(resampled)["frames"] == 16000
@@ -566,43 +548,6 @@ def test_surround_wav_volume_flac_and_channel_ops(
 
     expected_resampled = resample_poly(actual, 2, 3, axis=-1)
     np.testing.assert_allclose(resampled_window, expected_resampled, atol=3e-8, rtol=0)
-    quieter = AdjustAudioVolume.execute(audio=loaded, gain_db=-6.020599913279624)["audio"]
-    merged = MergeAudio.execute(audio1=loaded, audio2=quieter, merge_method="subtract")["audio"]
-    np.testing.assert_allclose(
-        audio_window(merged, 0, 24000)["waveform"], actual * 0.5, atol=3e-8, rtol=0
-    )
-    envelope = ExtractAudioEnvelope.execute(
-        audio=loaded,
-        frames_per_second=20,
-        band_low_hz=0,
-        band_high_hz=4000,
-        normalize=False,
-    )
-    assert envelope["frames"] == 10
-    envelope_values = cast(list[float], envelope["envelope"])
-    expected_envelope = []
-    envelope_mono = actual[0].astype(np.float64).mean(axis=0)
-    for frame in range(10):
-        samples = envelope_mono[frame * frame_samples : (frame + 1) * frame_samples]
-        spectrum = (2.0 / frame_samples) * np.abs(np.fft.rfft(samples))
-        expected_envelope.append(float(np.max(spectrum[:200])))
-    np.testing.assert_allclose(envelope_values, expected_envelope, atol=0, rtol=0)
-    onsets = cast(Curve, AudioOnsets.execute(audio=loaded, frames_per_second=20)["curve"])
-    expected_flux = []
-    previous = None
-    onset_mono = actual[0].mean(axis=0)
-    for frame in range(10):
-        samples = onset_mono[frame * frame_samples : (frame + 1) * frame_samples]
-        spectrum = np.abs(np.fft.rfft(samples * np.hanning(frame_samples), n=frame_samples))
-        expected_flux.append(
-            float(spectrum.sum())
-            if previous is None
-            else float(np.maximum(spectrum - previous, 0).sum())
-        )
-        previous = spectrum
-    peak = max(expected_flux)
-    expected_points = tuple((frame / 20, value / peak) for frame, value in enumerate(expected_flux))
-    assert onsets.points == expected_points
 
 
 def test_batched_wav_preview_selects_first_without_decoding_other_batches() -> None:
@@ -762,47 +707,6 @@ def test_audio_rendition_selector_limits(normalizer, parameters, message) -> Non
         normalizer({"batch": "0", **parameters}, metadata)
 
 
-def test_downmix_accepts_discrete_channels_without_an_ffmpeg_layout() -> None:
-    pcm = np.ones((1, 9, 16), dtype=np.float32)
-    audio = {"waveform": pcm, "sample_rate": 8000}
-    mono = DownmixAudio.execute(audio=audio, layout="mono")["audio"]
-    np.testing.assert_array_equal(audio_window(mono, 0, 16)["waveform"], pcm[:, :1])
-    with pytest.warns(UserWarning, match="distributing channels equally"):
-        stereo = DownmixAudio.execute(audio=audio)["audio"]
-    np.testing.assert_array_equal(audio_window(stereo, 0, 16)["waveform"], pcm[:, :2])
-
-
-def test_onset_curve_tracks_impulses_and_silent_audio() -> None:
-    waveform = np.zeros((1, 6, 8000), dtype=np.float32)
-    waveform[..., 2100:2200] = 0.75
-    waveform[..., 6100:6200] = 0.5
-    value = AudioOnsets.execute(
-        audio={"waveform": waveform, "sample_rate": 8000}, frames_per_second=20
-    )["curve"]
-    assert isinstance(value, Curve)
-    curve = value
-    from dinkster_nodes_media_io import register_media_types
-
-    registry = TypeRegistry()
-    register_media_types(registry)
-    encoded = registry.spec("CURVE").encode(curve)
-    assert registry.spec("CURVE").decode(encoded) == curve
-    assert json.loads(encoded)["points"][0] == {"position": 0.0, "value": 0.0}
-    assert max(curve.points, key=lambda point: point[1])[0] == 0.25
-    assert curve.evaluate(0.75) > 0.5
-    silent = AudioOnsets.execute(audio={"waveform": waveform * 0, "sample_rate": 8000})["curve"]
-    assert isinstance(silent, Curve)
-    assert all(point[1] == 0 for point in silent.points)
-
-
-def test_long_onsets_retain_all_curve_points() -> None:
-    waveform = np.zeros((1, 1, 5000), dtype=np.float32)
-    value = AudioOnsets.execute(audio={"waveform": waveform, "sample_rate": 1})["curve"]
-    assert isinstance(value, Curve)
-    # Hand-derived: a one-sample hop keeps every timestamp, even beyond preview limits.
-    assert value.points == tuple((float(index), 0.0) for index in range(5000))
-
-
 def test_flac_seek_windows_are_sample_exact_and_decoder_bounded(
     source, tmp_path, monkeypatch
 ) -> None:
@@ -810,8 +714,8 @@ def test_flac_seek_windows_are_sample_exact_and_decoder_bounded(
 
     asset, expected = source
     _, snapshot = _mount(tmp_path, monkeypatch)
-    saved = cast(list[AssetRef], SaveAudio.execute(audio=audio_from_source(asset))["audios"])[0]
-    value = LoadAudio.execute(audio=_bound(saved, snapshot))["audio"]
+    saved = _save(SaveAudio, audio=audio_from_source(asset), mount="comfy-output")[0]
+    value = audio_from_source(_bound(saved, snapshot))
     opened = av.open
     decoded_samples: list[int] = []
 
@@ -861,8 +765,8 @@ def test_compressed_seek_windows_preserve_decoder_preroll(source, tmp_path, monk
     import dinkster_values.audio_lazy as runtime
 
     _, snapshot = _mount(tmp_path, monkeypatch)
-    saved = saver.execute(audio=audio_from_source(source[0]))["audios"][0]
-    value = LoadAudio.execute(audio=_bound(saved, snapshot))["audio"]
+    saved = _save(saver, audio=audio_from_source(source[0]), mount="comfy-output")[0]
+    value = audio_from_source(_bound(saved, snapshot))
     facts = effective_audio_facts(value)
     full = audio_window(value, 0, facts["frames"])["waveform"]
     decode = runtime._decode_frames
@@ -936,7 +840,7 @@ def test_registry_audio_wire_admission_and_receiving_host_binding(source) -> Non
 
 
 @pytest.mark.parametrize("preexisting", (False, True))
-def test_native_comfy_audio_registration_preserves_first_authority(
+def test_audio_pack_registration_preserves_first_authority(
     source, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preexisting: bool
 ) -> None:
     from dinkster_values import register_core_types
@@ -954,7 +858,7 @@ def test_native_comfy_audio_registration_preserves_first_authority(
     else:
         original = None
     manifest = load_manifest(
-        Path(__file__).parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        Path(__file__).parents[1] / "packages/dinkster-nodes-audio/dinkster-pack.toml"
     )
     assert manifest.types_entry is not None
     register = resolve_entry(manifest.types_entry)
@@ -974,14 +878,14 @@ def test_native_comfy_audio_registration_preserves_first_authority(
     np.testing.assert_array_equal(window["waveform"], expected[..., 712:741])
 
 
-def test_native_comfy_audio_registration_is_torch_free() -> None:
+def test_audio_pack_registration_is_torch_free() -> None:
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             "import sys; from dinkster_api.v1 import AUDIO_TYPE, TypeRegistry; "
-            "from dinkster_nodes_comfy import register_inference_types; "
-            "registry=TypeRegistry(); register_inference_types(registry); "
+            "from dinkster_audio import register_types; "
+            "registry=TypeRegistry(); register_types(registry); "
             "assert AUDIO_TYPE in registry; assert 'torch' not in sys.modules; "
             "assert 'dinkster_inference' not in sys.modules",
         ],
@@ -993,7 +897,8 @@ def test_native_comfy_audio_registration_is_torch_free() -> None:
 
 @pytest.mark.parametrize("concat", [False, True])
 def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) -> None:
-    from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
+    from dinkster_audio import NODES, register_types
+    from dinkster_audio.audio_effects import TrimAudioDuration
     from dinkster_protocol import Invocation
     from dinkster_schema import build_node_types
     from dinkster_values import register_core_types
@@ -1009,31 +914,31 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
         registry = TypeRegistry()
         register_core_types(registry)
         register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
-        register_media_types(registry)
+        register_types(registry)
+        node_type = TrimAudioDuration.define_schema().node_type
 
         async def run(worker: InProcessWorker | IsolatedWorker) -> object:
             result = await worker.invoke(
                 Invocation(
                     invocation_id="trim",
                     node_id="trim",
-                    node_type="dinkster.audio.trim",
+                    node_type=node_type,
                     inputs={
                         "audio": registry.wrap(AUDIO_TYPE, value),
-                        "start": registry.wrap("FLOAT", 0.113),
+                        "start_index": registry.wrap("FLOAT", 0.113),
                         "duration": registry.wrap("FLOAT", 0.751),
                     },
-                    effective_schema=worker.schemas["dinkster.audio.trim"],
+                    effective_schema=worker.schemas[node_type],
                 )
             )
             assert result.error is None
             assert result.outputs is not None
-            return result.outputs["audio"].resolve()
+            return result.outputs["AUDIO"].resolve()
 
-        expected = await run(InProcessWorker(build_node_types(MEDIA_IO_NODES), registry))
+        expected = await run(InProcessWorker(build_node_types(NODES), registry))
         diagnostics: list[BoundaryDiagnostic] = []
         manifest = (
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-audio/dinkster-pack.toml"
         )
         worker = IsolatedWorker(
             manifest,

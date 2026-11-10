@@ -1,15 +1,19 @@
 """Torch-free public audio music conditioning schemas."""
 
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
+from dinkster_minimax import NODES
+from dinkster_minimax.audio_music_conditioning import (
+    MiniMaxMusic3TextEncode,
+    ReferenceTimbreAudio,
+)
 
 
 def test_audio_music_conditioning_schemas() -> None:
-    music, reference = (node.schema() for node in AUDIO_MUSIC_CONDITIONING_NODES)
-    assert all(node in COMFY_NODES for node in AUDIO_MUSIC_CONDITIONING_NODES)
+    music, reference = MiniMaxMusic3TextEncode.schema(), ReferenceTimbreAudio.schema()
+    assert MiniMaxMusic3TextEncode in NODES
+    assert ReferenceTimbreAudio in NODES
     assert (music.node_type, music.display_name, music.category) == (
-        "MiniMaxMusic3TextEncode",
+        "dinkster.minimax.mini_max_music3_text_encode",
         "MiniMax Music3 Text Encode",
         "model/conditioning/minimax music",
     )
@@ -29,7 +33,7 @@ def test_audio_music_conditioning_schemas() -> None:
     ]
     assert music.inputs[5].advanced and music.inputs[6].advanced
     assert (reference.node_type, reference.display_name, reference.category) == (
-        "ReferenceTimbreAudio",
+        "dinkster.minimax.reference_timbre_audio",
         "Set Reference Audio",
         "model/conditioning",
     )

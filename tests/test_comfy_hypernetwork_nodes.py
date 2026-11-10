@@ -4,13 +4,13 @@ import tomllib
 from pathlib import Path
 
 from dinkster_api.v1 import ASSET_TYPE, CORE_FLOAT, MODEL_TYPE, AssetWidget, NumberWidget, TypeExpr
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.hypernetwork import HypernetworkLoader
+from dinkster_models import NODES
+from dinkster_models.hypernetwork import HypernetworkLoader
 
 
 def test_hypernetwork_schema_and_cold_registration() -> None:
     schema = HypernetworkLoader.schema()
-    assert schema.node_type == "HypernetworkLoader"
+    assert schema.node_type == "dinkster.models.hypernetwork_loader"
     assert schema.category == "model/loaders"
     assert schema.display_name == "Load Hypernetwork"
     assert tuple(port.id for port in schema.inputs) == ("model", "hypernetwork_name", "strength")
@@ -28,9 +28,7 @@ def test_hypernetwork_schema_and_cold_registration() -> None:
     ]
     root = Path(__file__).resolve().parents[1]
     manifest = tomllib.loads(
-        (root / "packages/dinkster-nodes-comfy/dinkster-pack.toml").read_text()
+        (root / "packages/dinkster-nodes-models/dinkster-pack.toml").read_text()
     )
-    assert ["devices", *(node.schema().node_type for node in COMFY_NODES)] == manifest["pack"][
-        "namespaces"
-    ]
-    assert HypernetworkLoader in COMFY_NODES
+    assert manifest["pack"]["namespaces"] == ["dinkster.models", "devices"]
+    assert HypernetworkLoader in NODES

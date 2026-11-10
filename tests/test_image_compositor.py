@@ -7,29 +7,34 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE, CompositorWidget, TypeRegistry
-from dinkster_image_document.document import ImageDocument
-from dinkster_nodes_image import (
-    COMPOSITOR_BLEND_MODES,
-    COMPOSITOR_TYPE,
-    IMAGE_NODES,
-    LAYERS_TYPE,
+from dinkster_api.v1 import (
+    BOUNDING_BOX_TYPE,
+    COMFY_ARRAY_TYPE,
+    CompositorWidget,
+    Detection,
+    Region,
+    TypeRegistry,
+)
+from dinkster_image.compositor import (
+    COMPOSITOR_NODES,
     AddLayer,
+    CreateLayeredImage,
+    LayersFromBoundingBoxes,
+)
+from dinkster_image.compositor_blend import blend, linear_to_srgb
+from dinkster_image.compositor_types import (
+    BLEND_MODES as COMPOSITOR_BLEND_MODES,
+)
+from dinkster_image.compositor_types import (
+    COMPOSITOR_TYPE,
+    LAYERS_TYPE,
+    MAX_COMPOSITOR_DIMENSION,
+    MAX_COMPOSITOR_LAYERS,
     CompositorLayer,
     CompositorRecipe,
     CompositorSourceLayer,
     CompositorTransform,
-    CreateLayeredImage,
-    Detection,
-    LayersFromBoundingBoxes,
     LayerStack,
-    Region,
-    register_image_types,
-)
-from dinkster_nodes_image.compositor_blend import blend, linear_to_srgb
-from dinkster_nodes_image.compositor_types import (
-    MAX_COMPOSITOR_DIMENSION,
-    MAX_COMPOSITOR_LAYERS,
     coerce_compositor_recipe,
     compositor_recipe_meta,
     decode_compositor_recipe,
@@ -39,6 +44,8 @@ from dinkster_nodes_image.compositor_types import (
     layer_stack_meta,
     source_layer_fingerprint,
 )
+from dinkster_image.types import register_image_types
+from dinkster_image_document.document import ImageDocument
 from dinkster_schema import use_reporter
 
 Captured = tuple[str, Mapping[str, object], bytes | None]
@@ -179,8 +186,8 @@ def _layers_header(encoded: bytes) -> dict[str, object]:
     return cast("dict[str, object]", json.loads(encoded[prefix : prefix + size]))
 
 
-def test_compositor_nodes_and_runtime_types_are_registered() -> None:
-    schemas = {node.schema().node_type: node.schema() for node in IMAGE_NODES}
+def test_compositor_support_schemas_and_runtime_types() -> None:
+    schemas = {node.schema().node_type: node.schema() for node in COMPOSITOR_NODES}
     assert {
         "dinkster.layers.add",
         "dinkster.layers.from_bounding_boxes",
@@ -329,7 +336,7 @@ def test_source_layers_enforce_dimension_and_operation_memory_bounds(
             1,
         )
 
-    monkeypatch.setattr("dinkster_nodes_image.support.MAX_IMAGE_BYTES", 8)
+    monkeypatch.setattr("dinkster_image.support.MAX_IMAGE_BYTES", 8)
     with pytest.raises(ValueError, match="image operation limit"):
         _source()
     with pytest.raises(ValueError, match="image operation limit"):
@@ -851,8 +858,8 @@ def test_compositor_refuses_output_memory_budget_before_allocation() -> None:
 
 
 def test_migrated_legacy_recipe_preserves_stale_detection_and_mask_placement() -> None:
-    from dinkster_nodes_image.layer_document import migrate_layers
-    from dinkster_nodes_image.layer_recipe import replay_compositor
+    from dinkster_image.layer_document import migrate_layers
+    from dinkster_image.layer_recipe import replay_compositor
 
     source = _source(width=2, height=1, mask=np.array([[[0, 1]]], dtype=np.float32))
     value = migrate_layers(LayerStack((source,), canvas_width=4, canvas_height=1))

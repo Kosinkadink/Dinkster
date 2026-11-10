@@ -19,7 +19,7 @@ import pytest
 from dinkster.installer import Installer, InstallError
 from dinkster.storelock import StoreLockTimeout, hold_lock
 
-MANIFEST_TEMPLATE = '[pack]\nname = "{name}"\n\n[pack.entry]\nnodes = "{name}_nodes:NODES"\n'
+MANIFEST_TEMPLATE = '[pack]\nname = "{name}"\n\n[pack.entry]\nnodes = "{name}:NODES"\n'
 
 HOLDER = """
 import sys
@@ -46,7 +46,9 @@ print("ok", flush=True)
 def write_pack(directory: Path, name: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "dinkster-pack.toml").write_text(MANIFEST_TEMPLATE.format(name=name))
-    (directory / f"{name}_nodes.py").write_text("NODES = []\n")
+    package = directory / name
+    package.mkdir()
+    (package / "__init__.py").write_text("NODES = []\n")
     return directory
 
 

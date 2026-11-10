@@ -19,7 +19,9 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_nodes_media_io import EmptyAudio, LoadAudio, SaveAudio, SaveAudioMP3, SaveAudioOpus
+from dinkster_audio.audio_generators import EmptyAudio
+from dinkster_audio.audio_io import LoadAudio
+from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -78,7 +80,7 @@ def _load(tmp_path: Path, data: bytes, name: str) -> tuple[np.ndarray, int]:
         writer.commit()
     media_type = _MEDIA_TYPES[name.rsplit(".", 1)[1]]
     ref = AssetRef(digest, name, len(data), media_type, resolver=vault)
-    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=ref)["audio"])
+    loaded = cast("dict[str, Any]", LoadAudio.execute(audio=ref)["AUDIO"])
     return cast(np.ndarray, loaded["waveform"])[0], int(cast(int, loaded["sample_rate"]))
 
 
@@ -121,14 +123,16 @@ def _save_and_reload(
         "utf-8",
     )
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    audio = _golden_audio(case)
     result = node.execute(
-        audio=_golden_audio(case),
-        target={"mount": "comfy-output", "prefix": "audio/golden"},
+        audio=audio,
+        mount="comfy-output",
+        filename_prefix="audio/golden",
         **kwargs,
     )
-    refs = cast("list[AssetRef]", result["audios"])
-    assert len(refs) == 1
-    return _load(tmp_path, (root / "audio" / refs[0].name).read_bytes(), f"dinkster{suffix}")
+    assert result["audio"] is audio
+    (saved,) = (root / "audio").glob(f"golden_*{suffix}")
+    return _load(tmp_path, saved.read_bytes(), f"dinkster{suffix}")
 
 
 def _pinned_decode(
@@ -201,8 +205,8 @@ def test_empty_audio_matches_pinned_shapes_and_rates() -> None:
             sample_rate=case["sampleRate"],
             channels=case["channels"],
         )
-        value = cast("dict[str, Any]", result["audio"])
-        waveform = cast(np.ndarray, value["waveform"])
+        value = cast("dict[str, Any]", result["AUDIO"])
+        waveform = np.asarray(value["waveform"])
         assert list(waveform.shape) == case["shape"]
         assert value["sample_rate"] == case["outputRate"]
         assert not bool(waveform.any())

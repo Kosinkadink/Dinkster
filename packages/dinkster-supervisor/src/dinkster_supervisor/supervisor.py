@@ -288,6 +288,7 @@ class EngineLink:
 
 LINK_KEY: web.AppKey[EngineLink] = web.AppKey("supervisor_link")
 SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("supervisor_session")
+WEBSOCKETS_KEY: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("supervisor_websockets")
 RESTART_KEY: web.AppKey[Callable[[], Awaitable[None]] | None] = web.AppKey("supervisor_restart")
 CORS_KEY: web.AppKey[frozenset[str]] = web.AppKey("supervisor_cors")
 INSTANCE_KEY: web.AppKey[str | None] = web.AppKey("supervisor_instance")
@@ -581,7 +582,6 @@ async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResp
     """Bidirectional WebSocket pump (the /api/events channel). Text and
     binary frames cross verbatim; either side closing closes both."""
     server_ws = web.WebSocketResponse(heartbeat=30)
-    await server_ws.prepare(request)
     session = request.app[SESSION_KEY]
     url = link.base_url + str(request.rel_url)
 
@@ -597,24 +597,30 @@ async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResp
             elif message.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.ERROR):
                 break
 
+    sockets = request.app[WEBSOCKETS_KEY]
+    sockets.add(server_ws)
     try:
+        await server_ws.prepare(request)
         async with session.ws_connect(url) as client_ws:
             up = asyncio.create_task(pump(server_ws, client_ws))
             down = asyncio.create_task(pump(client_ws, server_ws))
-            _, pending = await asyncio.wait((up, down), return_when=asyncio.FIRST_COMPLETED)
-            for task in (up, down):
-                if task.done():
+            try:
+                await asyncio.wait((up, down), return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in (up, down):
+                    task.cancel()
+                for task in (up, down):
                     try:
-                        task.result()
+                        await task
+                    except asyncio.CancelledError:
+                        pass
                     except Exception:  # noqa: BLE001 - log pump failures, then close both
                         log.exception("websocket proxy pump failed for %s", url)
-            for task in pending:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
     except aiohttp.ClientError as exc:
         log.warning("websocket proxy error for %s: %s", url, exc)
-    await server_ws.close()
+    finally:
+        sockets.discard(server_ws)
+        await server_ws.close()
     return server_ws
 
 
@@ -634,6 +640,7 @@ def create_supervisor_app(
     directly and point base_url at an in-process engine)."""
     app = web.Application()
     app[LINK_KEY] = link
+    app[WEBSOCKETS_KEY] = set()
     app[RESTART_KEY] = restart
     app[CORS_KEY] = frozenset(allow_origins)
     app[INSTANCE_KEY] = instance
@@ -652,7 +659,14 @@ def create_supervisor_app(
     async def close_session(app: web.Application) -> None:
         await app[SESSION_KEY].close()
 
+    async def close_websockets(app: web.Application) -> None:
+        # Request draining must not wait for clients that are waiting for an engine event.
+        await asyncio.gather(
+            *(ws.close(code=aiohttp.WSCloseCode.GOING_AWAY) for ws in tuple(app[WEBSOCKETS_KEY]))
+        )
+
     app.on_startup.append(manage_session)
+    app.on_shutdown.append(close_websockets)
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)

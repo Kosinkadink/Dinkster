@@ -1,1 +1,0 @@
-"""Bundled DETR provider runtime."""

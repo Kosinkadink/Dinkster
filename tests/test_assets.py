@@ -505,7 +505,7 @@ def test_comfy_manifest_registers_bound_assets_without_replacing_authority(
         original = None
         monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
     manifest = load_manifest(
-        Path(__file__).parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        Path(__file__).parents[1] / "packages/dinkster-nodes-audio/dinkster-pack.toml"
     )
     assert manifest.types_entry is not None
     register = resolve_entry(manifest.types_entry)

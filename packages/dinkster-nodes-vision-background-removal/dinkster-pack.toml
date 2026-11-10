@@ -1,0 +1,22 @@
+[pack]
+name = "dinkster-vision-background-removal"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.vision.background.removal"]
+requires = ["torch", "dinkster-inference==0.1.1"]
+
+[pack.inference]
+imports = ["bg_removal_model"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_vision_background_removal:NODES"
+types = "dinkster_vision_background_removal:register_types"

@@ -20,36 +20,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
+  checks:
+    name: format, lint, types
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     outputs:
-      comfy: ${{ steps.paths.outputs.comfy }}
+      docs: ${{ steps.paths.outputs.docs }}
+      engine: ${{ steps.paths.outputs.engine }}
+      runtime: ${{ steps.paths.outputs.runtime }}
+      packs: ${{ steps.paths.outputs.packs }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Select the CPU comfy gate
+      - name: Select changed-path test lanes
         id: paths
-        shell: bash
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        run: |
-          if [ -z "$BASE" ]; then
-            echo 'comfy=true' >> "$GITHUB_OUTPUT"
-          else
-            paths=$(git diff --name-only "$BASE" HEAD)
-            if grep -E '^(packages/dinkster-(nodes-comfy|compat-comfy)/|tests/test_comfy_|\.github/(actions/torch-cpu-suite/|workflows/ci\.yml$)|uv\.lock$)' <<< "$paths" > /dev/null; then
-              echo 'comfy=true' >> "$GITHUB_OUTPUT"
-            else
-              echo 'comfy=false' >> "$GITHUB_OUTPUT"
-            fi
-          fi
+        run: python tools/ci_selection.py --base "$BASE"
+      - uses: astral-sh/setup-uv@v5
+        if: steps.paths.outputs.docs != 'true'
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-packages
+        if: steps.paths.outputs.docs != 'true'
+      - run: bash scripts/ci-fast.sh checks
+        if: steps.paths.outputs.docs != 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
 
   torch-cpu:
-    needs: changes
-    if: needs.changes.outputs.comfy == 'true'
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/v')
     name: CPU comfy gate (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -75,6 +80,8 @@ jobs:
           comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
 
   windows-runtime:
+    needs: checks
+    if: needs.checks.outputs.runtime == 'true'
     name: Windows SQLite runtime and durable delegations
     runs-on: windows-latest
     timeout-minutes: 15
@@ -89,13 +96,15 @@ jobs:
           cache-dependency-glob: uv.lock
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
-      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_environment_collection.py tests/test_setup_envs.py tests/test_release_install.py::test_development_version_counts_commits_since_the_last_version_tag
+      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_environment_collection.py tests/test_setup_envs.py tests/test_release_install.py::test_development_version_counts_commits_since_the_last_version_tag tests/test_release_install.py::test_default_admission_workflow_selects_publication_candidates
       - name: Verify published setup and bounded subprocess diagnostics
         run: uv run --no-sync python -m pytest -q tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal tests/test_environment_history.py::test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs tests/test_environment_history.py::test_snapshot_refuses_modified_metadata_and_linked_pack_parents tests/test_environment_runtime.py::test_start_status_idempotence_and_stop tests/test_environment_transactions.py::test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation tests/test_supervisor_subprocess.py
       - name: Verify produced assets and shared SQLite journals
         run: uv run --no-sync python -m pytest -q tests/test_produced_video_assets.py tests/test_environment_downloads.py tests/test_asset_cleanup.py
 
   windows-adoption:
+    needs: checks
+    if: needs.checks.outputs.runtime == 'true'
     name: Windows adoption and pruned restore (${{ matrix.case }})
     runs-on: windows-latest
     timeout-minutes: 15
@@ -117,6 +126,8 @@ jobs:
       - run: uv run --no-sync python -m pytest -q --durations=5 "tests/test_environment_history.py::test_adoption_materializes_pack_dependencies_and_restores_after_pruning[${{ matrix.case }}]"
 
   windows-imports:
+    needs: checks
+    if: needs.checks.outputs.runtime == 'true'
     name: Windows legacy snapshot imports
     runs-on: windows-latest
     timeout-minutes: 15
@@ -134,6 +145,8 @@ jobs:
       - run: uv run --no-sync python -m pytest -q --durations=5 tests/test_environment_history.py::test_legacy_import_preserves_activation_selection_and_refuses_conflicting_capture tests/test_environment_history.py::test_imported_software_restores_after_pruning_without_becoming_rollback_predecessor tests/test_environment_history.py::test_restore_plan_reports_only_required_pack_wheels_without_writing
 
   windows-acquisition:
+    needs: checks
+    if: needs.checks.outputs.runtime == 'true'
     name: Windows public setup acquisition
     runs-on: windows-latest
     timeout-minutes: 15
@@ -150,51 +163,71 @@ jobs:
       - run: uv sync --locked --all-packages
       - run: uv run --no-sync python -m pytest -q --durations=5 tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release
 
-  fast:
-    needs: [changes, torch-cpu]
-    if: always()
-    name: format, lint, types and unit subset
+  tests:
+    needs: [checks, torch-cpu]
+    if: ${{ !cancelled() }}
+    name: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Hosted pytest has taken 24m21s before catalog export and frontend decode.
+    # Keep three times the exhausted 25-minute budget for the complete gate.
+    timeout-minutes: 75
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
-      - name: Require the selected CPU gate
-        env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          COMFY: ${{ needs.changes.outputs.comfy }}
-          CPU_RESULT: ${{ needs.torch-cpu.result }}
+      - name: Require successful path selection and checks
         run: |
-          test "$CHANGES_RESULT" = success
-          if [ "$COMFY" = true ]; then
-            test "$CPU_RESULT" = success
+          test '${{ needs.checks.result }}' = success
+          if [ '${{ startsWith(github.ref, 'refs/tags/v') }}' = true ]; then
+            test '${{ needs.torch-cpu.result }}' = success
           else
-            test "$CPU_RESULT" = skipped
+            test '${{ needs.torch-cpu.result }}' = skipped
           fi
       - uses: actions/checkout@v4
+        if: needs.checks.outputs.docs != 'true'
         with:
           clean: true
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5
+        if: needs.checks.outputs.docs != 'true'
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --all-packages
+        if: needs.checks.outputs.docs != 'true'
       - name: Provision the wheel build backend before offline validation
+        if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
       - name: Verify pinned inference APIs
+        if: needs.checks.outputs.engine == 'true'
         run: uv run --no-sync python tools/verify_pinned_inference.py
-      - run: bash scripts/ci-fast.sh
+      - run: bash scripts/ci-fast.sh tests
+        if: needs.checks.outputs.engine == 'true'
+        env:
+          DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
+      - name: Install the CPU base for selected packs
+        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
+        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+      - name: Install the CPU software shader renderer
+        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
+      - name: Test selected packs
+        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
+        env:
+          PACKS: ${{ needs.checks.outputs.packs }}
+          DINKSTER_ACCELERATOR: cpu
+        run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
-        run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
+        if: needs.checks.outputs.engine == 'true'
+        run: uv run --no-sync pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
       - name: Read the pinned frontend revision
+        if: needs.checks.outputs.engine == 'true'
         id: frontend
         run: |
           uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
@@ -205,19 +238,23 @@ jobs:
           print(f"ref={workflow['env']['FRONTEND_REF']}")
           PY
       - uses: actions/checkout@v4
+        if: needs.checks.outputs.engine == 'true'
         with:
           repository: Kosinkadink/Dinkster-Frontend
           ref: ${{ steps.frontend.outputs.ref }}
           path: .frontend-validation
           persist-credentials: false
       - uses: actions/setup-node@v4
+        if: needs.checks.outputs.engine == 'true'
         with:
           node-version: 26.12.1
       - uses: pnpm/action-setup@v4
+        if: needs.checks.outputs.engine == 'true'
         with:
           package_json_file: .frontend-validation/package.json
           dest: ${{ runner.tool_cache }}/setup-pnpm
       - name: Decode the default catalog with the pinned frontend
+        if: needs.checks.outputs.engine == 'true'
         working-directory: .frontend-validation
         run: |
           pnpm install --frozen-lockfile --filter @dinkster/core... --filter .
@@ -227,6 +264,8 @@ jobs:
           CATALOG: ${{ runner.temp }}/default-catalog.json
 
   windows-checks:
+    needs: checks
+    if: needs.checks.outputs.runtime == 'true'
     name: Windows format, lint and types
     runs-on: windows-latest
     timeout-minutes: 10

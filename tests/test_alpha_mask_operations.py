@@ -9,7 +9,7 @@ from dinkster_api.v1 import (
     annotate_mask,
     media_semantics,
 )
-from dinkster_nodes_image import (
+from dinkster_image._draft_initialization import (
     IMAGE_NODES,
     GlslShader,
     ImageAlphaJoin,
@@ -26,7 +26,6 @@ from dinkster_nodes_image import (
     MaskToImage,
     PorterDuffComposite,
 )
-from dinkster_nodes_media_io.image import LoadImage, LoadImageOutput, LoadMask, SaveImage, SaveMask
 from dinkster_schema import validate_replacement_references
 
 
@@ -168,14 +167,6 @@ def test_image_operation_alpha_policy_inventory(node: type[Node]) -> None:
         assert schema.inputs[0].alpha_policy == "require"
 
 
-def test_media_policy_inventory() -> None:
-    for node in (LoadImage, LoadImageOutput):
-        assert node.schema().outputs[0].alpha_policy == "drop"
-        assert node.schema().outputs[1].mask_semantic == "alpha"
-    for node in (LoadMask, SaveMask, SaveImage):
-        assert all(spec.alpha_policy == "preserve" for spec in node.schema().outputs)
-
-
 def _matches(
     predicate: ReplacementPredicate | None, values: dict[str, object], links: set[str]
 ) -> bool:
@@ -207,8 +198,6 @@ def _matches(
             {"mask": 1, "source_resize": "none"},
         ),
         (MaskToImage, "channels.alpha_polarity", "channels.mask_polarity", {"channels": "rgba"}),
-        (LoadMask, "polarity", "mask_polarity", {}),
-        (SaveMask, "mask_mode", "mask_polarity", {}),
     ],
 )
 @pytest.mark.parametrize(
@@ -242,19 +231,3 @@ def test_polarity_migrations_preserve_values_and_links(
         else:
             assert mapping.transform is not None
             assert dict(mapping.transform.map)[legacy] == canonical
-
-
-@pytest.mark.parametrize(
-    "legacy,canonical",
-    [("inverted", "transparency"), ("source", "coverage"), ("direct", "coverage")],
-)
-@pytest.mark.parametrize("node", [LoadMask, SaveMask])
-def test_mask_file_migrations_preserve_old_pixel_inversion(
-    node: type[Node], legacy: str, canonical: str
-) -> None:
-    rule = node.schema().replacements[0]
-    for source in ("polarity", "mask_mode"):
-        case = next(case for case in rule.cases if _matches(case.when, {source: legacy}, set()))
-        transform = dict(case.inputs)["mask_polarity"].transform
-        assert transform is not None
-        assert dict(transform.map)[legacy] == canonical

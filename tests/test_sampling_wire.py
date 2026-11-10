@@ -182,18 +182,12 @@ def test_runtime_sampling_residency_validation_and_release(type_id: str, value: 
         spec.validate_encoded(type_id.encode() + b'.resident.v1\x00{"residentId":""}', metadata)
 
 
-@pytest.mark.parametrize("native_first", (True, False))
-def test_sampling_registration_order_preserves_the_shared_pool(native_first: bool) -> None:
+def test_sampling_registration_preserves_the_shared_pool() -> None:
     from dinkster_inference_wire import register_inference_types
     from dinkster_memory.resident import default_pool
-    from dinkster_native.native import register_native_types
 
     registry = TypeRegistry()
-    register = (register_native_types, register_inference_types)
-    if not native_first:
-        register = register[::-1]
-    for registration in register:
-        registration(registry)
+    register_inference_types(registry)
     for type_id, value in (("SAMPLER", RuntimeSampler()), ("NOISE", RuntimeNoise())):
         spec = registry.spec(type_id)
         assert spec.decode(spec.encode(value)) is value
@@ -210,12 +204,10 @@ import sys
 sys.modules["torch"] = None
 sys.modules["dinkster_inference"] = None
 from dinkster_api.v1 import TypeRegistry, register_inference_types
-from dinkster_native.native import register_native_types
-from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_sampling import NODES
 registry = TypeRegistry()
 register_inference_types(registry)
-register_native_types(registry)
-for node in COMFY_NODES:
+for node in NODES:
     node.schema()
 for type_id in ("SAMPLER", "NOISE"):
     prefix = type_id + ".resident.v1"

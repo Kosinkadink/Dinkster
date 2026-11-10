@@ -1,5 +1,29 @@
 ## Installed pack startup
 
+- Static-only registry installs support both the release catalog and the split
+  catalog with per-pack version files. Selection and acquisition share a snapshot
+  within each operation; the next operation reads current publication state.
+  Unknown index schemas refuse with an instruction to update Dinkster.
+- Managed generation hosts can opt into local human pack previews with
+  `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
+  or the inherited `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the
+  routes do not exist. Exact selections produce a review and copyable commands
+  for that project. Run the plan command, inspect its output, then run the apply
+  command before its 15-minute approval expires. Reconnect and refresh after
+  application. HTTP apply always refuses with `registry.managed-generation-required`;
+  it never installs or activates packs. HTTP application is Desktop-gateway-owned.
+  Remote, agent and delegated callers cannot use these routes. Authenticated
+  loopback callers require a nondelegated human with settings-write authority.
+- The default install selection contains all 35 ComfyUI-origin first-party
+  packs plus the remote pack. Checkout serving verifies their locked sources
+  and isolates every selected pack. The engine carries no draft node packs.
+- Official packs retain independent versions when the engine is released;
+  changed remote pack dependencies use a new version rather than replacing
+  an immutable published artifact.
+- Dependency locks declaring engine API compatibility can layer unchanged on
+  later engines inside that range. The target must supply the API, and all
+  ordinary shared dependency versions must still agree exactly. Older exact
+  locks retain their exact-version requirements.
 - Published software history can rebuild a pruned generation without restoring
   workflows, models or outputs. Missing engine inputs expose read-only alternatives
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
@@ -69,8 +93,13 @@
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
-  fourteen pack identities and node entry points without importing node code.
-  Generation schemas remain engine-carried rather than separate official packs.
+  manifest-declared pack identities and node entry points without importing node
+  code. New node-pack directories are discovered without a family allowlist.
+  Development scaffolding stays unpublished.
+- First-party source resolution reads runtime IDs and node entry modules from
+  manifests and distribution names from project metadata or installed wheel
+  records. Runtime, distribution and import names need not match. Discovery
+  does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
   Engine-only pushes select no pack. PR, fork and tag events build and
@@ -84,15 +113,15 @@
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
 - Prepared official source catalogs preserve dependency-owned codecs without
-  claiming them as pack-owned declarations. Existing comfy and image node IDs
-  execute from these archives without rewriting saved workflows or pack bytes.
+  claiming them as pack-owned declarations. First-party pack node IDs execute
+  from these archives without rewriting their source bytes.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
 - Pack manifests can declare an independent public pack version and a PEP 440
   engine compatibility range. Invalid or incomplete declarations are rejected
   without importing pack code. Every first-party node pack declares both,
-  including development and engine-carried generation packs.
+  including the development pack.
 - The registry client can select the newest active pack version meeting a
   minimum version and target engine range across paginated results. Active
   prereleases inside those bounds remain eligible. Historical releases without
@@ -116,6 +145,9 @@
   under test and require every pack to pass the registry scanner, including
   the isolated executable probe. Missing defaults, rejected packs and security
   review requirements fail the check without publishing any pack.
+- Selected-archive behavioral tests use each first-party pack's independent
+  distribution, including vision packs. They verify selected source provenance
+  and refuse checkout fallbacks or replacement of engine-owned tests.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
@@ -146,6 +178,38 @@
   them. Recorded registries remain authoritative; third-party, local and git
   selections remain unchanged for generation admission. Unavailable releases refuse
   before the candidate source lock is written, even with missing-default opt-in.
+- Additive source preparation accepts exact absent first-party pack selections
+  with `prepare-registry-sources --installed-lock PATH --retain-sources --add PACK@VERSION`.
+  Existing source identities remain unchanged instead of being re-resolved.
+  Repeated or installed pack names, noncanonical selections, incompatible engines,
+  third-party registry publishers and corrupt wheels refuse before a candidate
+  lock is written. Additions use the static index's compatible `wheels` entry and
+  preserve its authenticated registry publisher, never a manifest trust grant.
+  Preparation does not activate a generation or modify project data.
+- `prepare-registry-locks --pack PACK` acquires only the named source's published
+  dependency lock for the exact base; repeat the option to select multiple packs.
+  Other source releases need not remain available in the registry. Duplicate or
+  absent selections refuse before fetching; explicit non-registry selections
+  cannot be silently omitted with `--registry-only`. Supervisor additive source
+  preparation uses these selections, retaining existing source identities and
+  leaving old dependency locks to inheritance from the source generation.
+- `dinkster-env packs-plan PACK@VERSION --output PATH --json` retains an exact
+  additive software review in a new host-owned disposable directory outside the
+  project and shared store. It reports source/dependency locks, retained engine,
+  base and placement, wheel downloads and isolation size without a generation
+  journal or activation. Intact retained registry wheels can supply old archives
+  without contacting their release endpoints. Previously installed wheels retain
+  their original archive bytes and digest when another pack is added; corrupt
+  retained wheels refuse before a candidate source lock is written. Missing
+  retained registry archives are fetched and verified at their pinned identity,
+  without re-resolving their versions.
+- `packs-apply --input PATH --approval DIGEST --json` applies that review once
+  within 900 seconds. Changed project settings, current software or reviewed
+  input files refuse before construction. Successful application seals and
+  activates an ordinary next generation and appends its software history; existing
+  source/dependency locks and placement are preserved. Workflows, models, outputs,
+  user data and project settings remain unchanged. Hosts own review-directory
+  cleanup and must authorize the caller before invoking these local commands.
 - Generation source admission checks each declared pack engine range against
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a
@@ -258,6 +322,12 @@
   accepts the same opt-in, with an explicit host interpreter override when its
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
+  Official packs built from the explicitly selected checkout may serve under
+  reserved namespaces in that local generation. Other Git, local and pip
+  sources do not gain reserved-namespace trust, even with publisher `dinkster`.
+  Libraries built alongside those packs supply their locked dependencies
+  without a registry download and must match the dependency lock's digest.
+  Libraries are not installed or cataloged as node packs.
   Default setup and Desktop remain published-bundle consumers.
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the
@@ -319,6 +389,9 @@
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
   refuse repair; failures keep the prior generation selected and serving.
+- Connected event clients do not need to close their browser before an installed
+  generation can stop or be replaced. Authenticated supervisor shutdown closes
+  their event connections so clients can reconnect to the active generation.
 - `dinkster-env move` plans before confirmation, preserves project assets and
   named engine assignments, and checks destination health before committing.
   Same-volume relocation keeps shared packages; cross-volume relocation rebuilds

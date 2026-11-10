@@ -38,6 +38,16 @@ must agree with their package entry. Candidate wheels allow the planner to selec
 a compatible Python/ABI/platform tag; a missing compatible candidate is a conflict,
 not permission to build from source or resolve again.
 
+Locks using `dinkster.pack-lock/2` additionally record an `engine` version range.
+They require the target generation to supply `dinkster-api` inside that range;
+the API is not an exact package or a downloadable wheel in these locks. Direct
+and transitive API version requirements remain in `requirements` and constrain
+the target version too. URL, extra and conditional API requirements are refused
+for this representation. All other shared distributions still require exact
+agreement. Format 1 locks retain their original exact-version interpretation.
+The official builder takes the range from the node manifest, or from
+`[tool.dinkster] engine` for an ordinary official library.
+
 ## Alias table
 
 `pack_lock.OPENCV_ALIASES` is the engine's alias data:

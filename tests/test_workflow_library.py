@@ -1381,9 +1381,11 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     import numpy as np
-    from dinkster_nodes_media_io import SaveAudio, SaveImage, SaveText
-    from dinkster_nodes_media_io.video import SaveVideo
-    from dinkster_video import assemble_video
+    from dinkster_audio.audio_save import SaveAudio
+    from dinkster_image.ported.image_file_tools import SaveImage
+    from dinkster_text.save_text import SaveText
+    from dinkster_video.video_save import SaveVideo
+    from dinkster_video_runtime import assemble_video
     from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 
     root = tmp_path / "output"
@@ -1406,10 +1408,11 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
 
         @classmethod
         def execute(cls) -> Mapping[str, object]:
-            target = {"mount": "renders", "prefix": "saved/result"}
             if kind == "media/image":
                 SaveImage.execute(
-                    images=np.full((1, 3, 5, 3), 0.25, dtype=np.float32), target=target
+                    images=np.full((1, 3, 5, 3), 0.25, dtype=np.float32),
+                    filename_prefix="saved/result",
+                    mount="renders",
                 )
             elif kind == "media/audio":
                 SaveAudio.execute(
@@ -1417,13 +1420,24 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
                         "waveform": np.zeros((1, 1, 800), dtype=np.float32),
                         "sample_rate": 8000,
                     },
-                    target=target,
+                    filename_prefix="saved/result",
+                    mount="renders",
                 )
             elif kind == "media/video":
                 video = assemble_video(np.full((2, 16, 16, 3), 0.75, dtype=np.float32), fps=2)
-                SaveVideo.execute(video=video, target=target, format="mp4_h264")
+                SaveVideo.execute(
+                    video=video,
+                    filename_prefix="saved/result",
+                    mount="renders",
+                    format="mp4",
+                    codec="h264",
+                )
             else:
-                SaveText.execute(text="ordinary text, not encoded media", target=target)
+                SaveText.execute(
+                    text="ordinary text, not encoded media",
+                    filename_prefix="saved/result",
+                    mount="renders",
+                )
             return cls.outputs(out="saved")
 
     schemas = build_schemas([NativeSave])

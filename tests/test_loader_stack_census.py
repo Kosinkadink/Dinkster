@@ -9,12 +9,6 @@ from typing import Any, cast
 CENSUS_PATH = (
     Path(__file__).parent.parent / "tools" / "data" / "loader_stack_census_2026-08-28.json"
 )
-ALIAS_PATH = (
-    Path(__file__).parent.parent
-    / "packages"
-    / "dinkster-nodes-generation"
-    / "comfy-aliases.inactive.json"
-)
 
 
 def _census() -> dict[str, Any]:
@@ -87,37 +81,3 @@ def test_loader_stack_census_has_a_closed_disposition_for_every_record() -> None
         "specialized-pipeline": 7,
         "stable-cascade-stack": 2,
     }
-
-
-def test_loader_stack_census_admitted_records_remain_in_retired_alias_evidence() -> None:
-    repository_to_pack = {
-        "kijai/ComfyUI-KJNodes": "comfyui-kjnodes",
-        "rgthree/rgthree-comfy": "rgthree-comfy",
-        "yolain/ComfyUI-Easy-Use": "comfyui-easy-use",
-        "WASasquatch/was-node-suite-comfyui": "was-node-suite-comfyui",
-        "pythongosssss/ComfyUI-Custom-Scripts": "comfyui-custom-scripts",
-        "jags111/efficiency-nodes-comfyui": "efficiency-nodes-comfyui",
-    }
-    expected = {
-        (repository_to_pack[record["repository"]], record["nodeType"])
-        for record in _census()["records"]
-        if record["disposition"] != "quarantine"
-    }
-    aliases = cast(
-        "dict[str, Any]",
-        json.loads(ALIAS_PATH.read_text(encoding="utf-8")),
-    )
-    loader_carriers = {
-        "dinkster.apply_lora_stack",
-        "dinkster.load_checkpoint",
-        "dinkster.load_checkpoint_stack",
-        "dinkster.load_diffusion_model",
-        "dinkster.load_lora",
-    }
-    census_packs = set(repository_to_pack.values())
-    actual = {
-        (record["source"]["pack"], record["source"]["nodeClass"])
-        for record in aliases["records"]
-        if record["carrier"] in loader_carriers and record["source"]["pack"] in census_packs
-    }
-    assert actual == expected

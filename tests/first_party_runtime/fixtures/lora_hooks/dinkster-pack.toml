@@ -1,0 +1,11 @@
+[pack]
+name = "lora-hooks-fixture"
+publisher = "dinkster"
+namespaces = ["lora-hooks-fixture"]
+
+[pack.dependencies]
+dinkster-models = ">=0.0.1,<1"
+
+[pack.entry]
+nodes = "lora_hooks_fixture:LORA_HOOK_FIXTURES"
+types = "lora_hooks_fixture:register_inference_types"

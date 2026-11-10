@@ -21,6 +21,17 @@ uv sync --all-packages
 
 The package is not published separately yet and provides no console script.
 
+## ComfyUI import metadata
+
+`first_party.collect_comfy_translations` consumes authenticated publisher, pack,
+version and schema snapshots. Each index item carries `pack`, `version`, the
+ordinary `rule` and its target `schema` in the normal schema wire format.
+The schema retains ordered interfaces, family templates, combo choices and
+widget descriptors so import does not require the target pack to be installed.
+These snapshots are import metadata, not installed node registrations. The
+collector accepts only table-owned identities from publisher `dinkster` and
+rejects duplicate source classes and altered identity rules.
+
 ## Pack versions and engine compatibility
 
 `PackCompatibility` is the shared declaration for `[pack] version` and
@@ -163,6 +174,8 @@ use guarded cases; ordinary input mappings carry slot connections. The planner
 resolves choices before elaborating and validating the target.
 Same-type rules can attach `ReplacementMigration` with retired flat input IDs
 so stored nodes migrate once into the selected dynamic shape.
+First-party pack identities declare only their ComfyUI-class conversion rule.
+They do not retain predecessor Dinkster-pack rules or historical family migrations.
 `ReplacementCase.input_families` additionally supports copying a top-level
 dynamic family while preserving suffixes and authored order, or creating an
 explicit ordered member list from static source inputs.

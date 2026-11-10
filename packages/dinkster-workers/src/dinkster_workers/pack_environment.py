@@ -17,7 +17,7 @@ from pathlib import Path
 
 from dinkster_store import object_path, readable_label
 from dinkster_values import MEBIBYTE
-from packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .boundary import PROTOCOL_VERSION
 from .pack_lock import GenerationPackages, LockedWheel, PackLock, PackPlan, plan_pack
@@ -158,22 +158,41 @@ def provision_pack(
         else:
             python = _create_layered_venv(generation_python, destination, uv_cache, uv)
         if wheels:
-            # Direct wheel paths with --no-deps cannot pull a second torch or consult an index.
-            _run(
-                [
-                    uv,
-                    "pip",
-                    "install",
-                    "--python",
-                    str(python),
-                    "--offline",
-                    "--no-index",
-                    "--no-deps",
-                    *(["--break-system-packages"] if in_process else []),
-                    *(str(path) for path in wheels),
-                ],
-                uv_cache,
-            )
+            with tempfile.TemporaryDirectory(prefix="dinkster-wheel-pins-") as temporary:
+                requirements = Path(temporary) / "requirements.txt"
+                pins: list[str] = []
+                for wheel in plan.wheels:
+                    name, version, _, _ = parse_wheel_filename(wheel.filename)
+                    pins.append(f"{name}=={version} --hash=sha256:{wheel.sha256}")
+                requirements.write_text("\n".join(pins) + "\n", encoding="ascii")
+                _run(
+                    [
+                        uv,
+                        "pip",
+                        "install",
+                        "--python",
+                        str(python),
+                        "--no-config",
+                        "--no-deps",
+                        "--require-hashes",
+                        "--only-binary",
+                        ":all:",
+                        *(
+                            ["--offline", "--no-index"]
+                            if offline or len(plan.lock.indexes) != 1
+                            else ["--index-url", plan.lock.indexes[0]]
+                        ),
+                        *(["--break-system-packages"] if in_process else []),
+                        *(
+                            argument
+                            for parent in sorted({path.parent for path in wheels})
+                            for argument in ("--find-links", str(parent))
+                        ),
+                        "--requirements",
+                        str(requirements),
+                    ],
+                    uv_cache,
+                )
         plan.lock.write(destination / "pack-lock.json")
         return python
     except BaseException:

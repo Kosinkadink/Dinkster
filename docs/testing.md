@@ -50,11 +50,37 @@ the active test and exits the process, so the rest of that shard cannot run.
 For a measured longer whole-test requirement, use
 `@pytest.mark.timeout(seconds)` with a reason, keeping the helper deadline
 below that backstop and the backstop below the CI job budget. Job limits are
-the final outer bound; neither timeout skips a test. pytest-xdist is not used.
+the final outer bound; neither timeout skips a test. Worker crashes fail the
+run without restarting the worker or retrying its tests.
 
 The defaults allow over four times the 28.25-second slowest call reported
 by the hosted Windows shard 1 sample in
 [full-validation run 42071734785](https://github.com/Kosinkadink/Dinkster/actions/runs/42071734785/job/127401249972).
+
+## Parallel execution
+
+Install the locked development group before testing. Root pytest invocations
+use pytest-xdist with at most eight logical-CPU workers and work stealing.
+Smaller hosts use their detected CPU count. Tests must own their ports and
+temporary directories; generated binary parameters need stable, explicit IDs
+so every worker collects the same cases. Assertions and coverage sources are
+unchanged by parallel execution.
+
+Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
+Do not use retries to hide a parallel-only failure. Package suites launched
+from their own project directory retain that project's pytest settings.
+Selected-archive admission is an explicit serial group: its inline plugin
+tracks unavailable exports and executed tests in the launcher's process.
+The selected tests and minimum-executed-test guard remain unchanged.
+
+Full-validation jobs run serially inside each matrix shard with
+`PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
+within a job. The matrix jobs themselves run in parallel. Linux and Windows
+root shards print every setup, call and teardown duration with
+`--durations=0 --durations-min=0` and retain per-test totals in
+`test-timings-linux-N` and `test-timings-windows-N` JUnit artifacts, including
+when pytest fails. Use each platform's timings to balance its shards instead
+of counting files.
 
 ## Platform golden evidence
 
@@ -75,11 +101,12 @@ the evidence repository. Generation fails if the evidence checkout or its
 
 ## Pull requests and full validation
 
-`.github/workflows/ci.yml` runs one fast job with a ten-minute limit. After
-installing the locked workspace and fetching pinned evidence for type
-resolution (not model weights or coverage inputs), it runs
-`bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
-path-based unit subset:
+`.github/workflows/ci.yml` always reports `format, lint, types` and `tests`.
+Docs-only changes skip environment provisioning and test execution inside
+those jobs. Other changes run Ruff format, Ruff lint and both platform
+Pyright checks with `bash scripts/ci-fast.sh checks`. The test job runs the
+engine subset with `bash scripts/ci-fast.sh tests`, selected pack tests, or
+both, according to the changed paths. Engine subset examples include:
 
 - `tests/test_extension_factory_guard.py`: exact registry-factory,
   contribution-kind and factory baseline checks.
@@ -92,27 +119,37 @@ path-based unit subset:
 - `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
 
 These tests use synthetic data. The validation-input contract checks the prepared
-evidence location without reading model data. Selection does not depend on the
-changed files, network access, model availability or hardware. Full suites remain
-required locally before landing; this subset is fast PR feedback, not a
-replacement for full validation. Reproduce the job after
+evidence location without reading model data. `tools/ci_selection.py` selects
+install/environment tests and the Windows jobs only for runtime-related changes.
+A pack-only change selects that pack's behavioral tests; shared library changes
+also select its declared dependents. Registry default pack admission gates only
+scanner or harness changes. Publication preflight runs for publisher or manifest
+changes, not ordinary pack source edits. Reproduce the checks and engine subset after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
+
+Landing requires the selected hosted jobs green and a fresh LOW verifier PASS at
+the offered head. Running the counted full suite or its shards locally is not a
+landing gate. During development, run the tests the change touches. The whole
+suite runs in hosted full validation on main after landing; a red main follows
+the integrator's repair route. Issue-specific acceptance evidence still applies.
 
 ### Counted pack runtime matrix
 
-Before freezing a distribution, dependency or pack-loading change, the counted
-suite includes the following runtime environments, not only the root and
-workspace-member tests. The selections and setup commands in
+Full validation covers the following runtime environments, not only the root
+and workspace-member tests. This matrix is not a local pre-freeze requirement.
+The selections and setup commands in
 `.github/workflows/full-validation.yml` and
 `.github/actions/torch-cpu-suite/action.yml` are authoritative.
 
 | Lane | Required execution |
 | --- | --- |
-| Linux CPython 3.12 root | All four `test` file shards, with the workflow's branch-coverage sources and exclusions |
-| Windows CPython 3.14.10 root | All four `test` file shards in a native Windows checkout, using the patched SQLite runtime |
+| Linux CPython 3.12 root | All twelve serial `test` shards, with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
+| Windows CPython 3.14.10 root | All ten serial `test` file shards, balanced by native Windows timings with module fixtures kept together, excluding the separate runtime selection and using the patched SQLite runtime |
+| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, generations, history and transactions split by sorted test ID, other files stay whole |
 | CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
-| Coverage gate | All four Linux coverage files combined; `coverage report --fail-under=80` |
+| Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |
+| Coverage gate | All twelve Linux and eight Windows runtime coverage files combined; `coverage report --fail-under=80` |
 
 Build the CPU runtime with
 `uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
@@ -128,16 +165,42 @@ Prepare the pinned validation inputs before running evidence-tooling tests.
 
 On X570, launch each complete suite through the wrapper workspace's
 `run_counted_suite.sh` with `OMP_NUM_THREADS=4` and `MKL_NUM_THREADS=4`.
+From a Dinkster root checkout with its locked development dependencies and
+pinned validation inputs prepared, the counted CPU root command is:
+
+```bash
+OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES='' \
+  DINKSTER_ACCELERATOR=cpu DINKSTER_SLOW_TESTS=1 \
+  /home/kosin/comfy-vibe-station/run_counted_suite.sh \
+  .venv/bin/python -m pytest -q --durations=0 --durations-min=0 \
+  --junitxml=test-results/root.xml \
+  --deselect=tests/test_sandbox.py::TestLiveJail \
+  --deselect=tests/test_doctor.py::TestLiveJailedProbe \
+  --cov=dinkster_api --cov=dinkster_assets --cov=dinkster_caches \
+  --cov=dinkster_engine --cov=dinkster_graph --cov=dinkster_memory \
+  --cov=dinkster_image --cov=dinkster_schema --cov=dinkster_server \
+  --cov=dinkster_values --cov=dinkster_workers --cov-branch \
+  --cov-report=term-missing
+```
+
+Adjust only the wrapper workspace path for another installation. Root pytest
+defaults select up to eight workers with work stealing and no worker restart;
+no explicit `-n` is needed. The wrapper holds one host-wide slot for the whole
+command, including all workers. Record host load as measurement context, not
+as another admission gate. Focused tests and collection-only checks do not use
+the counted wrapper. This root run is not a replacement for the CPU-pack,
+native Windows or live-jail environments in the matrix.
+
 Native Windows evidence runs on a Windows machine; a Linux collection or
 simulated platform is not a replacement. Preserve the existing assertions,
 platform exclusions and coverage floor. Model/GPU comparisons are separate
 from this non-model runtime matrix.
 
-The freeze record names every lane, the exact head, commands, results and logs,
-including each shard and the combined coverage percentage. Missing inputs or
-an unexecuted lane are reported as incomplete, never as a pass. Hosted fast
-feedback alone does not certify this matrix. Do not dispatch or rerun hosted
-full validation to obtain the record.
+When reporting this matrix, name the executed lanes, exact head, commands,
+results and logs, including each shard and the combined coverage percentage.
+Missing inputs or an unexecuted lane are incomplete, never a pass. Hosted fast
+feedback alone does not certify the matrix, and matrix evidence does not gate
+landing. Do not dispatch or rerun hosted full validation to obtain the record.
 
 The required `CI_RUNNERS` repository variable controls every job. Its
 `linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
@@ -156,58 +219,42 @@ dispatch, and when called by the release workflow. The `on.schedule` cron
 list in that file is the single schedule definition; change its first cron
 line to change the two-hour cadence. A scheduled run skips the heavy jobs
 when the latest successful main run already validated the same commit.
-Main pushes use one non-cancelling concurrency group. GitHub keeps one active
-push run and only the newest pending push run, replacing older pending runs as
-new commits arrive. A merge whose pending run is replaced is covered by the
-next completed run at a descendant head. Find candidate runs in the Actions
+Main pushes use one concurrency group that cancels superseded active runs
+and replaces older pending runs as new commits arrive. A merge whose run is
+cancelled or replaced is covered by the next successful complete run at a
+descendant head. Find candidate runs in the Actions
 `full-validation` history, then confirm coverage from a local clone with
 `git merge-base --is-ancestor <merge-sha> <run-head-sha>`. Scheduled,
 dispatched and release-called runs use a separate non-cancelling durable group,
-so push traffic neither queues nor replaces them. Full validation runs the
-Python 3.12 Linux suite as four whole-file shards, both Python 3.12 Windows
-shards, and branch coverage collected during those same Linux test shards.
-All four coverage artifacts are required and combined before enforcing the
-unchanged 80% floor, without a second root-suite run. Model pytest invocations
-report their ten slowest durations. Full validation also runs model tests,
-one torch CPU job, translation coverage, artifact
-smoke checks and the macOS descriptor test. Every complete lane has a
-20-minute or lower job timeout. `main-status` uploads one JSON artifact with
-every aggregate result and fails unless every selected lane passed. Select a branch in Actions'
-"Run workflow" menu, or pass the dispatch ref explicitly:
+so push traffic neither queues nor replaces them. Full validation executes the
+matrix above, including branch coverage during the root/runtime test jobs
+rather than a second root-suite run. Linux root shards retain complete phase
+durations and JUnit totals; Windows runtime jobs print all durations. Root
+jobs have 30-minute limits except Windows root shard 1 at 45 minutes; Windows
+runtime jobs have 45-minute limits, CPU-pack jobs 20 minutes and probe jail
+15 minutes. These are failure backstops, not target completion times.
+`main-status` uploads one JSON artifact with every aggregate result and fails
+unless every selected lane passed.
 
-```bash
-gh workflow run full-validation.yml --repo Kosinkadink/Dinkster --ref <branch>
-```
+Owners do not dispatch, rerun or cancel full validation to obtain evidence for
+a pull request. Use naturally completed main runs; cancelled or replaced runs
+are incomplete evidence. The separate release workflow defines its own build,
+installation and publication checks and does not replace main full validation.
 
-The dispatch ref selects both the workflow and checked-out code, so owners
-can obtain Windows and full-suite evidence for an unmerged branch. The
-selected branch must contain the workflow. The daily audit uses main.
-
-`release.yml` runs only for version tags. It calls full validation for the
-exact tagged commit before building the complete wheel set, then installs and
-launch-checks those exact artifacts on Linux, Windows and macOS before
-publishing the GitHub Release. Its hosted-eligible jobs use the same
-`CI_RUNNERS` variable.
-
-Both workflows use Python 3.12 only. Package requirements and the dependency
-lock continue to support Python 3.13. Heavy jobs run independently; the
-torch CPU job pins AVX2 dispatch without retry jobs.
+The root matrix uses Linux Python 3.12 and Windows Python 3.14.10. CPU-pack
+jobs use the interpreter selected by their prepared bundle. Heavy jobs run
+independently; CPU Torch jobs pin AVX2 dispatch without retry jobs.
 
 Linux ARM64 artifact smoke and release installation are not part of the
 supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 
 ## Coverage
 
-Measured with branch coverage across all packages:
-
-```bash
-uv run pytest -q --cov=dinkster_api --cov=dinkster_assets --cov=dinkster_caches \
-  --cov=dinkster_compat_comfy --cov=dinkster_engine --cov=dinkster_graph \
-  --cov=dinkster_memory --cov=dinkster_nodes_foundation --cov=dinkster_nodes_media_io \
-  --cov=dinkster_schema \
-  --cov=dinkster_server --cov=dinkster_values --cov=dinkster_workers \
-  --cov-branch --cov-report=term-missing
-```
+The counted root command above uses the same branch-coverage source list as
+the hosted Linux root and Windows runtime jobs. Hosted coverage combines all
+Linux root and Windows runtime artifacts in the matrix above before running
+`coverage report --fail-under=80`; a missing artifact or failed shard fails
+the gate. A local root report alone is not the combined hosted result.
 
 CI enforces a ratcheting floor (see `.github/workflows/full-validation.yml`); raise it
 when real coverage rises, never lower it to make a PR pass. Known
@@ -234,7 +281,7 @@ are clearly labeled, and skip loudly rather than silently not existing:
   platforms. A core-only checkout can use `uv sync --group angle`. Run the test to
   execute every declared GLSL image mirror against its CPU parity corpus.
   It skips when ANGLE or a float-renderable EGL/GLES 3 context is unavailable.
-- **CI matrix**: Linux + Windows, Python 3.12 - Windows is the
+- **CI root matrix**: Linux Python 3.12 and Windows Python 3.14.10 - Windows is the
   dominant user OS and keeps the tcp-transport and shm-lifetime rules
   honest.
 
@@ -245,10 +292,9 @@ targets because their inputs come from outside.
 
 ## CPU checks
 
-The single `torch-cpu` job never acquires or executes model weights. It
-passes `run-model-tests: "false"` to
-`.github/actions/torch-cpu-suite`. The action defaults to false as well.
-Environment setup and the vision pyright projects remain in this job. The
+The `torch-cpu` matrix has four comfy shards and one vision job, using
+`.github/actions/torch-cpu-suite`. It never acquires or executes model weights.
+Environment setup runs in each job; vision Pyright runs in the vision job. The
 vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
@@ -298,19 +344,9 @@ For physical workflow runs, use the tracked transcript harness and the exact
 interpreter, preflight, catalog preparation, and evidence recipe in
 [Workflow benchmark invocation](workflow-benchmark.md).
 
-The `model-tests` matrix runs in full validation in `Kosinkadink/Dinkster` on
-main pushes, the daily schedule and manual dispatch. Pull requests run only
-the fast tier. Eight whole-file inference and IPAdapter shards run beside
-fixed groups for acceptance sampling and the benchmark loader; HED, upscale
-and EfficientSAM; Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth
-Anything V3; and SAM 3.1. Every vision test is selected from the single
-`packages/dinkster-nodes-vision/tests` tree. All groups run on GitHub-hosted
-Linux with CPU Torch and pinned AVX2 dispatch. `model-tests-gate` requires
-every group to pass. The contract test asserts the complete suite manifest so
-a suite cannot be silently omitted or assigned twice. Each group uses the
-same composite action with `run-model-tests: "true"` and the existing
-read-only identity and evidence deploy keys. Checkouts do not persist
-credentials, downloads use `RUNNER_TEMP`, and full suites execute directly.
+Full validation has no separate `model-tests` or `model-tests-gate` jobs.
+Real-artifact checks use their documented provider inputs and are not implied
+by a passing non-model CPU matrix.
 
 ## Tooling enforcement
 

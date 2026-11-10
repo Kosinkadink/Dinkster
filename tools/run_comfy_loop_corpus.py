@@ -13,11 +13,9 @@ from dinkster_api.v1 import CORE_INT
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
-from dinkster_nodes_comfy.loops import LOOP_NODES
-from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_nodes_dev.loop_corpus import LOOP_CORPUS_NODES, VALUE_TYPE, Observations
-from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
+from dinkster_utilities import NODES as UTILITY_NODES
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -27,7 +25,11 @@ OUTPUTS = {
     "EndLoop": ("outputs",),
     "Issue408LazySwitch": ("output",),
 }
-TYPE_NAMES = {"Issue408LazySwitch": "ComfySwitchNode"}
+TYPE_NAMES = {
+    "StartLoop": "dinkster.utilities.start_loop",
+    "EndLoop": "dinkster.utilities.end_loop",
+    "Issue408LazySwitch": "dinkster.utilities.comfy_switch_node",
+}
 RUN_TIMEOUT_SECONDS = 10
 INT = TypeExpr.concrete(CORE_INT)
 VALUE = TypeExpr.concrete(VALUE_TYPE)
@@ -130,7 +132,7 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
 
     def last_element(link: Link) -> Link:
         node_id = generated_id("last")
-        nodes[node_id] = GraphNode("std.list.element", {"list": link, "index": -1})
+        nodes[node_id] = GraphNode("dinkster.utilities.list_element", {"list": link, "index": -1})
         return Link(node_id, "item")
 
     for node_id, spec in prompt.items():
@@ -196,7 +198,7 @@ def make_engine() -> Engine:
     registry = TypeRegistry()
     register_core_types(registry)
     registry.register(VALUE_TYPE)
-    nodes = (*LOOP_NODES, ComfySwitchNode, *FOUNDATION_NODES, *LOOP_CORPUS_NODES)
+    nodes = (*UTILITY_NODES, *LOOP_CORPUS_NODES)
     return Engine(
         schemas=build_schemas(nodes),
         registry=registry,

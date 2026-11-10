@@ -1,0 +1,27 @@
+[pack]
+name = "dinkster-3d"
+version = "0.0.2"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "dinkster"
+namespaces = ["dinkster.3d"]
+type-namespaces = []
+requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26", "scipy>=1.11", "tqdm>=4", "pillow>=10"]
+
+[pack.inference]
+imports = ["cli_args", "model_management", "quant_ops", "utils"]
+tested-version = "0.1.1"
+
+[pack.sandbox]
+gpu = true
+writable-mounts = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+dinkster-image = ">=0.0.1,<1"
+
+[pack.entry]
+nodes = "dinkster_3d:NODES"
+types = "dinkster_3d:register_types"

@@ -1,12 +1,17 @@
 # dinkster-native
 
-`dinkster-native` owns Dinkster's retained native media, mesh/3D, and worker
-integration surfaces. It does not contain a sampling engine or model-family
-runtime.
+`dinkster-native` supplies resident-pool and memory planning helpers, device
+telemetry, worker attention integration, and legacy checkpoint conversion.
+It does not contain a sampling engine or model-family runtime. First-party
+packs own media and 3D execution.
+
+The unused modules are preserved on the permanent branch
+`archive/dinkster-native-unused-modules` at commit
+`602f8bf4936379bc366afe225554cedc0b9e75bf`.
 
 The package depends on an exact `dinkster-inference` PyPI release and imports
-`dinkster_inference` for supported SD1.5 and MiniMax H3 inference. ComfyUI-backed
-legacy nodes remain in `dinkster-compat-comfy`.
+`dinkster_inference` for supported SD1.5 and MiniMax H3 inference. First-party
+node packs own node registration; this package supplies shared runtime helpers.
 
 To update inference, the sync owner first validates and releases a landed
 inference commit with a new version and matching `vX.Y.Z` tag. After the

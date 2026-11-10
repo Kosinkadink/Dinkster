@@ -80,6 +80,7 @@ from dinkster_workers import (
     resolve_accelerator,
 )
 from dinkster_workers.doctor import diagnose, prepare_catalog, render_text
+from dinkster_workers.pack_wheel import wheel_filename
 
 from . import __version__ as dinkster_version
 from .compose import CompositionError, PackSpec, resolve_manifest_path
@@ -96,6 +97,7 @@ from .registries import (
     DEFAULT_REGISTRIES_FILENAME,
     RegistryConfig,
     RegistryPublishError,
+    StaticPackIndex,
     browse_packs,
     browse_templates,
     default_pack_minimums,
@@ -105,6 +107,7 @@ from .registries import (
     prepare_registry_sources,
     prepare_registry_update_sources,
     publish_release,
+    registry_source_lock,
     resolve_release,
     routing_registry_fetcher,
     select_registry,
@@ -373,10 +376,11 @@ def _cmd_install(args: argparse.Namespace) -> None:
             url, ref = _parse_git_spec(raw)
             entry, _ = lock_git_pack(url, installer.artifacts_dir, ref=ref)
         elif spec is not None:
-            # pack@version: resolved against exactly ONE registry - the
-            # named/default one - never a search across registries.
-            registry = select_registry(_registry_config(args), args.registry)
-            entry = resolve_release(registry, *spec)
+            raise InstallError(
+                "registry.managed-generation-required: registry installs are bound to a base "
+                "and variant; use dinkster-env setup with --catalog-lock, --artifacts and "
+                "--pack-lock inputs instead of dinkster-pack install"
+            )
         else:
             pack_dir = resolve_manifest_path(raw).parent
             entry, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
@@ -431,17 +435,24 @@ def _cmd_publish(args: argparse.Namespace) -> None:
         raise RegistryPublishError(f"version {args.version!r} {problem}")
     manifest_path = resolve_manifest_path(args.pack)
     manifest = load_manifest(manifest_path)
+    registry = select_registry(_registry_config(args), args.registry)
+    if manifest.compatibility is None or args.version != manifest.compatibility.version:
+        raise RegistryPublishError("publication version must equal the pack manifest version")
     if not args.no_preflight:
-        report = diagnose(manifest_path)
+        report = diagnose(
+            manifest_path,
+            published_packs=[
+                cast("str", row["name"]) for row in StaticPackIndex().catalog(registry)
+            ],
+        )
         if not report.ok:
             print(render_text(report))
             raise SystemExit(1)
-    registry = select_registry(_registry_config(args), args.registry)
     with tempfile.TemporaryDirectory(prefix="dinkster-publish-") as scratch:
-        archive = Path(scratch) / "artifact.zip"
+        archive = Path(scratch) / wheel_filename(manifest)
         try:
-            digest = build_artifact(manifest_path.parent, archive)
-        except ArtifactError as exc:
+            digest = build_pack_archive(manifest_path.parent, archive)
+        except PackArchiveError as exc:
             raise RegistryPublishError(str(exc)) from exc
         verdict = publish_release(registry, archive, manifest.name, args.version, locks=args.locks)
     for finding in verdict.findings:
@@ -547,6 +558,7 @@ def _cmd_apply(args: argparse.Namespace) -> None:
         target = _claims_from_manifests(installer, target)
     number, _ = installer.apply(
         target,
+        expected_base=record.base,
         venvs=record.venvs,
         venv_specs=dict(record.venv_specs),
         allow_doctor_findings=record.allow_doctor_findings,
@@ -1082,6 +1094,8 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
         raise InstallError("--allow-missing is only valid for fresh pack selection")
     if args.retain_sources and not args.installed_lock:
         raise InstallError("--retain-sources requires an installed generation source lock")
+    if args.add and not (args.installed_lock and args.retain_sources):
+        raise InstallError("--add requires --installed-lock and --retain-sources")
     if args.installed_lock and args.installed_lock.resolve() == args.catalog_lock.resolve():
         raise InstallError("candidate source lock must differ from --installed-lock")
     minimums: dict[str, str] = {}
@@ -1094,19 +1108,56 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
             raise InstallError(f"duplicate minimum for {pack}")
         minimums[pack] = minimum
     try:
+        index = StaticPackIndex(args.index_snapshot)
         if args.installed_lock:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
-            lock = prepare_registry_update_sources(
-                config,
-                installed,
-                args.artifacts.resolve(),
-                engine_version=dinkster_version,
-                selected=select_registry(config, args.registry) if args.registry else None,
-            )
+            if args.add:
+                selections: dict[str, str] = {}
+                installed_names = {entry.pack for entry in installed.packs}
+                for raw in args.add:
+                    parsed = parse_registry_spec(raw)
+                    if parsed is None or raw != f"{parsed[0]}@{parsed[1]}":
+                        raise InstallError("--add requires canonical PACK@VERSION selections")
+                    pack, version = parsed
+                    if pack in installed_names or pack in selections:
+                        raise InstallError(f"{pack}: --add requires a distinct absent pack")
+                    selections[pack] = version
+                registry = select_registry(config, args.registry)
+                fetch = routing_registry_fetcher(config, registry, index=index)
+                entries = list(installed.packs)
+                args.artifacts.mkdir(parents=True, exist_ok=True)
+                for pack, version in selections.items():
+                    selected = resolve_release(
+                        registry, pack, version, engine_version=dinkster_version, index=index
+                    )
+                    cached = pack_archive_path(
+                        args.artifacts,
+                        selected.artifact_digest,
+                        label=pack_label(selected.pack, selected.version),
+                    )
+                    if not cached.exists():
+                        cached.parent.mkdir(parents=True, exist_ok=True)
+                        cached.write_bytes(fetch(selected))
+                    entry = registry_source_lock(selected, cached, engine_version=dinkster_version)
+                    if entry.publisher != "dinkster":
+                        raise InstallError(f"{pack}: --add requires a first-party pack")
+                    entries.append(entry)
+                lock = Lockfile.of(entries)
+            else:
+                lock = prepare_registry_update_sources(
+                    config,
+                    installed,
+                    args.artifacts.resolve(),
+                    engine_version=dinkster_version,
+                    selected=select_registry(config, args.registry) if args.registry else None,
+                    index=index,
+                )
             if args.retain_sources:
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 fetch = routing_registry_fetcher(
-                    config, select_registry(config, args.registry) if args.registry else None
+                    config,
+                    select_registry(config, args.registry) if args.registry else None,
+                    index=index,
                 )
                 for entry in lock.packs:
                     cached = pack_archive_path(
@@ -1116,12 +1167,16 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     )
                     if not cached.exists():
                         cached.parent.mkdir(parents=True, exist_ok=True)
+                        retained = args.installed_lock.parent / "pack-sources" / entry.pack
+                        retained_wheel = retained.parent / f"{entry.pack}.whl"
                         if entry.source == "registry" or entry.source.startswith("registry:"):
-                            cached.write_bytes(fetch(entry))
-                        else:
-                            actual = build_artifact(
-                                args.installed_lock.parent / "pack-sources" / entry.pack, cached
+                            cached.write_bytes(
+                                retained_wheel.read_bytes()
+                                if retained_wheel.is_file()
+                                else fetch(entry)
                             )
+                        else:
+                            actual = build_artifact(retained, cached)
                             if actual != entry.artifact_digest:
                                 raise InstallError(f"{entry.pack}: retained source digest differs")
                 from .generation_packs import stage_generation_packs
@@ -1149,6 +1204,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 args.artifacts.resolve(),
                 engine_version=dinkster_version,
                 allow_missing=args.allow_missing,
+                index=index,
             )
         args.catalog_lock.parent.mkdir(parents=True, exist_ok=True)
         args.catalog_lock.write_text(lock.record_json() + "\n", encoding="utf-8", newline="\n")
@@ -1171,7 +1227,22 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     try:
         sources = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        if args.pack:
+            requested = set(args.pack)
+            if len(requested) != len(args.pack):
+                raise InstallError("dependency lock selection must not repeat a pack")
+            available = {entry.pack for entry in sources.packs}
+            if missing := requested - available:
+                raise InstallError(
+                    f"dependency lock selection is absent: {', '.join(sorted(missing))}"
+                )
+            sources = Lockfile.of([entry for entry in sources.packs if entry.pack in requested])
         if args.registry_only:
+            if args.pack and any(
+                entry.source != "registry" and not entry.source.startswith("registry:")
+                for entry in sources.packs
+            ):
+                raise InstallError("selected dependency locks require registry provenance")
             sources = Lockfile.of(
                 [
                     entry
@@ -1186,6 +1257,7 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
             variant=args.variant,
             base_id=args.base_id,
             selected=select_registry(config, args.registry) if args.registry else None,
+            index=StaticPackIndex(args.index_snapshot),
         )
     except OSError as exc:
         raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
@@ -1193,15 +1265,10 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
 
 
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
-    from .comfy_compose import comfy_compat_specs
     from .compose import default_pack_specs
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
-    specs = (
-        (*default_pack_specs(), *comfy_compat_specs())
-        if args.defaults
-        else _installer(args).packs_for_serving()
-    )
+    specs = default_pack_specs() if args.defaults else _installer(args).packs_for_serving()
     default_count = len(specs)
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
@@ -1318,10 +1385,10 @@ def main() -> None:
 
     archive = commands.add_parser(
         "archive",
-        help="build a deterministic registry-compatible pack archive",
+        help="build a deterministic registry-compatible pack wheel",
     )
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
-    archive.add_argument("--output", required=True, metavar="FILE.zip", help="archive to write")
+    archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
 
     sources = commands.add_parser(
@@ -1330,6 +1397,11 @@ def main() -> None:
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
+    sources.add_argument(
+        "--index-snapshot",
+        type=Path,
+        help="operation-owned scratch directory shared with dependency lock preparation",
+    )
     selection = sources.add_mutually_exclusive_group()
     selection.add_argument(
         "--minimum",
@@ -1349,6 +1421,13 @@ def main() -> None:
         action="store_true",
         help="cache unchanged sources from the installed generation's pack-sources tree",
     )
+    sources.add_argument(
+        "--add",
+        action="append",
+        default=[],
+        metavar="PACK@VERSION",
+        help="add an exact absent first-party pack without re-resolving installed sources",
+    )
     sources.set_defaults(handler=_cmd_prepare_registry_sources)
 
     locks = commands.add_parser(
@@ -1359,6 +1438,18 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--index-snapshot",
+        type=Path,
+        help="reuse this operation's source-selection static index snapshot",
+    )
+    locks.add_argument(
+        "--pack",
+        action="append",
+        default=[],
+        metavar="PACK",
+        help="acquire only this selected source's dependency lock; repeat for multiple packs",
+    )
     locks.add_argument(
         "--registry-only",
         action="store_true",

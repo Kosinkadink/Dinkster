@@ -190,7 +190,7 @@ undeclared chunks are not served. Stale, changed, removed, or unselected
 modules return 404. Catalog, snapshot, and module reads do not activate a
 worker or import pack code in the host.
 
-The opt-in first-party [video preview pack](../dinkster-video/README.md#preview-initialization)
+The opt-in first-party [video preview pack](../dinkster-video-runtime/README.md#preview-initialization)
 uses the same policy route and typed event to initialize VHS-style video
 preview metadata. No ComfyUI JavaScript, PromptServer, or global extension
 registry is involved.
@@ -210,9 +210,9 @@ carried by the claim. Host validation streams the file without materializing it.
 
 - [Pack authoring](../../docs/pack-authoring.md) describes manifests, nodes,
   custom value types, and the compatibility contract.
-- [The pack template](../../templates/pack/) is a complete working starting
-  point.
+- [The pack template](https://github.com/Kosinkadink/dinkster-pack-template)
+  builds and tests against published Dinkster packages.
 - [DESIGN.md section 3.6](../../DESIGN.md#36-extension-api-predictable-no-hacks-required)
   defines the versioned extension surface.
 - `tests/test_api_v1.py`, `tests/test_doctor.py`, and
-  `tests/test_pack_template.py` exercise the public door and its policy.
+  `tests/test_pack_contract.py` exercise the public door and its policy.

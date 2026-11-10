@@ -41,14 +41,18 @@ from dinkster_workers.provision import ProvisionError
 from packaging.tags import Tag
 
 
-def _wheel(root: Path, name: str, version: str, module: str, body: str) -> LockedWheel:
+def _wheel(
+    root: Path, name: str, version: str, module: str, body: str, *, requires: tuple[str, ...] = ()
+) -> LockedWheel:
     filename = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
     path = root / filename
     info = f"{name.replace('-', '_')}-{version}.dist-info"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(f"{module}.py", body)
         archive.writestr(
-            f"{info}/METADATA", f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            f"{info}/METADATA",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            + "".join(f"Requires-Dist: {requirement}\n" for requirement in requires),
         )
         archive.writestr(
             f"{info}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
@@ -318,6 +322,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
 ) -> None:
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_workers import load_manifest
+    from dinkster_workers.pack_wheel import pack_manifest_path
 
     from scripts.build_official_packs import build
 
@@ -327,18 +332,30 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
     source = tmp_path / "source"
     source.mkdir()
-    for family in ("comfy", "foundation", "image", "media-io", "remote", "generation"):
+    for family in (
+        "comfy",
+        "foundation",
+        "image",
+        "media-io",
+        "remote",
+        "generation",
+        "text",
+        "upscale",
+    ):
         root = source / "packages" / f"dinkster-nodes-{family}"
         root.mkdir(parents=True)
         (root / "dinkster-pack.toml").write_text(
             f'[pack]\nname="dinkster-nodes-{family}"\npublisher="dinkster"\n'
+            'version="1.2.3"\nengine=">=0.0.2"\n'
             'requires = ["fixture-extra<3"]\n'
             '[pack.dependencies]\ndinkster-nodes-foundation=">=0.0.1"\n'
-            '[pack.entry]\nnodes="nodes:NODES"\n'
+            f'[pack.entry]\nnodes="dinkster_nodes_{family.replace("-", "_")}:NODES"\n'
         )
-        (root / "nodes.py").write_text("raise AssertionError('node bodies must not load')\n")
+        module = root / f"dinkster_nodes_{family.replace('-', '_')}"
+        module.mkdir()
+        (module / "__init__.py").write_text("raise AssertionError('node bodies must not load')\n")
         (root / "pyproject.toml").write_text(
-            '[project]\nrequires-python=">=3.12"\n'
+            f'[project]\nname="dinkster-nodes-{family}"\nversion="1.2.3"\nrequires-python=">=3.12"\n'
             'dependencies=["fixture-extra>=2", "dinkster-nodes-foundation>=0.0.1"]\n'
         )
     subprocess.run(["git", "init", "--quiet", str(source)], check=True)
@@ -362,7 +379,8 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     scripts = source / "scripts"
     scripts.mkdir()
     script = scripts / "build_official_packs.py"
-    shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / script.name, script)
+    for name in (script.name, "build_release.py", "download_frontend.py"):
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / name, scripts / name)
     cli_output = tmp_path / "cli-payloads"
     subprocess.run(
         [
@@ -388,7 +406,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     assert (cli_output / "official-packs.lock").read_bytes() == (
         output / "official-packs.lock"
     ).read_bytes()
-    assert len(payloads) == 11
+    assert len(payloads) == 15
     assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
     assert {entry.pack for entry in inventory.packs} == {
@@ -397,6 +415,8 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         "dinkster-nodes-image",
         "dinkster-nodes-media-io",
         "dinkster-nodes-remote",
+        "dinkster-nodes-text",
+        "dinkster-nodes-upscale",
     }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"
@@ -412,11 +432,11 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         ]
         assert lock.packages[0].wheels == (pinned,)
         extracted = unpack_artifact(
-            output / f"{entry.pack}-1.2.3.zip",
+            output / f"{entry.pack.replace('-', '_')}-1.2.3-py3-none-any.whl",
             tmp_path / "unpacked" / entry.pack,
             entry.artifact_digest,
         )
-        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        manifest = load_manifest(pack_manifest_path(extracted))
         assert set(manifest.requires) == set(lock.requirements)
         assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
 
@@ -499,6 +519,48 @@ def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_pa
     assert json.loads(refused.stdout)["errors"]
     assert not list((tmp_path / "refused").glob("*.pack-lock.json"))
     assert not (generation / "dinkster.lock").exists()
+
+
+def test_transitive_api_constraints_and_legacy_exact_locks_remain_binding(tmp_path: Path) -> None:
+    api = _wheel(tmp_path, "dinkster-api", "0.0.3.dev235", "dinkster_api", "value = 235\n")
+    _wheel(
+        tmp_path,
+        "fixture-extra",
+        "1.2",
+        "fixture_extra",
+        "value = 13\n",
+        requires=("dinkster-api==0.0.3.dev235",),
+    )
+    with zipfile.ZipFile(tmp_path / "fixture_extra-1.2-py3-none-any.whl", "a") as archive:
+        archive.writestr(
+            "fixture_extra/_vendor/other-1.0.dist-info/METADATA",
+            "Name: other\nVersion: 1.0\nRequires-Dist: dinkster-api==99\n",
+        )
+    parent = _generation(tmp_path / "generation", [api])
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("dinkster-api==0.0.3.dev235\n")
+    facts = GenerationPackages.inspect(parent)
+    for engine in (None, ">=0.0.3.dev0,<0.1"):
+        lock = resolve_pack_lock(
+            pack="example",
+            variant="linux-cpu",
+            requirements=["fixture-extra>=1"],
+            python=parent,
+            constraints=constraints,
+            find_links=[tmp_path],
+            engine=engine,
+        )
+        path = tmp_path / "lock.json"
+        lock.write(path)
+        restored = PackLock.read(path)
+        assert restored == lock
+        assert not plan_pack(
+            restored, facts, variant="linux-cpu", own_environment_size=100
+        ).conflicts
+        newer = replace(facts, versions={**facts.versions, "dinkster-api": "0.0.3.dev240"})
+        refused = plan_pack(restored, newer, variant="linux-cpu", own_environment_size=100)
+        assert any("dinkster-api" in conflict for conflict in refused.conflicts)
+        assert ("dinkster-api" in {package.name for package in lock.packages}) == (engine is None)
 
 
 def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_path: Path) -> None:
@@ -788,17 +850,19 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 73\n")
+    api = _wheel(tmp_path, "dinkster-api", "0.0.3.dev240", "dinkster_api", "value = 240\n")
     target = tmp_path / "generations/2"
-    python = _generation(target / "python", [])
+    python = _generation(target / "python", [api])
     constraints = target / "constraints.txt"
     constraints.write_text("")
     lock = PackLock(
         "in-process",
         "linux-cpu",
         ">=3.12",
-        ("fixture-extra==1.2",),
+        ("fixture-extra==1.2", "dinkster-api<0.1,>=0.0.3.dev0"),
         (),
         (LockedDistribution("fixture-extra", "1.2", (extra,)),),
+        engine=">=0.0.3.dev0,<0.1",
     )
     paths = []
     for name in ("in-process", "shared", "isolated"):
@@ -834,9 +898,14 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
         ]
     isolated = venv_python(target / "packs/isolated")
     result = subprocess.check_output(
-        [str(isolated), "-c", "import fixture_extra; print(fixture_extra.value)"], text=True
+        [
+            str(isolated),
+            "-c",
+            "import fixture_extra, dinkster_api; print(fixture_extra.value, dinkster_api.value)",
+        ],
+        text=True,
     )
-    assert result.strip() == "73"
+    assert result.strip() == "73 240"
     assert doctor_generation(context) == ()
     args = [
         "--generation",

@@ -588,6 +588,7 @@ def prepare_registry_inputs(
     engine_version: str,
     project: Path,
     installed_lock: Path | None = None,
+    additions: tuple[str, ...] = (),
     pack_locks: tuple[Path, ...] = (),
     prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
     preflight: Callable[[Path, Path, Path], None] | None = None,
@@ -604,7 +605,12 @@ def prepare_registry_inputs(
     Explicit ``pack_locks`` take precedence over either automatic producer.
     ``preflight`` checks the scratch engine, catalog and archives before locks
     are prepared; it also runs when explicit locks override automatic preparation.
+    ``additions`` retains installed sources and acquires published dependency locks
+    only for exact new selections. Construction inherits the old dependency locks
+    from its source generation instead of retrieving them from the registry again.
     """
+    if additions and installed_lock is None:
+        raise EnvironmentError("additive registry preparation requires installed sources")
     with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
         scratch = Path(directory)
         python = prepare_engine_interpreter(
@@ -637,6 +643,23 @@ def prepare_registry_inputs(
             if installed_lock is not None
             else ["--allow-missing"]
         )
+        for addition in additions:
+            selection.extend(["--add", addition])
+        snapshot: list[str] = []
+        if not pack_locks and prepare_locks is None:
+            # Historical target engines do not expose operation-owned snapshots.
+            help_result = subprocess.run(
+                [*command, "prepare-registry-sources", "--help"],
+                capture_output=True,
+                text=True,
+            )
+            if help_result.returncode:
+                raise EnvironmentError(
+                    "target registry preparation refused: "
+                    + (help_result.stderr.strip() or help_result.stdout.strip())
+                )
+            if "--index-snapshot" in help_result.stdout:
+                snapshot = ["--index-snapshot", str(scratch / "index")]
         sources = run(
             [
                 "prepare-registry-sources",
@@ -645,6 +668,7 @@ def prepare_registry_inputs(
                 "--artifacts",
                 str(artifacts),
                 *selection,
+                *snapshot,
             ]
         )
         unavailable = sources.get("unavailable")
@@ -686,6 +710,12 @@ def prepare_registry_inputs(
                     "--base-id",
                     base,
                     "--registry-only",
+                    *snapshot,
+                    *[
+                        argument
+                        for addition in additions
+                        for argument in ("--pack", addition.partition("@")[0])
+                    ],
                 ]
             )
             raw_locks = prepared.get("locks")

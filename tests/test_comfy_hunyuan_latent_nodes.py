@@ -3,15 +3,15 @@
 from typing import cast
 
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.hunyuan_latent import HUNYUAN_LATENT_NODES
+from dinkster_hunyuan import NODES
+from dinkster_hunyuan.hunyuan_latent import EmptyHunyuanImageLatent, HunyuanRefinerLatent
 
 
 def test_hunyuan_image_latent_schemas_match_the_fixed_reference_contract() -> None:
-    empty, refiner = HUNYUAN_LATENT_NODES
+    empty, refiner = EmptyHunyuanImageLatent, HunyuanRefinerLatent
     empty_schema = empty.schema()
-    assert empty in COMFY_NODES
-    assert empty_schema.node_type == "EmptyHunyuanImageLatent"
+    assert empty in NODES
+    assert empty_schema.node_type == "dinkster.hunyuan.empty_hunyuan_image_latent"
     assert empty_schema.display_name == "Empty Hunyuan Image Latent"
     assert empty_schema.category == "model/latent/hunyuan image"
     assert [(input_spec.id, input_spec.default) for input_spec in empty_schema.inputs] == [
@@ -32,8 +32,8 @@ def test_hunyuan_image_latent_schemas_match_the_fixed_reference_contract() -> No
     ]
 
     refiner_schema = refiner.schema()
-    assert refiner in COMFY_NODES
-    assert refiner_schema.node_type == "HunyuanRefinerLatent"
+    assert refiner in NODES
+    assert refiner_schema.node_type == "dinkster.hunyuan.hunyuan_refiner_latent"
     assert refiner_schema.display_name == "Hunyuan Latent Refiner"
     assert refiner_schema.category == "model/conditioning/hunyuan video"
     assert [(input_spec.id, input_spec.default) for input_spec in refiner_schema.inputs] == [

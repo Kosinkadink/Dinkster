@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from dinkster_compat_comfy import CompatTranslation, translate_node, translate_v3_schema
-from dinkster_nodes_image import IMAGE_NODES
+from dinkster_image import IMAGE_NODES
 from dinkster_schema import (
     DynamicComboSpec,
     DynamicSlotSpec,
