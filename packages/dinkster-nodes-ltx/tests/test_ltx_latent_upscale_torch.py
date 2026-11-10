@@ -32,7 +32,8 @@ def test_ltx_normalizes_around_the_model_and_removes_noise_mask(monkeypatch) -> 
     )
     monkeypatch.setattr("dinkster_ltx.latent_upscale.initialize_inference_process", lambda: None)
     monkeypatch.setattr(
-        "dinkster_ltx.latent_upscale.importlib.import_module", lambda _name: management
+        "dinkster_ltx.latent_upscale.importlib",
+        SimpleNamespace(import_module=lambda _name: management),
     )
     source = {
         "samples": torch.tensor([[[[2.0]]]], dtype=torch.float32),
