@@ -75,11 +75,12 @@ The selected tests and minimum-executed-test guard remain unchanged.
 
 Full-validation jobs run serially inside each matrix shard with
 `PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
-within a job. The matrix jobs themselves run in parallel. Linux root shards
-print every setup, call and teardown duration with
+within a job. The matrix jobs themselves run in parallel. Linux and Windows
+root shards print every setup, call and teardown duration with
 `--durations=0 --durations-min=0` and retain per-test totals in
-`test-timings-linux-N` JUnit artifacts, including when pytest fails. Use these
-timings to balance shards instead of counting files.
+`test-timings-linux-N` and `test-timings-windows-N` JUnit artifacts, including
+when pytest fails. Use each platform's timings to balance its shards instead
+of counting files.
 
 ## Platform golden evidence
 

@@ -167,13 +167,15 @@ jobs:
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6"
             run_checks: false
             timeout-minutes: 45
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 2
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
             run_checks: false
@@ -181,6 +183,7 @@ jobs:
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 3
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
             run_checks: true
@@ -188,6 +191,7 @@ jobs:
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 4
             shard_name: ", shard 4"
             pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
             run_checks: false
@@ -195,6 +199,7 @@ jobs:
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 5
             shard_name: ", shard 5"
             pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
             run_checks: false
@@ -202,6 +207,7 @@ jobs:
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 6
             shard_name: ", shard 6"
             pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
             run_checks: false
@@ -257,6 +263,8 @@ jobs:
           --ignore-glob=tests/test_supervisor*.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
+          --durations=0 --durations-min=0
+          --junitxml=test-results/windows-${{ matrix.shard }}.xml
         if: runner.os == 'Windows'
         env:
           DINKSTER_SLOW_TESTS: "1"
@@ -291,6 +299,13 @@ jobs:
         with:
           name: test-timings-linux-${{ matrix.shard }}
           path: test-results/linux-${{ matrix.shard }}.xml
+          if-no-files-found: error
+      - name: Retain Windows test timings
+        uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: test-timings-windows-${{ matrix.shard }}
+          path: test-results/windows-${{ matrix.shard }}.xml
           if-no-files-found: error
       - run: uv run dinkster demo
         if: matrix.run_checks

@@ -184,12 +184,20 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert [row["run_checks"] for row in linux] == [True, *([False] * 11)]
     assert all(row["timeout-minutes"] == 30 for row in linux)
     windows = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "windows"]
-    assert [row["pytest_args"] for row in windows] == [
-        f"-p tools.pytest_file_shard --file-shard {index}/6"
-        + (" --durations=20" if index == 1 else "")
-        for index in range(1, 7)
+    assert [(row["shard"], row["pytest_args"]) for row in windows] == [
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/6") for index in range(1, 7)
     ]
     assert [row["run_checks"] for row in windows] == [False, False, True, False, False, False]
+    windows_run = next(step for step in root["steps"] if step.get("if") == "runner.os == 'Windows'")
+    assert "--durations=0 --durations-min=0" in windows_run["run"]
+    assert "--junitxml=test-results/windows-${{ matrix.shard }}.xml" in windows_run["run"]
+    windows_timings = next(
+        step for step in root["steps"] if step.get("name") == "Retain Windows test timings"
+    )
+    assert windows_timings["if"] == "always() && runner.os == 'Windows'"
+    assert windows_timings["with"]["if-no-files-found"] == "error"
+    assert windows_timings["with"]["name"] == "test-timings-windows-${{ matrix.shard }}"
+    assert windows_timings["with"]["path"] == "test-results/windows-${{ matrix.shard }}.xml"
     run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
     assert run["if"] == "runner.os == 'Linux'"
     assert "${{ matrix.pytest_args }}" in run["run"]
