@@ -1286,7 +1286,7 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
         write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": True})
         if capture_fault:
             deadline = time.monotonic() + 20
-            while time.monotonic() < deadline:
+            while True:
                 code, status = _run(root, "status")
                 assert code == 0, status
                 attempt = status["cleanup"].get("lastAttempt", {})
@@ -1295,6 +1295,7 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
                     for warning in attempt.get("warnings", [])
                 ):
                     break
+                assert time.monotonic() < deadline, status
                 time.sleep(0.05)
             assert status["cleanup"]["lastAttempt"]["status"] == "deferred", status
             assert any(
