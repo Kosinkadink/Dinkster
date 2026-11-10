@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_latent,
 )
-from dinkster_conditioning.conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 from .ltx_guides import (
     add_image_guide,

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
 
 from dinkster_api.v1 import (
-    ASSET_TYPE,
     CLIP_TYPE,
     CLIP_VISION_TYPE,
     CONTROL_NET_TYPE,
@@ -15,20 +13,31 @@ from dinkster_api.v1 import (
     MODEL_TYPE,
     STYLE_MODEL_TYPE,
     VAE_TYPE,
-    AssetRef,
-    AssetWidget,
     ComboOption,
     ComboWidget,
     Deprecation,
     InputSpec,
-    LocalAssetRef,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
     first_party_schema,
     initialize_inference_process,
-    mount_roots_for_kind,
+)
+from dinkster_pack_helpers.model_file_loaders import (
+    asset_input as _asset,
+)
+from dinkster_pack_helpers.model_file_loaders import (
+    asset_path as _path,
+)
+from dinkster_pack_helpers.model_file_loaders import (
+    clip_options as _clip_options,
+)
+from dinkster_pack_helpers.model_file_loaders import (
+    combo_input as _combo,
+)
+from dinkster_pack_helpers.model_file_loaders import (
+    embedding_roots as _embedding_roots,
 )
 
 __all__ = [
@@ -41,20 +50,7 @@ __all__ = [
     "DualCLIPLoader",
     "CLIPVisionLoader",
     "StyleModelLoader",
-    "_asset",
-    "_path",
-    "_embedding_roots",
-    "_clip_options",
-    "_combo",
-    "asset_input",
-    "asset_path",
-    "embedding_roots",
-    "clip_options",
-    "combo_input",
 ]
-
-_ASSET = TypeExpr.concrete(ASSET_TYPE)
-
 
 _CLIP = TypeExpr.concrete(CLIP_TYPE)
 
@@ -162,54 +158,9 @@ _DUAL_CLIP_DESCRIPTION = (
 )
 
 
-def _asset(name: str, kind: str, *, doc: str = "") -> InputSpec:
-    return InputSpec(
-        name,
-        _ASSET,
-        doc=doc,
-        widget=AssetWidget(kind=kind, accept=("application/octet-stream",)),
-    )
-
-
-def _path(value: object, name: str) -> str:
-    if not isinstance(value, (AssetRef, LocalAssetRef)):
-        raise TypeError(f"{name} must be an AssetRef or LocalAssetRef")
-    return str(value.local_path())
-
-
-def _embedding_roots() -> list[str]:
-    return [str(root) for root in mount_roots_for_kind("model/embedding")]
-
-
-def _clip_options(device: str) -> dict[str, Any]:
-    if device == "default":
-        return {}
-    torch = importlib.import_module("torch")
-    return {"load_device": torch.device("cpu"), "offload_device": torch.device("cpu")}
-
-
 def _clip_type(name: str) -> object:
     sd = importlib.import_module("dinkster_inference.sd")
     return getattr(sd.CLIPType, name.upper(), sd.CLIPType.STABLE_DIFFUSION)
-
-
-def _combo(
-    name: str, options: tuple[str, ...], default: str, *, advanced: bool = False
-) -> InputSpec:
-    return InputSpec(
-        name,
-        _COMBO,
-        default=default,
-        advanced=advanced,
-        widget=ComboWidget(tuple(ComboOption(option) for option in options)),
-    )
-
-
-asset_input = _asset
-asset_path = _path
-embedding_roots = _embedding_roots
-clip_options = _clip_options
-combo_input = _combo
 
 
 class CheckpointLoaderSimple(Node):
