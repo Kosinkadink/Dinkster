@@ -173,8 +173,8 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             [entry]
         )
         assert (
-            snapshots[2]["metadata"]["packs/healthy/pack-lock.json"]
-            == (root / "generations/3/packs/healthy/pack-lock.json").read_text()
+            snapshots[2]["metadata"]["packs/healthy/pack-lock.json"].encode("utf-8")
+            == (root / "generations/3/packs/healthy/pack-lock.json").read_bytes()
         )
         assert "packs/healthy/pack-lock.json" not in snapshots[0]["metadata"]
         code, shown = _run(root, "history", "show", "2")
