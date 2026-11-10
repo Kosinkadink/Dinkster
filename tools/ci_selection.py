@@ -102,6 +102,7 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
         "engine": engine,
         "runtime": shared
         or "tests/test_remote.py" in code
+        or "tests/test_durable_delegations.py" in code
         or any(runtime_path(path) for path in code),
         "packs": sorted(path.relative_to(root).as_posix() for path in selected & tested),
     }
