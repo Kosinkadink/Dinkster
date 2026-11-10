@@ -31,10 +31,12 @@ from dinkster_workers.pack_wheel import pack_manifest_path
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from dinkster.installer import InstallError, http_registry_fetcher
 from dinkster.registries import (
     NamedRegistry,
+    StaticPackIndex,
     default_pack_minimums,
     prepare_registry_sources,
     registry_source_lock,
@@ -98,8 +100,90 @@ def library_probe_index(libraries: dict[str, Path]):
 
 def _require_accepted(result: StageResult, identity: str) -> None:
     if result.blocked or result.review:
+        if result.operator_details:
+            print(
+                json.dumps({"pack": identity, "operatorDetails": result.operator_details}),
+                flush=True,
+            )
         findings = "; ".join(f"{finding.code}: {finding.message}" for finding in result.findings)
         raise ValueError(f"default {identity} admission refused: {findings}")
+
+
+def prepare_library_sources(
+    registry: NamedRegistry, catalog: Lockfile, artifacts: Path, root: Path
+) -> Lockfile:
+    """Close registry library requirements over verified selected archive bytes."""
+    entries = {pack.pack: pack for pack in catalog.packs}
+    libraries = selected_library_wheels(catalog, artifacts)
+    known_libraries = {
+        identity[0]
+        for path in (root / "packages").glob("*/pyproject.toml")
+        if (identity := official_library(tomllib.loads(path.read_text())))
+    }
+    index = StaticPackIndex()
+    library_names: set[str] | None = None
+    requirements: dict[str, list[Requirement]] = {}
+    pending = list(catalog.packs)
+    with tempfile.TemporaryDirectory(prefix="admission-library-sources-") as directory:
+        for pack in pending:
+            archive = pack_archive_path(artifacts, pack.artifact_digest)
+            if pack.pack in libraries:
+                _, _, requires = library_metadata(archive)
+            else:
+                source = unpack_artifact(archive, Path(directory) / pack.pack, pack.artifact_digest)
+                requires = load_manifest(pack_manifest_path(source)).requires_for("cpu")
+            for value in requires:
+                requirement = Requirement(value)
+                if requirement.marker and not requirement.marker.evaluate():
+                    continue
+                name = canonicalize_name(requirement.name)
+                if name in entries and name not in libraries:
+                    continue
+                if name not in libraries:
+                    if library_names is None:
+                        library_names = known_libraries | {
+                            str(row["name"])
+                            for row in index.catalog(registry, include_libraries=True)
+                            if row.get("library") is True
+                        }
+                    if name not in library_names:
+                        continue
+                requirements.setdefault(name, []).append(requirement)
+                ranges = ",".join(str(item.specifier) for item in requirements[name])
+                if requirement.url is not None:
+                    raise ValueError(f"registry library {name} must use a version range")
+                if name in entries:
+                    if not SpecifierSet(ranges).contains(entries[name].version, prereleases=True):
+                        raise ValueError(
+                            f"registry library {name}@{entries[name].version} "
+                            f"does not satisfy {ranges}"
+                        )
+                    continue
+                versions = [
+                    str(row["version"])
+                    for row in index.releases(registry, name)
+                    if row.get("library") is True
+                    and SpecifierSet(ranges).contains(str(row["version"]), prereleases=True)
+                ]
+                if not versions:
+                    raise ValueError(
+                        f"registry library {name} has no compatible release for {ranges}"
+                    )
+                selected = resolve_release(registry, name, max(versions, key=Version), index=index)
+                archive = pack_archive_path(artifacts, selected.artifact_digest)
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                archive.write_bytes(
+                    http_registry_fetcher(registry.endpoint, token=registry.token(), index=index)(
+                        selected
+                    )
+                )
+                verified = selected_library_wheels(Lockfile.of([selected]), artifacts)
+                if name not in verified:
+                    raise ValueError(f"registry library {name} contains a node manifest")
+                libraries.update(verified)
+                entries[name] = selected
+                pending.append(selected)
+    return Lockfile.of(entries.values())
 
 
 def check_defaults(
@@ -183,6 +267,7 @@ def check_defaults(
             engine_version=engine_version,
         )
         catalog = Lockfile.of((*catalog.packs, *selected.packs))
+        catalog = prepare_library_sources(registry, catalog, artifacts, root)
         if not catalog.packs:
             raise ValueError("engine admission requires a nonempty default set")
         entries = {pack.pack: pack for pack in catalog.packs}

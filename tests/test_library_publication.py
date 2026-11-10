@@ -276,12 +276,13 @@ def test_library_preparation_and_native_locks_preserve_exact_sources(
     assert {path.name: path.read_bytes() for path in sources.iterdir()} == source_bytes
 
 
-@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("published", [False, True, "registry", "missing", "installer"])
 def test_default_admission_probes_and_tests_selected_library_dependency(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
-    published: bool,
+    request: pytest.FixtureRequest,
+    published: bool | str,
 ) -> None:
     import shutil
 
@@ -297,7 +298,12 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     (library / "pyproject.toml").write_text(
         '[project]\nname = "dinkster-test-helpers"\nversion = "0.0.1"\n'
         'requires-python = ">=3.12"\n'
-        '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        + (
+            'dependencies = ["dinkster-unavailable-test-library==0.0.1"]\n'
+            if published == "installer"
+            else ""
+        )
+        + '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         '[tool.hatch.build.targets.wheel]\npackages = ["src/dinkster_test_helpers"]\n'
         "[tool.dinkster]\nofficial-library = true\n"
     )
@@ -373,14 +379,80 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     monkeypatch.setattr(
         admission, "prepare_registry_sources", lambda *args, **kwargs: (Lockfile.of([]), {})
     )
+    registry_url = "https://registry.invalid"
+    ordinary_requests: list[tuple[str, str | None]] = []
+    ordinary_url = ""
+    if isinstance(published, str):
+        from test_installer import _serve_artifacts, _static_release
+
+        library_entry = entries[1]
+        archive = wheels / "dinkster_test_helpers-0.0.1-py3-none-any.whl"
+        data = archive.read_bytes()
+        row = {**_static_release(library_entry, data), "library": True}
+        files = {
+            "/static/packs/index.json": json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "items": [
+                        {
+                            "name": library_entry.pack,
+                            "latestVersion": "0.0.1",
+                            "publisher": "dinkster",
+                            "library": True,
+                            "url": f"packs/{library_entry.pack}/index.json",
+                        }
+                    ],
+                }
+            ).encode(),
+            f"/static/packs/{library_entry.pack}/index.json": json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "name": library_entry.pack,
+                    "items": [] if published == "missing" else [row],
+                }
+            ).encode(),
+            f"/static/wheels/{hashlib.sha256(data).hexdigest()}/{archive.name}": data,
+        }
+        server = _serve_artifacts(files, [])
+        request.addfinalizer(server.shutdown)
+        registry_url = f"http://127.0.0.1:{server.server_port}"
+        ordinary = _serve_artifacts({}, ordinary_requests)
+        request.addfinalizer(ordinary.shutdown)
+        ordinary_url = f"http://127.0.0.1:{ordinary.server_port}"
+
+        def registry_defaults(registry, minimums, artifacts, *, engine_version):
+            entry = entries[0]
+            (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
+                (wheels / "dinkster_text-0.0.1-py3-none-any.whl").read_bytes()
+            )
+            return Lockfile.of([entry]), {}
+
+        monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
+        # Keep fallback requests observable and off the public package index.
+        from http.server import BaseHTTPRequestHandler
+
+        send_header = BaseHTTPRequestHandler.send_header
+
+        def no_redirect(self, keyword, value):
+            if keyword.lower() == "location":
+                value = ordinary_url + "/" + value.rstrip("/").rsplit("/", 1)[-1] + "/"
+            return send_header(self, keyword, value)
+
+        monkeypatch.setattr(BaseHTTPRequestHandler, "send_header", no_redirect)
     probe = admission.run_executable_probe
+
+    def executable_probe(root, **kwargs):
+        if ordinary_url and kwargs.get("settings") is None:
+            kwargs["settings"] = admission.ProbeSettings(probe_package_index_url=ordinary_url)
+        return probe(root, require_isolation=False, **kwargs)
+
     monkeypatch.setattr(
         admission,
         "run_executable_probe",
-        lambda root, **kwargs: probe(root, require_isolation=False, **kwargs),
+        executable_probe,
     )
     publication = None
-    if published:
+    if published is True:
         publication = tmp_path / "official-packs.lock"
         publication.write_text(catalog.record_json())
         original = subprocess.check_output
@@ -406,6 +478,26 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
                 ).read_bytes()
             ),
         )
+    if published == "missing":
+        with pytest.raises(ValueError, match=r"dinkster-test-helpers.*>=0\.0\.1"):
+            admission.check_defaults(
+                admission.NamedRegistry("", registry_url), engine_version="0.0.3"
+            )
+        assert ordinary_requests == []
+        return
+    if published == "installer":
+        if sys.platform == "win32":
+            pytest.skip("probe installer requires POSIX process limits")
+        with pytest.raises(ValueError, match="probe.dependencies-unresolved"):
+            admission.check_defaults(
+                admission.NamedRegistry("", registry_url), engine_version="0.0.3"
+            )
+        output = capfd.readouterr().out
+        assert '"returnCode": 1' in output
+        assert '"stderrTail":' in output
+        assert "dinkster-unavailable-test-library" in output
+        assert not any("dinkster-test-helpers" in path for path, _ in ordinary_requests)
+        return
     # The service probe requires POSIX process groups and resource limits.
     with (
         pytest.raises(
@@ -417,9 +509,9 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         else nullcontext()
     ):
         result = admission.check_defaults(
-            admission.NamedRegistry("", "https://registry.invalid"),
+            admission.NamedRegistry("", registry_url),
             engine_version="0.0.3",
-            candidate_base=None if published else "b" * 40,
+            candidate_base="b" * 40 if published is False else None,
             published_sources=publication,
         )
         assert result == {
@@ -437,6 +529,9 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     assert "selected dinkster-test-helpers@0.0.1" in output
     assert ("Testing dinkster-text@0.0.1" in output) is (sys.platform != "win32")
     assert "Testing dinkster-test-helpers" not in output
+    assert ordinary_requests == []
+    if isinstance(published, str):
+        return
     with ZipFile(wheels / "dinkster_test_helpers-0.0.1-py3-none-any.whl", "a") as wheel:
         wheel.writestr("changed.txt", "library drift")
     with pytest.raises(ValueError, match="library dinkster-test-helpers size or digest mismatch"):
