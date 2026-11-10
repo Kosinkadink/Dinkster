@@ -996,11 +996,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         helper = tomllib.loads(
             (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.1"
+        assert helper["version"] == "0.0.2"
         models = tomllib.loads(
             (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
         )["project"]
-        assert "dinkster-pack-helpers==0.0.1" in models["dependencies"]
+        assert "dinkster-pack-helpers==0.0.2" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],

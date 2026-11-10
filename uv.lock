@@ -1097,7 +1097,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-audio-models"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-audio-models" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1146,7 +1146,7 @@ requires-dist = [{ name = "aiohttp", specifier = ">=3.10" }]
 
 [[package]]
 name = "dinkster-conditioning"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-conditioning" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1169,7 +1169,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-cosmos"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-cosmos" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1207,7 +1207,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-flux"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-flux" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1241,7 +1241,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-hidream"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-hidream" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1260,7 +1260,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-hunyuan"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-hunyuan" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1430,7 +1430,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-ltx"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-ltx" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1470,7 +1470,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-minimax"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-minimax" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1489,7 +1489,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-misc-models"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-misc-models" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1510,7 +1510,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-models"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-models" }
 dependencies = [
     { name = "comfy-kitchen" },
@@ -1620,7 +1620,7 @@ wheels = [
 
 [[package]]
 name = "dinkster-pack-helpers"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "packages/dinkster-pack-helpers" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1656,7 +1656,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-qwen"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-qwen" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1694,7 +1694,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-sampling"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-sampling" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1732,7 +1732,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-sd"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-sd" }
 dependencies = [
     { name = "dinkster-api" },
@@ -2082,7 +2082,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-vision-sam3d-body"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-vision-sam3d-body" }
 dependencies = [
     { name = "dinkster-api" },
@@ -2109,7 +2109,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-vision-sdpose"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-vision-sdpose" }
 dependencies = [
     { name = "dinkster-api" },
@@ -2132,7 +2132,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-void"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-void" }
 dependencies = [
     { name = "dinkster-api" },
@@ -2155,7 +2155,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-wan"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-wan" }
 dependencies = [
     { name = "dinkster-api" },
