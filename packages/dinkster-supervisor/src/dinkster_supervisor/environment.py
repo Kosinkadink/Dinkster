@@ -1071,7 +1071,10 @@ def _restore(
 
 def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
-    if args.automatic is None and args.yes:
+    if args.keep_previous is not None and not 1 <= args.keep_previous <= 100:
+        raise EnvironmentError("previous generation count must be an integer from 1 to 100")
+    changing_policy = args.automatic is not None or args.keep_previous is not None
+    if not changing_policy and args.yes:
         attempt = retry_generation_collection(root)
         result.update(cleanupAttempt=attempt, status=attempt["status"], current=read_current(root))
         result["cleanup"] = collection_preview(root)
@@ -1083,11 +1086,19 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
         for row in cast("list[dict[str, object]]", preview["generations"])
     ] + cast("list[str]", preview["warnings"])
     result.update(cleanup=preview, current=preview["current"], status="planned", plan=plan)
-    if args.automatic is None:
+    if not changing_policy:
         return 0
-    automatic = args.automatic == "on"
-    plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
-    result["requestedAutomaticCleanup"] = automatic
+    requested = dict(cast("dict[str, object]", preview["policy"]))
+    if args.automatic is not None:
+        requested["automatic"] = args.automatic == "on"
+        plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
+        result["requestedAutomaticCleanup"] = requested["automatic"]
+    if args.keep_previous is not None:
+        requested["previousSuccessfulActivations"] = args.keep_previous
+        plan.append(
+            f"keep {args.keep_previous} previous successful generations; do not collect now"
+        )
+        result["requestedPreviousSuccessfulActivations"] = args.keep_previous
     if not _confirmed(args, plan):
         return 0
     with writer_lock(root):
@@ -1095,10 +1106,14 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
         if policy != preview["policy"]:
             raise EnvironmentError("cleanup policy changed after planning; request a new plan")
         write_document(
-            root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": automatic}
+            root / "cleanup.json",
+            {
+                "format": "dinkster.cleanup/1",
+                "automatic": requested["automatic"],
+                "previousSuccessfulActivations": requested["previousSuccessfulActivations"],
+            },
         )
-        policy["automatic"] = automatic
-        preview["policy"] = policy
+        result["cleanup"] = collection_preview(root)
     result["status"] = "applied"
     return 0
 
@@ -1302,6 +1317,11 @@ def main() -> None:
     cleanup.add_argument(
         "--automatic", choices=("on", "off"), help="persist automatic cleanup preference"
     )
+    cleanup.add_argument(
+        "--keep-previous",
+        type=int,
+        help="keep 1-100 previous generations besides current (default 1)",
+    )
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
@@ -1436,6 +1456,13 @@ def main() -> None:
             print(f"Engine: {engine['version']} ({engine['release']})")
             if engine["label"] is not None:
                 print(f"Engine label: {engine['label']}")
+        cleanup = cast("dict[str, object]", result.get("cleanup", {}))
+        if "policy" in cleanup:
+            policy = cast("dict[str, object]", cleanup["policy"])
+            print(
+                f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
+                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+            )
         for step in cast("list[str]", result["plan"]):
             print(step)
         for change in cast("list[str]", result.get("changes", [])):

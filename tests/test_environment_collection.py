@@ -350,7 +350,81 @@ def test_cleanup_policy_persists_without_collecting_or_changing_software(tmp_pat
     assert json.loads((tmp_path / "cleanup.json").read_text()) == {
         "format": "dinkster.cleanup/1",
         "automatic": False,
+        "previousSuccessfulActivations": 1,
     }
+
+
+def test_retained_count_uses_activation_ancestry_and_changes_only_next_collection(
+    cleanup_project: Path,
+):
+    root = cleanup_project
+    protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    for count in (0, 101):
+        code, refused = _run(root, "cleanup", "--keep-previous", str(count), "--yes")
+        assert code == 1 and "integer from 1 to 100" in refused["error"], refused
+    assert not (root / "cleanup.json").exists()
+    for count in (2, 100, 1, 2):
+        code, planned = _run(root, "cleanup", "--keep-previous", str(count), "--plan")
+        assert code == 0 and planned["requestedPreviousSuccessfulActivations"] == count, planned
+        code, applied = _run(root, "cleanup", "--keep-previous", str(count), "--yes")
+        assert code == 0 and applied["status"] == "applied", applied
+        assert applied["cleanup"]["policy"]["previousSuccessfulActivations"] == count
+        rows = {row["generation"]: row["status"] for row in applied["cleanup"]["generations"]}
+        assert rows == {
+            3: "retained",
+            1: "retained",
+            7: "retained" if count >= 2 else "candidate",
+            2: "retained" if count >= 3 else "candidate",
+        }
+        assert {p: p.read_bytes() for p in protected} == protected
+    for automatic in ("off", "on"):
+        code, applied = _run(root, "cleanup", "--automatic", automatic, "--yes")
+        assert code == 0 and applied["cleanup"]["policy"] == {
+            "automatic": automatic == "on",
+            "previousSuccessfulActivations": 2,
+            "minimumAgeSeconds": 0,
+        }, applied
+    code, collected = _run(root, "cleanup", "--yes")
+    assert code == 0 and collected["status"] == "complete", collected
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3", "7"]
+    code, lowered = _run(root, "cleanup", "--keep-previous", "1", "--yes")
+    assert code == 0 and lowered["cleanup"]["policy"]["previousSuccessfulActivations"] == 1
+    assert (root / "generations/7").is_dir()
+    code, collected = _run(root, "cleanup", "--yes")
+    assert code == 0 and collected["status"] == "complete", collected
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    code, raised = _run(root, "cleanup", "--keep-previous", "100", "--yes")
+    assert code == 0 and raised["status"] == "applied", raised
+    for command in ("cleanup", "status"):
+        code, read = _run(root, command)
+        assert code == 0 and read["cleanup"]["policy"]["previousSuccessfulActivations"] == 100
+    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
+    preserved = {
+        p: data
+        for p, data in protected.items()
+        if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
+    }
+    assert {p: p.read_bytes() for p in preserved} == preserved
+
+
+@pytest.mark.parametrize("count", [0, 101, True, "2", 2.5, None])
+def test_invalid_retained_count_refuses_cleanup_without_mutation(
+    cleanup_project: Path, count: object
+):
+    root = cleanup_project
+    write_document(
+        root / "cleanup.json",
+        {
+            "format": "dinkster.cleanup/1",
+            "automatic": True,
+            "previousSuccessfulActivations": count,
+        },
+    )
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    for arguments in (("--plan",), ("--keep-previous", "1", "--yes")):
+        code, refused = _run(root, "cleanup", *arguments)
+        assert code == 1 and "invalid cleanup policy" in refused["error"], refused
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
 
 
 @pytest.mark.parametrize("condition", ["json", "format", "string", "number", "linked"])

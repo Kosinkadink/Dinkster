@@ -540,7 +540,12 @@ visible until cleanup succeeds.
 `--automatic on` restores its preference for automatic cleanup. Add `--plan`
 instead of `--yes` to inspect without writing. The shared `cleanup.policy`
 object reports `automatic` (default true), `previousSuccessfulActivations`
-(1), and `minimumAgeSeconds` (0). These are retention preferences, not proof
+(default 1, allowed 1-100), and `minimumAgeSeconds` (0).
+`cleanup --keep-previous N --yes` saves the previous-generation count in the
+same policy without changing on/off. Both options may be set together.
+Retention follows successful activation ancestry rather than numeric folders.
+Raising the count never recreates collected trees; lowering applies at the next
+eligible collection. These are retention preferences, not proof
 of history coverage or deletion eligibility. Changing the preference does not
 collect, recover operations, or capture history. The preference lives in
 `cleanup.json`, outside activation settings and software history, so restore

@@ -236,17 +236,21 @@ def collection_policy(root: Path) -> dict[str, object]:
     if path.is_symlink() or path.is_junction():
         raise EnvironmentError("cleanup policy must not be linked")
     automatic = True
+    previous_count = 1
     if path.exists():
         document = read_document(path)
+        previous_count = document.get("previousSuccessfulActivations", 1)
         if (
             document.get("format") != "dinkster.cleanup/1"
             or type(document.get("automatic")) is not bool
+            or type(previous_count) is not int
+            or not 1 <= previous_count <= 100
         ):
             raise EnvironmentError("invalid cleanup policy")
         automatic = cast("bool", document["automatic"])
     return {
         "automatic": automatic,
-        "previousSuccessfulActivations": 1,
+        "previousSuccessfulActivations": previous_count,
         "minimumAgeSeconds": 0,
     }
 
@@ -270,6 +274,21 @@ def collection_preview(root: Path) -> dict[str, object]:
         journals.append((path, Journal.read(path)))
     previous = previous_activation(root, current)
     predecessor = previous.previous if previous is not None else None
+    retained = {current}
+    ancestor = current
+    for _, journal in reversed(journals):
+        if (
+            journal.operation in {"update", "rollback", "repair", "restore"}
+            and journal.stage == "complete"
+            and journal.target == ancestor
+            and journal.previous is not None
+        ):
+            ancestor = journal.previous
+            if ancestor in retained:
+                raise EnvironmentError("successful activation ancestry contains a cycle")
+            retained.add(ancestor)
+            if len(retained) > cast("int", policy["previousSuccessfulActivations"]):
+                break
     warnings: list[str] = []
     if any(journal.incomplete for _, journal in journals):
         warnings.append("pending environment operation requires recovery")
@@ -310,6 +329,8 @@ def collection_preview(root: Path) -> dict[str, object]:
             state, reasons = "retained", ["current activation"]
         elif number == predecessor:
             state, reasons = "retained", ["previous successful activation"]
+        elif number in retained:
+            state, reasons = "retained", ["retained successful activation"]
         try:
             if tree.is_symlink() or tree.is_junction() or not tree.is_dir():
                 raise EnvironmentError("generation tree must be an unlinked directory")

@@ -358,15 +358,21 @@
   completed journal provenance and sealed software are revalidated. Preview
   never launches an interpreter, publishes or repairs history; candidate status
   is advisory rather than deletion authorization.
-  Pack environments containing runtime payloads not represented in software
-  history defer rather than treating unchanged dependency locks as payload proof.
+  Materialized pack payloads are disposable once their software identity is
+  recorded; history does not promise to preserve local edits to runtime files.
   Managed interpreter acquisition is serialized against generation collection;
   pending launches and unproven child cleanup retain the generation.
   Stopped assignments carried across updates remain stopped and do not by
   themselves prevent collection after leaving the retained rollback set.
   `cleanup --automatic off --yes` persists an opt-out without collecting;
   `--automatic on` restores the default preference. Preview and status expose
-  the same policy. Policy commands do not collect synchronously.
+  the same policy. `cleanup --keep-previous N --yes` persists how many previous
+  successful generations to keep besides current, from 1 to 100 (default 1).
+  Desktop offers the same count beside on/off. Selection follows successful
+  activation ancestry, not directory numbering; imports and failed attempts do
+  not consume retention slots. Older policy files default to one. Raising the
+  count does not rebuild collected trees; lowering it takes effect at the next
+  eligible collection. Policy commands do not collect synchronously.
   `cleanup --yes` retries generation-only collection for history-covered unused
   trees when the policy is enabled. Busy projects defer, overlapping retries
   coalesce, and status preserves the last attempt and retryable failures.
