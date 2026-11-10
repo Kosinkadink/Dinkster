@@ -3610,12 +3610,24 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
     assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
 
 
-@pytest.mark.parametrize("problem", [None, "existing", "duplicate", "third-party", "corrupt"])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "existing",
+        "duplicate",
+        "third-party",
+        "corrupt",
+        "retained-corrupt",
+        "retained-missing",
+    ],
+)
 def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
 ) -> None:
     from dinkster_registry import artifact_digest
 
+    from dinkster.generation_packs import stage_generation_packs
     from dinkster.pack_archive import build_pack_archive
 
     artifacts = tmp_path / "artifacts"
@@ -3648,12 +3660,27 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
         ),
     }
+    if problem == "retained-missing":
+        old_release = {**_static_release(old, archives["retained"]), "engine": ">=0"}
+        old_wheel = cast("list[dict[str, object]]", old_release["wheels"])[0]
+        files["/static/packs/index.json"] = json.dumps(
+            {"schemaVersion": 1, "items": [old_release, release]}
+        ).encode()
+        files[f"/static/{old_wheel['url']}"] = archives["retained"]
     server = _serve_artifacts(files, [])
-    installed = tmp_path / "installed.lock"
-    installed.write_text(Lockfile.of([old]).record_json())
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    stage_generation_packs(
+        generation, Lockfile.of([old]), {"retained": tmp_path / "retained-1.0-py3-none-any.whl"}
+    )
+    installed = generation / "dinkster.lock"
     original = installed.read_bytes()
-    # The old registry is deliberately unreachable; its pinned archive is retained.
-    pack_archive_path(artifacts, old.artifact_digest).write_bytes(archives["retained"])
+    if problem == "retained-corrupt":
+        (generation / "pack-sources/retained.whl").write_bytes(b"corrupt retained wheel")
+    elif problem == "retained-missing":
+        (generation / "pack-sources/retained.whl").unlink()
+    before = {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()}
+    # Only a missing retained archive permits retrieval of the pinned old release.
     output = tmp_path / "candidate.lock"
     requested = "retained@2.0" if problem == "existing" else "added@1.2"
     args = [
@@ -3675,7 +3702,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     if problem == "duplicate":
         args.extend(["--add", requested])
     try:
-        if problem:
+        if problem is not None and problem != "retained-missing":
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err
@@ -3684,6 +3711,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 "duplicate": "distinct absent pack",
                 "third-party": "first-party",
                 "corrupt": "sha256",
+                "retained-corrupt": "digest mismatch",
             }
             assert expected[problem] in error
             assert not output.exists()
@@ -3699,7 +3727,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 pack_archive_path(artifacts, added.artifact_digest).read_bytes()
                 == archives["added"]
             )
+            assert (
+                pack_archive_path(artifacts, old.artifact_digest).read_bytes()
+                == archives["retained"]
+            )
         assert installed.read_bytes() == original
+        assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
     finally:
         server.shutdown()
 

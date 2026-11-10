@@ -60,6 +60,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_cli_acquires_published_locks_for_exact_sources_and_base \
   tests/test_installer.py::test_cli_publishes_exact_archive_with_optional_published_locks \
   tests/test_installer.py::test_cli_retains_nonregistry_generation_sources_before_writing_candidate \
+  tests/test_installer.py::test_cli_adds_exact_pack_without_reresolving_installed_sources \
   tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
   tests/test_installer.py::test_generation_source_staging_cli \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
