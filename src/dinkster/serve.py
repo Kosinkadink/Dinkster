@@ -154,6 +154,7 @@ from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
+from .pack_install_api import add_pack_install_routes
 from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
@@ -863,6 +864,13 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_INSTALL_ROOT)",
     )
     parser.add_argument(
+        "--allow-pack-install",
+        action="store_true",
+        default=os.environ.get("DINKSTER_ALLOW_PACK_INSTALL") == "1",
+        help="allow local human pack previews and terminal commands for --generation "
+        "(also enabled by $DINKSTER_ALLOW_PACK_INSTALL=1)",
+    )
+    parser.add_argument(
         "--generation",
         type=Path,
         metavar="ABS",
@@ -1298,6 +1306,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.install_root or args.pack or args.watch_packs:
             parser.error("--generation cannot be combined with other pack sources or --watch-packs")
         args.no_default_packs = True
+    if args.allow_pack_install and args.generation is None:
+        parser.error("--allow-pack-install requires --generation")
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
     openai_values = (args.openai_base_url, args.openai_model, args.openai_api_key)
@@ -2088,7 +2098,10 @@ def main(argv: list[str] | None = None) -> None:
             # the install root's current generation without a restart.
             # Not dev-gated - the mutation was authorized at dinkster-pack
             # apply time; this endpoint only delivers it.
-            add_activation_routes(app, composer, installer)
+            install_busy = asyncio.Lock()
+            add_activation_routes(app, composer, installer, busy=install_busy)
+        if args.allow_pack_install and args.generation is not None:
+            add_pack_install_routes(app, args.generation.parent.parent, redactor=redactor)
         watcher: PackWatcher | None = None
         if args.watch_packs:
             # Pack hot reload is a dev affordance: production installs
