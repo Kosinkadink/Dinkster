@@ -121,7 +121,7 @@ def build(
     )
     payloads: list[Path] = []
     locked: list[LockedPack] = []
-    lock_inputs: list[tuple[str, str, tuple[str, ...], str]] = []
+    lock_inputs: list[tuple[str, str, tuple[str, ...], str, str | None]] = []
     with tempfile.TemporaryDirectory(prefix="dinkster-official-packs-") as directory:
         staged = Path(directory)
         with tarfile.open(fileobj=io.BytesIO(tracked)) as archive:
@@ -219,8 +219,16 @@ def build(
                 )
             )
             payloads.append(payload)
-            metadata = tomllib.loads((library_root / "pyproject.toml").read_text())["project"]
-            lock_inputs.append((name, library_version, requirements, metadata["requires-python"]))
+            declaration = tomllib.loads((library_root / "pyproject.toml").read_text())
+            lock_inputs.append(
+                (
+                    name,
+                    library_version,
+                    requirements,
+                    declaration["project"]["requires-python"],
+                    declaration["tool"]["dinkster"].get("engine"),
+                )
+            )
         for pack_root, manifest in manifests:
             if selected and manifest.name not in selected:
                 continue
@@ -282,6 +290,7 @@ def build(
                     pack_version,
                     requirements,
                     project.get("requires-python", ">=3.12"),
+                    manifest.compatibility.engine,
                 )
             )
         if variant is not None:
@@ -304,7 +313,7 @@ def build(
                     encoding="utf-8",
                 )
                 constraints = pinned
-            for name, pack_version, requirements, requires_python in lock_inputs:
+            for name, pack_version, requirements, requires_python, engine in lock_inputs:
                 dependency_lock = resolve_pack_lock(
                     pack=name,
                     variant=variant,
@@ -314,6 +323,7 @@ def build(
                     indexes=indexes,
                     find_links=(*find_links, output) if library_wheels else find_links,
                     requires_python=requires_python,
+                    engine=engine,
                     uv=uv,
                 )
                 distributions = []

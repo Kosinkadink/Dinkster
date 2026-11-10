@@ -828,12 +828,9 @@ sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
 import dinkster_api.v1 as api
 from dinkster_inference_wire import materialize_voxel
-from dinkster_native.native import register_native_types
 assert materialize_voxel is api.materialize_voxel
-for registrations in ((api.register_inference_types, register_native_types),
-                      (register_native_types, api.register_inference_types),
-                      (api.register_voxel_type, register_native_types),
-                      (register_native_types, api.register_voxel_type)):
+for registrations in ((api.register_inference_types, api.register_voxel_type),
+                      (api.register_voxel_type, api.register_inference_types)):
     for preexisting in (True, False):
         registry = api.TypeRegistry()
         first = registry.register(api.VOXEL_TYPE) if preexisting else None
@@ -900,7 +897,6 @@ sys.modules['dinkster_inference'] = None
 import dinkster_api.v1 as api
 import dinkster_values as values
 from dinkster_values import builtin_types
-from dinkster_native.native import register_native_types
 
 payloads = {
     'CAMERA_INFO_STATE': {'position': {'x': -3.25, 'y': 7, 'z': 0.5},
@@ -920,22 +916,19 @@ for type_id in payloads:
     name = type_id + '_TYPE'
     assert getattr(api, name) == getattr(values, name) == getattr(builtin_types, name) == type_id
     assert type_id in builtin_types.BUILTIN_TYPE_IDS
-for registrations in ((api.register_inference_types, register_native_types),
-                      (register_native_types, api.register_inference_types)):
-    for preexisting in (False, True):
-        registry = api.TypeRegistry()
-        first = {t: registry.register(t) for t in payloads} if preexisting else {}
-        registrations[0](registry)
-        specs = {t: registry.spec(t) for t in payloads}
-        registrations[1](registry)
-        registrations[0](registry)
-        for type_id, value in payloads.items():
-            spec = registry.spec(type_id)
-            assert spec is specs[type_id]
-            assert not preexisting or spec is first[type_id]
-            if not preexisting:
-                assert spec.decode(spec.encode(value)) == value
-                assert registry.wrap(type_id, spec.decode(spec.encode(value))).resolve() == value
+for preexisting in (False, True):
+    registry = api.TypeRegistry()
+    first = {t: registry.register(t) for t in payloads} if preexisting else {}
+    api.register_inference_types(registry)
+    specs = {t: registry.spec(t) for t in payloads}
+    api.register_inference_types(registry)
+    for type_id, value in payloads.items():
+        spec = registry.spec(type_id)
+        assert spec is specs[type_id]
+        assert not preexisting or spec is first[type_id]
+        if not preexisting:
+            assert spec.decode(spec.encode(value)) == value
+            assert registry.wrap(type_id, spec.decode(spec.encode(value))).resolve() == value
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """

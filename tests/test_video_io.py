@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from av.codec import Codec as AvCodec
 from av.error import InvalidDataError
-from dinkster_api.v1 import VIDEO_TYPE, image_input
+from dinkster_api.v1 import image_input
 from dinkster_assets import (
     AssetRef,
     AssetVault,
@@ -164,14 +164,10 @@ def test_video_admission_enforces_size_before_probe(
 def test_indexed_video_over_one_gib_is_admitted_without_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import sys
-    from types import ModuleType
-
     from dinkster_api.v1 import admit_video_source
     from dinkster_assets import AssetError, ChainResolver, MountDef, MountTable
     from dinkster_assets.value import bind_video_value
-    from dinkster_native.video import register_video_type
-    from dinkster_values import GIBIBYTE, TypeRegistry, decode_video, encode_video, video_source
+    from dinkster_values import GIBIBYTE, decode_video, encode_video, video_source
     from dinkster_values.video_document import video_reference
     from dinkster_video_runtime import save_video_stream
     from dinkster_video_runtime.document import clip, make, mutate
@@ -226,13 +222,6 @@ def test_indexed_video_over_one_gib_is_admitted_without_copy(
     assert isinstance(rendered_source, AssetRef)
     assert rendered_source.digest == selected.digest
     assert rendered_source.local_path() == path
-    input_impl = ModuleType("comfy_api.input_impl")
-    cast(Any, input_impl).VideoFromFile = object
-    monkeypatch.setitem(sys.modules, "comfy_api.input_impl", input_impl)
-    registry = TypeRegistry()
-    register_video_type(registry, VIDEO_TYPE)
-    native = cast(Any, registry.spec(VIDEO_TYPE).decode(encode_video(received)))
-    assert Path(native.get_stream_source()) == path
     for store in (tmp_path / "vault", tmp_path / "scratch"):
         assert not any(entry.is_file() for entry in store.rglob("*"))
     table.remove("input")
@@ -240,8 +229,6 @@ def test_indexed_video_over_one_gib_is_admitted_without_copy(
         received_source.open()
     with pytest.raises(AssetError):
         rendered_source.open()
-    with pytest.raises(AssetError):
-        native.get_stream_source()
 
 
 def test_ungranted_video_source_over_copy_limit_is_rejected(tmp_path: Path) -> None:

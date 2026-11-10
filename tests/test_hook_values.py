@@ -137,27 +137,18 @@ def test_hook_values_reject_foreign_resident_stubs(monkeypatch: pytest.MonkeyPat
         target_registry.spec(HOOKS_TYPE).decode(encoded)
 
 
-@pytest.mark.parametrize("native_first", (False, True))
 def test_clip_hook_replacement_preserves_only_current_declared_dependencies(
-    monkeypatch: pytest.MonkeyPatch, native_first: bool
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_api.v1 import CLIP_TYPE
-    from dinkster_native.native import register_native_types
     from dinkster_values import RESOURCE_ID_META_KEY, RESOURCE_REFS_META_KEY, resident_resource_id
 
     pool = ResidencyTable()
     monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
-    monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
     registry = TypeRegistry()
-    first, second = (
-        (register_native_types, register_inference_types)
-        if native_first
-        else (register_inference_types, register_native_types)
-    )
-    first(registry)
+    register_inference_types(registry)
     spec = registry.spec(CLIP_TYPE)
-    second(registry)
-    first(registry)
+    register_inference_types(registry)
     assert registry.spec(CLIP_TYPE) is spec
     primary, explicit, group_owner, group_ref = (object() for _ in range(4))
     old_keyframes, new_keyframes = object(), object()

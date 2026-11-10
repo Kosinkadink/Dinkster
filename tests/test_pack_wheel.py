@@ -35,6 +35,7 @@ from dinkster.installer import http_registry_fetcher
 from dinkster.registries import (
     NamedRegistry,
     RegistryConfig,
+    StaticPackIndex,
     prepare_registry_pack_locks,
     registry_source_lock,
     resolve_release,
@@ -357,10 +358,13 @@ def test_static_release_refuses_nonuniversal_or_missing_wheel_array(problem: str
 @pytest.mark.parametrize(
     "publisher,compression", [("demo", zipfile.ZIP_STORED), (None, zipfile.ZIP_DEFLATED)]
 )
+@pytest.mark.parametrize("schema", [1, 2])
 def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     publisher: str | None,
     compression: int,
+    schema: int,
 ) -> None:
     root = wheel_pack(tmp_path / "source")
     (root / "src/demo_nodes/__init__.py").write_text("from demo_core import VALUE\nNODES = []\n")
@@ -479,12 +483,45 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
         routes["/static/packs/index.json"] = json.dumps(
             {"schemaVersion": 1, "items": [release]}
         ).encode()
+        if schema == 2:
+            routes["/static/packs/index.json"] = json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "items": [
+                        {
+                            "name": "demo-nodes",
+                            "publisher": publisher,
+                            "latestVersion": "1.2.3",
+                            "library": False,
+                            "url": "packs/demo-nodes/index.json",
+                        },
+                        {
+                            "name": "unrelated",
+                            "publisher": "demo",
+                            "latestVersion": "9.0",
+                            "library": False,
+                            "url": "packs/unrelated/index.json",
+                        },
+                    ],
+                }
+            ).encode()
+            routes["/static/packs/demo-nodes/index.json"] = json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "name": "demo-nodes",
+                    "items": [release],
+                }
+            ).encode()
         for name, row in zip(("demo-nodes", "demo-core"), wheel_rows, strict=True):
             routes[f"/static/cpu/simple/{name}/"] = (
                 f'<a href="{row["url"]}#sha256={row["sha256"]}">{row["filename"]}</a>'
             ).encode()
-        registry = NamedRegistry("demo", endpoint)
-        entry = resolve_release(registry, "demo-nodes", "1.2.3", engine_version="0.0.2")
+        monkeypatch.setenv("STATIC_REGISTRY_FIXTURE_TOKEN", "fixture-token")
+        registry = NamedRegistry("demo", endpoint, "STATIC_REGISTRY_FIXTURE_TOKEN")
+        index = StaticPackIndex()
+        entry = resolve_release(
+            registry, "demo-nodes", "1.2.3", engine_version="0.0.2", index=index
+        )
         assert entry.publisher == (publisher or "")
         entry = registry_source_lock(entry, pack_file, engine_version="0.0.2")
         assert entry.publisher == (publisher or "")
@@ -498,7 +535,8 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
             == "authenticated-operator"
         )
         assert (
-            http_registry_fetcher(endpoint, token="fixture-token")(entry) == pack_file.read_bytes()
+            http_registry_fetcher(endpoint, token="fixture-token", index=index)(entry)
+            == pack_file.read_bytes()
         )
         assert authorization[-2:] == ["Bearer fixture-token", "Bearer fixture-token"]
         paths = prepare_registry_pack_locks(
@@ -508,7 +546,9 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
             variant="cpu",
             base_id=base_id,
             selected=registry,
+            index=index,
         )
+        assert "/static/packs/unrelated/index.json" not in requested
         lock = PackLock.read(paths[0])
         assert [(p.name, p.version) for p in lock.packages] == [
             ("demo-core", "2.4"),
@@ -552,6 +592,9 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
         assert spec.python == str(python)
         assert spec.packs is not None and spec.packs[entry.pack].publisher == (publisher or "")
         assert not spec.trust_reserved
+        assert requested.count("/static/packs/index.json") == 1
+        assert requested.count("/static/packs/demo-nodes/index.json") == (1 if schema == 2 else 0)
+        assert str(wheel_rows[1]["url"]).removeprefix(endpoint) in requested
         assert requested and all(path.startswith("/static/") for path in requested)
         from dinkster.compose import CompositionError
 

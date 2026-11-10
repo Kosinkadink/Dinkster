@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Static-only registry installs support both the release catalog and the split
+  catalog with per-pack version files. Selection and acquisition share a snapshot
+  within each operation; the next operation reads current publication state.
+  Unknown index schemas refuse with an instruction to update Dinkster.
 - Managed generation hosts can opt into local human pack previews with
   `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
   or the inherited `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the
@@ -16,6 +20,10 @@
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
+- Dependency locks declaring engine API compatibility can layer unchanged on
+  later engines inside that range. The target must supply the API, and all
+  ordinary shared dependency versions must still agree exactly. Older exact
+  locks retain their exact-version requirements.
 - Published software history can rebuild a pruned generation without restoring
   workflows, models or outputs. Missing engine inputs expose read-only alternatives
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
@@ -259,6 +267,11 @@
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
   the interpreter. Setup never upgrades uv automatically.
+- Environment commands that ask for confirmation refuse non-terminal text-mode
+  requests without `--yes`, naming `--yes` to apply and `--plan` to inspect.
+  Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
+  does not apply it. Explicit `--plan` and the Desktop client's `--json` preview
+  remain read-only without prompting; `--json --yes` applies without prompting.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -314,6 +327,12 @@
   accepts the same opt-in, with an explicit host interpreter override when its
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
+  Official packs built from the explicitly selected checkout may serve under
+  reserved namespaces in that local generation. Other Git, local and pip
+  sources do not gain reserved-namespace trust, even with publisher `dinkster`.
+  Libraries built alongside those packs supply their locked dependencies
+  without a registry download and must match the dependency lock's digest.
+  Libraries are not installed or cataloged as node packs.
   Default setup and Desktop remain published-bundle consumers.
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the
@@ -334,6 +353,49 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env cleanup --plan` reports retained, candidate and deferred
+  generation numbers with reasons without recovering or modifying the project.
+  Status includes the same preview and visible pending quarantine warnings.
+  Candidate status requires matching sealed software in published history and
+  unique completed activation provenance. Missing, damaged, unpublished or
+  ambiguous coverage defers the tree. Host and tools observations do not change
+  software identity. Explicit legacy imports provide coverage only after their
+  completed journal provenance and sealed software are revalidated. Preview
+  never launches an interpreter, publishes or repairs history; candidate status
+  is advisory rather than deletion authorization.
+  Materialized pack payloads are disposable once their software identity is
+  recorded; history does not promise to preserve local edits to runtime files.
+  Managed interpreter acquisition is serialized against generation collection;
+  pending launches and unproven child cleanup retain the generation.
+  Stopped assignments carried across updates remain stopped and do not by
+  themselves prevent collection after leaving the retained rollback set.
+  `cleanup --automatic off --yes` persists an opt-out without collecting;
+  `--automatic on` restores the default preference. Preview and status expose
+  the same policy. `cleanup --keep-previous N --yes` persists how many previous
+  successful generations to keep besides current, from 1 to 100 (default 1).
+  Desktop offers the same count beside on/off. Selection follows successful
+  activation ancestry, not directory numbering; imports and failed attempts do
+  not consume retention slots. Older policy files default to one. Raising the
+  count does not rebuild collected trees; lowering it takes effect at the next
+  eligible collection. Policy commands do not collect synchronously.
+  `cleanup --yes` retries generation-only collection for history-covered unused
+  trees when the policy is enabled. Busy projects defer, overlapping retries
+  coalesce, and status preserves the last attempt and retryable failures.
+  Before selecting trees, retries publish completed activation receipts and
+  capture eligible legacy software as marked imports under the project and
+  runtime locks. Existing receipts are never replaced. Live, uncertain or
+  invalid legacy trees retain their software and expose capture warnings;
+  stopped trees can be captured on a later retry. Imports do not change the
+  activation chronology, and capture never runs a retained interpreter.
+  Interrupted quarantine recovers and committed deletion retries without
+  collecting shared caches, rewriting history or stopping processes.
+  Successful CLI activation, repair, restore, start and stop attempt collection
+  after releasing transaction locks. Managed supervisors attempt startup,
+  hourly collection, retrying busy locks sooner. Acknowledged stops attempt
+  collection after durably recording the stopped engine assignment.
+  Cleanup failures remain warnings rather than invalidating a successful
+  update. Legacy trees without provable coverage still defer; Desktop controls
+  are separate.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
@@ -471,6 +533,10 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+  Linux and Windows managed shutdown drains worker descendants before proving
+  exit, including isolated and grouped workers blocked during pack import.
+  Collection retains legacy or unsupported-platform stopped generations when
+  descendant exit is unproven; it never stops processes to make them collectible.
 - `dinkster-env history` lists successful software activations in order, and
   `history show ID` displays the recorded software and changes. History survives
   generation-directory collection. Snapshots exclude workflows, models, outputs,
@@ -490,8 +556,11 @@
 - Software snapshots describe canonical reconstruction inputs, not the integrity
   of every materialized pack runtime file. A successful import or exact restore
   does not establish that an existing same-lock runtime has no local edits.
-  Unrecorded or linked pack payloads must remain retained when that proof is
-  unavailable; capture alone does not authorize their collection.
+  Recorded software identity in history permits collection of unused generations,
+  including their materialized pack runtimes, without a per-file runtime inventory.
+  Current and previous generations, live processes and intact sealed metadata
+  remain protected. Links inside disposable runtime trees are removed without
+  deleting their targets; linked sealed metadata still refuses collection.
 - `dinkster-env restore ID` rebuilds a published software snapshot in a new
   generation after confirmation. Recorded identities are preserved; unavailable
   inputs refuse activation. Tools versions are displayed but tools are never

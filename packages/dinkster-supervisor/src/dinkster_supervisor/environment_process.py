@@ -32,8 +32,18 @@ def process_state(directory: Path, instance: str, *, pid: int = 0) -> str:
     return str(document["state"])
 
 
-def _write(directory: Path, instance: str, state: str, pid: int) -> None:
-    write_document(directory / "state.json", {"instance": instance, "state": state, "pid": pid})
+def _write(
+    directory: Path, instance: str, state: str, pid: int, *, descendants: bool = False
+) -> None:
+    write_document(
+        directory / "state.json",
+        {
+            "instance": instance,
+            "state": state,
+            "pid": pid,
+            "descendantsStopped": descendants,
+        },
+    )
 
 
 @contextmanager
@@ -50,11 +60,11 @@ def process_lifetime(directory: Path, instance: str) -> Generator[bool]:
         yield True
 
 
-def complete_process(directory: Path, instance: str) -> None:
+def complete_process(directory: Path, instance: str, *, descendants: bool = False) -> None:
     """Called only by the lock-holding supervisor after listener and child cleanup."""
     if process_state(directory, instance) != "running":
         raise EnvironmentError("supervisor lifecycle was not running")
-    _write(directory, instance, "stopped", os.getpid())
+    _write(directory, instance, "stopped", os.getpid(), descendants=descendants)
 
 
 def cancel_pending_process(directory: Path, instance: str) -> bool:
