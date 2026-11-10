@@ -217,6 +217,8 @@ jobs:
           uv run python -m pytest -q ${{ matrix.pytest_args }}
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
+          --durations=0 --durations-min=0
+          --junitxml=test-results/linux-${{ matrix.shard }}.xml
           --cov=dinkster_api --cov=dinkster_assets
           --cov=dinkster_caches --cov=dinkster_engine
           --cov=dinkster_graph --cov=dinkster_memory
@@ -233,6 +235,13 @@ jobs:
           name: coverage-shard-${{ matrix.shard }}
           path: .coverage.${{ matrix.shard }}
           include-hidden-files: true
+          if-no-files-found: error
+      - name: Retain Linux test timings
+        uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Linux'
+        with:
+          name: test-timings-linux-${{ matrix.shard }}
+          path: test-results/linux-${{ matrix.shard }}.xml
           if-no-files-found: error
       - run: uv run dinkster demo
         if: matrix.run_checks

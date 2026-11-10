@@ -193,6 +193,8 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
     assert run["if"] == "runner.os == 'Linux'"
     assert "${{ matrix.pytest_args }}" in run["run"]
+    assert "--durations=0 --durations-min=0" in run["run"]
+    assert "--junitxml=test-results/linux-${{ matrix.shard }}.xml" in run["run"]
     assert run["env"]["COVERAGE_FILE"] == ".coverage.${{ matrix.shard }}"
     upload = next(
         step for step in root["steps"] if step.get("uses") == "actions/upload-artifact@v4"
@@ -200,6 +202,13 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert upload["if"] == "runner.os == 'Linux'"
     assert upload["with"]["path"] == run["env"]["COVERAGE_FILE"]
     assert upload["with"]["if-no-files-found"] == "error"
+    timings = next(
+        step for step in root["steps"] if step.get("name") == "Retain Linux test timings"
+    )
+    assert timings["if"] == "always() && runner.os == 'Linux'"
+    assert timings["with"]["if-no-files-found"] == "error"
+    assert timings["with"]["name"] == "test-timings-linux-${{ matrix.shard }}"
+    assert timings["with"]["path"] == "test-results/linux-${{ matrix.shard }}.xml"
     gate = jobs["coverage-gate"]
     assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
     runtime = jobs["windows-runtime"]
