@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-ltx"
-version = "0.0.3"
+version = "0.0.4"
 description = "Dinkster ltx model nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,7 +10,7 @@ dependencies = [
     "dinkster-latent>=0.0.1",
     "dinkster-llm>=0.0.1",
     "dinkster-models>=0.0.1",
-    "dinkster-pack-helpers>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.2,<1",
 ]
 
 [build-system]
