@@ -30,10 +30,12 @@ def test_hunyuan_one_zero_dimension_uses_width_height_in_the_core_order(monkeypa
         "dinkster_hunyuan.latent_upscale.initialize_inference_process", lambda: None
     )
     monkeypatch.setattr(
-        "dinkster_hunyuan.latent_upscale.importlib.import_module",
-        lambda name: SimpleNamespace(
-            common_upscale=lambda tensor, width, height, _method, _crop: (
-                calls.append((width, height)) or tensor.new_ones((1, 2, height, width))
+        "dinkster_hunyuan.latent_upscale.importlib",
+        SimpleNamespace(
+            import_module=lambda name: SimpleNamespace(
+                common_upscale=lambda tensor, width, height, _method, _crop: (
+                    calls.append((width, height)) or tensor.new_ones((1, 2, height, width))
+                )
             )
         ),
     )
