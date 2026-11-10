@@ -1,10 +1,10 @@
 [pack]
 name = "dinkster-sampling"
-version = "0.0.3"
+version = "0.0.4"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.sampling"]
-requires = ["torch", "numpy", "tqdm", "dinkster-inference==0.1.1", "dinkster-pack-helpers>=0.0.1,<1"]
+requires = ["torch", "numpy", "tqdm", "dinkster-inference==0.1.1", "dinkster-pack-helpers>=0.0.2,<1"]
 
 [pack.inference]
 imports = ["k_diffusion.sa_solver", "k_diffusion.sampling", "ldm.modules.attention", "model_management", "model_patcher", "nested_tensor", "patcher_extension", "sample", "sampler_helpers", "samplers", "utils"]

@@ -6,6 +6,10 @@ makes, and these rules keep it that way as the codebase grows.
 
 ## Ground rules
 
+- **New single-pack execution tests use `dinkster_engine.testing` when enough.**
+  Use its real worker-process default and share startup with a module- or
+  session-scoped fixture. Keep composer and HTTP tests for behavior that needs
+  those layers. See the [engine testing guide](../packages/dinkster-engine/README.md#tests-from-pytest).
 - **Every bug fix ships with the regression test that would have caught it.**
   No exceptions - if it broke once without a test noticing, the suite has a
   hole exactly there.
@@ -75,11 +79,12 @@ The selected tests and minimum-executed-test guard remain unchanged.
 
 Full-validation jobs run serially inside each matrix shard with
 `PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
-within a job. The matrix jobs themselves run in parallel. Linux root shards
-print every setup, call and teardown duration with
+within a job. The matrix jobs themselves run in parallel. Linux and Windows
+root shards print every setup, call and teardown duration with
 `--durations=0 --durations-min=0` and retain per-test totals in
-`test-timings-linux-N` JUnit artifacts, including when pytest fails. Use these
-timings to balance shards instead of counting files.
+`test-timings-linux-N` and `test-timings-windows-N` JUnit artifacts, including
+when pytest fails. Use each platform's timings to balance its shards instead
+of counting files.
 
 ## Platform golden evidence
 
@@ -142,13 +147,13 @@ The selections and setup commands in
 
 | Lane | Required execution |
 | --- | --- |
-| Linux CPython 3.12 root | All six `test` file shards, with the workflow's branch-coverage sources and exclusions |
-| Windows CPython 3.14.10 root | All six `test` file shards in a native Windows checkout, excluding the separate runtime selection and using the patched SQLite runtime |
-| Windows CPython 3.14.10 runtime | All four `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; history is in job 4 |
+| Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
+| Windows CPython 3.14.10 root | All ten serial `test` file shards, balanced by native Windows timings with module fixtures kept together, excluding the separate runtime selection and using the patched SQLite runtime |
+| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, generations, history and transactions split by sorted test ID, other files stay whole |
 | CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
-| Probe jail | Live jail and jailed-doctor contracts in the configured Linux isolation environment |
-| Coverage gate | All six Linux and four Windows runtime coverage files combined; `coverage report --fail-under=80` |
+| Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |
+| Coverage gate | All twelve Linux and eight Windows runtime coverage files combined; `coverage report --fail-under=80` |
 
 Build the CPU runtime with
 `uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
@@ -251,7 +256,7 @@ supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 
 The counted root command above uses the same branch-coverage source list as
 the hosted Linux root and Windows runtime jobs. Hosted coverage combines all
-six Linux and four Windows runtime artifacts before running
+Linux root and Windows runtime artifacts in the matrix above before running
 `coverage report --fail-under=80`; a missing artifact or failed shard fails
 the gate. A local root report alone is not the combined hosted result.
 

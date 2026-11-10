@@ -376,16 +376,28 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
                         locations.append({"storage": "vault", "path": str(path)})
             except (AssetError, OSError):
                 pass
+            mount_entries: dict[str, tuple[MountDef, dict[str, str]]] = {}
             for virtual_path in dict.fromkeys(item.asset.virtual_path for item in groups[0]):
                 parts = virtual_path.split("/", 2)
                 if len(parts) != 3 or parts[0] != "mounts" or parts[1] not in context.mounts:
                     continue
                 try:
-                    ref = await asyncio.to_thread(service.table.ref, virtual_path)
-                    if ref.digest != asset.digest:
-                        continue
-                    mount = service.table.get(parts[1])
-                    if mount is None:
+                    if parts[1] not in mount_entries:
+                        mount = service.table.get(parts[1])
+                        if mount is None:
+                            continue
+                        # Refresh writer entries once, without reusing them across requests.
+                        mount_entries[parts[1]] = (mount, {})
+                        entries = await asyncio.to_thread(service.table.entries, parts[1])
+                        mount_entries[parts[1]] = (
+                            mount,
+                            {entry.virtual_path: entry.digest for entry in entries},
+                        )
+                    mount, digests = mount_entries[parts[1]]
+                    if (
+                        digests.get(virtual_path) != asset.digest
+                        or service.table.get(parts[1]) is not mount
+                    ):
                         continue
                     root = mount.path.resolve()
                     path = (root / parts[2]).resolve()
@@ -393,12 +405,12 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
                         continue
                     path = await asyncio.to_thread(verified_local_path, path, asset.digest)
                     if (
-                        service.table.get(parts[1]) != mount
+                        service.table.get(parts[1]) is not mount
                         or parts[1] not in service.project_context(project).mounts
                         or not path.resolve().is_relative_to(root)
                     ):
                         continue
-                except (AssetError, OSError):
+                except (AssetError, MountsError, OSError):
                     continue
                 location: dict[str, object] = {
                     "storage": "mount",

@@ -65,16 +65,15 @@ jobs:
         # Windows keeps the tcp boundary transport and the shm
         # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
         # user OS, not a nice-to-have.
-        # Whole-file shards keep each complete lane within its main-validation
-        # budget. Checks and generated-contract validation run once per OS;
-        # every root test file still runs in exactly one shard.
+        # Linux splits expensive histories and generations by case; other files
+        # stay whole. Checks and generated contracts run once per OS.
         include:
           - os: linux
             runner: linux
             python-version: "3.12"
             shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/12"
             run_checks: true
             timeout-minutes: 30
           - os: linux
@@ -82,7 +81,7 @@ jobs:
             python-version: "3.12"
             shard: 2
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -90,7 +89,7 @@ jobs:
             python-version: "3.12"
             shard: 3
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -98,7 +97,7 @@ jobs:
             python-version: "3.12"
             shard: 4
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -106,7 +105,7 @@ jobs:
             python-version: "3.12"
             shard: 5
             shard_name: ", shard 5"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/12"
             run_checks: false
             timeout-minutes: 30
           - os: linux
@@ -114,49 +113,135 @@ jobs:
             python-version: "3.12"
             shard: 6
             shard_name: ", shard 6"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 7
+            shard_name: ", shard 7"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 7/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 8
+            shard_name: ", shard 8"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 8/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 9
+            shard_name: ", shard 9"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 9/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 10
+            shard_name: ", shard 10"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 10/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 11
+            shard_name: ", shard 11"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 11/12"
+            run_checks: false
+            timeout-minutes: 30
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard: 12
+            shard_name: ", shard 12"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 12/12"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 1
             shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/6 --durations=20"
-            run_checks: false
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/10"
+            run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 2
             shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/10"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 3
             shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/6"
-            run_checks: true
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/10"
+            run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 4
             shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/10"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 5
             shard_name: ", shard 5"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 5/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 5/10"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.14.10"
+            shard: 6
             shard_name: ", shard 6"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 6/6"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 6/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 7
+            shard_name: ", shard 7"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 7/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 8
+            shard_name: ", shard 8"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 8/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 9
+            shard_name: ", shard 9"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 9/10"
+            run_checks: false
+            timeout-minutes: 30
+          - os: windows
+            runner: windows
+            python-version: "3.14.10"
+            shard: 10
+            shard_name: ", shard 10"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 10/10"
             run_checks: false
             timeout-minutes: 30
     steps:
@@ -210,11 +295,15 @@ jobs:
           --ignore-glob=tests/test_supervisor*.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
+          --durations=0 --durations-min=0
+          --junitxml=test-results/windows-${{ matrix.shard }}.xml
         if: runner.os == 'Windows'
         env:
           DINKSTER_SLOW_TESTS: "1"
       - run: >
           uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --case-shard-file tests/test_environment_history.py
+          --case-shard-file tests/test_environment_generations.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
           --durations=0 --durations-min=0
@@ -242,6 +331,13 @@ jobs:
         with:
           name: test-timings-linux-${{ matrix.shard }}
           path: test-results/linux-${{ matrix.shard }}.xml
+          if-no-files-found: error
+      - name: Retain Windows test timings
+        uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: test-timings-windows-${{ matrix.shard }}
+          path: test-results/windows-${{ matrix.shard }}.xml
           if-no-files-found: error
       - run: uv run dinkster demo
         if: matrix.run_checks
@@ -331,17 +427,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Natural Windows phase times: history 971s, remaining shard 3 1467s.
-        # Keep the existing three-way case placement; move history to its own job.
-        include:
-          - shard: 1
-            file-shard: 1
-          - shard: 2
-            file-shard: 2
-          - shard: 3
-            file-shard: 3
-          - shard: 4
-            file-shard: 3
+        # Measured Windows phase totals balance to 445-531s before job setup.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -378,15 +465,15 @@ jobs:
             $_.Name -like 'test_supervisor*.py'
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
-          $caseShardArgs = @('--case-shard-file', 'tests/test_environment_generations.py')
-          if (${{ matrix.shard }} -eq 3) {
-            $files = @($files | Where-Object { (Split-Path $_ -Leaf) -ne 'test_environment_history.py' })
-          } elseif (${{ matrix.shard }} -eq 4) {
-            $files = @('tests/test_environment_history.py')
-            $caseShardArgs = @()
-          }
+          $caseShardArgs = @(
+            '--case-shard-file', 'tests/test_environment_artifacts.py',
+            '--case-shard-file', 'tests/test_environment_cli.py',
+            '--case-shard-file', 'tests/test_environment_generations.py',
+            '--case-shard-file', 'tests/test_environment_history.py',
+            '--case-shard-file', 'tests/test_environment_transactions.py'
+          )
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.file-shard }}/3 --durations=0 `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/8 --durations=0 `
             @caseShardArgs `
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_engine `
@@ -432,10 +519,10 @@ jobs:
           merge-multiple: true
       - name: Combine coverage and enforce the unchanged branch floor
         run: |
-          for shard in 1 2 3 4 5 6; do
+          for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do
             test -f "coverage-data/.coverage.$shard"
           done
-          for shard in 1 2 3 4; do
+          for shard in 1 2 3 4 5 6 7 8; do
             test -f "coverage-data/.coverage.windows-runtime-$shard"
           done
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
@@ -514,4 +601,5 @@ jobs:
       - run: |
           uv sync --locked --all-packages
           uv run --no-sync python -m pytest -v \
-            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
+            'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'

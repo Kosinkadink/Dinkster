@@ -508,11 +508,12 @@ downloads it first and shows the size before starting. Downloads are ranged
 and resumable, hashed while streaming, and retried across the configured
 mirror list.
 
-Rollback is `dinkster-env rollback`: start the previous generation's
-supervisor, repoint `current`, stop the newer one. Nothing is rebuilt. The
-newer generation stays on disk until garbage collection, which keeps the
-active and previous generation of each project, and keeps every wheel and
-base in the store that any retained generation references.
+Rollback is `dinkster-env rollback`: rebuild the preceding successful software
+snapshot as a fresh generation under the restore approval contract, preserving
+project settings and user data. The replaced generation stays on disk until
+garbage collection, which keeps the active and previous generation of each
+project, and keeps every wheel and base in the store that any retained
+generation references.
 
 Generation collection uses the last successful activation journal to find the
 previous generation, not numeric order. A gc journal carries optional
@@ -522,6 +523,70 @@ previous generation, not numeric order. A gc journal carries optional
 Incomplete collection restores quarantined trees before another confirmed
 operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
 bindings refuse collection. Previously published generation numbers are not reused.
+
+`dinkster-env --root /absolute/project cleanup --plan --json` reports a
+read-only generation safety preview. `status --json` includes the same
+`cleanup` object: `policy`, `current`, `generations` (generation number, status and
+reasons), `quarantine` (journal, stage and generation numbers), and `warnings`.
+Rows distinguish retained generations, candidates outside current/previous,
+and deferred records. A candidate is not authorization for automatic deletion:
+durable software-history coverage must also be established before pruning.
+The preview never recovers operations, captures history, acquires writer
+locks, removes trash, or changes project settings. Corrupt records report a
+reason rather than granting permission to delete. Committed quarantine stays
+visible until cleanup succeeds.
+
+`cleanup --automatic off --yes --json` persists the project's opt-out;
+`--automatic on` restores its preference for automatic cleanup. Add `--plan`
+instead of `--yes` to inspect without writing. The shared `cleanup.policy`
+object reports `automatic` (default true), `previousSuccessfulActivations`
+(default 1, allowed 1-100), and `minimumAgeSeconds` (0).
+`cleanup --keep-previous N --yes` saves the previous-generation count in the
+same policy without changing on/off. Both options may be set together.
+Retention follows successful activation ancestry rather than numeric folders.
+Raising the count never recreates collected trees; lowering applies at the next
+eligible collection. These are retention preferences, not proof
+of history coverage or deletion eligibility. Changing the preference does not
+collect, recover operations, or capture history. The preference lives in
+`cleanup.json`, outside activation settings and software history, so restore
+and rollback do not undo an opt-out. Invalid or linked policy files refuse
+policy changes and preview rather than falling back to automatic deletion.
+The preference command does not run collection synchronously.
+
+`cleanup --yes --json` retries generation-only collection using the same policy,
+preview eligibility, project lock and runtime acquisition lock. It never calls
+shared-store GC or stops processes. Busy writers defer; overlapping cleanup
+attempts coalesce. `cleanup.lastAttempt` preserves the last attempt's status,
+collected generation numbers, deferred records and warnings across invocations.
+Uncommitted generation quarantine is recovered before retry; committed trash
+is retried after deletion failures. Shared-store quarantine is left to explicit
+cache GC and its recovery.
+
+Successful CLI setup, update, repair, rollback, restore, start and stop attempt
+generation-only collection after transaction locks are released. A managed
+supervisor also attempts collection after startup and every hour while running,
+then after its acknowledged listener/child shutdown receipt. Busy acquisition
+locks and overlapping collectors retry after 30 seconds instead of waiting an
+hour. Opt-out is checked on each attempt. Cleanup warnings do not change the
+successful command result; unreadable maintenance state is also logged. Missing
+or invalid legacy history still defers collection. Recorded software identity
+covers disposable pack runtime payloads without a per-file inventory; collection
+removes links inside those runtimes without deleting their external targets.
+
+Interpreter acquisition and collection share a runtime admission lock in
+addition to the existing project transaction lock. A pending launch protects
+its generation even if the caller exits before publishing its engine binding.
+Collection requires terminal child-cleanup or launch-cancellation receipts for
+all recorded launch attempts; a missing receipt retains the tree. A live
+supervisor can restart its engine, so its generation remains protected even
+when its current HTTP engine status is stopped.
+Collection defers while activation or move holds the project transaction lock.
+A collection plan made before a later activation must be replanned against
+the new current and successful predecessor before any tree is quarantined.
+On Linux and Windows, normal managed shutdown and restart also drain owned
+worker descendants, including workers blocked before their startup handshake.
+Collection does not stop processes. Legacy direct-child-only receipts and
+platforms without full descendant-exit proof retain the generation.
 
 Shared-store collection preserves the bases, engine caches and hashed wheels of
 every extant generation in registered projects, except this project's approved
@@ -646,6 +711,9 @@ directory's OS lock through child cleanup. Recovery may cancel a still-pending
 launch under that lock; a delayed supervisor then exits without an engine.
 The supervisor writes a stopped receipt only after cleanup, so interruption
 of the updater before its own record write cannot erase shutdown evidence.
+A stopped receipt must also carry `descendantsStopped: true` for collection.
+The dedicated supervisor owns descendants through Linux child-subreaper or
+Windows Job Object membership; a cleanup failure cannot publish that proof.
 A dead supervisor without that receipt remains ambiguous. No process receipt
 or shutdown credential is added to the exported operation journal.
 

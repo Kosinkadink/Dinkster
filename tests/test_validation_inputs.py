@@ -56,6 +56,12 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
             False,
             ["packages/dinkster-nodes-text"],
         ),
+        (
+            "packages/dinkster-nodes-dev/pyproject.toml",
+            False,
+            False,
+            ["packages/dinkster-nodes-dev"],
+        ),
         ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
         ("tests/test_environment_history.py", True, True, []),
         ("tests/test_remote.py", True, True, []),
@@ -71,7 +77,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
 def test_ci_selects_only_the_changed_behavior(
     path: str, engine: bool, runtime: bool, packs: list[str]
 ) -> None:
-    from tools.ci_selection import select
+    from tools.ci_selection import select, test_paths
 
     plan = select(evidence_paths.DINKSTER_ROOT, [path])
     assert plan == {
@@ -80,6 +86,8 @@ def test_ci_selects_only_the_changed_behavior(
         "runtime": runtime,
         "packs": packs,
     }
+    for pack in packs:
+        assert test_paths(evidence_paths.DINKSTER_ROOT, [pack])
 
 
 def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> None:
@@ -170,6 +178,11 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     )
     jobs = workflow["jobs"]
     assert "coverage" not in jobs
+    jail_run = jobs["probe-jail"]["steps"][-1]["run"]
+    assert (
+        "tests/test_comfy_model_selection_hosts.py::"
+        "test_native_selection_loaders_in_public_hosts[sandbox]"
+    ) in jail_run
     root = jobs["test"]
     decode = next(
         step
@@ -179,20 +192,30 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     linux = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "linux"]
     assert [(row["shard"], row["pytest_args"]) for row in linux] == [
-        (index, f"-p tools.pytest_file_shard --file-shard {index}/6") for index in range(1, 7)
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/12") for index in range(1, 13)
     ]
-    assert [row["run_checks"] for row in linux] == [True, False, False, False, False, False]
+    assert [row["run_checks"] for row in linux] == [True, *([False] * 11)]
     assert all(row["timeout-minutes"] == 30 for row in linux)
     windows = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "windows"]
-    assert [row["pytest_args"] for row in windows] == [
-        f"-p tools.pytest_file_shard --file-shard {index}/6"
-        + (" --durations=20" if index == 1 else "")
-        for index in range(1, 7)
+    assert [(row["shard"], row["pytest_args"]) for row in windows] == [
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/10") for index in range(1, 11)
     ]
-    assert [row["run_checks"] for row in windows] == [False, False, True, False, False, False]
+    assert [row["run_checks"] for row in windows] == [True] + [False] * 9
+    windows_run = next(step for step in root["steps"] if step.get("if") == "runner.os == 'Windows'")
+    assert "--durations=0 --durations-min=0" in windows_run["run"]
+    assert "--junitxml=test-results/windows-${{ matrix.shard }}.xml" in windows_run["run"]
+    windows_timings = next(
+        step for step in root["steps"] if step.get("name") == "Retain Windows test timings"
+    )
+    assert windows_timings["if"] == "always() && runner.os == 'Windows'"
+    assert windows_timings["with"]["if-no-files-found"] == "error"
+    assert windows_timings["with"]["name"] == "test-timings-windows-${{ matrix.shard }}"
+    assert windows_timings["with"]["path"] == "test-results/windows-${{ matrix.shard }}.xml"
     run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
     assert run["if"] == "runner.os == 'Linux'"
     assert "${{ matrix.pytest_args }}" in run["run"]
+    assert "--case-shard-file tests/test_environment_history.py" in run["run"]
+    assert "--case-shard-file tests/test_environment_generations.py" in run["run"]
     assert "--durations=0 --durations-min=0" in run["run"]
     assert "--junitxml=test-results/linux-${{ matrix.shard }}.xml" in run["run"]
     assert run["env"]["COVERAGE_FILE"] == ".coverage.${{ matrix.shard }}"
@@ -212,22 +235,14 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     gate = jobs["coverage-gate"]
     assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
     runtime = jobs["windows-runtime"]
-    runtime_rows = runtime["strategy"]["matrix"]["include"]
-    assert [(row["shard"], row["file-shard"]) for row in runtime_rows] == [
-        (1, 1),
-        (2, 2),
-        (3, 3),
-        (4, 3),
-    ]
-    from tools.pytest_file_shard import file_shard
-
-    assert file_shard("tests/test_environment_history.py", 3) == 3
+    runtime_shards = runtime["strategy"]["matrix"]["shard"]
+    assert runtime_shards == list(range(1, 9))
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
-    assert "--file-shard ${{ matrix.file-shard }}/3" in runtime_run["run"]
-    assert "@('--case-shard-file', 'tests/test_environment_generations.py')" in runtime_run["run"]
-    assert "(Split-Path $_ -Leaf) -ne 'test_environment_history.py'" in runtime_run["run"]
-    assert "$files = @('tests/test_environment_history.py')" in runtime_run["run"]
-    assert "$caseShardArgs = @()" in runtime_run["run"]
+    assert "--file-shard ${{ matrix.shard }}/8" in runtime_run["run"]
+    for name in ("artifacts", "cli", "generations", "history", "transactions"):
+        assert f"'--case-shard-file', 'tests/test_environment_{name}.py'" in runtime_run["run"]
+    assert "matrix.file-shard" not in runtime_run["run"]
+    assert "$files = @(" not in runtime_run["run"]
     runtime_upload = next(
         step for step in runtime["steps"] if step.get("uses") == "actions/upload-artifact@v4"
     )
@@ -240,13 +255,12 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     combine = gate["steps"][-1]["run"]
     assert "*/packages/" in combine
     assert 'coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data' in combine
-    assert "for shard in 1 2 3 4 5 6; do" in combine
+    assert "for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do" in combine
     assert 'test -f "coverage-data/.coverage.$shard"' in combine
     assert "coverage report --fail-under=80" in combine
-    assert "for shard in 1 2 3 4; do" in combine
+    assert "for shard in 1 2 3 4 5 6 7 8; do" in combine
     assert 'test -f "coverage-data/.coverage.windows-runtime-$shard"' in combine
-    for row in runtime_rows:
-        shard = row["shard"]
+    for shard in runtime_shards:
         coverage_file = runtime_run["env"]["COVERAGE_FILE"].replace(
             "${{ matrix.shard }}", str(shard)
         )
