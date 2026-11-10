@@ -17,7 +17,7 @@ from dinkster_registry import LockedPack, Lockfile, artifact_digest
 from dinkster_schema import canonical_claim
 from dinkster_store import object_path, pack_archive_path, pack_label
 from packaging.specifiers import SpecifierSet
-from packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .manifest import load_manifest
 from .pack_lock import resolve_pack_lock
@@ -72,11 +72,21 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             {"filename": wheel.name, "sha256": digest, "size": wheel.stat().st_size}
         )
 
+    engine = json.loads((generation / "engine-manifest.json").read_text())
+    engine_wheels = {
+        str(parse_wheel_filename(row["filename"])[0]): object_path(
+            store / "wheels", "sha256:" + row["sha256"]
+        )
+        / row["filename"]
+        for row in engine["wheels"]
+    }
     constraints = artifacts / "development-constraints.txt"
     constraints.write_text(
         (generation / "constraints.txt").read_text()
         + "\n"
         + "\n".join(f"{name}=={value}" for name, value in library_versions.items())
+        + "\n"
+        + "\n".join(f"{name} @ {path.as_uri()}" for name, path in engine_wheels.items())
         + "\n",
         encoding="utf-8",
     )

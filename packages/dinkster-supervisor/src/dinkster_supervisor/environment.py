@@ -1551,6 +1551,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{result['operation']}: {result['status']}")
         if "sourceDescription" in result:
             print(result["sourceDescription"])
+        if "sourceApproval" in result:
+            print(f"Source approval: {result['sourceApproval']}")
         if "base" in result:
             base = cast("dict[str, object]", result["base"])
             print(f"Variant: {base['variant']} ({base['origin']})")

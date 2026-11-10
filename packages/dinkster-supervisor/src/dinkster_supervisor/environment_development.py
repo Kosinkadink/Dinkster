@@ -86,7 +86,7 @@ def _git_state(root: Path) -> dict[str, object]:
         )
 
     commit = read("rev-parse", "HEAD")
-    if commit.returncode:
+    if commit.returncode or read("check-ignore", "--quiet", "--", str(root)).returncode == 0:
         return {"commit": None, "dirty": None}
     status = read("status", "--porcelain", "--untracked-files=all", "--", str(root))
     if status.returncode:
