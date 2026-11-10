@@ -601,4 +601,5 @@ jobs:
       - run: |
           uv sync --locked --all-packages
           uv run --no-sync python -m pytest -v \
-            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
+            'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'

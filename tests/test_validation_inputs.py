@@ -170,6 +170,11 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     )
     jobs = workflow["jobs"]
     assert "coverage" not in jobs
+    jail_run = jobs["probe-jail"]["steps"][-1]["run"]
+    assert (
+        "tests/test_comfy_model_selection_hosts.py::"
+        "test_native_selection_loaders_in_public_hosts[sandbox]"
+    ) in jail_run
     root = jobs["test"]
     decode = next(
         step
