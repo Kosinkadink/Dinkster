@@ -112,6 +112,11 @@
 - Pack publication can submit publisher-produced per-base locks together with
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
+- Published lock preparation inspects the whole selected set before creating
+  lock output, reporting all missing or invalid bindings together. Its
+  `--offline --index-snapshot PATH` form uses retained index and lock metadata
+  without network access or dependency resolution; missing or corrupt inputs
+  refuse without creating the output or repairing the snapshot.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.
@@ -437,6 +442,8 @@
 - Engine release assembly records variant-specific dependency wheel identities
   without uploading third-party wheels. Finalization rejects unexpected payloads
   and enforces a 100 MB budget excluding native tools ZIPs.
+  Release metadata also records that engine's default pack IDs and minimum
+  versions, independently of the command interpreter's installed defaults.
 - Native tools builds retry transient HTTPS input failures up to three times,
   preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
   corrupt payloads fail without retry; exhausted failures retain attempt details.

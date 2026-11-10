@@ -1262,7 +1262,7 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
             variant=args.variant,
             base_id=args.base_id,
             selected=select_registry(config, args.registry) if args.registry else None,
-            index=StaticPackIndex(args.index_snapshot),
+            index=StaticPackIndex(args.index_snapshot, offline=args.offline),
         )
     except OSError as exc:
         raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
@@ -1443,6 +1443,9 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--offline", action="store_true", help="use only cached index and published lock metadata"
+    )
     locks.add_argument(
         "--index-snapshot",
         type=Path,

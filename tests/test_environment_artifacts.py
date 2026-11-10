@@ -771,6 +771,32 @@ def test_discovery_rejects_unsupported_manifest_architectures(
         discover((str(mirror),), "main")
 
 
+@pytest.mark.parametrize(
+    "defaults",
+    [
+        {"fixture-pack": "1.2.3"},
+        {},
+        [],
+        {"Bad_Name": "1.2"},
+        {"fixture-pack": 3},
+        {"fixture-pack": "not-a-version"},
+    ],
+)
+def test_engine_manifest_validates_target_default_declaration(tmp_path: Path, defaults: object):
+    _, engine, _ = _mirror(tmp_path / "mirror")
+    engine["defaultPacks"] = defaults
+    payload = _json(engine)
+    identity = "sha256:" + hashlib.sha256(payload).hexdigest()
+    if defaults == {"fixture-pack": "1.2.3"}:
+        assert (
+            environment_artifacts.validate_manifest(payload, identity, None)["defaultPacks"]
+            == defaults
+        )
+    else:
+        with pytest.raises(EnvironmentError, match="default"):
+            environment_artifacts.validate_manifest(payload, identity, None)
+
+
 def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path: Path):
     first, second = tmp_path / "first", tmp_path / "second"
     _, engine, channel = _mirror(first)

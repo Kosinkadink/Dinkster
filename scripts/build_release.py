@@ -529,6 +529,9 @@ def build(
         "workerProtocol": int(protocol[1]),
         "workspaceWheels": [wheel.name for wheel in wheels],
         "dependencies": dependencies,
+        "defaultPacks": tomllib.loads(
+            (root / "src/dinkster/default-packs.toml").read_text(encoding="utf-8")
+        )["packs"],
     }
     write_manifest(output, manifest, artifacts)
     return manifest

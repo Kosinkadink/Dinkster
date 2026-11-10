@@ -155,7 +155,14 @@ class PackLock:
     @classmethod
     def read(cls, path: Path) -> PackLock:
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            return cls.from_json(path.read_text(encoding="utf-8"))
+        except (ProvisionError, UnicodeError) as exc:
+            raise ProvisionError(f"{path}: {exc}") from exc
+
+    @classmethod
+    def from_json(cls, payload: str | bytes) -> PackLock:
+        try:
+            raw = json.loads(payload)
             if not isinstance(raw, dict):
                 raise ValueError("dependency lock must be an object")
             data = cast("dict[str, Any]", raw)
@@ -182,7 +189,7 @@ class PackLock:
                 engine=engine,
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise ProvisionError(f"invalid dependency lock {path}: {exc}") from exc
+            raise ProvisionError(f"invalid dependency lock: {exc}") from exc
 
 
 @dataclass(frozen=True)

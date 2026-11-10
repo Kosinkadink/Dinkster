@@ -1547,6 +1547,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         ),
         "src/dinkster/__init__.py": "",
+        "src/dinkster/default-packs.toml": '[packs]\nfixture-pack = "1.2.3"\n',
         "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
         "scripts/release_sources.json": json.dumps(frontend_pin),
     }
@@ -1598,6 +1599,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     assert built_at.tzinfo == UTC
     assert manifest["label"] == f"{built_at.date().isoformat()}-{public_version}"
     assert manifest["version"] == version
+    assert manifest["defaultPacks"] == {"fixture-pack": "1.2.3"}
     assert "tag" not in manifest
     assert set(manifest["workspaceWheels"]) == {
         f"dinkster-{version}-py2.py3-none-any.whl",

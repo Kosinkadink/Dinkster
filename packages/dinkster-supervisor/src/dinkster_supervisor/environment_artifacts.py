@@ -107,6 +107,19 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
         rows = artifact_rows(document.get("artifacts"), "name")
         if not any(row["name"] == "constraints.txt" for row in rows):
             raise EnvironmentError("engine release has no constraints.txt artifact")
+        if "defaultPacks" in document:
+            defaults = document["defaultPacks"]
+            if not isinstance(defaults, dict) or not defaults:
+                raise EnvironmentError("engine defaultPacks must be a nonempty object")
+            for pack, minimum in cast("dict[str, object]", defaults).items():
+                if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", pack) is None:
+                    raise EnvironmentError("engine default pack names must be canonical")
+                try:
+                    if not isinstance(minimum, str):
+                        raise ValueError("minimum version must be a string")
+                    Version(minimum)
+                except ValueError as exc:
+                    raise EnvironmentError(f"invalid engine default pack minimum: {pack}") from exc
         if "dependencies" in document:
             dependencies = document["dependencies"]
             if not isinstance(dependencies, dict) or not dependencies:

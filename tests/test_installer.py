@@ -3742,6 +3742,7 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         "pack",
         "variant",
         "missing",
+        "multiple",
         "local",
         "selected",
         "absent-selection",
@@ -3750,7 +3751,10 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
     ],
 )
 def test_cli_acquires_published_locks_for_exact_sources_and_base(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    problem: str | None,
 ) -> None:
     from dinkster_registry import artifact_digest
     from dinkster_workers.pack_lock import PackLock
@@ -3761,7 +3765,13 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     expected = {}
     releases = []
     for pack in ("demo", "z-other"):
-        fault = problem if pack == "z-other" else None
+        fault = (
+            ("missing" if pack == "demo" else "base")
+            if problem == "multiple"
+            else problem
+            if pack == "z-other"
+            else None
+        )
         entry = LockedPack(
             pack, "1.2.3", "blake3:" + ("a" if pack == "demo" else "b") * 64, "acme", ()
         )
@@ -3827,7 +3837,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         entries.append(replace(entries[0], pack="local-only", source="local:/retained"))
     source.write_text(Lockfile.of(entries).record_json())
     original = source.read_bytes()
-    output = tmp_path / "published-locks"
+    output = tmp_path / "new-inputs" / "published-locks"
+    snapshot = tmp_path / "index"
     args = (
         "--root",
         str(root),
@@ -3842,6 +3853,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         "linux-cpu",
         "--base-id",
         base,
+        "--index-snapshot",
+        str(snapshot),
     )
     if problem == "local":
         args += ("--registry-only",)
@@ -3867,7 +3880,12 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 assert requests == []
             else:
                 assert "z-other" in error
+                if problem == "multiple":
+                    assert "demo@1.2.3" in error
+                    assert "published binding differs" in error
+                    assert "invalid archive/base/lock binding" in error
             assert not output.exists()
+            assert not output.parent.exists()
         else:
             run_cli(*args)
             report = json.loads(capsys.readouterr().out)
@@ -3900,6 +3918,38 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                     path in {"/static/packs/index.json", "/static/" + lock_path}
                     for path, _ in requests
                 )
+            if problem is None:
+
+                def forbidden(*args: object, **kwargs: object) -> None:
+                    raise AssertionError("offline lock preparation must not fetch or resolve")
+
+                monkeypatch.setattr("urllib.request.urlopen", forbidden)
+                monkeypatch.setattr(subprocess, "run", forbidden)
+                offline = tmp_path / "offline" / "locks"
+                offline_args = list(args)
+                offline_args[offline_args.index("--output") + 1] = str(offline)
+                before = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+                run_cli(*offline_args, "--offline")
+                capsys.readouterr()
+                assert {path.name: path.read_bytes() for path in offline.iterdir()} == {
+                    path.name: path.read_bytes() for path in output.iterdir()
+                }
+                assert {path.name: path.read_bytes() for path in snapshot.iterdir()} == before
+                cached_locks = sorted(snapshot.glob("*.lock"))
+                assert len(cached_locks) == 2
+                cached_locks[0].write_bytes(b"corrupt")
+                cached_locks[1].unlink()
+                before = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+                refused = tmp_path / "refused" / "locks"
+                offline_args[offline_args.index("--output") + 1] = str(refused)
+                with pytest.raises(SystemExit):
+                    run_cli(*offline_args, "--offline")
+                error = capsys.readouterr().err
+                assert "demo@1.2.3" in error and "z-other@1.2.3" in error
+                assert "published lock bytes differ" in error
+                assert "offline dependency lock missing" in error
+                assert not refused.parent.exists()
+                assert {path.name: path.read_bytes() for path in snapshot.iterdir()} == before
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
         assert sorted(path.name for path in root.iterdir()) == ["current"]
