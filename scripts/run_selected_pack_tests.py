@@ -10,16 +10,21 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import tomllib
 import venv
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 
-from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
+from dinkster_registry.archive_admission import ARCHIVE_LIMIT
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
 from dinkster_workers.pack_wheel import pack_import_name, pack_manifest_path
 
 from dinkster.compose import _FIRST_PARTY_PACK_DISTRIBUTIONS, _installed_pack_digest
+from scripts.build_official_packs import library_metadata
+from scripts.build_release import is_official_library
 
 _PACK_DIRECTORIES = {
     pack: distribution
@@ -81,13 +86,32 @@ _SUITES = {
 }
 
 
+def selected_library_wheels(catalog: Lockfile, artifacts: Path) -> dict[str, Path]:
+    """Identify manifestless entries and verify the publisher's locked library identity."""
+    libraries = {}
+    for pack in catalog.packs:
+        archive = pack_archive_path(artifacts, pack.artifact_digest)
+        with zipfile.ZipFile(archive) as wheel:
+            if any(Path(name).name == "dinkster-pack.toml" for name in wheel.namelist()):
+                continue
+        data = archive.read_bytes()
+        if not 1 <= len(data) <= ARCHIVE_LIMIT or artifact_digest(data) != pack.artifact_digest:
+            raise ValueError(f"selected library {pack.pack} size or digest mismatch")
+        name, version, _ = library_metadata(archive)
+        if (name, version) != (pack.pack, pack.version) or pack.claims:
+            raise ValueError(f"selected library {pack.pack} identity mismatch")
+        libraries[pack.pack] = archive
+    return libraries
+
+
 def run_selected_tests(
     root: Path, catalog: Lockfile, artifacts: Path, *, test_packs: tuple[str, ...] = ()
 ) -> None:
     """Test only the scanner's verified selection through a disposable checkout layout."""
     if sys.platform != "linux":
         raise RuntimeError("selected pack admission tests require the Linux CI environment")
-    unknown = {pack.pack for pack in catalog.packs} - _SUITES.keys()
+    libraries = selected_library_wheels(catalog, artifacts)
+    unknown = {pack.pack for pack in catalog.packs} - libraries.keys() - _SUITES.keys()
     if unknown:
         raise ValueError(f"selected packs have no engine test suite: {sorted(unknown)}")
     if not catalog.packs:
@@ -95,6 +119,11 @@ def run_selected_tests(
     if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
         raise ValueError(f"requested test packs are not in the selected catalog: {sorted(missing)}")
     directories = set(_PACK_DIRECTORIES.values())
+    directories.update(
+        path.parent.name
+        for path in (root / "packages").glob("*/pyproject.toml")
+        if is_official_library(tomllib.loads(path.read_text()))
+    )
     import_packages = {pack_import_name(pack) for pack in _PACK_DIRECTORIES}
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
         work = Path(directory)
@@ -117,8 +146,40 @@ def run_selected_tests(
             shutil.copy2(source, destination)
         module_roots: list[str] = []
         modules: dict[str, str] = {}
+        if libraries:
+            wheels = work / "wheels"
+            wheels.mkdir()
+            paths = []
+            for archive in libraries.values():
+                identity, version, _ = library_metadata(archive)
+                wheel_path = wheels / f"{identity.replace('-', '_')}-{version}-py3-none-any.whl"
+                shutil.copyfile(archive, wheel_path)
+                paths.append(str(wheel_path))
+                with zipfile.ZipFile(archive) as wheel:
+                    for member in wheel.namelist():
+                        if member.endswith(".py") and ".dist-info/" not in member:
+                            module = member.split("/")[0].removesuffix(".py")
+                            import_packages.add(module)
+                            modules[module] = str(work / "libraries")
+            subprocess.run(
+                [
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--no-deps",
+                    "--target",
+                    str(work / "libraries"),
+                    *paths,
+                ],
+                check=True,
+            )
+            module_roots.append(str(work / "libraries"))
         checkout_packs = []
         for pack in catalog.packs:
+            if pack.pack in libraries:
+                continue
             package = checkout / "packages" / _PACK_DIRECTORIES[pack.pack]
             destination = package / "src"
             archive = pack_archive_path(artifacts, pack.artifact_digest)
@@ -206,6 +267,8 @@ def run_selected_tests(
         shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
         shutil.copy2(child, checkout / "_selected_pack_test_child.py")
         for pack in catalog.packs:
+            if pack.pack in libraries:
+                continue
             if test_packs and pack.pack not in test_packs:
                 continue
             tests = sorted(
@@ -221,7 +284,11 @@ def run_selected_tests(
             config = work / "test-selection.json"
             config.write_text(
                 json.dumps(
-                    {"modules": modules, "tests": tests, "packs": [p.pack for p in catalog.packs]}
+                    {
+                        "modules": modules,
+                        "tests": tests,
+                        "packs": [p.pack for p in catalog.packs if p.pack not in libraries],
+                    }
                 ),
                 encoding="utf-8",
             )

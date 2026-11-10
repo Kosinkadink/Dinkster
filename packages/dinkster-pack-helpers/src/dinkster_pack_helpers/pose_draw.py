@@ -1,4 +1,4 @@
-"""Whole-body pose rasterization using batched disks and clipped Pillow polygons."""
+"""Shared whole-body pose rasterization with batched disks and clipped Pillow polygons."""
 
 from __future__ import annotations
 

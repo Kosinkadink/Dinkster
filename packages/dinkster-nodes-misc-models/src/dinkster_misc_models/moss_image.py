@@ -32,7 +32,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_image,
 )
-from dinkster_conditioning.conditioning import (
+from dinkster_pack_helpers.conditioning import (
     conditioning_set_values,
     conditioning_set_values_with_timestep_range,
 )

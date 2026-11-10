@@ -13,19 +13,19 @@ from dinkster_api.v1 import (
     first_party_schema,
     initialize_inference_process,
 )
-from dinkster_models.model_file_loaders import (
+from dinkster_pack_helpers.model_file_loaders import (
     asset_input as _asset,
 )
-from dinkster_models.model_file_loaders import (
+from dinkster_pack_helpers.model_file_loaders import (
     asset_path as _path,
 )
-from dinkster_models.model_file_loaders import (
+from dinkster_pack_helpers.model_file_loaders import (
     clip_options as _clip_options,
 )
-from dinkster_models.model_file_loaders import (
+from dinkster_pack_helpers.model_file_loaders import (
     combo_input as _combo,
 )
-from dinkster_models.model_file_loaders import (
+from dinkster_pack_helpers.model_file_loaders import (
     embedding_roots as _embedding_roots,
 )
 

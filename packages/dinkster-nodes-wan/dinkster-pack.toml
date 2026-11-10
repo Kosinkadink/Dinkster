@@ -1,10 +1,10 @@
 [pack]
 name = "dinkster-wan"
-version = "0.0.2"
+version = "0.0.3"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.wan"]
-requires = ["torch", "dinkster-inference==0.1.1", "numpy", "scipy", "einops"]
+requires = ["torch", "dinkster-inference==0.1.1", "numpy", "scipy", "einops", "dinkster-pack-helpers>=0.0.1,<1"]
 type-namespaces = ["WAN_CAMERA_EMBEDDING", "TRACKS"]
 
 [pack.inference]
@@ -19,7 +19,6 @@ host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.dependencies]
-"dinkster-conditioning" = ">=0.0.1"
 "dinkster-models" = ">=0.0.1"
 "dinkster-vision-sam3" = ">=0.0.1"
 

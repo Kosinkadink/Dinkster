@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-from dinkster_image.pose_draw import draw_disks, draw_pose
+from dinkster_pack_helpers.pose_draw import draw_disks, draw_pose
 
 from .sam3d_pose import OPENPOSE_HAND_COLORS_21, openpose_render_keypoints
 

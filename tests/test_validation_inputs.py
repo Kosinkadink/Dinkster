@@ -130,6 +130,46 @@ def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> N
     ]
 
 
+@pytest.mark.parametrize("fail_root", [False, True])
+def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
+    tmp_path: Path, fail_root: bool
+) -> None:
+    import json
+
+    packages = ["packages/dinkster-nodes-image", "packages/dinkster-nodes-video"]
+    executed = tmp_path / "executed.txt"
+    for directory, identity in [
+        (packages[0] + "/tests", "image"),
+        (packages[1] + "/tests", "video"),
+        ("tests", "root"),
+    ]:
+        tests = tmp_path / directory
+        tests.mkdir(parents=True)
+        if identity != "root":
+            (tests.parent / "dinkster-pack.toml").write_text(
+                f'[pack]\nname = "dinkster-{identity}"\n'
+            )
+        (tests / "selection_helper.py").write_text(f"IDENTITY = {identity!r}\n")
+        (tests / "test_image_compositor.py").write_text(
+            "from pathlib import Path\n"
+            "from selection_helper import IDENTITY\n"
+            "def test_selected_consumer():\n"
+            f"    assert IDENTITY == {identity!r}\n"
+            f"    with Path({str(executed)!r}).open('a') as output:\n"
+            f"        output.write({identity!r} + '\\n')\n"
+            f"    assert {not (fail_root and identity == 'root')}\n"
+        )
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.ci_selection", "--packs", json.dumps(packages)],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(evidence_paths.DINKSTER_ROOT)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == (1 if fail_root else 0), result.stdout + result.stderr
+    assert executed.read_text().splitlines() == ["image", "video", "root"]
+
+
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     import yaml
 

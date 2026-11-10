@@ -47,7 +47,7 @@ def _inference_modules() -> tuple[Any, Any, Any, Any]:
         importlib.import_module("dinkster_inference.samplers"),
         importlib.import_module("dinkster_inference.sampler_helpers"),
         importlib.import_module("dinkster_inference.patcher_extension"),
-        importlib.import_module("dinkster_conditioning.conditioning"),
+        importlib.import_module("dinkster_pack_helpers.conditioning"),
     )
 
 
