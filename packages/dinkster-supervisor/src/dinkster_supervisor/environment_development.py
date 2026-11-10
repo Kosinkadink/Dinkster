@@ -228,6 +228,7 @@ def prepare_development_packs(
             worker_protocol=selection["workerProtocol"],
             own_environment_size=0,
             locks=locks if operation != "doctor" else (),
+            source_generation=generation,
             in_process_packs=in_process,
             offline=operation != "acquire",
         )

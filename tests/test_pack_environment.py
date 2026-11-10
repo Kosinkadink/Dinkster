@@ -1047,3 +1047,48 @@ def test_doctor_rejects_unavailable_generation_even_without_packs(
     result = json.loads(output.out)
     assert result["packs"] == []
     assert "missing-python" in result["changes"][0]
+
+
+@pytest.mark.parametrize("problem", ["engine", "dependency"])
+def test_development_pack_build_refuses_incompatible_or_unresolvable_inputs(
+    tmp_path: Path, problem: str
+) -> None:
+    from dinkster_workers.development_sources import build_inputs
+
+    generation, source, index = (tmp_path / name for name in ("generation", "pack", "index"))
+    for directory in (generation, source, index):
+        directory.mkdir()
+    (generation / "engine-manifest.json").write_text('{"wheels": []}')
+    (generation / "constraints.txt").write_text("")
+    (source / "example").mkdir()
+    (source / "example/__init__.py").write_text("NODES = []\n")
+    engine = ">=9999" if problem == "engine" else ">=0.0.2"
+    requirements = [] if problem == "engine" else ["unavailable-development-helper==9999"]
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "example"\nversion = "1.0"\npublisher = "demo"\n'
+        f'engine = "{engine}"\nrequires = {json.dumps(requirements)}\n'
+        '[pack.entry]\nnodes = "example:NODES"\n'
+    )
+    store = tmp_path / "store"
+    (store / "wheels").mkdir(parents=True)
+    error = (
+        "declared engine requirement is incompatible"
+        if problem == "engine"
+        else "dependency conflict"
+    )
+    with pytest.raises(ProvisionError, match=error):
+        build_inputs(
+            {
+                "generation": str(generation),
+                "store": str(store),
+                "artifacts": str(tmp_path / "artifacts"),
+                "libraries": [],
+                "packs": [str(source)],
+                "packPaths": [str(source)],
+                "variant": "linux-cpu",
+                "accelerator": "cpu",
+                "index": index.as_uri(),
+            }
+        )
+    assert not (tmp_path / "artifacts/development-packs.lock").exists()
+    assert not (generation / "packs").exists()
