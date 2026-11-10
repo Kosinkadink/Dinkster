@@ -329,7 +329,6 @@ def write_pack(directory: Path, name: str) -> Path:
 def test_station_two_real_engines_share_one_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    installed_default_catalogs: None,
 ) -> None:
     """The Comfy Desktop role, live: two install roots on one shared
     content store, each generation different, one station managing both.
