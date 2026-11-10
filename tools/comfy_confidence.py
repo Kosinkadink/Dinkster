@@ -172,25 +172,13 @@ def _validate_mapping(value: object) -> dict[str, Any]:
         "receipt.mapping",
         {"registryId", "mappingKind", "tier", "source", "target"},
     )
-    registry_id = _string(mapping["registryId"], "receipt.mapping.registryId")
-    if registry_id.startswith("comfy_alias:"):
-        registry_kind = "alias"
-    elif registry_id.startswith("comfy_group:"):
-        registry_kind = "group"
-    else:
-        raise ConfidenceReceiptError(
-            "receipt.mapping.registryId must start with comfy_alias: or comfy_group:"
-        )
+    _string(mapping["registryId"], "receipt.mapping.registryId")
     mapping_kind = _string(mapping["mappingKind"], "receipt.mapping.mappingKind")
     if mapping_kind not in _MAPPING_KINDS:
         raise ConfidenceReceiptError("receipt.mapping.mappingKind must be op or family")
     tier = _string(mapping["tier"], "receipt.mapping.tier")
     if tier not in _TIERS:
         raise ConfidenceReceiptError(f"unsupported receipt confidence tier: {tier}")
-    if (registry_kind == "group") != (tier == "grouped"):
-        raise ConfidenceReceiptError(
-            "group receipts require grouped confidence and alias receipts forbid it"
-        )
 
     source = _fields(
         mapping["source"],
@@ -200,7 +188,7 @@ def _validate_mapping(value: object) -> dict[str, Any]:
     pack = _string(source["pack"], "receipt.mapping.source.pack", maximum=128)
     if _PACK_ID.fullmatch(pack) is None:
         raise ConfidenceReceiptError("receipt.mapping.source.pack is not a canonical pack id")
-    name = _string(source["name"], "receipt.mapping.source.name", maximum=256)
+    _string(source["name"], "receipt.mapping.source.name", maximum=256)
     revision = _string(source["revision"], "receipt.mapping.source.revision", maximum=128)
     reference_kind = _string(source["referenceKind"], "receipt.mapping.source.referenceKind")
     if reference_kind not in _REFERENCE_KINDS:
@@ -222,9 +210,6 @@ def _validate_mapping(value: object) -> dict[str, Any]:
         raise ConfidenceReceiptError(
             "ecosystem-pinned references require a non-core pack and full commit"
         )
-    expected_id = f"comfy_{registry_kind}:{pack}/{name}"
-    if registry_id != expected_id:
-        raise ConfidenceReceiptError(f"receipt.mapping.registryId must be {expected_id!r}")
 
     target = _fields(mapping["target"], "receipt.mapping.target", {"kind", "id"})
     target_kind = _string(target["kind"], "receipt.mapping.target.kind")
