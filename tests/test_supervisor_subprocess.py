@@ -5,15 +5,46 @@ from __future__ import annotations
 import socket
 import subprocess
 import sys
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
-from supervisor_subprocess import run
+from supervisor_subprocess import _request_snapshot, run
+
+
+def wait_until(ready: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 30
+    while not ready():
+        assert time.monotonic() < deadline, "diagnostic child did not reach the required state"
+        threading.Event().wait(0.01)
+
+
+@pytest.fixture
+def expire_after_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[Callable[[subprocess.Popen[str]], None]], None]:
+    communicate = subprocess.Popen.communicate
+
+    def install(ready: Callable[[subprocess.Popen[str]], None]) -> None:
+        def expire(process, input=None, timeout=None):
+            if timeout is None:
+                return communicate(process, input=input)
+            assert timeout == 30
+            ready(process)
+            # Exercise real communicate expiration, but only once the child is ready.
+            return communicate(process, input=input, timeout=0)
+
+        monkeypatch.setattr(subprocess.Popen, "communicate", expire)
+
+    return install
 
 
 @pytest.mark.parametrize("entry", ["module", "inline"])
 def test_child_output_and_timeout_diagnostics(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str, expire_after_ready
 ) -> None:
     module = tmp_path / "diagnostic_child.py"
     module.write_text(
@@ -30,6 +61,7 @@ def test_child_output_and_timeout_diagnostics(
         "def blocked_child():\n"
         "    threading.Thread(target=active_child, daemon=True).start()\n"
         "    ready.wait()\n"
+        f"    __import__('pathlib').Path({str(tmp_path / 'ready')!r}).touch()\n"
         "    threading.Event().wait(90)\n"
         "if sys.argv[1] == 'blocked':\n"
         "    blocked_child()\n"
@@ -49,9 +81,10 @@ def test_child_output_and_timeout_diagnostics(
         "child stdout\n",
         "child stderr\n",
     )
+    expire_after_ready(lambda process: wait_until((tmp_path / "ready").exists))
     with pytest.raises(subprocess.TimeoutExpired) as raised:
         run([*command, "blocked", 'space "quoted" value'])
-    assert raised.value.timeout == 30
+    assert raised.value.timeout == 0
     notes = "\n".join(raised.value.__notes__)
     assert "returncode before cleanup=None" in notes
     assert "Child stack before cleanup:" in notes
@@ -77,6 +110,7 @@ def test_nested_child_state_and_stack_at_timeout(
     blocked: bool,
     late: bool,
     entry: str,
+    expire_after_ready,
 ) -> None:
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -98,6 +132,7 @@ def test_nested_child_state_and_stack_at_timeout(
         "release.settimeout(None)\n"
         "release.sendall(b'ready')\n"
         "def blocked_nested_child():\n"
+        "    (root / 'blocked-ready').touch()\n"
         "    assert release.recv(1) == b'x'\n"
         f"if {blocked!r}:\n"
         "    blocked_nested_child()\n"
@@ -118,6 +153,7 @@ def test_nested_child_state_and_stack_at_timeout(
         "        dump(*args, **kwargs)\n"
         "        sampled.set()\n"
         "    faulthandler.dump_traceback = record_sample\n"
+        f"    __import__('pathlib').Path({str(tmp_path / 'awaiting-snapshot')!r}).touch()\n"
         "    assert sampled.wait(30), 'supervisor sample absent'\n"
         f"result = subprocess.run([{sys.executable!r}, '-B', '-m', {module_name!r}, "
         f"*{arguments!r}, {str(tmp_path)!r}], capture_output=True, text=True)\n"
@@ -130,6 +166,22 @@ def test_nested_child_state_and_stack_at_timeout(
     parent_python = (
         str(vars(sys)["_base_executable"]) if sys.platform == "win32" else sys.executable
     )
+
+    def ready(process: subprocess.Popen[str]) -> None:
+        directory = Path(cast(list[str], process.args)[4])
+        if late:
+            wait_until((tmp_path / "awaiting-snapshot").exists)
+            assert _request_snapshot(directory) == "Timeout snapshot acknowledged"
+            (directory / "snapshot.request").unlink()
+        if blocked:
+            wait_until((tmp_path / "blocked-ready").exists)
+        else:
+            wait_until(lambda: bool(list(directory.glob("nested-*.exit"))))
+        if late:
+            for acknowledgment in directory.glob("*.snapshot"):
+                acknowledgment.unlink()
+
+    expire_after_ready(ready)
     result = None
     try:
         with pytest.raises(subprocess.TimeoutExpired) as raised:
@@ -143,7 +195,7 @@ def test_nested_child_state_and_stack_at_timeout(
                 ]
             )
             pytest.fail(f"Diagnostic parent exited before timeout: {result!r}")
-        assert raised.value.timeout == 30
+        assert raised.value.timeout == 0
         notes = "\n".join(raised.value.__notes__)
         assert f"module={module_name}" in notes
         assert f"Nested CLI child pid={(tmp_path / 'runtime-pid').read_text()}," in notes
