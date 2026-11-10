@@ -1,4 +1,4 @@
-"""Retained additive software plans for a host-owned project installation prompt."""
+"""Retained software plans for a host-owned project installation prompt."""
 
 from __future__ import annotations
 
@@ -162,8 +162,8 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
     return {
         "current": generation.number,
         "status": "planned",
-        "plan": [f"add {selection}" for selection in selections]
-        + ["retain engine, base, existing pack locks and placement; preserve project data"],
+        "plan": [f"select {selection}" for selection in selections]
+        + ["retain engine, base, unselected pack locks and placement; preserve project data"],
         "packPlan": record,
         "approval": _approval(record),
         "expiresInSeconds": 900,
