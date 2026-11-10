@@ -2089,11 +2089,12 @@ def test_collection_journal_refuses_unsafe_generation_sets(tmp_path: Path, numbe
         Journal.read(path)
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux physical extent observation")
 @pytest.mark.parametrize("enabled", [True, False])
 def test_space_report_counts_shared_allocation_once_without_changing_project(
     cleanup_project: Path, enabled: bool
 ):
+    if sys.platform != "linux":
+        pytest.skip("Linux physical extent observation")
     root = cleanup_project
     (root / "store").unlink()
     write_document(
