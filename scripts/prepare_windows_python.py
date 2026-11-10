@@ -16,10 +16,10 @@ import urllib.request
 from pathlib import Path
 
 # This source pin moves with the Windows base's SQLite override, not with uv's catalog.
-ENVIRONMENTS_COMMIT = "e80a7240f6a6e835ffa724f43c36552f58e73b5e"
+ENVIRONMENTS_COMMIT = "f0d10799dff79d92fab2d6b45da9c91e2f35b4e9"
 INPUTS = {
-    "windows_sqlite.py": "9f681989e1928d979868f2acbbb5be88d587c1e6f7c97216b3e777a963208b95",
-    "variants.toml": "6c13daa5b35c65c787c859d85bae44a2d463678269c54fcf4ac4141c3ba64db8",
+    "windows_sqlite.py": "8b8b02d2a86f22f06bbb10424076ad06aac5c3f27f7caf3916a42cfc55f5aa6d",
+    "variants.toml": "884515be492964f2a1c5bcde70fc0e7e6ee95ad77c205ea8917ed6f9a121e02e",
 }
 MINIMUM_UV_VERSION = (0, 13, 6)
 PINNED_PYTHON_VERSION = "3.14.10"
