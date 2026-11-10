@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from supervisor_subprocess import _request_snapshot, run
+from supervisor_subprocess import _request_snapshot, operation_reports, run
 
 
 def wait_until(ready: Callable[[], bool]) -> None:
@@ -20,6 +20,35 @@ def wait_until(ready: Callable[[], bool]) -> None:
     while not ready():
         assert time.monotonic() < deadline, "diagnostic child did not reach the required state"
         threading.Event().wait(0.01)
+
+
+def test_completed_and_refused_operations_retain_separate_timings(tmp_path: Path) -> None:
+    (tmp_path / "source").write_bytes(b"payload")
+    result = run(
+        [
+            sys.executable,
+            "-c",
+            "import hashlib\n"
+            "from pathlib import Path\n"
+            "from dinkster_supervisor.environment_downloads import fetch_artifact\n"
+            f"root = Path({str(tmp_path)!r})\n"
+            "fetch_artifact((str(root),), 'source', root / 'copied', "
+            "hashlib.sha256(b'payload').hexdigest(), 7)\n"
+            "try:\n"
+            "    fetch_artifact((str(root),), 'source', root / 'refused', '0' * 64, 7)\n"
+            "except ValueError:\n"
+            "    print('refused')\n",
+        ]
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (0, "refused\n", "")
+    assert (tmp_path / "copied").read_bytes() == b"payload"
+    assert not (tmp_path / "refused").exists()
+    report = operation_reports[-1]
+    events = [line.split() for line in report.splitlines() if "fetch_artifact" in line]
+    assert [row[1] for row in events] == ["start", "return", "start", "unwind"]
+    stamps = [float(row[0].removesuffix("s")) for row in events]
+    assert stamps[0] < stamps[1] <= stamps[2] < stamps[3]
+    assert "supervisor child wait" in report
 
 
 @pytest.fixture

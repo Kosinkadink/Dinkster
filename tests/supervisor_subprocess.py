@@ -10,12 +10,101 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 from uuid import uuid4
 
 _WRAPPER = f"import runpy; runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')"
+operation_reports: list[str] = []
+
+
+@contextmanager
+def _trace_operations(path: Path):
+    from dinkster_supervisor import (
+        environment_archives,
+        environment_artifacts,
+        environment_downloads,
+        environment_generations,
+        environment_move,
+    )
+
+    operations = {
+        function.__code__: f"{module.__name__}.{name}"
+        for module, names in (
+            (environment_archives, ("extract_base",)),
+            (environment_artifacts, ("acquire", "acquire_base")),
+            (environment_downloads, ("fetch_artifact",)),
+            (
+                environment_generations,
+                (
+                    "prepare_engine_interpreter",
+                    "build_generation",
+                    "stage_pack_sources",
+                    "prepare_pack_catalogs",
+                    "pack_operation",
+                ),
+            ),
+            (environment_move, ("execute_move",)),
+        )
+        for name in names
+        if (function := getattr(module, name))
+    }
+    operations[subprocess.run.__code__] = "subprocess.run"
+    monitoring = sys.monitoring
+    tool = monitoring.PROFILER_ID
+    monitoring.use_tool_id(tool, "supervisor operation timings")
+    with _open_trace(path) as trace:
+        origin = time.monotonic()
+
+        def record(event, code):
+            trace.write(f"{time.monotonic() - origin:.6f}s {event} {operations[code]}\n")
+            trace.flush()
+
+        def start(code, offset):
+            record("start", code)
+
+        def complete(code, offset, result):
+            record("return", code)
+
+        def failed(code, offset, error):
+            if code in operations:
+                record("unwind", code)
+
+        callbacks = {
+            monitoring.events.PY_START: start,
+            monitoring.events.PY_RETURN: complete,
+            monitoring.events.PY_UNWIND: failed,
+        }
+        try:
+            for event, callback in callbacks.items():
+                monitoring.register_callback(tool, event, callback)
+            monitoring.set_events(tool, monitoring.events.PY_UNWIND)
+            for code in operations:
+                monitoring.set_local_events(
+                    tool, code, monitoring.events.PY_START | monitoring.events.PY_RETURN
+                )
+            yield
+        finally:
+            monitoring.set_events(tool, 0)
+            for code in operations:
+                monitoring.set_local_events(tool, code, 0)
+            for event in callbacks:
+                monitoring.register_callback(tool, event, None)
+            monitoring.free_tool_id(tool)
+
+
+def _retain_operations(directory: Path, elapsed: float) -> str:
+    path = directory / "child.operations"
+    trace = path.read_text() if path.exists() else "operation trace absent\n"
+    report = (
+        f"{os.environ.get('PYTEST_CURRENT_TEST', 'outside pytest')}: "
+        f"supervisor child wait {elapsed:.6f}s\n"
+        "Operation timestamps are relative to tracing startup; nested intervals overlap.\n" + trace
+    )
+    operation_reports.append(report)
+    return report
 
 
 def _process_state(pid: int) -> tuple[str, int | None]:
@@ -131,6 +220,7 @@ def _request_snapshot(directory: Path) -> str:
 def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
+        started = time.monotonic()
         with subprocess.Popen(
             [
                 command[0],
@@ -148,6 +238,7 @@ def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProce
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
+                elapsed = time.monotonic() - started
                 # poll must precede kill: an exited child can leave inherited pipes open.
                 returncode = process.poll()
                 snapshot = _request_snapshot(Path(directory))
@@ -158,7 +249,8 @@ def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProce
                     f"returncode before cleanup={returncode}\n"
                     f"{snapshot}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
-                    f"{_nested_diagnostics(Path(directory))}"
+                    f"{_nested_diagnostics(Path(directory))}\n"
+                    f"{_retain_operations(Path(directory), elapsed)}"
                 )
                 process.kill()
                 if os.name == "nt":
@@ -175,6 +267,7 @@ def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProce
                     saved = stack.read_text()
                     if "Fatal Python error:" in saved or "Windows fatal exception:" in saved:
                         stderr += f"\nFatal child diagnostics ({stack.stem}):\n{saved}"
+            _retain_operations(Path(directory), time.monotonic() - started)
             return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
@@ -244,7 +337,12 @@ def _main() -> None:
         temporary.write_text(str(os.getpid()))
         temporary.replace(Path(location).with_suffix(".pid"))
     sys.argv = [module, *(arguments[1:] if module == "-c" else arguments)]
-    with _open_trace(trace_path) as trace:
+    operations = (
+        _trace_operations(trace_path.with_suffix(".operations"))
+        if mode == "supervisor"
+        else nullcontext()
+    )
+    with _open_trace(trace_path) as trace, operations:
         faulthandler.enable(file=trace)
         finished = threading.Event()
         interval = 25 if mode == "supervisor" else 5
