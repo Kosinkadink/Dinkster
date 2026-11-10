@@ -59,6 +59,7 @@ dev = [
     "pytest>=8",
     "pytest-cov>=6",
     "pytest-timeout>=2.4",
+    "pytest-xdist>=3.8",
     "pyyaml>=6",
     "ruff>=0.8",
     "pyright>=1.1.390",
@@ -128,6 +129,7 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["UP040", "UP046", "UP047"]
 
 [tool.pytest.ini_options]
+addopts = "-n logical --maxprocesses=8 --dist=worksteal --max-worker-restart=0"
 testpaths = [
     "tests",
     "packages/dinkster-nodes-remote/tests",

@@ -50,11 +50,25 @@ the active test and exits the process, so the rest of that shard cannot run.
 For a measured longer whole-test requirement, use
 `@pytest.mark.timeout(seconds)` with a reason, keeping the helper deadline
 below that backstop and the backstop below the CI job budget. Job limits are
-the final outer bound; neither timeout skips a test. pytest-xdist is not used.
+the final outer bound; neither timeout skips a test. Worker crashes fail the
+run without restarting the worker or retrying its tests.
 
 The defaults allow over four times the 28.25-second slowest call reported
 by the hosted Windows shard 1 sample in
 [full-validation run 42071734785](https://github.com/Kosinkadink/Dinkster/actions/runs/42071734785/job/127401249972).
+
+## Parallel execution
+
+Install the locked development group before testing. Root pytest invocations
+use pytest-xdist with at most eight logical-CPU workers and work stealing.
+Smaller hosts use their detected CPU count. Tests must own their ports and
+temporary directories; generated binary parameters need stable, explicit IDs
+so every worker collects the same cases. Assertions and coverage sources are
+unchanged by parallel execution.
+
+Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
+Do not use retries to hide a parallel-only failure. Package suites launched
+from their own project directory retain that project's pytest settings.
 
 ## Platform golden evidence
 
