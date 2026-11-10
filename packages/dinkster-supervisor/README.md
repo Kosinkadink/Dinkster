@@ -658,6 +658,9 @@ every persisted generation's engines.
 Graceful shutdown requires both the live instance identity and its private
 token. An unreachable or ambiguous supervisor cannot establish an idle engine;
 queue checks refuse mutation unless every observed engine is safely idle.
+Shutdown closes proxied WebSockets with a going-away frame before draining
+HTTP handlers, allowing engine replacement while event clients are connected.
+Each proxy handler cancels and joins both pumps before releasing its upstream.
 Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
 
 `rollback [--plan | --yes] --json` selects the preceding successful history entry

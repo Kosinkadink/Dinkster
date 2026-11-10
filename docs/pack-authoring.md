@@ -23,6 +23,9 @@ Start from the template in [`templates/pack/`](../templates/pack/) - it is a
 complete working pack (manifest, nodes, custom type, rendition, tests, CI)
 kept healthy by this repo's own test suite.
 
+For a complete build, test, submission and withdrawal example, follow
+[Submit a node pack](registry-submission.md).
+
 ## Building a registry wheel
 
 The distribution name equals `[pack].name`. Each pack, first-party or
