@@ -85,13 +85,9 @@ class LockedDistribution:
 def _wheel_requirements(wheel: LockedWheel) -> tuple[str, ...]:
     """Read dependency metadata from verified bytes, once per publication artifact."""
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-metadata-") as directory:
-        parsed = urlparse(wheel.url)
-        if parsed.scheme == "file":
-            path = Path(urllib.request.url2pathname(parsed.path))
-        else:
-            path = Path(directory) / wheel.filename
-            with urllib.request.urlopen(wheel.url, timeout=30) as source, path.open("wb") as output:
-                shutil.copyfileobj(source, output)
+        path = Path(directory) / wheel.filename
+        with urllib.request.urlopen(wheel.url, timeout=30) as source, path.open("wb") as output:
+            shutil.copyfileobj(source, output)
         with path.open("rb") as source:
             if (
                 path.stat().st_size != wheel.size
