@@ -2470,8 +2470,8 @@ def test_prepared_surface_validation_keeps_requests_responsive(
     import threading
 
     import dinkster_server.app as app_module
+    from dinkster_schema import validate_replacement_references
 
-    original_validate = app_module.validate_replacement_references
     validation_started = threading.Event()
     release_validation = threading.Event()
     app = create_app(make_engine, SCHEMAS)
@@ -2483,7 +2483,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
     def pause_validation(schemas: Mapping[str, NodeSchema]):
         validation_started.set()
         assert release_validation.wait(2)
-        return original_validate(schemas)
+        return validate_replacement_references(schemas)
 
     monkeypatch.setattr(app_module, "validate_replacement_references", pause_validation)
 
