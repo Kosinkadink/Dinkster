@@ -361,6 +361,10 @@
   cleanup allocation. User libraries are excluded. Unsupported, changing,
   delayed or encoded allocation is unavailable, not replaced by logical file
   sizes. Shared clone references outside the scan make reclaimability unknown.
+  Protected software history and settings are included separately from disposable
+  generations and stores. Empty shared-store categories remain visible. Without
+  `--json`, the command shows the same report with IEC units, exact byte counts,
+  retention reasons and settings guidance.
   Native Windows physical measurement is not available in this command.
 - `dinkster-env cleanup --plan` reports retained, candidate and deferred
   generation numbers with reasons without recovering or modifying the project.

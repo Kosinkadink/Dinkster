@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import socket
 import struct
 import subprocess
@@ -2121,6 +2122,7 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
                 os.fsync(stream.fileno())
     protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     trees = list((root / "generations").iterdir())
+    trees.extend(root / name for name in ("history", "journal", "current", "cleanup.json"))
     expected = sum(
         int(line.split()[0])
         for line in subprocess.check_output(
@@ -2151,8 +2153,34 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
     assert report["eligibleGenerationReclaimableBytes"] == eligible
     assert report["automaticReclaimableBytes"] == (eligible if enabled else 0)
     assert report["additionalExplicitReclaimableBytes"] == (0 if enabled else eligible)
+    assert report["groups"]["project/software-metadata"]["exclusiveAllocatedBytes"] > 0
+    assert {row["allocationGroup"] for row in report["stores"]} >= {
+        "store/bases",
+        "store/wheels",
+        "store/engines",
+        "store/pack-archives",
+        "store/uv-cache",
+    }
+    assert all(not row["automaticCleanup"] and row["reasons"] for row in report["stores"])
     assert "user data" in report["scope"]
     assert "--keep-previous" in report["settingsCommand"]
+    human = subprocess.run(
+        [sys.executable, "-m", "dinkster_supervisor.environment", "--root", str(root), "space"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    ).stdout
+    assert "Managed software disk space (read-only)" in human
+    assert f"({expected} bytes)" in next(
+        line for line in human.splitlines() if line.startswith("Total allocated:")
+    )
+    assert f"Automatic cleanup: {'on' if enabled else 'off'}" in human
+    assert "Generation 3 (retained)" in human and "current activation" in human
+    assert "Pack archives:" in human and "uv cache:" in human
+    assert "Automatic cleanup can release now:" in human
+    assert "Explicit cleanup can release additionally:" in human
+    assert "Models, outputs, workflows, mounts and other user data are excluded." in human
     assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == protected
 
 
@@ -2184,8 +2212,14 @@ def test_space_report_counts_partial_clone_overlap_without_inventing_reclaimabil
     expected = (
         sum(
             p.lstat().st_blocks * 512
-            for p in [root / "generations", *(root / "generations").rglob("*")]
-            if p != root / "generations"
+            for p in [
+                *(root / "generations").rglob("*"),
+                root / "history",
+                *(root / "history").rglob("*"),
+                root / "journal",
+                *(root / "journal").rglob("*"),
+                root / "current",
+            ]
         )
         - 4096
     )
@@ -2257,9 +2291,9 @@ def test_space_report_refuses_unknown_or_encoded_allocation(
     assert report["warnings"]
 
 
-@pytest.mark.parametrize("change_reference", [False, True])
+@pytest.mark.parametrize("change", ["none", "reference", "store-membership"])
 def test_space_report_checks_other_project_references_before_claiming_store_savings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change_reference: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ):
     if sys.platform != "linux":
         pytest.skip("Linux physical extent observation")
@@ -2268,7 +2302,7 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
     from dinkster_supervisor.environment_space import space_report
 
     store = tmp_path / "store"
-    first, second = tmp_path / "first", tmp_path / "second"
+    first, second = tmp_path / "first project", tmp_path / "second"
     for project in (first, second):
         record = _generation(project, 1)
         constraints = record.parent / "constraints.txt"
@@ -2287,16 +2321,20 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
     )
     kept = object_path(store / "wheels", "sha256:" + "c" * 64)
     disposable = object_path(store / "wheels", "sha256:" + "d" * 64)
+    engine = object_path(store / "engines", "sha256:" + "d" * 64)
     for directory, size in ((kept, 8193), (disposable, 16385), (store / "uv-cache", 4097)):
         directory.mkdir(parents=True)
         (directory / "payload").write_bytes(b"x" * size)
+    archives = engine / "artifacts"
+    archives.mkdir(parents=True)
+    (archives / "fixture.zip").write_bytes(b"pack archive" * 733)
     for path in tmp_path.rglob("*"):
         if path.is_file():
             with path.open("rb") as stream:
                 os.fsync(stream.fileno())
     expected = sum(
         p.lstat().st_blocks * 512
-        for directory in (disposable, store / "uv-cache")
+        for directory in (disposable, store / "uv-cache", engine)
         for p in (directory, *directory.rglob("*"))
     )
     ioctl = fcntl.ioctl
@@ -2304,26 +2342,56 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
 
     def observe(fd, request, buffer, mutate):
         nonlocal changed
-        if change_reference and not changed:
+        if change != "none" and not changed:
             changed = True
-            record = second / "generations/1/generation.json"
-            constraints = record.parent / "constraints.txt"
-            constraints.write_text(f"demo==1 --hash=sha256:{'d' * 64}\n")
-            generation = Generation.read(record)
-            files = dict(generation.files) | {"constraints.txt": content_digest(constraints)}
-            replace(
-                generation,
-                constraints=files["constraints.txt"],
-                files=tuple(sorted(files.items())),
-            ).write(record)
+            if change == "reference":
+                record = second / "generations/1/generation.json"
+                constraints = record.parent / "constraints.txt"
+                constraints.write_text(f"demo==1 --hash=sha256:{'d' * 64}\n")
+                generation = Generation.read(record)
+                files = dict(generation.files) | {"constraints.txt": content_digest(constraints)}
+                replace(
+                    generation,
+                    constraints=files["constraints.txt"],
+                    files=tuple(sorted(files.items())),
+                ).write(record)
+            else:
+                (store / "downloads").mkdir()
         return ioctl(fd, request, buffer, mutate)
 
     monkeypatch.setattr(fcntl, "ioctl", observe)
     before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
     report = space_report(first)
+    assert shlex.split(cast("str", report["settingsCommand"])) == [
+        "dinkster-env",
+        "--root",
+        str(first),
+        "cleanup",
+        "--automatic",
+        "on",
+        "--keep-previous",
+        "1",
+        "--yes",
+    ]
+    if change == "store-membership":
+        assert not report["complete"]
+        assert report["allocatedBytes"] is None
+        assert report["additionalExplicitReclaimableBytes"] is None
+        assert report["warnings"]
+        assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before
+        return
     assert report["complete"], report
     assert report["automaticReclaimableBytes"] == 0
-    if change_reference:
+    groups = cast("dict[str, dict[str, int]]", report["groups"])
+    assert groups["store/pack-archives"]["exclusiveAllocatedBytes"] == sum(
+        p.lstat().st_blocks * 512 for p in (archives, *archives.rglob("*"))
+    )
+    assert groups["store/engines"]["exclusiveAllocatedBytes"] == sum(
+        p.lstat().st_blocks * 512
+        for p in (store / "engines", *(store / "engines").rglob("*"))
+        if not p.is_relative_to(archives)
+    )
+    if change == "reference":
         assert report["additionalExplicitReclaimableBytes"] is None
         assert report["eligibilityWarnings"]
     else:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import shlex
 import stat
 import struct
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -226,6 +228,7 @@ def space_report(root: Path) -> dict[str, object]:
     """Observe the same safety policy as cleanup; never recover, collect or change settings."""
     if any(p.is_symlink() or p.is_junction() for p in (root, *root.parents)):
         raise EnvironmentError("space report requires an unlinked project path")
+    project_directory = _signature(root.stat())
     preview = collection_preview(root)
     policy = cast("dict[str, object]", preview["policy"])
     generations = [dict(row) for row in cast("list[dict[str, object]]", preview["generations"])]
@@ -238,6 +241,7 @@ def space_report(root: Path) -> dict[str, object]:
     group_paths: dict[Path, str] = {}
     pointer = root / "store"
     store: Path | None = None
+    store_directory: tuple[int, ...] | None = None
     if pointer.exists():
         if pointer.is_symlink() or pointer.is_junction():
             raise EnvironmentError("space report refuses a linked store pointer")
@@ -252,6 +256,7 @@ def space_report(root: Path) -> dict[str, object]:
             or ".." in store.parts
         ):
             raise EnvironmentError("space report requires separate unlinked project and store")
+        store_directory = _signature(store.stat())
     try:
         _, _, explicit_generations = collection_plan(root)
         if store is not None:
@@ -284,8 +289,16 @@ def space_report(root: Path) -> dict[str, object]:
             if path.is_symlink() or path.is_junction():
                 raise EnvironmentError("space report refuses linked store directories")
             trees.append((path, _Owner(group, False, False)))
+        for name in ("projects.json", ".lock"):
+            path = store / name
+            if path.exists():
+                trees.append((path, _Owner("store/metadata", False, False)))
     if (root / ".garbage").exists():
         trees.append((root / ".garbage", _Owner("generation-quarantine", False, False)))
+    for name in ("history", "journal", "current", "project.json", "store", "cleanup.json", ".lock"):
+        path = root / name
+        if path.exists():
+            trees.append((path, _Owner("project/software-metadata", False, False)))
     allocation = _allocation(
         trees,
         {store / name for name in explicit_paths} if store is not None else set(),
@@ -306,7 +319,9 @@ def space_report(root: Path) -> dict[str, object]:
             warnings.append(f"Explicit cleanup eligibility is unavailable: {exc}")
     if (
         collection_preview(root) != preview
+        or _signature(root.stat()) != project_directory
         or _signature((root / "generations").stat()) != generation_directory
+        or (store is not None and _signature(store.stat()) != store_directory)
         or (store is not None and pointer.read_text(encoding="utf-8").strip() != str(store))
     ):
         allocation.update(
@@ -319,6 +334,53 @@ def space_report(root: Path) -> dict[str, object]:
         cast("list[str]", allocation["warnings"]).append(
             "Cleanup state or generation membership changed during observation."
         )
+    categories = {
+        "bases": "Extracted bases",
+        "wheels": "Dependency wheels",
+        "downloads": "Base archives",
+        "engines": "Engine archives",
+        "pack-archives": "Pack archives",
+        "uv-cache": "uv cache",
+        ".garbage": "Store quarantine",
+        "metadata": "Store registration metadata",
+    }
+    groups = cast("dict[str, dict[str, int | None]]", allocation["groups"])
+    stores: list[dict[str, object]] = []
+    for category, label in categories.items():
+        group = f"store/{category}"
+        groups.setdefault(
+            group,
+            {
+                "exclusiveAllocatedBytes": 0 if allocation["complete"] else None,
+                "sharedAllocatedBytes": 0 if allocation["complete"] else None,
+            },
+        )
+        stores.append(
+            {
+                "allocationGroup": group,
+                "label": label,
+                "automaticCleanup": False,
+                "reasons": [
+                    "Shared stores are never removed by automatic cleanup.",
+                    "Quarantined files are retained until operation recovery or cleanup."
+                    if category == ".garbage"
+                    else "Registration metadata is protected from explicit cleanup."
+                    if category == "metadata"
+                    else "Explicit cleanup checks references from every registered project.",
+                ],
+            }
+        )
+    settings = [
+        "dinkster-env",
+        "--root",
+        str(root),
+        "cleanup",
+        "--automatic",
+        "on" if policy["automatic"] else "off",
+        "--keep-previous",
+        str(policy["previousSuccessfulActivations"]),
+        "--yes",
+    ]
     return {
         "format": "dinkster.space/1",
         "observedAt": time.time_ns(),
@@ -329,9 +391,13 @@ def space_report(root: Path) -> dict[str, object]:
         "sharing": "Exclusive rows plus sharedAllocatedBytes give the total. Per-row shared "
         "bytes overlap and must not be added together.",
         "policy": policy,
-        "settingsCommand": f"dinkster-env --root {root} cleanup --automatic on|off "
-        "--keep-previous 1..100 --yes",
+        "settingsCommand": subprocess.list2cmdline(settings)
+        if os.name == "nt"
+        else shlex.join(settings),
+        "settingsHelp": "Use --automatic on or off and --keep-previous 1 through 100. "
+        "Changing settings does not collect software immediately.",
         "generations": generations,
+        "stores": stores,
         "cleanupWarnings": preview["warnings"],
         **allocation,
         "eligibilityWarnings": warnings,
