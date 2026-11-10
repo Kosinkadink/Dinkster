@@ -75,6 +75,9 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         zipfile.ZipFile(direct) as expected,
         zipfile.ZipFile(rebuilt) as actual,
     ):
+        if project == "dinkster":
+            assert expected.read("dinkster/py.typed") == b""
+            assert actual.read("dinkster/py.typed") == b""
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
