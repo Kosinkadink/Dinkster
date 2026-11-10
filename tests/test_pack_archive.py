@@ -828,6 +828,12 @@ def test_official_publication_selects_only_changed_committed_packs(
         ("candidate", None),
         ("candidate", "manifest"),
         ("candidate", "security"),
+        ("prepared", None),
+        ("prepared", "security"),
+        ("prepared", "engine-version"),
+        ("prepared", "incomplete-catalog"),
+        ("prepared", "corrupt-artifact"),
+        ("prepared", "unknown-pack"),
         ("published", None),
         ("published", "promotion"),
         ("published", "timeout"),
@@ -901,8 +907,9 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
 
     observed = []
 
-    def engine_tests(root, catalog, artifacts):
+    def engine_tests(root, catalog, artifacts, *, test_packs=()):
         assert root == Path(admission.__file__).resolve().parents[1]
+        assert test_packs == (("candidate",) if mode == "prepared" else ())
         observed.extend((pack.pack, pack.version) for pack in catalog.packs)
 
     monkeypatch.setattr(
@@ -913,6 +920,33 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
     monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
     monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
+    prepared = None
+    if mode == "prepared":
+        prepared = tmp_path / "prepared"
+        output = admission.check_defaults(
+            admission.NamedRegistry("", "https://registry.example"),
+            engine_version="0.2",
+            candidate_base="b" * 40,
+            prepare_output=prepared,
+        )
+        groups = output["groups"]
+        assert isinstance(groups, list)
+        assert sorted(name for group in groups for name in group) == [
+            "candidate",
+            "unchanged",
+        ]
+        assert not observed
+        if problem == "engine-version":
+            metadata = json.loads((prepared / "engine.json").read_text())
+            metadata["engineVersion"] = "0.3"
+            (prepared / "engine.json").write_text(json.dumps(metadata))
+        elif problem == "incomplete-catalog":
+            (prepared / "catalog.lock").write_text(
+                Lockfile.of([entries["candidate"]]).record_json()
+            )
+        elif problem == "corrupt-artifact":
+            digest = entries["candidate"].artifact_digest.removeprefix("blake3:")
+            (prepared / "artifacts" / f"{digest}.zip").write_bytes(b"corrupted")
     publication = None
     if mode == "published":
         publication = tmp_path / "official-packs.lock"
@@ -950,6 +984,10 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "digest": "digest mismatch",
         "head": "do not match the engine checkout",
         "timeout": "not active yet",
+        "engine-version": "do not match the engine checkout and version",
+        "incomplete-catalog": "prepared sources omit defaults",
+        "corrupt-artifact": "candidate@7.2 admission refused",
+        "unknown-pack": "requested admission packs are not in the catalog",
     }.get(problem or "")
     if expected_error:
         with pytest.raises((ValueError, admission.InstallError), match=expected_error):
@@ -958,6 +996,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                 engine_version="0.2",
                 candidate_base="b" * 40 if mode == "candidate" else None,
                 published_sources=publication,
+                prepared_sources=prepared,
+                test_packs=("unknown",)
+                if problem == "unknown-pack"
+                else ("candidate",)
+                if mode == "prepared"
+                else (),
             )
         assert not observed
     else:
@@ -966,6 +1010,8 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             engine_version="0.2",
             candidate_base="b" * 40 if mode == "candidate" else None,
             published_sources=publication,
+            prepared_sources=prepared,
+            test_packs=("candidate",) if mode == "prepared" else (),
         )
         assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
         assert result == {
@@ -976,7 +1022,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                     "version": entries[name].version,
                     "artifactDigest": entries[name].artifact_digest,
                 }
-                for name in ("candidate", "unchanged")
+                for name in (("candidate",) if mode == "prepared" else ("candidate", "unchanged"))
             ],
         }
     if problem in {"manifest", "security"}:

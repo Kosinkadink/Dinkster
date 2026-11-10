@@ -443,13 +443,15 @@ def test_default_pack_admission_uses_complete_version_history() -> None:
     )
     assert checkout["with"]["fetch-depth"] == 0
     assert checkout["with"]["ref"] == "${{ needs.select.outputs.engine }}"
-    for job in (selection, workflow["jobs"]["admission"]):
+    for job in (selection, workflow["jobs"]["prepare"]):
         download = next(
             step for step in job["steps"] if step.get("uses") == "actions/download-artifact@v4"
         )
         assert download["with"]["name"] == "official-publication-inputs"
         assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
-    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    command = next(
+        step["run"] for step in workflow["jobs"]["prepare"]["steps"] if step.get("id") == "sources"
+    )
     assert '--candidate-base "$CANDIDATE_BASE"' in command
     assert "--published-sources .publication/sources/official-packs.lock" in command
 
@@ -490,13 +492,18 @@ def test_default_admission_workflow_selects_publication_candidates(
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
     )
-    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    command = next(
+        step["run"] for step in workflow["jobs"]["prepare"]["steps"] if step.get("id") == "sources"
+    )
     stub = """
     uv() {
       if [ "$4" = "-c" ]; then
         echo development-engine
+      elif [ "$4" = "-" ]; then
+        "$TEST_PYTHON" -
       else
         printf '%s\\0' "$@" > admission-arguments
+        echo '{"groups": [["dinkster-image"], ["dinkster-audio", "dinkster-video"]]}'
       fi
     }
     """
@@ -506,10 +513,15 @@ def test_default_admission_workflow_selects_publication_candidates(
         else "bash"
     )
     subprocess.run(
-        [bash, "-e", "-c", stub + command],
+        [bash, "-e", "-o", "pipefail", "-c", stub + command],
         cwd=tmp_path,
         env=os.environ
-        | {"CANDIDATE_BASE": base if pull_request else "", "PUBLISHED_VERSION": "1.2.3"},
+        | {
+            "CANDIDATE_BASE": base if pull_request else "",
+            "PUBLISHED_VERSION": "1.2.3",
+            "GITHUB_OUTPUT": str(tmp_path / "outputs"),
+            "TEST_PYTHON": sys.executable,
+        },
         check=True,
     )
     arguments = (tmp_path / "admission-arguments").read_bytes().decode().split("\0")[:-1]
@@ -525,6 +537,38 @@ def test_default_admission_workflow_selects_publication_candidates(
         ("0" * 40 if all_candidates else base)
         if pull_request
         else ".publication/sources/official-packs.lock",
+        "--prepare-output",
+        "admission-sources",
+    ]
+    groups = json.loads((tmp_path / "outputs").read_text().removeprefix("groups="))
+    assert groups == [
+        {"group": 1, "packs": '["dinkster-image"]'},
+        {"group": 2, "packs": '["dinkster-audio", "dinkster-video"]'},
+    ]
+    prepared = tmp_path / "admission-sources"
+    prepared.mkdir()
+    (prepared / "engine.json").write_text('{"engineVersion": "prepared-engine"}')
+    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    subprocess.run(
+        [bash, "-e", "-o", "pipefail", "-c", stub + command],
+        cwd=tmp_path,
+        env=os.environ | {"TEST_PACKS": groups[1]["packs"]},
+        check=True,
+    )
+    assert (tmp_path / "admission-arguments").read_bytes().decode().split("\0")[:-1] == [
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "scripts.check_default_pack_admission",
+        "--engine-version",
+        "prepared-engine",
+        "--prepared-sources",
+        "admission-sources",
+        "--pack",
+        "dinkster-audio",
+        "--pack",
+        "dinkster-video",
     ]
 
 

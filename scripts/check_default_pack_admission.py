@@ -51,10 +51,18 @@ def check_defaults(
     engine_version: str,
     candidate_base: str | None = None,
     published_sources: Path | None = None,
+    prepare_output: Path | None = None,
+    prepared_sources: Path | None = None,
+    test_packs: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Run the public archive stages without service state or publication credentials."""
-    if candidate_base is not None and published_sources is not None:
+    if (
+        sum(value is not None for value in (candidate_base, published_sources, prepared_sources))
+        > 1
+    ):
         raise ValueError("select candidate or published sources, not both")
+    if prepare_output is not None and prepared_sources is not None:
+        raise ValueError("cannot prepare sources from a prepared selection")
     root = Path(__file__).resolve().parents[1]
     minimums = default_pack_minimums()
     with tempfile.TemporaryDirectory(prefix="default-pack-admission-") as directory:
@@ -62,7 +70,16 @@ def check_defaults(
         artifacts = work / "artifacts"
         artifacts.mkdir()
         selected = Lockfile.of(())
-        if candidate_base is not None:
+        if prepared_sources is not None:
+            metadata = json.loads((prepared_sources / "engine.json").read_text())
+            head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            if metadata != {"commit": head, "engineVersion": engine_version}:
+                raise ValueError("prepared sources do not match the engine checkout and version")
+            selected = Lockfile.from_record_json((prepared_sources / "catalog.lock").read_text())
+            shutil.copytree(prepared_sources / "artifacts", artifacts, dirs_exist_ok=True)
+        elif candidate_base is not None:
             candidates = tuple(
                 pack
                 for pack in select_packs(root, before=candidate_base, version_changes_only=True)
@@ -112,16 +129,43 @@ def check_defaults(
                     registry_source_lock(release, archive, engine_version=engine_version)
                 )
             selected = Lockfile.of(entries)
-        with admission_timing("defaults", "registry-resolution-download"):
-            catalog, _ = prepare_registry_sources(
-                registry,
-                {name: version for name, version in minimums.items() if selected.get(name) is None},
-                artifacts,
-                engine_version=engine_version,
-            )
-        catalog = Lockfile.of((*catalog.packs, *selected.packs))
+        if prepared_sources is not None:
+            if missing := set(minimums) - {pack.pack for pack in selected.packs}:
+                raise ValueError(f"prepared sources omit defaults: {sorted(missing)}")
+            catalog = selected
+        else:
+            with admission_timing("defaults", "registry-resolution-download"):
+                catalog, _ = prepare_registry_sources(
+                    registry,
+                    {
+                        name: version
+                        for name, version in minimums.items()
+                        if selected.get(name) is None
+                    },
+                    artifacts,
+                    engine_version=engine_version,
+                )
+            catalog = Lockfile.of((*catalog.packs, *selected.packs))
         if not catalog.packs:
             raise ValueError("engine admission requires a nonempty default set")
+        if prepare_output is not None:
+            prepare_output.mkdir()
+            shutil.copytree(artifacts, prepare_output / "artifacts")
+            (prepare_output / "catalog.lock").write_text(catalog.record_json())
+            head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            (prepare_output / "engine.json").write_text(
+                json.dumps({"commit": head, "engineVersion": engine_version})
+            )
+            names = [pack.pack for pack in catalog.packs]
+            heavy = ("dinkster-3d", "dinkster-image", "dinkster-video")
+            groups = [[name] for name in heavy if name in names]
+            remaining = [name for name in names if name not in heavy]
+            groups.extend(remaining[index::7] for index in range(7) if remaining[index::7])
+            return {"engineVersion": engine_version, "groups": groups}
+        if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
+            raise ValueError(f"requested admission packs are not in the catalog: {sorted(missing)}")
         entries = {pack.pack: pack for pack in catalog.packs}
         graph: dict[str, set[str]] = {}
         sources = {}
@@ -172,6 +216,8 @@ def check_defaults(
         order = tuple(TopologicalSorter(graph).static_order())
         results = []
         for name in order:
+            if test_packs and name not in test_packs:
+                continue
             pack = entries[name]
             identity = f"{name}@{pack.version}"
             source, data = sources[name]
@@ -185,7 +231,10 @@ def check_defaults(
                 {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
             )
         with admission_timing("defaults", "selected-tests"):
-            run_selected_tests(root, catalog, artifacts)
+            if test_packs:
+                run_selected_tests(root, catalog, artifacts, test_packs=test_packs)
+            else:
+                run_selected_tests(root, catalog, artifacts)
         return {"engineVersion": engine_version, "packs": results}
 
 
@@ -196,6 +245,9 @@ if __name__ == "__main__":
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--candidate-base")
     selection.add_argument("--published-sources", type=Path)
+    selection.add_argument("--prepared-sources", type=Path)
+    parser.add_argument("--prepare-output", type=Path)
+    parser.add_argument("--pack", action="append", default=[])
     args = parser.parse_args()
     print(
         json.dumps(
@@ -204,6 +256,9 @@ if __name__ == "__main__":
                 engine_version=args.engine_version,
                 candidate_base=args.candidate_base,
                 published_sources=args.published_sources,
+                prepare_output=args.prepare_output,
+                prepared_sources=args.prepared_sources,
+                test_packs=tuple(args.pack),
             )
         )
     )
