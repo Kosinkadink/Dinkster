@@ -20,23 +20,21 @@ on:
   pull_request:
     paths:
       - .github/workflows/official-packs.yml
-      - pyproject.toml
-      - uv.lock
       - scripts/select_official_packs.py
       - scripts/prepare_official_publication.py
       - scripts/build_official_packs.py
       - scripts/build_release_pack_locks.py
       - scripts/publish_official_packs.py
       - scripts/base_bundles.json
-      - packages/**/pyproject.toml
-      - packages/dinkster-nodes-*/**
+      - packages/**/dinkster-pack.toml
+      - packages/dinkster-pack-helpers/pyproject.toml
 
 permissions:
   contents: read
 
 concurrency:
   group: official-packs-${{ inputs.head || github.event.workflow_run.head_sha || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   select:
