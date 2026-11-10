@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     Node,
     NodeSchema,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.video_latent import empty_video_latent as _empty_video_latent
 from dinkster_pack_helpers.video_latent import video_latent_schema as _schema
@@ -15,14 +15,14 @@ class EmptyHunyuanLatentVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyHunyuanLatentVideo",
+            "dinkster.hunyuan.empty_hunyuan_latent_video",
             "Empty Hunyuan Video 1.0 Latent",
             "model/latent/hunyuan video",
             width=848,
             height=480,
             length=25,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyHunyuanLatentVideo")
 
     @classmethod
     def execute(
@@ -49,14 +49,14 @@ class EmptyHunyuanVideo15Latent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyHunyuanVideo15Latent",
+            "dinkster.hunyuan.empty_hunyuan_video15_latent",
             "Empty Hunyuan Video 1.5 Latent",
             "model/latent/hunyuan video",
             width=848,
             height=480,
             length=25,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyHunyuanVideo15Latent")
 
     @classmethod
     def execute(

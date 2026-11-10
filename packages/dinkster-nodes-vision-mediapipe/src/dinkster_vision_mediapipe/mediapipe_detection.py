@@ -25,10 +25,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     report_progress,
+    with_identity_replacement,
 )
 
 _SEARCH = (
@@ -193,7 +193,7 @@ class LoadMediaPipeFaceLandmarker(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "LoadMediaPipeFaceLandmarker",
+            "dinkster.vision.mediapipe.load_media_pipe_face_landmarker",
             display_name="Load Face Detection Model (MediaPipe)",
             category="model/loaders",
             search_terms=_SEARCH,
@@ -211,7 +211,7 @@ class LoadMediaPipeFaceLandmarker(Node):
                 OutputSpec("FACE_DETECTION_MODEL", TypeExpr.concrete(FACE_DETECTION_MODEL_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadMediaPipeFaceLandmarker")
 
     @classmethod
     def execute(cls, *, model_name: Any) -> Mapping[str, object]:
@@ -229,7 +229,7 @@ class MediaPipeFaceLandmarker(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "MediaPipeFaceLandmarker",
+            "dinkster.vision.mediapipe.media_pipe_face_landmarker",
             display_name="Detect Face Landmarks (MediaPipe)",
             category="image/detection",
             search_terms=_SEARCH,
@@ -273,7 +273,7 @@ class MediaPipeFaceLandmarker(Node):
                 OutputSpec("bboxes", TypeExpr.concrete(BOUNDING_BOX_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MediaPipeFaceLandmarker")
 
     @classmethod
     def execute(

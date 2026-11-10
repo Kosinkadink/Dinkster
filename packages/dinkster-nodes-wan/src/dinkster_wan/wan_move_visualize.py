@@ -15,10 +15,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -97,7 +97,7 @@ class WanMoveVisualizeTracks(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanMoveVisualizeTracks",
+            node_type="dinkster.wan.wan_move_visualize_tracks",
             category="model/conditioning/wan/move",
             inputs=(
                 InputSpec("images", _IMAGE),
@@ -131,7 +131,7 @@ class WanMoveVisualizeTracks(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanMoveVisualizeTracks")
 
     @classmethod
     def execute(

@@ -15,10 +15,10 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_mesh,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class MeshTextureToImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MeshTextureToImage",
+            node_type="dinkster.3d.mesh_texture_to_image",
             display_name="Mesh Texture to Image",
             category="3d/texturing",
             description=(
@@ -40,7 +40,7 @@ class MeshTextureToImage(Node):
                 for name in ("base_color", "metallic", "roughness", "occlusion", "normal_map")
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MeshTextureToImage")
 
     @classmethod
     def execute(cls, *, mesh: object) -> Mapping[str, object]:
@@ -131,7 +131,7 @@ class ApplyTextureToMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ApplyTextureToMesh",
+            node_type="dinkster.3d.apply_texture_to_mesh",
             display_name="Apply Texture to Mesh",
             category="3d/texturing",
             description=(
@@ -148,7 +148,7 @@ class ApplyTextureToMesh(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ApplyTextureToMesh")
 
     @classmethod
     def execute(

@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _COMBO = TypeExpr.concrete(CORE_COMBO)
@@ -163,7 +163,7 @@ class PorterDuffImageComposite(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PorterDuffImageComposite",
+            node_type="dinkster.image.porter_duff_image_composite",
             display_name="Porter-Duff Image Composite",
             category="image/compositing",
             search_terms=(
@@ -186,7 +186,7 @@ class PorterDuffImageComposite(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PorterDuffImageComposite")
 
     @classmethod
     def execute(
@@ -269,14 +269,14 @@ class SplitImageWithAlpha(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SplitImageWithAlpha",
+            node_type="dinkster.image.split_image_with_alpha",
             display_name="Split Image with Alpha",
             category="image/compositing",
             search_terms=("extract alpha", "separate transparency", "remove alpha"),
             inputs=(InputSpec("image", _IMAGE),),
             outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SplitImageWithAlpha")
 
     @classmethod
     def execute(cls, *, image: Any) -> Mapping[str, object]:
@@ -293,14 +293,14 @@ class JoinImageWithAlpha(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="JoinImageWithAlpha",
+            node_type="dinkster.image.join_image_with_alpha",
             display_name="Join Image with Alpha",
             category="image/compositing",
             search_terms=("add transparency", "apply alpha", "composite alpha", "RGBA"),
             inputs=(InputSpec("image", _IMAGE), InputSpec("alpha", _MASK)),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "JoinImageWithAlpha")
 
     @classmethod
     def execute(cls, *, image: Any, alpha: Any) -> Mapping[str, object]:

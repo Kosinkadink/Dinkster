@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -43,14 +43,15 @@ def _batch_size() -> InputSpec:
 class RebatchLatents(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="RebatchLatents",
+                node_type="dinkster.latent.rebatch_latents",
                 display_name="Rebatch Latents",
                 category="model/latent/batch",
                 inputs=(InputSpec("latents", _LATENTS), _batch_size()),
                 outputs=(OutputSpec("LATENT", _LATENTS),),
-            )
+            ),
+            "RebatchLatents",
         )
 
     @staticmethod
@@ -146,14 +147,15 @@ class RebatchLatents(Node):
 class RebatchImages(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="RebatchImages",
+                node_type="dinkster.latent.rebatch_images",
                 display_name="Rebatch Images",
                 category="image/batch",
                 inputs=(InputSpec("images", _IMAGES), _batch_size()),
                 outputs=(OutputSpec("IMAGE", _IMAGES),),
-            )
+            ),
+            "RebatchImages",
         )
 
     @classmethod

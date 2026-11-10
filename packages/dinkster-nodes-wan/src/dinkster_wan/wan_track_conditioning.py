@@ -22,10 +22,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -221,7 +221,7 @@ class WanTrackToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanTrackToVideo",
+            node_type="dinkster.wan.wan_track_to_video",
             search_terms=(
                 "motion tracking",
                 "trajectory video",
@@ -257,7 +257,7 @@ class WanTrackToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanTrackToVideo")
 
     @classmethod
     def execute(

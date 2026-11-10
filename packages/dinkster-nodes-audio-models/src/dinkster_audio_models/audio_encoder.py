@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 
 _AUDIO_ENCODER = TypeExpr.concrete(AUDIO_ENCODER_TYPE)
@@ -30,7 +30,7 @@ class SheetSage2AudioToABC(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SheetSage2AudioToABC",
+            node_type="dinkster.audio.models.sheet_sage2_audio_to_abc",
             display_name="SheetSage2 Audio to ABC",
             category="model/conditioning/yue2",
             description=(
@@ -52,7 +52,7 @@ class SheetSage2AudioToABC(Node):
             ),
             outputs=(OutputSpec("abc", TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SheetSage2AudioToABC")
 
     @classmethod
     def execute(cls, *, audio_encoder: Any, audio: object, mode: str) -> Mapping[str, object]:

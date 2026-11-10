@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -52,7 +52,7 @@ class LTXVReferenceAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVReferenceAudio",
+            node_type="dinkster.ltx.ltxv_reference_audio",
             display_name="LTXV Reference Audio (ID-LoRA)",
             category="model/conditioning/ltxv",
             inputs=(
@@ -75,7 +75,7 @@ class LTXVReferenceAudio(Node):
                 OutputSpec("negative", _CONDITIONING),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVReferenceAudio")
 
     @classmethod
     def execute(
@@ -142,7 +142,7 @@ class LTXVSpatioTemporalGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVSpatioTemporalGuidance",
+            node_type="dinkster.ltx.ltxv_spatio_temporal_guidance",
             display_name="LTXV Spatio-Temporal Guidance (STG)",
             category="advanced/guidance",
             inputs=(
@@ -163,7 +163,7 @@ class LTXVSpatioTemporalGuidance(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVSpatioTemporalGuidance")
 
     @classmethod
     def execute(
@@ -210,7 +210,7 @@ class LTXVModalityGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVModalityGuidance",
+            node_type="dinkster.ltx.ltxv_modality_guidance",
             display_name="LTXV Modality Guidance (A/V coupling)",
             category="advanced/guidance",
             inputs=(
@@ -225,7 +225,7 @@ class LTXVModalityGuidance(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVModalityGuidance")
 
     @classmethod
     def execute(

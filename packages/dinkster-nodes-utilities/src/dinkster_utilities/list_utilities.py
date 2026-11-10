@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     Value,
-    first_party_schema,
     list_children,
+    with_identity_replacement,
 )
 
 _ITEM = TypeExpr.wildcard()
@@ -34,7 +34,7 @@ class CreateList(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CreateList",
+            node_type="dinkster.utilities.create_list",
             display_name="Create List",
             category="utilities",
             input_families=(
@@ -51,7 +51,7 @@ class CreateList(Node):
             search_terms=("Image Iterator", "Text Iterator", "Iterator"),
             input_values=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CreateList")
 
     @classmethod
     def execute(
@@ -67,7 +67,7 @@ class GetItemFromList(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GetItemFromList",
+            node_type="dinkster.utilities.get_item_from_list",
             display_name="Get Item From List",
             category="utilities",
             inputs=(
@@ -82,7 +82,7 @@ class GetItemFromList(Node):
             outputs=(OutputSpec("item", _ITEM, display_name="*"),),
             input_values=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GetItemFromList")
 
     @classmethod
     def execute(

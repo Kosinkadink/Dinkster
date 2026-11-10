@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -119,7 +119,7 @@ class LTXVAddGeneratedKeyframes(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning, latent = TypeExpr.concrete(CONDITIONING_TYPE), TypeExpr.concrete(LATENT_TYPE)
         schema = NodeSchema(
-            node_type="LTXVAddGeneratedKeyframes",
+            node_type="dinkster.ltx.ltxv_add_generated_keyframes",
             display_name="LTXV Add Generated Keyframes",
             category="model/conditioning/ltxv",
             search_terms=("detailing", "dfr", "generated keyframes"),
@@ -150,7 +150,7 @@ class LTXVAddGeneratedKeyframes(Node):
                 OutputSpec("latent", latent),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVAddGeneratedKeyframes")
 
     @classmethod
     def execute(
@@ -419,7 +419,7 @@ class LTXVGeneratedKeyframesToGuides(Node):
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         latent = TypeExpr.concrete(LATENT_TYPE)
         schema = NodeSchema(
-            node_type="LTXVGeneratedKeyframesToGuides",
+            node_type="dinkster.ltx.ltxv_generated_keyframes_to_guides",
             display_name="LTXV Generated Keyframes to Guides",
             category="model/conditioning/ltxv",
             search_terms=("detailing", "dfr", "keyframe guides"),
@@ -449,7 +449,7 @@ class LTXVGeneratedKeyframesToGuides(Node):
                 OutputSpec("latent", latent),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVGeneratedKeyframesToGuides")
 
     @classmethod
     def decode_single_frames(cls, vae: Any, keyframe_samples: Any) -> Any:
@@ -575,7 +575,7 @@ class LTXVSeparateGeneratedKeyframes(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning, latent = TypeExpr.concrete(CONDITIONING_TYPE), TypeExpr.concrete(LATENT_TYPE)
         schema = NodeSchema(
-            node_type="LTXVSeparateGeneratedKeyframes",
+            node_type="dinkster.ltx.ltxv_separate_generated_keyframes",
             display_name="LTXV Separate Generated Keyframes",
             category="model/conditioning/ltxv",
             search_terms=("detailing", "dfr", "peel keyframes"),
@@ -596,7 +596,7 @@ class LTXVSeparateGeneratedKeyframes(Node):
                 OutputSpec("keyframes", latent),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVSeparateGeneratedKeyframes")
 
     @classmethod
     def execute(

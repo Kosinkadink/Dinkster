@@ -20,11 +20,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -76,7 +76,7 @@ class HunyuanImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="HunyuanImageToVideo",
+            node_type="dinkster.hunyuan.hunyuan_image_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -96,7 +96,7 @@ class HunyuanImageToVideo(Node):
             ),
             outputs=(OutputSpec("positive", _CONDITIONING), OutputSpec("latent", _LATENT)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HunyuanImageToVideo")
 
     @classmethod
     def execute(
@@ -146,7 +146,7 @@ class HunyuanVideo15ImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="HunyuanVideo15ImageToVideo",
+            node_type="dinkster.hunyuan.hunyuan_video15_image_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -165,7 +165,7 @@ class HunyuanVideo15ImageToVideo(Node):
                 OutputSpec("latent", _LATENT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HunyuanVideo15ImageToVideo")
 
     @classmethod
     def execute(
@@ -216,7 +216,7 @@ class HunyuanVideo15SuperResolution(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="HunyuanVideo15SuperResolution",
+            node_type="dinkster.hunyuan.hunyuan_video15_super_resolution",
             display_name="Hunyuan Video 1.5 Super Resolution",
             category=_CATEGORY,
             inputs=(
@@ -240,7 +240,7 @@ class HunyuanVideo15SuperResolution(Node):
                 OutputSpec("latent", _LATENT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HunyuanVideo15SuperResolution")
 
     @classmethod
     def execute(

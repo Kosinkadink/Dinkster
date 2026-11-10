@@ -25,11 +25,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_splat,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -37,7 +37,7 @@ class RenderSplat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RenderSplat",
+            node_type="dinkster.3d.render_splat",
             display_name="Render Splat",
             category="3d/splat",
             search_terms=("splat to image", "render splat", "gaussian turntable"),
@@ -161,7 +161,7 @@ class RenderSplat(Node):
                 OutputSpec("MASK", TypeExpr.concrete(MASK_TYPE), display_name="mask"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RenderSplat")
 
     @classmethod
     def execute(

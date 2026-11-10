@@ -15,9 +15,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -30,7 +30,7 @@ class EmptyHunyuanImageLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyHunyuanImageLatent",
+            node_type="dinkster.hunyuan.empty_hunyuan_image_latent",
             display_name="Empty Hunyuan Image Latent",
             category="model/latent/hunyuan image",
             inputs=(
@@ -55,7 +55,7 @@ class EmptyHunyuanImageLatent(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyHunyuanImageLatent")
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:
@@ -76,7 +76,7 @@ class HunyuanRefinerLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="HunyuanRefinerLatent",
+            node_type="dinkster.hunyuan.hunyuan_refiner_latent",
             display_name="Hunyuan Latent Refiner",
             category="model/conditioning/hunyuan video",
             inputs=(
@@ -97,7 +97,7 @@ class HunyuanRefinerLatent(Node):
                 OutputSpec("latent", _LATENT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HunyuanRefinerLatent")
 
     @classmethod
     def execute(

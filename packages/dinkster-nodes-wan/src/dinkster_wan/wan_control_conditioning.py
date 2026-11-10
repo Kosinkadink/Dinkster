@@ -19,10 +19,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -75,7 +75,7 @@ class WanFunControlToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanFunControlToVideo",
+            node_type="dinkster.wan.wan_fun_control_to_video",
             category="model/conditioning/wan/fun control",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -95,7 +95,7 @@ class WanFunControlToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanFunControlToVideo")
 
     @classmethod
     def execute(
@@ -145,7 +145,7 @@ class Wan22FunControlToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Wan22FunControlToVideo",
+            node_type="dinkster.wan.wan22_fun_control_to_video",
             category="model/conditioning/wan/fun control",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -164,7 +164,7 @@ class Wan22FunControlToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Wan22FunControlToVideo")
 
     @classmethod
     def execute(
@@ -235,7 +235,7 @@ class WanVaceToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanVaceToVideo",
+            node_type="dinkster.wan.wan_vace_to_video",
             search_terms=("video conditioning", "video control"),
             category="model/conditioning/wan/vace",
             inputs=(
@@ -263,7 +263,7 @@ class WanVaceToVideo(Node):
                 OutputSpec("trim_latent", _INT, display_name="trim_latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanVaceToVideo")
 
     @classmethod
     def execute(
@@ -357,7 +357,7 @@ class WanPhantomSubjectToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanPhantomSubjectToVideo",
+            node_type="dinkster.wan.wan_phantom_subject_to_video",
             category="model/conditioning/wan/phantom subject",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -376,7 +376,7 @@ class WanPhantomSubjectToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanPhantomSubjectToVideo")
 
     @classmethod
     def execute(

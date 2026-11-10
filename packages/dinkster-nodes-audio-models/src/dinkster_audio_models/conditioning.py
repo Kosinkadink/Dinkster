@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -55,7 +55,7 @@ class ConditioningStableAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ConditioningStableAudio",
+            node_type="dinkster.audio.models.conditioning_stable_audio",
             category="model/conditioning/stable audio",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -68,7 +68,7 @@ class ConditioningStableAudio(Node):
                 OutputSpec("negative", _CONDITIONING),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ConditioningStableAudio")
 
     @classmethod
     def execute(

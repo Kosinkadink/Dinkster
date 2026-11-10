@@ -19,11 +19,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -92,7 +92,7 @@ class WanMoveTrackToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanMoveTrackToVideo",
+            node_type="dinkster.wan.wan_move_track_to_video",
             category="model/conditioning/wan/move",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -126,7 +126,7 @@ class WanMoveTrackToVideo(Node):
                 OutputSpec("latent", _LATENT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanMoveTrackToVideo")
 
     @classmethod
     def execute(

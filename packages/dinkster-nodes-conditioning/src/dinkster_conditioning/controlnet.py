@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -78,9 +78,9 @@ def _range(*, advanced: bool = False) -> tuple[InputSpec, ...]:
 class ControlNetApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ControlNetApply",
+                node_type="dinkster.conditioning.control_net_apply",
                 display_name="Apply ControlNet (DEPRECATED)",
                 category=_CATEGORY,
                 inputs=(
@@ -90,7 +90,8 @@ class ControlNetApply(Node):
                     _strength(),
                 ),
                 outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
-            )
+            ),
+            "ControlNetApply",
         )
 
     @classmethod
@@ -118,9 +119,9 @@ class ControlNetApply(Node):
 class ControlNetApplyAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ControlNetApplyAdvanced",
+                node_type="dinkster.conditioning.control_net_apply_advanced",
                 display_name="Apply ControlNet",
                 category=_CATEGORY,
                 search_terms=("controlnet", "apply controlnet", "use controlnet", "control net"),
@@ -137,7 +138,8 @@ class ControlNetApplyAdvanced(Node):
                     OutputSpec("positive", _CONDITIONING),
                     OutputSpec("negative", _CONDITIONING),
                 ),
-            )
+            ),
+            "ControlNetApplyAdvanced",
         )
 
     @classmethod
@@ -186,9 +188,9 @@ class ControlNetApplyAdvanced(Node):
 class SetUnionControlNetType(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SetUnionControlNetType",
+                node_type="dinkster.conditioning.set_union_control_net_type",
                 display_name="Set Union ControlNet Type",
                 category=_CATEGORY,
                 search_terms=("set controlnet type", "union controlnet type"),
@@ -203,7 +205,8 @@ class SetUnionControlNetType(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CONTROL_NET", _CONTROL_NET),),
-            )
+            ),
+            "SetUnionControlNetType",
         )
 
     @classmethod
@@ -217,9 +220,9 @@ class SetUnionControlNetType(Node):
 class ControlNetInpaintingAliMamaApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ControlNetInpaintingAliMamaApply",
+                node_type="dinkster.conditioning.control_net_inpainting_ali_mama_apply",
                 display_name="Apply ControlNet Inpainting (AliMama)",
                 category=_CATEGORY,
                 search_terms=("masked controlnet",),
@@ -237,7 +240,8 @@ class ControlNetInpaintingAliMamaApply(Node):
                     OutputSpec("positive", _CONDITIONING),
                     OutputSpec("negative", _CONDITIONING),
                 ),
-            )
+            ),
+            "ControlNetInpaintingAliMamaApply",
         )
 
     @classmethod

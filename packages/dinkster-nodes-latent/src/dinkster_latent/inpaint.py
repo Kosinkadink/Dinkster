@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -73,9 +73,9 @@ def _masked_pixels(pixels: Any, mask: Any) -> Any:
 class VAEEncodeForInpaint(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VAEEncodeForInpaint",
+                node_type="dinkster.latent.vae_encode_for_inpaint",
                 display_name="VAE Encode (for Inpainting)",
                 category="model/latent",
                 inputs=(
@@ -90,7 +90,8 @@ class VAEEncodeForInpaint(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "VAEEncodeForInpaint",
         )
 
     @classmethod

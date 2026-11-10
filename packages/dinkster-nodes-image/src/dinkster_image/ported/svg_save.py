@@ -24,8 +24,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     attach_saved_artifact,
     current_export_snapshot,
-    first_party_schema,
     materialize_svg,
+    with_identity_replacement,
 )
 
 
@@ -33,7 +33,7 @@ class SaveSVGNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveSVGNode",
+            node_type="dinkster.image.save_svg_node",
             display_name="Save SVG",
             description="Save SVG files on disk.",
             category="image",
@@ -64,7 +64,7 @@ class SaveSVGNode(Node):
             output_node=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveSVGNode")
 
     @classmethod
     def execute(

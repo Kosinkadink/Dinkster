@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _COMPILE_KEY = "torch.compile"
@@ -47,9 +47,9 @@ def _apply_compiled_diffusion_model(compiled: Any) -> Callable[..., Any]:
 class TorchCompileModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="TorchCompileModel",
+                node_type="dinkster.models.torch_compile_model",
                 category="experimental",
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -61,7 +61,8 @@ class TorchCompileModel(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "TorchCompileModel",
         )
 
     @classmethod

@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -127,7 +127,7 @@ class TextEncodeAceStepAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeAceStepAudio",
+            node_type="dinkster.audio.models.text_encode_ace_step_audio",
             category=_CATEGORY,
             inputs=(
                 InputSpec("clip", _CLIP),
@@ -142,7 +142,7 @@ class TextEncodeAceStepAudio(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeAceStepAudio")
 
     @classmethod
     def execute(
@@ -159,7 +159,7 @@ class TextEncodeAceStepAudio15(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeAceStepAudio1.5",
+            node_type="dinkster.audio.models.text_encode_ace_step_audio1_5",
             category=_CATEGORY,
             inputs=(
                 InputSpec("clip", _CLIP),
@@ -242,7 +242,7 @@ class TextEncodeAceStepAudio15(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeAceStepAudio1.5")
 
     @classmethod
     def execute(

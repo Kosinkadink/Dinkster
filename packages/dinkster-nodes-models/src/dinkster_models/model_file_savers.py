@@ -27,8 +27,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     attach_saved_artifact,
     current_export_snapshot,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -143,9 +143,9 @@ def _save_checkpoint(model: Any, clip: Any, vae: Any, prefix: str, mount: str | 
 class CheckpointSave(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CheckpointSave",
+                node_type="dinkster.models.checkpoint_save",
                 display_name="Save Checkpoint",
                 category="model/merging",
                 inputs=(
@@ -158,7 +158,8 @@ class CheckpointSave(Node):
                 output_node=True,
                 idempotent=False,
                 search_terms=("save model", "export checkpoint", "merge save"),
-            )
+            ),
+            "CheckpointSave",
         )
 
     @classmethod
@@ -178,9 +179,9 @@ class CheckpointSave(Node):
 class ModelSave(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ModelSave",
+                node_type="dinkster.models.model_save",
                 category="model/merging",
                 inputs=(
                     InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
@@ -190,7 +191,8 @@ class ModelSave(Node):
                 output_node=True,
                 idempotent=False,
                 search_terms=("export model", "checkpoint save"),
-            )
+            ),
+            "ModelSave",
         )
 
     @classmethod
@@ -208,9 +210,9 @@ class ModelSave(Node):
 class CLIPSave(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPSave",
+                node_type="dinkster.models.clip_save",
                 category="model/merging",
                 inputs=(
                     InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
@@ -219,7 +221,8 @@ class CLIPSave(Node):
                 ),
                 output_node=True,
                 idempotent=False,
-            )
+            ),
+            "CLIPSave",
         )
 
     @classmethod
@@ -263,9 +266,9 @@ class CLIPSave(Node):
 class VAESave(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VAESave",
+                node_type="dinkster.models.vae_save",
                 category="model/merging",
                 inputs=(
                     InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
@@ -274,7 +277,8 @@ class VAESave(Node):
                 ),
                 output_node=True,
                 idempotent=False,
-            )
+            ),
+            "VAESave",
         )
 
     @classmethod

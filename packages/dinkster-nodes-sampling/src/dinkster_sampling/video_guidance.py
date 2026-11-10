@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
@@ -46,7 +46,10 @@ def _schema(node_type: str, display_name: str) -> NodeSchema:
 class VideoLinearCFGGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema("VideoLinearCFGGuidance", "Video Linear CFG Guidance"))
+        return with_identity_replacement(
+            _schema("dinkster.sampling.video_linear_cfg_guidance", "Video Linear CFG Guidance"),
+            "VideoLinearCFGGuidance",
+        )
 
     @classmethod
     def execute(cls, *, model: Any, min_cfg: float) -> Mapping[str, object]:
@@ -68,8 +71,9 @@ class VideoLinearCFGGuidance(Node):
 class VideoTriangleCFGGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _schema("VideoTriangleCFGGuidance", "Video Triangle CFG Guidance")
+        return with_identity_replacement(
+            _schema("dinkster.sampling.video_triangle_cfg_guidance", "Video Triangle CFG Guidance"),
+            "VideoTriangleCFGGuidance",
         )
 
     @classmethod

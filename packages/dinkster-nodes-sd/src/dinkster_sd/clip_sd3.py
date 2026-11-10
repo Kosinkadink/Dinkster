@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _CLIP = TypeExpr.concrete(CLIP_TYPE)
@@ -33,7 +33,7 @@ class CLIPTextEncodeSD3(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeSD3",
+            node_type="dinkster.sd.clip_text_encode_sd3",
             display_name="CLIP Text Encode (SD3)",
             category="model/conditioning/stable diffusion",
             search_terms=("sd3 prompt",),
@@ -56,7 +56,7 @@ class CLIPTextEncodeSD3(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeSD3")
 
     @classmethod
     def execute(

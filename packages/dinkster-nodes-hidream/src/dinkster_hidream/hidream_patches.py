@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -32,7 +32,7 @@ class HiDreamO1ReferenceImages(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="HiDreamO1ReferenceImages",
+            node_type="dinkster.hidream.hi_dream_o1_reference_images",
             display_name="HiDream-O1 Reference Images",
             category="model/conditioning/hidream",
             description="Attach ordered reference images to positive and negative conditioning.",
@@ -49,7 +49,7 @@ class HiDreamO1ReferenceImages(Node):
             ),
             outputs=(OutputSpec("positive", conditioning), OutputSpec("negative", conditioning)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HiDreamO1ReferenceImages")
 
     @classmethod
     def execute(
@@ -113,7 +113,7 @@ class HiDreamO1PatchSeamSmoothing(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="HiDreamO1PatchSeamSmoothing",
+            node_type="dinkster.hidream.hi_dream_o1_patch_seam_smoothing",
             display_name="HiDream-O1 Patch Seam Smoothing",
             category="model/patch/hidream",
             description=(
@@ -161,7 +161,7 @@ class HiDreamO1PatchSeamSmoothing(Node):
             ),
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HiDreamO1PatchSeamSmoothing")
 
     @classmethod
     def execute(

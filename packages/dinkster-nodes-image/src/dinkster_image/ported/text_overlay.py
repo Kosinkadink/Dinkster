@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -32,7 +32,7 @@ class TextOverlay(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "TextOverlay",
+            "dinkster.image.text_overlay",
             display_name="Draw Text Overlay",
             category="text",
             description="Draw text overlay on an image or batch of images.",
@@ -92,7 +92,7 @@ class TextOverlay(Node):
             ),
             outputs=(OutputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextOverlay")
 
     @classmethod
     def execute(

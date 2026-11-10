@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -48,7 +48,7 @@ def _schema(
 ) -> NodeSchema:
     return NodeSchema(
         node_type=name,
-        display_name=display or name,
+        display_name=display or "",
         category=category,
         description=description,
         inputs=inputs,
@@ -66,8 +66,10 @@ def _runtime() -> tuple[Any, Any]:
 class EmptySD3LatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        schema = _schema("EmptySD3LatentImage", "model/latent/stable diffusion", _image_inputs())
-        return first_party_schema(schema)
+        schema = _schema(
+            "dinkster.sd.empty_sd3_latent_image", "model/latent/stable diffusion", _image_inputs()
+        )
+        return with_identity_replacement(schema, "EmptySD3LatentImage")
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:

@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-conditioning"
-version = "0.0.3"
+version = "0.0.4"
 description = "First-party Dinkster conditioning nodes"
 requires-python = ">=3.12"
 dependencies = [

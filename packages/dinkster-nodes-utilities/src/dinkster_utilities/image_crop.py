@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _BOUNDING_BOX = TypeExpr.concrete(BOUNDING_BOX_TYPE)
@@ -27,7 +27,7 @@ class PrimitiveBoundingBox(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PrimitiveBoundingBox",
+            node_type="dinkster.utilities.primitive_bounding_box",
             display_name="Bounding Box",
             category="utilities/primitive",
             inputs=(
@@ -42,7 +42,7 @@ class PrimitiveBoundingBox(Node):
             ),
             outputs=(OutputSpec("BOUNDING_BOX", _BOUNDING_BOX),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PrimitiveBoundingBox")
 
     @classmethod
     def execute(cls, *, x: int, y: int, width: int, height: int) -> Mapping[str, object]:
