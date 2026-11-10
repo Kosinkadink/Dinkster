@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 import threading
@@ -33,6 +34,9 @@ def _trace_operations(path: Path):
         environment_downloads,
         environment_generations,
         environment_move,
+        environment_runtime,
+        environment_state,
+        environment_transactions,
     )
 
     operations = {
@@ -52,11 +56,15 @@ def _trace_operations(path: Path):
                 ),
             ),
             (environment_move, ("execute_move",)),
+            (environment_runtime, ("start_engine", "stop_engine")),
+            (environment_state, ("atomic_write",)),
+            (environment_transactions, ("activate",)),
         )
         for name in names
         if (function := getattr(module, name))
     }
     operations[subprocess.run.__code__] = "subprocess.run"
+    operations[shutil.rmtree.__code__] = "shutil.rmtree"
     monitoring = sys.monitoring
     tool = monitoring.PROFILER_ID
     monitoring.use_tool_id(tool, "supervisor operation timings")

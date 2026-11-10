@@ -28,10 +28,13 @@ def test_completed_and_refused_operations_retain_separate_timings(tmp_path: Path
         [
             sys.executable,
             "-c",
-            "import hashlib\n"
+            "import hashlib, shutil\n"
             "from pathlib import Path\n"
             "from dinkster_supervisor.environment_downloads import fetch_artifact\n"
+            "from dinkster_supervisor.environment_state import atomic_write\n"
             f"root = Path({str(tmp_path)!r})\n"
+            "atomic_write(root / 'scratch' / 'state', b'journal bytes')\n"
+            "shutil.rmtree(root / 'scratch')\n"
             "fetch_artifact((str(root),), 'source', root / 'copied', "
             "hashlib.sha256(b'payload').hexdigest(), 7)\n"
             "try:\n"
@@ -42,8 +45,12 @@ def test_completed_and_refused_operations_retain_separate_timings(tmp_path: Path
     )
     assert (result.returncode, result.stdout, result.stderr) == (0, "refused\n", "")
     assert (tmp_path / "copied").read_bytes() == b"payload"
+    assert not (tmp_path / "scratch").exists()
     assert not (tmp_path / "refused").exists()
     report = operation_reports[-1]
+    for operation in ("environment_state.atomic_write", "shutil.rmtree"):
+        events = [line.split() for line in report.splitlines() if operation in line]
+        assert [row[1] for row in events] == ["start", "return"]
     events = [line.split() for line in report.splitlines() if "fetch_artifact" in line]
     assert [row[1] for row in events] == ["start", "return", "start", "unwind"]
     stamps = [float(row[0].removesuffix("s")) for row in events]
