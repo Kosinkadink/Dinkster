@@ -590,7 +590,7 @@ def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
             requests.append(self.path)
             self.send_error(404)
 
-        def log_message(self, *args):
+        def log_message(self, format: str, *args: object) -> None:
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
