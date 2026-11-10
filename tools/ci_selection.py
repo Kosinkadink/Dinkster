@@ -23,7 +23,18 @@ def runtime_path(path: str) -> bool:
         )
         is not None
         or path.startswith(("setup_env", "run_dinkster"))
-        or path in {"scripts/setup_envs.py", "scripts/base_bundles.json"}
+        or path
+        in {
+            "scripts/setup_envs.py",
+            "scripts/base_bundles.json",
+            "src/dinkster/cli.py",
+            "src/dinkster/__main__.py",
+            "src/dinkster/setup.py",
+            "src/dinkster/manager.py",
+            "src/dinkster/launch.py",
+            "src/dinkster/generation_packs.py",
+            "packages/dinkster-registry/src/dinkster_registry/install.py",
+        }
     )
 
 
