@@ -18,6 +18,9 @@ def file_shard(path: str, count: int = 2) -> int:
         raise ValueError("file shard count must be 2, 3, 4, 6, or 8")
     # Three-way runtime placement balances native Windows durations independently of root shards.
     prefix = b"dinkster-windows-runtime-v1:4003:" if count == 3 else _HASH_PREFIX
+    if count == 8:
+        # Keep unsplit runtime files balanced against the five case-split files.
+        prefix = b"dinkster-windows-runtime-v2:4621:"
     digest = hashlib.sha256(prefix + path.encode("utf-8")).digest()
     return digest[0] % count + 1
 
