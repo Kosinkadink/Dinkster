@@ -1682,3 +1682,59 @@ def test_public_fixture_commands_install_update_and_rollback(
         if (root / "current").exists():
             run("stop")
             assert all(row["state"] == "stopped" for row in run("status")["engines"])
+
+
+@pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
+def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
+    tmp_path: Path, problem: str | None
+):
+    source = Path(__file__).resolve().parents[1]
+    engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = engine / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
+    library.mkdir()
+    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    root, store = tmp_path / "prospective", tmp_path / "store"
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    arguments = (
+        "develop",
+        "--source",
+        str(engine),
+        "--pack-source",
+        str(pack if problem != "missing" else tmp_path / "absent"),
+        "--library-source",
+        str(library),
+        "--variant",
+        variant,
+        "--python",
+        sys.executable,
+        "--data",
+        str(store),
+    )
+    code, plan = _run(root, *arguments, "--plan")
+    if problem == "missing":
+        assert code == 1 and "source folder is missing" in plan["error"]
+    else:
+        assert code == 0, plan
+        assert any("not reviewed by the registry" in line for line in plan["plan"])
+        assert any("dependency ranges resolved at build time" in line for line in plan["plan"])
+        assert [row["kind"] for row in plan["development"]["sources"]] == [
+            "engine",
+            "pack",
+            "library",
+        ]
+        if problem is not None:
+            changed = {"engine": engine, "pack": pack, "library": library}[problem]
+            (changed / "untracked.py").write_text("VALUE = 23\n")
+            code, refused = _run(root, *arguments, "--approve", plan["sourceApproval"], "--plan")
+            assert code == 1 and "changed from the approved plan" in refused["error"]
+    assert not root.exists()
+    assert not store.exists()

@@ -894,6 +894,10 @@ def build_generation(
             prepare_pack_catalogs(destination, in_process_packs)
         if prepare_packs is not None:
             prepare_packs(destination)
+        elif source_generation is not None:
+            development = source_generation / "development-sources.json"
+            if development.is_file():
+                shutil.copyfile(development, destination / development.name)
         if artifact_sources is not None:
             write_document(destination / "artifact-sources.json", artifact_sources)
         files = tuple(
