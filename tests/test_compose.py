@@ -23,7 +23,6 @@ import weakref
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -43,12 +42,13 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
+from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, Node, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
+from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import (
     Composition,
@@ -69,13 +69,10 @@ DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dink
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 FIRST_PARTY_NODE_PACKS = {
-    row["nodeType"]: row["pack"]
-    for row in json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())[
-        "nodes"
-    ]
-} | {
-    "dinkster.utilities.make_list": "dinkster-utilities",
-    "dinkster.utilities.list_element": "dinkster-utilities",
+    node.schema().node_type: manifest.name
+    for spec in default_pack_specs()
+    if (manifest := load_manifest(spec.manifest)).nodes_entry
+    for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
 }
 
 

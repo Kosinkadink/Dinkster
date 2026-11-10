@@ -1,12 +1,9 @@
-"""First-party identities and schema-declared ComfyUI replacement rules."""
+"""Schema-derived replacement declarations for pack authors."""
 
 from __future__ import annotations
 
-import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
-from functools import cache
-from importlib.resources import files
 
 from .model import DynamicComboSpec, DynamicEntry, InputSpec, NodeSchema
 from .replace import (
@@ -16,18 +13,7 @@ from .replace import (
     ReplacementCase,
     ReplacementPredicate,
     ReplacementRule,
-    rule_to_wire,
 )
-from .wire import schema_to_wire
-
-
-@cache
-def _identities() -> dict[str, tuple[str, str, bool]]:
-    data = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
-    return {
-        row["from"]: (row["pack"], row["nodeType"], row["backendPureRename"])
-        for row in data["nodes"]
-    }
 
 
 def _interfaces(
@@ -113,56 +99,3 @@ def with_identity_replacement(schema: NodeSchema, source_type: str) -> NodeSchem
         replacements=(),
     )
     return replace(declared, replacements=(_identity_rule(source_type, declared),))
-
-
-def first_party_schema(schema: NodeSchema) -> NodeSchema:
-    """Move an original class schema to its frozen identity without changing its interface."""
-    source = schema.node_type
-    _, target, backend = _identities()[source]
-    if backend == bool(
-        schema.input_families or schema.output_families or schema.combos or schema.slots
-    ):
-        raise ValueError(f"{source}: backendPureRename disagrees with the schema")
-    return with_identity_replacement(replace(schema, node_type=target), source)
-
-
-def collect_comfy_translations(
-    packs: Iterable[tuple[str, str, str, Iterable[NodeSchema]]],
-) -> dict[str, object]:
-    """Collect rules and import interfaces from authenticated pack schema snapshots."""
-    identities = _identities()
-    sources = {target: source for source, (_, target, _) in identities.items()}
-    claimed: set[str] = set()
-    items: dict[str, dict[str, object]] = {}
-    for publisher, pack, version, schemas in packs:
-        for schema in schemas:
-            source = sources.get(schema.node_type)
-            if source is not None and not any(
-                rule.from_type == source and rule.migration is None for rule in schema.replacements
-            ):
-                raise ValueError(f"comfy-translations.missing: {source}")
-            for rule in schema.replacements:
-                identity = identities.get(rule.from_type)
-                if identity is None or rule.migration is not None:
-                    continue
-                if publisher != "dinkster":
-                    raise ValueError(
-                        "comfy-translations.publisher: only dinkster may claim source classes"
-                    )
-                owner, target, _ = identity
-                if pack != owner or schema.node_type != target:
-                    raise ValueError(f"comfy-translations.owner: wrong owner for {rule.from_type}")
-                if rule.from_type in claimed:
-                    raise ValueError(f"comfy-translations.duplicate: {rule.from_type}")
-                if rule != _identity_rule(rule.from_type, schema):
-                    raise ValueError(
-                        f"comfy-translations.rule: non-identity rule for {rule.from_type}"
-                    )
-                claimed.add(rule.from_type)
-                items[rule.from_type] = {
-                    "pack": pack,
-                    "version": version,
-                    "rule": rule_to_wire(rule),
-                    "schema": schema_to_wire(schema),
-                }
-    return {"schemaVersion": 1, "items": [items[source] for source in sorted(items)]}

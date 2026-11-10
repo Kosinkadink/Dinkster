@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import json
 import tomllib
-from collections import Counter
 from dataclasses import replace
 from importlib import import_module
-from importlib.resources import files
 from pathlib import Path
 
 import pytest
 from dinkster_api.v1 import with_identity_replacement
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
 from dinkster_schema import Node, NodeSchema, claim_covers, validate_name
-from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
 from dinkster_schema.replace import ReplacementRule, rule_to_wire, validate_replacement_references
 from dinkster_schema.wire import schema_from_wire, schema_to_wire
 from dinkster_text.text import StringConcatenate, StringFormat
@@ -24,17 +21,12 @@ from packaging.version import Version
 
 from dinkster.compose import default_pack_specs
 from tests.async_scenarios import run_scenario
-from tools.compare_nodes import SCOPE_RULES, compare_registry
 
 
 def _source_schemas() -> dict[str, NodeSchema]:
-    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
-    packs = {row["pack"] for row in inventory["nodes"]}
     schemas = {}
-    for path in Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml"):
-        manifest = load_manifest(path)
-        if manifest.name not in packs:
-            continue
+    for spec in default_pack_specs():
+        manifest = load_manifest(spec.manifest)
         nodes = resolve_entry(manifest.nodes_entry)
         assert isinstance(nodes, (list, tuple))
         for node in nodes:
@@ -47,8 +39,11 @@ def _source_schemas() -> dict[str, NodeSchema]:
 
 
 def test_default_install_set_contains_every_comfy_origin_pack() -> None:
-    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
-    expected = {row["pack"] for row in inventory["nodes"]} | {"dinkster-nodes-remote"}
+    expected = {
+        load_manifest(path).name
+        for path in Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml")
+        if path.parent.name != "dinkster-nodes-dev"
+    }
     defaults = tomllib.loads(Path("src/dinkster/default-packs.toml").read_text())["packs"]
     assert defaults.keys() == expected
     declarations = {
@@ -66,143 +61,26 @@ def test_default_install_set_contains_every_comfy_origin_pack() -> None:
     assert all(not spec.in_process for spec in specs)
 
 
-def test_first_party_node_ids_preserve_the_pack_cut(tmp_path: Path) -> None:
-    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
-    rows = inventory["nodes"]
-    support = inventory["supportNodes"]
-    assert support == [
-        {
-            "pack": "dinkster-utilities",
-            "nodeType": node_type,
-            "bodyNotFromUpstream": True,
-        }
-        for node_type in ("dinkster.utilities.make_list", "dinkster.utilities.list_element")
-    ]
-    assert not ({row["nodeType"] for row in support} & {row["nodeType"] for row in rows})
-    assert collect_comfy_translations(
-        [
-            ("dinkster", "dinkster-utilities", "0.0.1", [NodeSchema(node_type=row["nodeType"])])
-            for row in support
-        ]
-    ) == {"schemaVersion": 1, "items": []}
-    assert inventory["schemaVersion"] == 1
-    assert inventory["referenceCommit"] == "bc5f880dbdd43e426077f42ccec53bb577ffee9f"
-    assert len(rows) == len({row["from"] for row in rows}) == 644
-    assert len({row["nodeType"] for row in rows}) == 644
-    assert Counter(row["pack"].removeprefix("dinkster-") for row in rows[:636]) == {
-        "sampling": 63,
-        "models": 101,
-        "conditioning": 29,
-        "latent": 45,
-        "image": 65,
-        "upscale": 2,
-        "audio": 15,
-        "video": 12,
-        "3d": 39,
-        "text": 16,
-        "llm": 1,
-        "utilities": 25,
-        "sd": 23,
-        "flux": 10,
-        "ltx": 30,
-        "wan": 32,
-        "hunyuan": 14,
-        "qwen": 6,
-        "hidream": 4,
-        "minimax": 9,
-        "cosmos": 3,
-        "void": 5,
-        "seedvr": 5,
-        "audio-models": 9,
-        "3d-models": 14,
-        "misc-models": 28,
-        "vision-background-removal": 2,
-        "vision-depth-anything-3": 4,
-        "vision-marigold": 1,
-        "vision-mediapipe": 4,
-        "vision-moge": 5,
-        "vision-rtdetr": 2,
-        "vision-sam3": 4,
-        "vision-sam3d-body": 6,
-        "vision-sdpose": 3,
-    }
-    schemas = _source_schemas()
-    expected_sources = {row["from"]: row["nodeType"] for row in rows}
-    expected_sources["ResizeImagesByLongerEdge"] = "dinkster.image.image_scale_to_max_dimension"
-    assert expected_sources == {source: schema.node_type for source, schema in schemas.items()}
-    assert {row["from"]: row["nodeType"] for row in rows[636:]} == {
-        "CreateBoundingBoxes": "dinkster.image.create_bounding_boxes",
-        "LayersFromBoundingBoxes": "dinkster.image.layers_from_bounding_boxes",
-        "ImageCompositor": "dinkster.image.image_compositor",
-        "WebcamCapture": "dinkster.image.webcam_capture",
-        "LoadMoGeModel": "dinkster.vision.moge.load_mo_ge_model",
-        "SplatToMesh": "dinkster.3d.splat_to_mesh",
-        "ImageCompare": "dinkster.image.image_compare",
-        "GLSLShader": "dinkster.image.glsl_shader",
-    }
-    assert {row["from"] for row in rows if row.get("bodyNotFromUpstream") is True} == {
-        "CreateBoundingBoxes",
-        "LayersFromBoundingBoxes",
-        "ImageCompositor",
-        "WebcamCapture",
-        "LoadMoGeModel",
-        "SplatToMesh",
-    }
-    assert all("bodyNotFromUpstream" not in row for row in rows[:636])
-    reference = {
-        row["class_name"]: row
-        for row in json.loads(Path("tools/data/comfy_core_reference.json").read_text())["nodes"]
-    }
-    for row in rows[636:642]:
-        assert row["backendPureRename"] is True
-        source = reference[row["from"]]
-        for group in ("required", "optional"):
-            for spec in source["input_types"].get(group, {}).values():
-                assert not str(spec[0]).startswith("COMFY_")
-        assert all(not value.startswith("COMFY_") for value in source["return_types"])
-    for row in rows[:636]:
-        schema = schemas[row["from"]]
-        assert row["backendPureRename"] is not bool(
-            schema.input_families or schema.output_families or schema.combos or schema.slots
-        )
-    for row in [*rows, *support]:
-        assert validate_name(row["nodeType"]) is None
-        namespace, leaf = row["nodeType"].rsplit(".", 1)
-        assert namespace == row["pack"].replace("-", ".")
-        assert leaf and all(c.isascii() and (c.islower() or c.isdigit() or c == "_") for c in leaf)
-        manifest_path = tmp_path / "dinkster-pack.toml"
-        manifest_path.write_text(
-            f'[pack]\nname = "{row["pack"]}"\npublisher = "dinkster"\n'
-            f'namespaces = ["{namespace}"]\n'
-            '[pack.entry]\nnodes = "example:NODES"\n'
-        )
-        manifest = load_manifest(manifest_path)
+def test_first_party_node_ids_preserve_the_pack_cut() -> None:
+    seen: set[str] = set()
+    for spec in default_pack_specs():
+        manifest = load_manifest(spec.manifest)
         validate_registration_claims(manifest)
-        assert manifest.namespaces == (namespace,)
-        assert claim_covers(manifest.namespaces[0], row["nodeType"])
-
-    scope = json.loads(SCOPE_RULES.read_text())
-    scope["migratedPacks"] = ["dinkster-image", "dinkster-vision-moge", "dinkster-3d"]
-    census = compare_registry(
-        {"nodes": [reference[row["from"]] for row in rows[636:]]},
-        {"nodes": {}},
-        scope=scope,
-    )
-    assert census["eligible_node_count"] == 8
-    assert census["counts"] == {"absent": 8}
-    assert census["pack_counts"] == {
-        "dinkster-image": {"absent": 6},
-        "dinkster-vision-moge": {"absent": 1},
-        "dinkster-3d": {"absent": 1},
-    }
-
-
-@pytest.mark.parametrize("display_name", ["", "Join text explicitly"])
-def test_pack_identity_preserves_the_effective_display_name(display_name: str) -> None:
-    original = NodeSchema(node_type="StringConcatenate", display_name=display_name)
-    renamed = first_party_schema(original)
-    assert renamed.node_type == "dinkster.text.string_concatenate"
-    assert schema_to_wire(renamed)["displayName"] == (display_name or "StringConcatenate")
+        nodes = resolve_entry(manifest.nodes_entry)
+        assert isinstance(nodes, (list, tuple))
+        for node in nodes:
+            schema = node.schema()
+            assert validate_name(schema.node_type) is None
+            assert schema.node_type not in seen
+            seen.add(schema.node_type)
+            assert any(
+                claim_covers(namespace, schema.node_type) for namespace in manifest.namespaces
+            )
+            assert validate_replacement_references({schema.node_type: schema}) == ()
+    assert len(seen) == 646
+    sources = _source_schemas()
+    assert len(sources) == 645
+    assert len({schema.node_type for schema in sources.values()}) == 644
 
 
 @pytest.mark.parametrize("display_name", ["", "Authored name"])
@@ -223,36 +101,25 @@ def test_identity_replacement_preserves_authored_id(display_name: str) -> None:
 
 
 def test_retained_image_classes_have_ordinary_identity_rules() -> None:
-    from dinkster_image.compare import NativeImageCompare
-    from dinkster_image.glsl import NativeGlslShader
+    from dinkster_image.ported.compare import NativeImageCompare
+    from dinkster_image.ported.glsl import NativeGlslShader
 
     schemas = []
-    for node, expected in (
-        (NativeImageCompare, "dinkster.image.image_compare"),
-        (NativeGlslShader, "dinkster.image.glsl_shader"),
+    for node, expected, source in (
+        (NativeImageCompare, "dinkster.image.image_compare", "ImageCompare"),
+        (NativeGlslShader, "dinkster.image.glsl_shader", "GLSLShader"),
     ):
-        original = node.schema()
-        renamed = first_party_schema(original)
+        renamed = node.schema()
         assert renamed.node_type == expected
         assert renamed.aliases == ()
         assert len(renamed.replacements) == 1
-        assert renamed.replacements[0].from_type == original.node_type
+        assert renamed.replacements[0].from_type == source
         assert renamed.replacements[0].migration is None
-        assert (
-            replace(
-                renamed,
-                node_type=original.node_type,
-                aliases=original.aliases,
-                search_terms=original.search_terms,
-                replacements=original.replacements,
-            )
-            == original
-        )
         schemas.append(renamed)
-    index = collect_comfy_translations([("dinkster", "dinkster-image", "0.0.1", schemas)])
-    items = index["items"]
-    assert isinstance(items, list)
-    assert {item["rule"]["from"] for item in items} == {"ImageCompare", "GLSLShader"}
+    assert {schema.replacements[0].from_type for schema in schemas} == {
+        "ImageCompare",
+        "GLSLShader",
+    }
 
 
 def test_first_party_rules_preserve_flat_graphs_and_leave_families_frontend_owned() -> None:
@@ -296,55 +163,16 @@ def test_first_party_rules_preserve_flat_graphs_and_leave_families_frontend_owne
         )
 
 
-def test_translation_index_collects_schema_rules_and_refuses_wrong_claims() -> None:
-    schema = StringConcatenate.schema()
-    pack = ("dinkster", "dinkster-text", "0.0.1", (schema,))
-    assert collect_comfy_translations([pack]) == {
-        "schemaVersion": 1,
-        "items": [
-            {
-                "pack": "dinkster-text",
-                "version": "0.0.1",
-                "rule": rule_to_wire(schema.replacements[0]),
-                "schema": schema_to_wire(schema),
-            }
-        ],
-    }
-    with pytest.raises(ValueError, match="comfy-translations.publisher"):
-        collect_comfy_translations([("outsider", *pack[1:])])
-    with pytest.raises(ValueError, match="comfy-translations.owner"):
-        collect_comfy_translations([("dinkster", "dinkster-image", "0.0.1", (schema,))])
-    with pytest.raises(ValueError, match="comfy-translations.duplicate"):
-        collect_comfy_translations([pack, pack])
-    altered = replace(
-        schema,
-        replacements=(
-            ReplacementRule(
-                "StringConcatenate", (replace(schema.replacements[0].cases[0], outputs=()),)
-            ),
-        ),
-    )
-    with pytest.raises(ValueError, match="comfy-translations.rule"):
-        collect_comfy_translations([("dinkster", "dinkster-text", "0.0.1", (altered,))])
-
-
 def test_translation_interfaces_retain_positional_order_after_json_round_trip() -> None:
-    index = json.loads(
+    flat, family = json.loads(
         json.dumps(
-            collect_comfy_translations(
-                [
-                    (
-                        "dinkster",
-                        "dinkster-text",
-                        "0.0.1",
-                        (StringFormat.schema(), StringConcatenate.schema()),
-                    )
-                ]
-            )
+            [
+                {"rule": rule_to_wire(schema.replacements[0]), "schema": schema_to_wire(schema)}
+                for schema in (StringConcatenate.schema(), StringFormat.schema())
+            ]
         )
     )
-    flat, family = index["items"]
-    assert [item["rule"]["from"] for item in index["items"]] == [
+    assert [item["rule"]["from"] for item in (flat, family)] == [
         "StringConcatenate",
         "StringFormat",
     ]
@@ -389,8 +217,8 @@ def test_translation_interfaces_retain_positional_order_after_json_round_trip() 
 )
 def test_renamed_prefixed_families_validate_without_serving_the_source(source: str) -> None:
     schema = _source_schemas()[source]
-    original = replace(schema, node_type=source, replacements=())
-    assert first_party_schema(original) == schema
+    original = replace(schema, replacements=())
+    assert with_identity_replacement(original, source) == schema
     assert validate_replacement_references({schema.node_type: schema}) == ()
     assert schema.input_families == original.input_families
     assert len(schema.replacements) == 1
@@ -496,11 +324,13 @@ def test_producer_pack_type_ownership_survives_ordinary_loading() -> None:
             assert registry.owner_of(type_id) is None
             assert type_id not in registry
     root = Path(__file__).resolve().parents[1] / "packages"
-    inventory = json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())
-    for name in sorted({row["pack"] for row in inventory["nodes"]}):
+    manifests = [load_manifest(spec.manifest) for spec in default_pack_specs()]
+    expected_ids: set[str] = set()
+    for manifest in manifests:
+        name = manifest.name
         pack = name.removeprefix("dinkster-")
-        manifest = load_manifest(root / f"dinkster-nodes-{pack}/dinkster-pack.toml")
         _worker, isolated_registry, _nodes, _arms = load_pack(manifest)
+        expected_ids.update(_worker.schemas)
         for schema in _worker.schemas.values():
             pending: list[object] = [schema_to_wire(schema)]
             while pending:
@@ -545,18 +375,16 @@ def test_producer_pack_type_ownership_survives_ordinary_loading() -> None:
         try:
             specs = [
                 PackSpec(
-                    root / f"dinkster-nodes-{name.removeprefix('dinkster-')}/dinkster-pack.toml",
+                    manifest.path,
                     in_process=True,
                     trust_reserved=True,
-                    packs={name: PackInfo(name, version="0.0.1")},
+                    packs={manifest.name: PackInfo(manifest.name, version="0.0.1")},
                 )
-                for name in sorted({row["pack"] for row in inventory["nodes"]})
+                for manifest in manifests
             ]
             for spec in composer.order_pack_entries(specs):
                 await composer.add_pack(spec)
-            assert set(composer.composition.schemas) == {
-                row["nodeType"] for row in inventory["nodes"] + inventory["supportNodes"]
-            }
+            assert set(composer.composition.schemas) == expected_ids
         finally:
             await composer.close()
 
