@@ -453,8 +453,6 @@ def prepare_local_packs(
             str(interpreter(generation)),
             "-B",
             str(source / "scripts/build_official_packs.py"),
-            "--version",
-            selection["version"],
             "--output",
             str(artifacts),
             "--variant",
@@ -471,13 +469,13 @@ def prepare_local_packs(
         input=json.dumps(links),
     )
     locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
-    for archive in artifacts.glob("*.zip"):
+    for archive in artifacts.glob("*.whl"):
         digest = blake3(archive.read_bytes()).hexdigest()
-        pack, separator, version = archive.stem.rpartition("-")
+        pack, version, _, _ = parse_wheel_filename(archive.name)
         cached = pack_archive_path(
             artifacts,
             "blake3:" + digest,
-            label=pack_label(pack if separator else version, version if separator else "0.0.0"),
+            label=pack_label(pack, str(version)),
         )
         if archive != cached:
             cached.parent.mkdir(parents=True, exist_ok=True)

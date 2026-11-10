@@ -28,7 +28,10 @@ from dinkster_supervisor.environment_state import (
 )
 from dinkster_supervisor.environment_stores import (
     register_project,
+    registered_stores,
     registry_path,
+    restore_setup_registration,
+    select_store,
     setup_registration,
     volume,
 )
@@ -41,6 +44,39 @@ from dinkster_supervisor.environment_transactions import (
 from test_environment_artifacts import _mirror
 from test_environment_cli import _run
 from test_environment_runtime import free_port, make_generation
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_missing_store_registration_is_replaced_without_losing_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    explicit: bool,
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root = tmp_path / "project"
+    missing = tmp_path / "removed-store"
+    requested = tmp_path / "chosen-store" if explicit else None
+    registry = registry_path()
+    entries = {volume(root): str(missing), "999999": str(tmp_path / "unrelated")}
+    write_document(registry, {"format": "dinkster.stores/1", "volumes": entries})
+    store = select_store(root, requested)
+    assert store == (requested or tmp_path / "dinkster-data")
+    assert registered_stores() == entries
+    assert not missing.exists()
+    root.mkdir()
+    store.mkdir()
+    snapshot = setup_registration(root, store)
+    register_project(root, store)
+    assert registered_stores() == {**entries, volume(root): str(store)}
+    message = capsys.readouterr().err
+    assert str(missing) in message and str(store) in message
+    with pytest.raises(EnvironmentError, match="volume already uses store"):
+        select_store(root, tmp_path / "different-store")
+    restore_setup_registration(root, snapshot)
+    assert registered_stores() == entries
+    assert not (store / "projects.json").exists()
 
 
 def _target(root: Path, number: int) -> Path:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -54,6 +55,10 @@ def select_store(root: Path, requested: Path | None) -> Path:
     """Read-only selection; the caller rechecks under the registry writer lock."""
     device = volume(root)
     registered = registered_stores().get(device)
+    missing = None
+    if registered is not None and not Path(registered).exists():
+        missing = registered
+        registered = None
     if requested is not None and not requested.is_absolute():
         raise EnvironmentError("--data must be absolute")
     selected = requested or (Path(registered) if registered else root.parent / "dinkster-data")
@@ -65,6 +70,8 @@ def select_store(root: Path, requested: Path | None) -> Path:
         raise EnvironmentError("project and wheel store must be on the same volume")
     if selected.is_relative_to(root) or root.is_relative_to(selected):
         raise EnvironmentError("project and wheel store must not contain each other")
+    if missing is not None:
+        print(f"replacing missing registered store {missing} with {selected}", file=sys.stderr)
     return selected
 
 
@@ -110,6 +117,7 @@ def setup_registration(root: Path, store: Path) -> dict[str, object]:
         else None,
         "addedProject": str(root) not in store_projects(store),
         "addedVolume": volume(root) not in registered_stores(),
+        "previousVolume": registered_stores().get(volume(root)),
         "hadProjects": (store / "projects.json").exists(),
         "hadRegistry": registry.exists(),
     }
@@ -132,6 +140,10 @@ def restore_setup_registration(root: Path, snapshot: dict[str, object]) -> None:
     device = volume(root)
     if snapshot["addedVolume"] and not projects and entries.get(device) == str(store):
         del entries[device]
+    elif not projects and entries.get(device) == str(store):
+        previous = snapshot.get("previousVolume")
+        if isinstance(previous, str):
+            entries[device] = previous
     if entries or snapshot["hadRegistry"]:
         write_document(registry, {"format": "dinkster.stores/1", "volumes": entries})
     else:
