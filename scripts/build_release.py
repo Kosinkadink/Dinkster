@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from scripts.build_official_packs import official_library
 from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
@@ -90,6 +91,8 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
 
 def uses_engine_version(root: Path, path: Path) -> bool:
     if project_metadata(path)[0] == "dinkster-supervisor":
+        return False
+    if official_library(tomllib.loads(path.read_text(encoding="utf-8"))) is not None:
         return False
     if (
         path.parent.parent != root / "packages"
