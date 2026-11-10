@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -2111,6 +2112,9 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
     external = candidate / "external.bin"
     external.write_bytes(b"b" * 16385)
     os.link(external, root / "models/external.bin")
+    with (candidate / "sparse.bin").open("wb") as stream:
+        stream.seek(8 * 1024 * 1024)
+        stream.write(b"sparse allocation")
     for path in root.rglob("*"):
         if path.is_file():
             with path.open("rb") as stream:
@@ -2150,3 +2154,178 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
     assert "user data" in report["scope"]
     assert "--keep-previous" in report["settingsCommand"]
     assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == protected
+
+
+@pytest.mark.parametrize("retained_partner", [True, False])
+def test_space_report_counts_partial_clone_overlap_without_inventing_reclaimability(
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, retained_partner: bool
+):
+    if sys.platform != "linux":
+        pytest.skip("Linux physical extent observation")
+    import fcntl
+
+    from dinkster_supervisor.environment_space import space_report
+
+    root = cleanup_project
+    (root / "store").unlink()
+    paths = []
+    for number, blocks in ((2, 3), (3 if retained_partner else 7, 2)):
+        parent = root / f"generations/{number}/__pycache__"
+        parent.mkdir()
+        path = parent / "clone.bin"
+        path.write_bytes(b"x" * (4096 * blocks))
+        with path.open("rb") as stream:
+            os.fsync(stream.fileno())
+        paths.append(path)
+    for path in root.rglob("*"):
+        if path.is_file():
+            with path.open("rb") as stream:
+                os.fsync(stream.fileno())
+    expected = (
+        sum(
+            p.lstat().st_blocks * 512
+            for p in [root / "generations", *(root / "generations").rglob("*")]
+            if p != root / "generations"
+        )
+        - 4096
+    )
+    base = 1 << 60
+    mappings = {
+        paths[0].stat().st_ino: [(0, base, 8192, 0), (8192, base + 8192, 4096, 0x2001)],
+        paths[1].stat().st_ino: [
+            (0, base + 8192, 4096, 0x2000),
+            (4096, base + 12288, 4096, 1),
+        ],
+    }
+    ioctl = fcntl.ioctl
+
+    def extent_reply(fd, request, buffer, mutate):
+        extents = mappings.get(os.fstat(fd).st_ino)
+        if request != 0xC020660B or extents is None:
+            return ioctl(fd, request, buffer, mutate)
+        struct.pack_into("=I", buffer, 20, len(extents))
+        for index, (logical, physical, length, flags) in enumerate(extents):
+            struct.pack_into(
+                "=QQQQQI", buffer, 32 + 56 * index, logical, physical, length, 0, 0, flags
+            )
+        return 0
+
+    monkeypatch.setattr(fcntl, "ioctl", extent_reply)
+    report = space_report(root)
+    assert report["complete"], report
+    assert report["allocatedBytes"] == expected
+    assert report["sharedAllocatedBytes"] == 4096
+    groups = cast("dict[str, dict[str, int]]", report["groups"])
+    assert groups["generation/2"]["sharedAllocatedBytes"] == 4096
+    assert groups[f"generation/{3 if retained_partner else 7}"]["sharedAllocatedBytes"] == 4096
+    assert sum(row["exclusiveAllocatedBytes"] for row in groups.values()) + 4096 == expected
+    if retained_partner:
+        assert report["automaticReclaimableBytes"] == sum(
+            groups[f"generation/{number}"]["exclusiveAllocatedBytes"] for number in (2, 7)
+        )
+        assert report["additionalExplicitReclaimableBytes"] == 0
+    else:
+        assert report["automaticReclaimableBytes"] is None
+        assert report["additionalExplicitReclaimableBytes"] is None
+        assert report["reclaimabilityWarnings"]
+
+
+@pytest.mark.parametrize("flags", [0x2, 0x8])
+def test_space_report_refuses_unknown_or_encoded_allocation(
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, flags: int
+):
+    if sys.platform != "linux":
+        pytest.skip("Linux physical extent observation")
+    import fcntl
+
+    from dinkster_supervisor.environment_space import space_report
+
+    root = cleanup_project
+    (root / "store").unlink()
+
+    def extent_reply(fd, request, buffer, mutate):
+        struct.pack_into("=I", buffer, 20, 1)
+        struct.pack_into("=QQQQQI", buffer, 32, 0, 1 << 60, 4096, 0, 0, flags | 1)
+        return 0
+
+    monkeypatch.setattr(fcntl, "ioctl", extent_reply)
+    report = space_report(root)
+    assert not report["complete"]
+    assert report["allocatedBytes"] is None
+    assert report["automaticReclaimableBytes"] is None
+    assert report["additionalExplicitReclaimableBytes"] is None
+    assert report["warnings"]
+
+
+@pytest.mark.parametrize("change_reference", [False, True])
+def test_space_report_checks_other_project_references_before_claiming_store_savings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change_reference: bool
+):
+    if sys.platform != "linux":
+        pytest.skip("Linux physical extent observation")
+    import fcntl
+
+    from dinkster_supervisor.environment_space import space_report
+
+    store = tmp_path / "store"
+    first, second = tmp_path / "first", tmp_path / "second"
+    for project in (first, second):
+        record = _generation(project, 1)
+        constraints = record.parent / "constraints.txt"
+        constraints.write_text(f"demo==1 --hash=sha256:{'c' * 64}\n")
+        generation = Generation.read(record)
+        files = dict(generation.files) | {"constraints.txt": content_digest(constraints)}
+        replace(
+            generation, constraints=files["constraints.txt"], files=tuple(sorted(files.items()))
+        ).write(record)
+        (project / "current").write_text("1\n")
+        (project / "store").write_text(str(store) + "\n")
+    store.mkdir()
+    write_document(
+        store / "projects.json",
+        {"format": "dinkster.store/1", "projects": [str(first), str(second)]},
+    )
+    kept = object_path(store / "wheels", "sha256:" + "c" * 64)
+    disposable = object_path(store / "wheels", "sha256:" + "d" * 64)
+    for directory, size in ((kept, 8193), (disposable, 16385), (store / "uv-cache", 4097)):
+        directory.mkdir(parents=True)
+        (directory / "payload").write_bytes(b"x" * size)
+    for path in tmp_path.rglob("*"):
+        if path.is_file():
+            with path.open("rb") as stream:
+                os.fsync(stream.fileno())
+    expected = sum(
+        p.lstat().st_blocks * 512
+        for directory in (disposable, store / "uv-cache")
+        for p in (directory, *directory.rglob("*"))
+    )
+    ioctl = fcntl.ioctl
+    changed = False
+
+    def observe(fd, request, buffer, mutate):
+        nonlocal changed
+        if change_reference and not changed:
+            changed = True
+            record = second / "generations/1/generation.json"
+            constraints = record.parent / "constraints.txt"
+            constraints.write_text(f"demo==1 --hash=sha256:{'d' * 64}\n")
+            generation = Generation.read(record)
+            files = dict(generation.files) | {"constraints.txt": content_digest(constraints)}
+            replace(
+                generation,
+                constraints=files["constraints.txt"],
+                files=tuple(sorted(files.items())),
+            ).write(record)
+        return ioctl(fd, request, buffer, mutate)
+
+    monkeypatch.setattr(fcntl, "ioctl", observe)
+    before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
+    report = space_report(first)
+    assert report["complete"], report
+    assert report["automaticReclaimableBytes"] == 0
+    if change_reference:
+        assert report["additionalExplicitReclaimableBytes"] is None
+        assert report["eligibilityWarnings"]
+    else:
+        assert report["additionalExplicitReclaimableBytes"] == expected, report
+    assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before

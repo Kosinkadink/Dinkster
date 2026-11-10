@@ -293,6 +293,17 @@ def space_report(root: Path) -> dict[str, object]:
         explicit_known,
         bool(policy["automatic"]),
     )
+    if explicit_known:
+        try:
+            _, _, final_generations = collection_plan(root)
+            if final_generations != explicit_generations or (
+                store is not None
+                and store_collection_plan(root, store, final_generations) != explicit_paths
+            ):
+                raise EnvironmentError("Cleanup references changed during observation.")
+        except (OSError, ValueError) as exc:
+            allocation["additionalExplicitReclaimableBytes"] = None
+            warnings.append(f"Explicit cleanup eligibility is unavailable: {exc}")
     if (
         collection_preview(root) != preview
         or _signature((root / "generations").stat()) != generation_directory
