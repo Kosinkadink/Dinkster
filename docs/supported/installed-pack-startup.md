@@ -365,7 +365,10 @@
   generations and stores. Empty shared-store categories remain visible. Without
   `--json`, the command shows the same report with IEC units, exact byte counts,
   retention reasons and settings guidance.
-  Native Windows physical measurement is not available in this command.
+  Windows uses native allocation and file identities, including resident data,
+  and checks the volume's clone capability before counting shared extents.
+  Unreadable allocation, reparse points and named streams make sizes unavailable;
+  they are never silently omitted or replaced with logical sizes.
 - `dinkster-env cleanup --plan` reports retained, candidate and deferred
   generation numbers with reasons without recovering or modifying the project.
   Status includes the same preview and visible pending quarantine warnings.

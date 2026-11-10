@@ -12,7 +12,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from dinkster_store import object_entries
 
@@ -32,6 +32,7 @@ class _File:
     owners: list[_Owner]
     extents: list[tuple[int, int, bool]]
     links: int
+    allocated: int = 0
 
 
 def _signature(info: os.stat_result) -> tuple[int, ...]:
@@ -82,6 +83,227 @@ def _linux_extents(fd: int) -> list[tuple[int, int, bool]]:
         start = end
 
 
+def _windows_allocation(path: Path) -> tuple[tuple[int, int], _File, list[str]]:
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
+    kernel: Any = win_dll("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel.GetVolumeInformationByHandleW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    ]
+    kernel.DeviceIoControl.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    ]
+    kernel.GetVolumePathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    kernel.GetDiskFreeSpaceW.argtypes = [wintypes.LPCWSTR] + [ctypes.POINTER(wintypes.DWORD)] * 4
+    get_error = getattr(ctypes, "get_last_error")  # noqa: B009 - Linux stubs omit it
+    format_error = getattr(ctypes, "FormatError")  # noqa: B009 - Linux stubs omit it
+
+    def fail() -> None:
+        error = get_error()
+        raise OSError(error, format_error(error), str(path))
+
+    handles: list[Any] = []
+    handle: Any = None
+
+    def information(kind: int, size: int) -> bytes:
+        buffer = ctypes.create_string_buffer(size)
+        if not kernel.GetFileInformationByHandleEx(handle, kind, buffer, size):
+            if kind == 7 and get_error() == 38:  # No streams on this file or directory.
+                return buffer.raw
+            fail()
+        return buffer.raw
+
+    try:
+        # Pin ancestors from the volume down so a rename cannot redirect a later open.
+        for part in (*reversed(path.parents), path):
+            handle = kernel.CreateFileW(
+                str(part), 0x81 if part == path else 0x80, 3, None, 3, 0x02000000 | 0x00200000, None
+            )
+            if handle == ctypes.c_void_p(-1).value:
+                fail()
+            handles.append(handle)
+            attributes = struct.unpack_from("=I", information(9, 8))[0]
+            if attributes & 0x400:
+                raise EnvironmentError(
+                    f"physical allocation of a reparse point is unavailable: {part}"
+                )
+            if part != path and not attributes & 0x10:
+                raise EnvironmentError(f"managed software ancestor is not a directory: {part}")
+        before = path.lstat()
+        directory = stat.S_ISDIR(before.st_mode)
+        basic = information(0, 40)
+        standard = information(1, 24)
+        allocated, _, links = struct.unpack_from("=qqI", standard)
+        identity_data = information(18, 24)
+        identity = (
+            struct.unpack_from("=Q", identity_data)[0],
+            int.from_bytes(identity_data[8:24], "little"),
+        )
+        if identity[1] != before.st_ino:
+            raise EnvironmentError(f"managed software changed during observation: {path}")
+        if allocated < 0 or not links or bool(standard[21]) != directory:
+            raise EnvironmentError(f"inconsistent Windows allocation metadata: {path}")
+        # Named streams are not represented by the unnamed stream's allocation or extents.
+        streams = information(7, 65536)
+        stream_offset = 0
+        while True:
+            following, name_size = struct.unpack_from("=II", streams, stream_offset)
+            if name_size % 2 or stream_offset + 24 + name_size > len(streams):
+                raise EnvironmentError("invalid Windows stream entry")
+            name = streams[stream_offset + 24 : stream_offset + 24 + name_size].decode("utf-16-le")
+            if name_size and name != "::$DATA":
+                raise EnvironmentError(f"named stream allocation is unavailable: {path}")
+            if not following:
+                break
+            if following < 24 + name_size or stream_offset + following + 24 > len(streams):
+                raise EnvironmentError("invalid Windows stream entry offset")
+            stream_offset += following
+        children: list[str] = []
+        extents: list[tuple[int, int, bool]] = []
+        if directory:
+            restart = True
+            while True:
+                buffer = ctypes.create_string_buffer(65536)
+                if not kernel.GetFileInformationByHandleEx(
+                    handle, 15 if restart else 14, buffer, len(buffer)
+                ):
+                    if get_error() == 18:  # ERROR_NO_MORE_FILES
+                        break
+                    fail()
+                restart = False
+                offset = 0
+                while True:
+                    following = struct.unpack_from("=I", buffer.raw, offset)[0]
+                    name_size = struct.unpack_from("=I", buffer.raw, offset + 60)[0]
+                    if name_size % 2 or offset + 68 + name_size > len(buffer):
+                        raise EnvironmentError("invalid Windows directory entry")
+                    name = buffer.raw[offset + 68 : offset + 68 + name_size].decode("utf-16-le")
+                    if name not in {".", ".."}:
+                        if not name or "/" in name or "\\" in name:
+                            raise EnvironmentError("invalid Windows directory entry name")
+                        children.append(name)
+                    if not following:
+                        break
+                    if following < 68 + name_size or offset + following + 68 > len(buffer):
+                        raise EnvironmentError("invalid Windows directory entry offset")
+                    offset += following
+        elif allocated:
+            flags = wintypes.DWORD()
+            if not kernel.GetVolumeInformationByHandleW(
+                handle, None, 0, None, None, ctypes.byref(flags), None, 0
+            ):
+                fail()
+            if flags.value & 0x08000000:  # FILE_SUPPORTS_BLOCK_REFCOUNTING
+                volume = ctypes.create_unicode_buffer(32768)
+                if not kernel.GetVolumePathNameW(str(path), volume, len(volume)):
+                    fail()
+                sectors, sector_bytes, free, capacity = (wintypes.DWORD() for _ in range(4))
+                if not kernel.GetDiskFreeSpaceW(
+                    volume,
+                    ctypes.byref(sectors),
+                    ctypes.byref(sector_bytes),
+                    ctypes.byref(free),
+                    ctypes.byref(capacity),
+                ):
+                    fail()
+                cluster = sectors.value * sector_bytes.value
+                if not cluster:
+                    raise EnvironmentError("Windows volume has no allocation unit size")
+                vcn = 0
+                resident = False
+                while True:
+                    start = ctypes.c_int64(vcn)
+                    buffer = ctypes.create_string_buffer(65536)
+                    returned = wintypes.DWORD()
+                    ok = kernel.DeviceIoControl(
+                        handle,
+                        0x000903D3,
+                        ctypes.byref(start),
+                        8,
+                        buffer,
+                        len(buffer),
+                        ctypes.byref(returned),
+                        None,
+                    )
+                    error = 0 if ok else get_error()
+                    if error == 38 and vcn == 0:  # Resident data has no retrieval pointers.
+                        resident = True
+                        break
+                    if error not in {0, 234}:
+                        fail()
+                    if returned.value < 16:
+                        raise EnvironmentError("truncated Windows physical extent reply")
+                    count = struct.unpack_from("=I", buffer.raw)[0]
+                    previous = struct.unpack_from("=q", buffer.raw, 8)[0]
+                    if not count or previous != vcn or 16 + count * 24 > returned.value:
+                        raise EnvironmentError("truncated Windows physical extents")
+                    for index in range(count):
+                        end, lcn, references = struct.unpack_from(
+                            "=qqI", buffer.raw, 16 + index * 24
+                        )
+                        if end <= previous or lcn < -1 or (lcn >= 0 and not references):
+                            raise EnvironmentError("invalid Windows physical extent")
+                        if lcn >= 0:
+                            extents.append(
+                                (lcn * cluster, (lcn + end - previous) * cluster, references > 1)
+                            )
+                        previous = end
+                    if ok:
+                        break
+                    if previous <= vcn:
+                        raise EnvironmentError("Windows physical extent query made no progress")
+                    vcn = previous
+                if not resident:
+                    if sum(end - begin for begin, end, _ in extents) != allocated:
+                        raise EnvironmentError(f"unmapped allocation or concurrent change: {path}")
+                    allocated = 0
+        after_basic = information(0, 40)
+        if (
+            after_basic[:8] + after_basic[16:36] != basic[:8] + basic[16:36]
+            or information(1, 24) != standard
+            or information(18, 24) != identity_data
+            or _signature(path.lstat()) != _signature(before)
+        ):
+            raise EnvironmentError(f"managed software changed during observation: {path}")
+        return identity, _File([], extents, links, allocated), children
+    finally:
+        for opened in reversed(handles):
+            kernel.CloseHandle(opened)
+
+
 def _allocation(
     trees: list[tuple[Path, _Owner]],
     explicit_paths: set[Path],
@@ -98,6 +320,28 @@ def _allocation(
     total = shared_total = automatic = explicit = 0
     reclaim_known = True
 
+    def account(length: int, items: list[_File], clone_shared: bool) -> None:
+        nonlocal total, shared_total, automatic, explicit, reclaim_known
+        owners = [owner for item in items for owner in item.owners]
+        groups = {owner.group for owner in owners}
+        outside_link = any(item.links > len(item.owners) for item in items)
+        total += length
+        if len(groups) > 1 or outside_link or clone_shared:
+            shared_total += length
+            for group in groups:
+                shared[group] += length
+        else:
+            exclusive[next(iter(groups))] += length
+        auto = all(owner.automatic for owner in owners)
+        gc = all(owner.explicit or owner.automatic for owner in owners)
+        if not outside_link and (auto or gc) and clone_shared:
+            reclaim_known = False
+        elif not outside_link and not clone_shared:
+            if auto:
+                automatic += length
+            if gc:
+                explicit += length
+
     def visit(path: Path, owner: _Owner, parent_fd: int | None = None) -> None:
         nonlocal total, automatic, explicit
         if path in group_paths:
@@ -108,6 +352,21 @@ def _allocation(
         info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         signature = _signature(info)
         observed[path] = signature
+        if sys.platform == "win32":
+            identity, item, children = _windows_allocation(path)
+            if stat.S_ISDIR(info.st_mode):
+                item.owners.append(owner)
+                account(item.allocated, [item], False)
+                for child in children:
+                    visit(path / child, owner)
+            elif identity in files:
+                files[identity].owners.append(owner)
+            else:
+                item.owners.append(owner)
+                files[identity] = item
+                for begin, end, _ in item.extents:
+                    events[identity[0]].extend(((begin, 1, identity), (end, -1, identity)))
+            return
         if sys.platform != "linux":
             raise EnvironmentError("physical extent measurement is unavailable on this platform")
         if stat.S_ISLNK(info.st_mode):
@@ -153,6 +412,9 @@ def _allocation(
             visit(path, owner)
         except (OSError, ValueError) as exc:
             warnings.append(str(exc))
+    for item in files.values():
+        if item.allocated:
+            account(item.allocated, [item], False)
     for device_events in events.values():
         active: dict[tuple[int, int], int] = defaultdict(int)
         previous = 0
@@ -160,32 +422,12 @@ def _allocation(
             length = position - previous
             if active and length:
                 items = [files[key] for key in active]
-                owners = [owner for item in items for owner in item.owners]
-                groups = {owner.group for owner in owners}
                 clone_shared = any(
                     is_shared and begin < position and end > previous
                     for item in items
                     for begin, end, is_shared in item.extents
                 )
-                outside_link = any(item.links > len(item.owners) for item in items)
-                is_shared = len(groups) > 1 or outside_link or clone_shared
-                total += length
-                if is_shared:
-                    shared_total += length
-                    for group in groups:
-                        shared[group] += length
-                else:
-                    exclusive[next(iter(groups))] += length
-                auto = all(owner.automatic for owner in owners)
-                gc = all(owner.explicit or owner.automatic for owner in owners)
-                if not outside_link and (auto or gc) and clone_shared:
-                    # FIEMAP says shared, but not how many references exist outside this scan.
-                    reclaim_known = False
-                elif not outside_link and not clone_shared:
-                    if auto:
-                        automatic += length
-                    if gc:
-                        explicit += length
+                account(length, items, clone_shared)
             active[identity] += delta
             if not active[identity]:
                 del active[identity]

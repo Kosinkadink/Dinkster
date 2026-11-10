@@ -2184,6 +2184,71 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
     assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == protected
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows allocation APIs")
+def test_space_report_windows_counts_hardlinks_and_resident_data_and_refuses_named_streams(
+    cleanup_project: Path,
+):
+    import ctypes
+    from ctypes import wintypes
+
+    from dinkster_supervisor.environment_space import space_report
+
+    root = cleanup_project
+    (root / "store").unlink()
+    candidate = root / "generations/2/__pycache__"
+    retained = root / "generations/3/__pycache__"
+    candidate.mkdir()
+    retained.mkdir()
+    shared = candidate / "shared.bin"
+    shared.touch()
+    os.link(shared, retained / "shared.bin")
+    resident = candidate / "resident.bin"
+    resident.touch()
+    baseline = space_report(root)
+    assert baseline["complete"], baseline
+
+    shared.write_bytes(b"large physical allocation" * 8193)
+    resident.write_bytes(b"r")
+    win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
+    get_error = getattr(ctypes, "get_last_error")  # noqa: B009 - Linux stubs omit it
+    kernel = win_dll("kernel32", use_last_error=True)
+    kernel.GetCompressedFileSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetCompressedFileSizeW.restype = wintypes.DWORD
+
+    def allocation(path: Path) -> int:
+        high = wintypes.DWORD()
+        low = kernel.GetCompressedFileSizeW(str(path), ctypes.byref(high))
+        assert low != 0xFFFFFFFF, get_error()
+        return (high.value << 32) | low
+
+    shared_bytes, resident_bytes = allocation(shared), allocation(resident)
+    assert shared_bytes > 0 and resident_bytes > 0
+    protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    report = space_report(root)
+    assert report["complete"], report
+    assert (
+        report["allocatedBytes"]
+        == cast("int", baseline["allocatedBytes"]) + shared_bytes + resident_bytes
+    )
+    assert (
+        report["sharedAllocatedBytes"]
+        == cast("int", baseline["sharedAllocatedBytes"]) + shared_bytes
+    )
+    assert (
+        report["automaticReclaimableBytes"]
+        == cast("int", baseline["automaticReclaimableBytes"]) + resident_bytes
+    )
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == protected
+    stream = Path(str(resident) + ":extra")
+    stream.write_bytes(b"must not be silently excluded" * 4096)
+    unavailable = space_report(root)
+    assert not unavailable["complete"]
+    assert unavailable["allocatedBytes"] is None
+    assert unavailable["automaticReclaimableBytes"] is None
+    assert any("named stream" in warning for warning in cast("list[str]", unavailable["warnings"]))
+    assert stream.read_bytes() == b"must not be silently excluded" * 4096
+
+
 @pytest.mark.parametrize("retained_partner", [True, False])
 def test_space_report_counts_partial_clone_overlap_without_inventing_reclaimability(
     cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, retained_partner: bool
