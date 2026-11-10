@@ -1,4 +1,4 @@
-"""Text nodes with the interfaces and behavior of ComfyUI core nodes."""
+"""Text nodes matching the interfaces and behavior of ComfyUI core nodes."""
 
 from __future__ import annotations
 
