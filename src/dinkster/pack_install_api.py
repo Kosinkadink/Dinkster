@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import ipaddress
 import os
 import shlex
@@ -15,8 +16,6 @@ from typing import cast
 
 from aiohttp import web
 from dinkster_server import PathRedactor, principal_for
-from dinkster_supervisor.environment_pack_install import plan_pack_install
-from dinkster_supervisor.environment_state import EnvironmentError
 
 from .registries import parse_registry_spec
 
@@ -27,6 +26,13 @@ def add_pack_install_routes(
     *,
     redactor: PathRedactor,
 ) -> None:
+    plan_pack_install = importlib.import_module(
+        "dinkster_supervisor.environment_pack_install"
+    ).plan_pack_install
+    environment_error = importlib.import_module(
+        "dinkster_supervisor.environment_state"
+    ).EnvironmentError
+
     pending: dict[str, tuple[float, list[str]]] = {}
     busy = asyncio.Lock()
     operations: set[asyncio.Task[dict[str, object]]] = set()
@@ -173,7 +179,7 @@ def add_pack_install_routes(
                         cancelled = True
                 if cancelled:
                     raise asyncio.CancelledError
-            except (EnvironmentError, OSError, ValueError) as exc:
+            except (environment_error, OSError, ValueError) as exc:
                 return failure(422, "plan-failed", str(exc))
         commands = commands_for(selections)
         pending[owner] = (time.monotonic() + 900, commands)

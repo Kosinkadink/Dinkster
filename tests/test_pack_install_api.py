@@ -40,7 +40,7 @@ def test_managed_preview_and_terminal_commands_never_apply(
         output.mkdir()
         return {"packPlan": {"current": 7}, "plan": ["add demo@1.0.0"], "expiresInSeconds": 900}
 
-    monkeypatch.setattr(routes, "plan_pack_install", plan)
+    monkeypatch.setattr("dinkster_supervisor.environment_pack_install.plan_pack_install", plan)
 
     async def scenario() -> list[str]:
         composer = ServingComposer()
@@ -165,7 +165,7 @@ def test_cancelled_preview_keeps_scratch_alive_until_worker_finishes(
         assert output.is_dir()
         return {"packPlan": {}, "plan": ["add demo@1.0.0"], "expiresInSeconds": 900}
 
-    monkeypatch.setattr(routes, "plan_pack_install", plan)
+    monkeypatch.setattr("dinkster_supervisor.environment_pack_install.plan_pack_install", plan)
 
     async def scenario() -> None:
         composer = ServingComposer()
