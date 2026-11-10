@@ -267,6 +267,11 @@
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
   the interpreter. Setup never upgrades uv automatically.
+- Environment commands that ask for confirmation refuse non-terminal text-mode
+  requests without `--yes`, naming `--yes` to apply and `--plan` to inspect.
+  Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
+  does not apply it. Explicit `--plan` and the Desktop client's `--json` preview
+  remain read-only without prompting; `--json --yes` applies without prompting.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
