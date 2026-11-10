@@ -1,10 +1,4 @@
-"""The pack template stays healthy (templates/pack, DESIGN 3.6/3.9).
-
-The template is documentation that executes: docs/pack-authoring.md points
-authors at it, so this repo's own suite holds it to the same bar it
-advertises - structural doctor health, no extra import dependencies, nodes
-executable over plain values, declared codec and rendition working. Template
-drift fails here, not in a copied pack's CI."""
+"""Engine pack contracts over a test-only specimen, not an author template."""
 
 from __future__ import annotations
 
@@ -18,27 +12,27 @@ from dinkster_api.v1 import TypeRegistry
 from dinkster_workers.doctor import diagnose, render_text
 from dinkster_workers.manifest import load_manifest
 
-TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "pack"
+PACK = Path(__file__).resolve().parent / "fixtures" / "pack-contract"
 
 
-def test_template_is_doctor_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pack_is_doctor_clean(monkeypatch: pytest.MonkeyPatch) -> None:
     def current_interpreter_version(selected: Path | str) -> tuple[int, int]:
         assert str(selected) == sys.executable
         assert sys.version_info[:2] >= (3, 12)
         return sys.version_info[:2]
 
-    # Template health is independent of version-probe startup latency. Interpreter
+    # Pack health is independent of version-probe startup latency. Interpreter
     # admission has its own real-process and timeout tests; the pack probe stays real.
     monkeypatch.setattr(
         "dinkster_workers.doctor.preflight_interpreter", current_interpreter_version
     )
-    report = diagnose(TEMPLATE / "dinkster-pack.toml")
+    report = diagnose(PACK / "dinkster-pack.toml")
     assert report.ok, render_text(report)
     assert not report.findings, render_text(report)
 
 
-def test_template_imports_only_public_api_and_stdlib() -> None:
-    source = ast.parse((TEMPLATE / "my_pack/__init__.py").read_text(encoding="utf-8"))
+def test_pack_imports_only_public_api_and_stdlib() -> None:
+    source = ast.parse((PACK / "my_pack/__init__.py").read_text(encoding="utf-8"))
     for node in ast.walk(source):
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
@@ -90,7 +84,7 @@ unexpected = added - sys.stdlib_module_names - {"my_pack"}
 assert not unexpected, sorted(unexpected)
 """
     result = subprocess.run(
-        [sys.executable, "-c", script, str(TEMPLATE)],
+        [sys.executable, "-c", script, str(PACK)],
         capture_output=True,
         text=True,
         timeout=30,
@@ -98,8 +92,8 @@ assert not unexpected, sorted(unexpected)
     assert result.returncode == 0, result.stderr
 
 
-def test_template_manifest_declares_presentation_and_icon() -> None:
-    manifest = load_manifest(TEMPLATE / "dinkster-pack.toml")
+def test_pack_manifest_declares_presentation_and_icon() -> None:
+    manifest = load_manifest(PACK / "dinkster-pack.toml")
     assert manifest.name == "my-pack"
     assert manifest.presentation is not None
     assert manifest.presentation.display_name == "My Pack"
@@ -107,8 +101,8 @@ def test_template_manifest_declares_presentation_and_icon() -> None:
     assert manifest.presentation.icon.media_type == "image/png"
 
 
-def test_template_nodes_execute_and_types_register() -> None:
-    sys.path.insert(0, str(TEMPLATE))
+def test_pack_nodes_execute_and_types_register() -> None:
+    sys.path.insert(0, str(PACK))
     try:
         # Resolved off sys.path at runtime, as the worker host resolves
         # manifest entries; invisible to static analysis by design.
@@ -119,7 +113,7 @@ def test_template_nodes_execute_and_types_register() -> None:
             register_types,
         )
     finally:
-        sys.path.remove(str(TEMPLATE))
+        sys.path.remove(str(PACK))
 
     assert [node.define_schema().node_type for node in NODES] == [
         "my-pack.shout",
