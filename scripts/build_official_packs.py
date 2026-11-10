@@ -32,6 +32,9 @@ from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from scripts.build_release import is_official_library
 
 
