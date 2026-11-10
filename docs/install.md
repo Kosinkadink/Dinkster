@@ -49,7 +49,27 @@ uv run --no-sync dinkster
 
 The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
-access. For native generation, follow the
+access.
+
+For native generation, build the execution environments from the Dinkster
+repository root:
+
+```sh
+./scripts/setup_envs.sh
+```
+
+On Windows, run `.\scripts\setup_envs.ps1` instead. The script requires `uv`
+and creates `.venv-torch` for CPU execution plus `.venv-gpu` when it detects an
+NVIDIA GPU. A `dinkster-evidence` sibling checkout is not required. When it is
+present, the script also installs its optional `dinkster-acceptance` package;
+otherwise the script prints a skip notice and completes normally. Launch with
+the CPU execution environment on Linux or macOS using:
+
+```sh
+DINKSTER_EXECUTION_PYTHON="$PWD/.venv-torch/bin/python" uv run --no-sync dinkster
+```
+
+For other platforms and accelerators, follow the
 [runtime setup instructions](../packages/dinkster-inference-torch/README.md).
 
 ## Release maintainers
