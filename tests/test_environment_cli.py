@@ -83,6 +83,8 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     result = (
         run_with_diagnostics(command, timeout=timeout)
         if "setup" in arguments
+        or "update" in arguments
+        or "restore" in arguments
         or "move" in arguments
         or ("doctor" in arguments and "--repair" in arguments)
         else subprocess.run(command, capture_output=True, text=True, timeout=timeout)
