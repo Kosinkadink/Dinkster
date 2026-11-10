@@ -368,14 +368,6 @@ def generation_history_coverage(root: Path, number: int) -> int:
         path = tree / name
         if any(parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)):
             raise EnvironmentError("history coverage refuses linked sealed software")
-    packs = tree / "packs"
-    if packs.is_symlink() or packs.is_junction():
-        raise EnvironmentError("history coverage refuses linked pack runtimes")
-    for path in packs.rglob("*"):
-        if path.is_symlink() or path.is_junction():
-            raise EnvironmentError("history coverage refuses linked pack runtimes")
-        if path.is_file() and not is_software_metadata(path.relative_to(tree).as_posix()):
-            raise EnvironmentError("history coverage has no recorded pack runtime payload identity")
     if record.drift(tree):
         raise EnvironmentError("history coverage requires an intact generation seal")
     snapshot = _sealed_software(tree)

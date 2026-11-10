@@ -612,7 +612,12 @@ def test_cleanup_preview_requires_published_sealed_software_and_completed_proven
         rows = {row["generation"]: row for row in result["cleanup"]["generations"]}
         assert rows[1]["reasons"] == ["previous successful activation"]
         assert rows[3]["reasons"] == ["current activation"]
-        if condition in {"covered", "observer-changed", "packed-no-launch"}:
+        if condition in {
+            "covered",
+            "observer-changed",
+            "packed-no-launch",
+            "unsealed-pack-runtime",
+        }:
             assert rows[2]["status"] == "candidate", rows[2]
             assert rows[2]["reasons"] == [
                 "outside current and previous; covered by history entry 1"
@@ -670,9 +675,10 @@ def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("fault", [None, "provenance", "malformed", "payload"])
+@pytest.mark.parametrize("fault", [None, "provenance", "malformed"])
+@pytest.mark.parametrize("runtime", [None, "file", "linked-directory"])
 def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
-    cleanup_project: Path, fault: str | None
+    cleanup_project: Path, fault: str | None, runtime: str | None
 ):
     from dinkster_supervisor.environment_history import activation_entries, history, validate_import
     from dinkster_supervisor.environment_state import writer_lock
@@ -699,6 +705,18 @@ def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
     receipt = root / "history/00000000000000000001.json"
     original = receipt.read_bytes()
     payload = root / "generations/2/packs/fixture/runtime.py"
+    if runtime is not None:
+        payload.parent.mkdir(parents=True)
+        if runtime == "file":
+            payload.write_bytes(b"materialized runtime with recorded software identity")
+        elif os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(payload), str(root / "models")],
+                capture_output=True,
+                check=True,
+            )
+        else:
+            payload.symlink_to(root / "models", target_is_directory=True)
     if fault == "provenance":
         entry = json.loads(original)
         entry["provenance"]["digest"] = "sha256:" + "0" * 64
@@ -707,9 +725,6 @@ def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
         entry = json.loads(original)
         del entry["generation"]
         write_document(receipt, entry)
-    elif fault == "payload":
-        payload.parent.mkdir(parents=True)
-        payload.write_bytes(b"unrecorded runtime is not covered by an import")
     before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     code, preview = _run(root, "cleanup", "--plan")
     assert code == 0, preview
@@ -737,8 +752,6 @@ def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
             p: data for p, data in before.items() if p.is_relative_to(root / "generations/2")
         }
         receipt.write_bytes(original)
-        if fault == "payload":
-            payload.unlink()
         code, result = _run(root, "cleanup", "--yes")
         assert code == 0 and result["status"] == "complete", result
         assert not (root / "generations/2").exists()
@@ -872,15 +885,19 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
     with writer_lock(tmp_path) if blocked == "busy" else nullcontext():
         code, result = _run(tmp_path, "cleanup", "--yes")
     assert code == 0, result
-    expected = "disabled" if blocked == "disabled" else ("deferred" if blocked else "complete")
+    expected = (
+        "disabled"
+        if blocked == "disabled"
+        else ("complete" if blocked in {None, "payload"} else "deferred")
+    )
     assert result["status"] == expected, result
     assert {p: p.read_bytes() for p in protected} == protected
     for number in (2, 7):
         retained = blocked in {"history", "unreadable-history", "disabled", "busy"} or (
-            blocked in {"payload", "generation", "runtime"} and number == 2
+            blocked in {"generation", "runtime"} and number == 2
         )
         assert (tmp_path / "generations" / str(number)).exists() == retained
-    if blocked:
+    if blocked not in {None, "payload"}:
         assert {p: p.read_bytes() for p in old_tree} == old_tree
     before_status = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     code, status = _run(tmp_path, "status")

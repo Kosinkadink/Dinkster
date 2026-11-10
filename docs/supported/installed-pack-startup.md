@@ -545,8 +545,11 @@
 - Software snapshots describe canonical reconstruction inputs, not the integrity
   of every materialized pack runtime file. A successful import or exact restore
   does not establish that an existing same-lock runtime has no local edits.
-  Unrecorded or linked pack payloads must remain retained when that proof is
-  unavailable; capture alone does not authorize their collection.
+  Recorded software identity in history permits collection of unused generations,
+  including their materialized pack runtimes, without a per-file runtime inventory.
+  Current and previous generations, live processes and intact sealed metadata
+  remain protected. Links inside disposable runtime trees are removed without
+  deleting their targets; linked sealed metadata still refuses collection.
 - `dinkster-env restore ID` rebuilds a published software snapshot in a new
   generation after confirmation. Recorded identities are preserved; unavailable
   inputs refuse activation. Tools versions are displayed but tools are never
