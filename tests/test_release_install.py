@@ -189,10 +189,16 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
     assert workflow["jobs"]["validation"] == {
         "needs": "changes",
-        "if": "needs.changes.outputs.engine == 'true'",
+        "if": "needs.changes.outputs.engine == 'true' && startsWith(github.ref, 'refs/tags/v')",
         "uses": "./.github/workflows/ci.yml",
     }
-    assert workflow["jobs"]["build"]["needs"] == "validation"
+    assert workflow["jobs"]["build"]["needs"] == ["changes", "validation"]
+    assert workflow["jobs"]["build"]["if"] == (
+        "always() && !cancelled() && needs.changes.outputs.engine == 'true' && "
+        "(needs.validation.result == 'success' || (needs.validation.result == 'skipped' && "
+        "(github.event_name == 'pull_request' || "
+        "(github.event_name == 'push' && github.ref == 'refs/heads/main'))))"
+    )
     assert workflow["jobs"]["finalize"]["needs"] == "build"
     assert workflow["jobs"]["install"]["needs"] == "finalize"
     commands = "\n".join(
