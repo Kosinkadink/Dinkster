@@ -805,36 +805,3 @@ def test_merge_image_batches_concatenates_and_reconciles() -> None:
     assert np.array_equal(np.asarray(merge_image_batches([first])), first)
     with pytest.raises(ValueError, match="zero image batches"):
         merge_image_batches([])
-
-
-def test_worker_image_type_decodes_to_torch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The worker half (dinkster_native.image): same bytes, torch
-    runtime form. torch is faked through sys.modules - the point is the
-    codec calls torch.from_numpy on the decoded array, not torch itself."""
-    import sys
-    import types
-
-    from dinkster_native.image import register_image_type
-
-    captured: list[np.ndarray] = []
-
-    def from_numpy(array: Any) -> Any:
-        captured.append(array)
-        return FakeTensor(array)
-
-    fake_torch = types.ModuleType("torch")
-    fake_torch.from_numpy = from_numpy  # pyright: ignore[reportAttributeAccessIssue]
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-
-    registry = TypeRegistry()
-    register_image_type(registry, COMFY_IMAGE_TYPE)
-    array = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 2, 3)
-    spec = registry.spec(COMFY_IMAGE_TYPE)
-    decoded = spec.decode(spec.encode(FakeTensor(array)))
-    assert isinstance(decoded, FakeTensor)
-    assert np.array_equal(captured[0], array)
-    assert spec.prepare_buffer_encoding is prepare_image_array_encoding
-    # Both halves agree on identity: worker wrap and host fingerprint match.
-    assert registry.wrap(COMFY_IMAGE_TYPE, array).fingerprint == (
-        image_array_fingerprint(COMFY_IMAGE_TYPE)(array)
-    )

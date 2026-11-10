@@ -261,16 +261,14 @@ def test_floats_tensor_codec_preserves_dtype_and_bytes() -> None:
     assert _raw_bytes(restored) == _raw_bytes(source)
 
 
-@pytest.mark.parametrize("native_first", (False, True))
 @pytest.mark.parametrize("field", ("conditioning", "schedule", "both"))
 @pytest.mark.parametrize("release", ("group", "keyframes", "group-owner", "group-ref"))
 def test_clip_retained_hooks_invalidate_cached_outputs(
-    monkeypatch: pytest.MonkeyPatch, native_first: bool, field: str, release: str
+    monkeypatch: pytest.MonkeyPatch, field: str, release: str
 ) -> None:
     from dinkster_api.v1 import CLIP_TYPE
     from dinkster_caches import MemoryLRUCache
     from dinkster_memory.resident import ResidentPool
-    from dinkster_native.native import register_native_types
     from dinkster_protocol import CacheKey
     from dinkster_values import ResidentLookupError
 
@@ -282,16 +280,10 @@ def test_clip_retained_hooks_invalidate_cached_outputs(
     async def scenario() -> None:
         pool = ResidentPool(terminal_release=lambda _: True)
         monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
-        monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
         registry = TypeRegistry()
-        first, second = (
-            (register_native_types, register_inference_types)
-            if native_first
-            else (register_inference_types, register_native_types)
-        )
-        first(registry)
+        register_inference_types(registry)
         spec = registry.spec(CLIP_TYPE)
-        second(registry)
+        register_inference_types(registry)
         assert registry.spec(CLIP_TYPE) is spec
         cache = MemoryLRUCache(max_bytes=16384)
         pool.register_invalidator(cache.drop_referencing)
@@ -352,12 +344,10 @@ def test_clip_retained_hooks_invalidate_cached_outputs(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("native_first", (False, True))
 def test_clip_clone_retains_actual_schedule_clone_not_source_group(
-    monkeypatch: pytest.MonkeyPatch, native_first: bool
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_memory.resident import ResidentPool
-    from dinkster_native.native import register_native_types
     from dinkster_values import RESOURCE_REFS_META_KEY, ResidentLookupError, resident_resource_id
 
     initialize_inference_process()
@@ -367,10 +357,7 @@ def test_clip_clone_retains_actual_schedule_clone_not_source_group(
 
     pool = ResidentPool(terminal_release=lambda _: True)
     monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
-    monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
     registry = TypeRegistry()
-    if native_first:
-        register_native_types(registry)
     register_inference_types(registry)
     spec = registry.spec(CLIP_TYPE)
     coerce = spec.coerce
@@ -524,10 +511,9 @@ def test_retained_keyframe_release_invalidates_groups_and_conditioning(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("native_first", (False, True))
 @pytest.mark.parametrize("schedule_clip", (False, True))
 def test_weight_pair_ownership_survives_hook_clones_and_invalidates_dependents(
-    monkeypatch: pytest.MonkeyPatch, native_first: bool, schedule_clip: bool
+    monkeypatch: pytest.MonkeyPatch, schedule_clip: bool
 ) -> None:
     from dinkster_api.v1 import CONDITIONING_TYPE
     from dinkster_caches import MemoryLRUCache
@@ -539,7 +525,6 @@ def test_weight_pair_ownership_survives_hook_clones_and_invalidates_dependents(
         CombineHooks8,
         SetHookKeyframes,
     )
-    from dinkster_native.native import register_native_types
     from dinkster_protocol import CacheKey
     from dinkster_values import ResidentLookupError
 
@@ -549,15 +534,8 @@ def test_weight_pair_ownership_survives_hook_clones_and_invalidates_dependents(
     async def scenario() -> None:
         pool = ResidentPool(terminal_release=lambda _: True)
         monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
-        monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
         registry = TypeRegistry()
-        first, second = (
-            (register_native_types, register_inference_types)
-            if native_first
-            else (register_inference_types, register_native_types)
-        )
-        first(registry)
-        second(registry)
+        register_inference_types(registry)
         cache = MemoryLRUCache(max_bytes=16384)
         pool.register_invalidator(cache.drop_referencing)
 
