@@ -1311,7 +1311,13 @@ def test_produced_video_adoption_owns_source_until_finished(
             assert not session._invocation_keys
             await worker.close()
             await stop_service(proc)
-            shutil.rmtree(tmp_path / "producer")
+            try:
+                shutil.rmtree(tmp_path / "producer")
+            except PermissionError as error:
+                from tools.windows_produced_lease_diagnostics import capture_delete_failure
+
+                capture_delete_failure(error, proc)
+                raise
             store.put(b"pressure after adoption")
             assert not store.has(ref.digest)
             video = cast(Mapping[str, object], captured["video"].resolve())

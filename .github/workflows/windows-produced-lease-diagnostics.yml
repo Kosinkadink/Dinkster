@@ -1,0 +1,75 @@
+name: Windows produced lease diagnostic probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-produced-lease-diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        include:
+          - arm: holder
+            slot: 1
+            attempts: 38
+          - arm: holder
+            slot: 2
+            attempts: 38
+          - arm: holder
+            slot: 3
+            attempts: 37
+          - arm: holder
+            slot: 4
+            attempts: 37
+          - arm: logging
+            slot: 1
+            attempts: 38
+          - arm: logging
+            slot: 2
+            attempts: 38
+          - arm: logging
+            slot: 3
+            attempts: 37
+          - arm: logging
+            slot: 4
+            attempts: 37
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.6"
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+      - run: uv sync --locked --all-packages
+      - name: Verify Windows holder capture against a known open lock
+        run: >-
+          uv run --no-sync python tools/windows_produced_lease_diagnostics.py
+          --self-check "${{ runner.temp }}/lease-holder-self-check"
+      - name: Enable logging only in the logging arm
+        if: matrix.arm == 'logging'
+        run: uv run --no-sync python tools/windows_produced_lease_diagnostics.py
+      - name: Repeat the original three-file pytest process
+        run: >-
+          uv run --no-sync python tools/run_windows_produced_lease_probe.py
+          --arm ${{ matrix.arm }} --attempts ${{ matrix.attempts }}
+          --evidence "${{ runner.temp }}/produced-lease-${{ matrix.arm }}-${{ matrix.slot }}"
+      - name: Retain attempt folders and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: produced-lease-${{ matrix.arm }}-${{ matrix.slot }}
+          path: ${{ runner.temp }}/produced-lease-${{ matrix.arm }}-${{ matrix.slot }}
+          include-hidden-files: true
+          if-no-files-found: warn
