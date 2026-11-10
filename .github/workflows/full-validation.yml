@@ -18,10 +18,10 @@ env:
   # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
   FRONTEND_REF: 388ba9794cb02fde8f88c49f24e44267a70be2d4
 
-# Pushes batch behind the active run while scheduled and release validation always finish.
+# Superseded pushes cancel; scheduled and release validation always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   validation-plan:
@@ -36,18 +36,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            let runTorch = true;
-            if (context.eventName === 'push' && !/^0+$/.test(context.payload.before)) {
-              const comparison = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${context.payload.before}...${context.sha}`,
-              });
-              const files = comparison.data.files || [];
-              // The compare API caps files at 300. A capped response must run everything.
-              const relevant = /^(packages\/dinkster-(nodes-(comfy|vision)|inference[^/]*|compat-comfy)\/|tests\/test_(comfy_|vision_)|\.github\/(actions\/torch-cpu-suite\/|workflows\/full-validation\.yml$)|uv\.lock$)/;
-              runTorch = files.length >= 300 || files.some(file => relevant.test(file.filename) || relevant.test(file.previous_filename || ''));
-            }
-            core.setOutput('run-torch', String(runTorch));
+            core.setOutput('run-torch', 'true');
             if (context.eventName !== 'schedule') {
               core.setOutput('run-heavy', 'true');
               return;
@@ -391,7 +380,7 @@ jobs:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
     needs: [validation-plan, test, windows-runtime]
-    if: always() && needs.validation-plan.outputs.run-heavy == 'true'
+    if: ${{ !cancelled() && needs.validation-plan.outputs.run-heavy == 'true' }}
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 5
     steps:
@@ -428,7 +417,7 @@ jobs:
 
   main-status:
     name: main validation status
-    if: always()
+    if: ${{ !cancelled() }}
     needs:
       - validation-plan
       - test
