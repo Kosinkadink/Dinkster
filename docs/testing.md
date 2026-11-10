@@ -75,11 +75,12 @@ the evidence repository. Generation fails if the evidence checkout or its
 
 ## Pull requests and full validation
 
-`.github/workflows/ci.yml` runs one fast job with a ten-minute limit. After
-installing the locked workspace and fetching pinned evidence for type
-resolution (not model weights or coverage inputs), it runs
-`bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
-path-based unit subset:
+`.github/workflows/ci.yml` always reports `format, lint, types` and `tests`.
+Docs-only changes skip environment provisioning and test execution inside
+those jobs. Other changes run Ruff format, Ruff lint and both platform
+Pyright checks with `bash scripts/ci-fast.sh checks`. The test job runs the
+engine subset with `bash scripts/ci-fast.sh tests`, selected pack tests, or
+both, according to the changed paths. Engine subset examples include:
 
 - `tests/test_extension_factory_guard.py`: exact registry-factory,
   contribution-kind and factory baseline checks.
@@ -92,17 +93,25 @@ path-based unit subset:
 - `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
 
 These tests use synthetic data. The validation-input contract checks the prepared
-evidence location without reading model data. Selection does not depend on the
-changed files, network access, model availability or hardware. Full suites remain
-required locally before landing; this subset is fast PR feedback, not a
-replacement for full validation. Reproduce the job after
+evidence location without reading model data. `tools/ci_selection.py` selects
+install/environment tests and the Windows jobs only for runtime-related changes.
+A pack-only change selects that pack's behavioral tests; shared library changes
+also select its declared dependents. Registry default pack admission gates only
+scanner or harness changes. Publication preflight runs for publisher or manifest
+changes, not ordinary pack source edits. Reproduce the checks and engine subset after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
+
+Landing requires the selected hosted jobs green and a fresh LOW verifier PASS at
+the offered head. Running the counted full suite or its shards locally is not a
+landing gate. During development, run the tests the change touches. The whole
+suite runs in hosted full validation on main after landing; a red main follows
+the integrator's repair route. Issue-specific acceptance evidence still applies.
 
 ### Counted pack runtime matrix
 
-Before freezing a distribution, dependency or pack-loading change, the counted
-suite includes the following runtime environments, not only the root and
-workspace-member tests. The selections and setup commands in
+Full validation covers the following runtime environments, not only the root
+and workspace-member tests. This matrix is not a local pre-freeze requirement.
+The selections and setup commands in
 `.github/workflows/full-validation.yml` and
 `.github/actions/torch-cpu-suite/action.yml` are authoritative.
 
@@ -133,11 +142,11 @@ simulated platform is not a replacement. Preserve the existing assertions,
 platform exclusions and coverage floor. Model/GPU comparisons are separate
 from this non-model runtime matrix.
 
-The freeze record names every lane, the exact head, commands, results and logs,
-including each shard and the combined coverage percentage. Missing inputs or
-an unexecuted lane are reported as incomplete, never as a pass. Hosted fast
-feedback alone does not certify this matrix. Do not dispatch or rerun hosted
-full validation to obtain the record.
+When reporting this matrix, name the executed lanes, exact head, commands,
+results and logs, including each shard and the combined coverage percentage.
+Missing inputs or an unexecuted lane are incomplete, never a pass. Hosted fast
+feedback alone does not certify the matrix, and matrix evidence does not gate
+landing. Do not dispatch or rerun hosted full validation to obtain the record.
 
 The required `CI_RUNNERS` repository variable controls every job. Its
 `linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
