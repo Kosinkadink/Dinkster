@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-conditioning"
-version = "0.0.3"
+version = "0.0.4"
 description = "First-party Dinkster conditioning nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "safetensors",
     "dinkster-inference==0.1.1",
     "dinkster-latent>=0.0.1,<1",
-    "dinkster-pack-helpers>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.2,<1",
 ]
 
 [build-system]

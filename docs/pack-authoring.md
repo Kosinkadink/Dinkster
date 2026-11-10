@@ -67,9 +67,18 @@ Pack metadata, schemas, locales, replacements and install locks share the
 `/static/` prefix. The host installs the registry's exact pins with uv and
 hash verification; it does not freely resolve dependencies against the index.
 Per-pack virtual environments remain isolated.
-Each `/static/packs/index.json` release contains a `wheels` array with
+The schema 2 `/static/packs/index.json` catalog lists one entry per pack:
+`name`, `publisher`, `latestVersion`, `library` and a static-relative `url`
+such as `packs/my-pack/index.json`. That per-pack file has `schemaVersion: 2`,
+`name` and `items` listing only that pack's active public releases.
+Each release contains engine requirements, install lock pointers and a `wheels` array with
 `filename`, `sha256`, `url`, `size`, `digest` and `tags` on its single wheel.
 The host selects compatible tags and verifies the selected wheel's hashes.
+The reader also accepts the schema 1 all-releases catalog during the registry
+transition. Each operation caches its catalog and reads only selected per-pack
+files; no dynamic API is needed, including on a static file-copy mirror.
+Managed preparation shares the snapshot between source selection and dependency
+lock acquisition in disposable scratch storage, removed when preparation ends.
 
 Shared implementation belongs in a library wheel without a pack manifest or
 node/type claims, such as `my-core`, listed in the pack's `requires`.

@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-wan"
-version = "0.0.3"
+version = "0.0.4"
 description = "Dinkster wan model nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
     "einops",
     "dinkster-models>=0.0.1",
     "dinkster-vision-sam3>=0.0.1",
-    "dinkster-pack-helpers>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.2,<1",
 ]
 
 [build-system]

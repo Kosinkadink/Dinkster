@@ -110,6 +110,7 @@ def prepare_pack_locks(
                 constraints=constraints,
                 indexes=indexes,
                 find_links=find_links,
+                engine=manifest.compatibility.engine if manifest.compatibility else None,
                 uv=uv,
             )
             path = output / f"{manifest.name}.pack-lock.json"
@@ -138,11 +139,13 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
         or len(set(hosting)) != len(hosting)
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
-    return variant, generation_pack_specs(generation, tuple(hosting))
+    return variant, generation_pack_specs(
+        generation, tuple(hosting), local_build=record.get("source") == "local"
+    )
 
 
 def generation_pack_specs(
-    generation: Path, in_process_packs: tuple[str, ...] = ()
+    generation: Path, in_process_packs: tuple[str, ...] = (), *, local_build: bool = False
 ) -> tuple[PackSpec, ...]:
     """Select verified admitted sources and their already-provisioned interpreters."""
     if not generation.is_absolute():
@@ -217,7 +220,17 @@ def generation_pack_specs(
                 packs={entry.pack: info},
                 in_process=in_process,
                 trust_reserved=entry.publisher == "dinkster"
-                and (entry.source == "registry" or entry.source.startswith("registry:")),
+                and (
+                    entry.source == "registry"
+                    or entry.source.startswith("registry:")
+                    or (
+                        local_build
+                        and re.fullmatch(
+                            r"local-build:git:Kosinkadink/Dinkster@[0-9a-f]{40}", entry.source
+                        )
+                        is not None
+                    )
+                ),
                 require_catalog=True,
                 asset_vault_write=(
                     entry.pack == "dinkster-nodes-remote"

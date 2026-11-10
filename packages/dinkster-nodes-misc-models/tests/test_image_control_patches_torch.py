@@ -10,6 +10,11 @@ from dinkster_api.v1 import (
 from dinkster_misc_models.image_control_patches import ZImageFunControlnet
 
 
+@pytest.fixture(autouse=True)
+def initialize_runtime() -> None:
+    initialize_inference_process()
+
+
 class _Sampling:
     def percent_to_sigma(self, value: float) -> float:
         return 10.0 - value

@@ -645,6 +645,21 @@ def prepare_registry_inputs(
         )
         for addition in additions:
             selection.extend(["--add", addition])
+        snapshot: list[str] = []
+        if not pack_locks and prepare_locks is None:
+            # Historical target engines do not expose operation-owned snapshots.
+            help_result = subprocess.run(
+                [*command, "prepare-registry-sources", "--help"],
+                capture_output=True,
+                text=True,
+            )
+            if help_result.returncode:
+                raise EnvironmentError(
+                    "target registry preparation refused: "
+                    + (help_result.stderr.strip() or help_result.stdout.strip())
+                )
+            if "--index-snapshot" in help_result.stdout:
+                snapshot = ["--index-snapshot", str(scratch / "index")]
         sources = run(
             [
                 "prepare-registry-sources",
@@ -653,6 +668,7 @@ def prepare_registry_inputs(
                 "--artifacts",
                 str(artifacts),
                 *selection,
+                *snapshot,
             ]
         )
         unavailable = sources.get("unavailable")
@@ -694,6 +710,7 @@ def prepare_registry_inputs(
                     "--base-id",
                     base,
                     "--registry-only",
+                    *snapshot,
                     *[
                         argument
                         for addition in additions
