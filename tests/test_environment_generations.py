@@ -553,6 +553,9 @@ def test_checkout_pack_build_preserves_independent_manifest_versions(
     artifacts = object_path(store / "engines", release) / "artifacts"
     lock = Lockfile.from_record_json((artifacts / "official-packs.lock").read_text())
     assert {pack.pack: pack.version for pack in lock.packs} == versions
+    assert {pack.source for pack in lock.packs} == {
+        "local-build:git:Kosinkadink/Dinkster@" + "a" * 40
+    }
     assert {path.name for path in artifacts.glob("*.whl")} == {
         f"{name.replace('-', '_')}-{version}-py3-none-any.whl" for name, version in versions.items()
     }

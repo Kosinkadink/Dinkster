@@ -468,6 +468,11 @@ def prepare_local_packs(
         cwd=source,
         input=json.dumps(links),
     )
+    catalog_lock = artifacts / "official-packs.lock"
+    catalog = json.loads(catalog_lock.read_text(encoding="utf-8"))
+    for entry in catalog["packs"]:
+        entry["source"] = "local-build:" + entry["source"]
+    write_document(catalog_lock, catalog)
     locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
     for archive in artifacts.glob("*.whl"):
         digest = blake3(archive.read_bytes()).hexdigest()
@@ -491,7 +496,5 @@ def prepare_local_packs(
             locks=locks if operation != "doctor" else (),
             in_process_packs=in_process,
         )
-    stage_pack_sources(
-        generation, catalog_lock=artifacts / "official-packs.lock", artifacts=artifacts
-    )
+    stage_pack_sources(generation, catalog_lock=catalog_lock, artifacts=artifacts)
     prepare_pack_catalogs(generation, in_process)
