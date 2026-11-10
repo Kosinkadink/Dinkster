@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 import pytest
 from dinkster_store import object_path
 from dinkster_supervisor.environment_state import (
+    EnvironmentError,
     Generation,
     Journal,
     content_digest,
@@ -124,7 +125,16 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
         connection = None
         try:
             port = free_port()
-            start_engine(tmp_path, 2, "old", port)
+            try:
+                start_engine(tmp_path, 2, "old", port)
+            except EnvironmentError as exc:
+                logs = {
+                    str(path.relative_to(tmp_path)): path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                    for path in (tmp_path / "runtime").glob("*/*.log")
+                }
+                pytest.fail(f"{exc}\n{logs}")
             connection, _ = listener.accept()
             connection.settimeout(10)
             assert connection.recv(5) == b"ready"
@@ -1275,17 +1285,17 @@ def test_managed_supervisor_startup_and_acknowledged_shutdown_collect_unused_gen
         imported: dict[Path, bytes] = {}
         write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": True})
         if capture_fault:
-            attempt = root / "runtime/maintenance/cleanup"
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
-                if attempt.exists() and any(
+                code, status = _run(root, "status")
+                assert code == 0, status
+                attempt = status["cleanup"].get("lastAttempt", {})
+                if any(
                     "generation 7 history capture deferred" in warning
-                    for warning in json.loads(attempt.read_bytes())["warnings"]
+                    for warning in attempt.get("warnings", [])
                 ):
                     break
                 time.sleep(0.05)
-            code, status = _run(root, "status")
-            assert code == 0, status
             assert status["cleanup"]["lastAttempt"]["status"] == "deferred", status
             assert any(
                 "generation 7 history capture deferred" in warning
