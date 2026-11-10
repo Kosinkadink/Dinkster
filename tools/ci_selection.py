@@ -100,7 +100,9 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     return {
         "docs": not code,
         "engine": engine,
-        "runtime": shared or any(runtime_path(path) for path in code),
+        "runtime": shared
+        or "tests/test_remote.py" in code
+        or any(runtime_path(path) for path in code),
         "packs": sorted(path.relative_to(root).as_posix() for path in selected & tested),
     }
 
@@ -145,8 +147,12 @@ def main() -> None:
     if args.packs is not None:
         tests = test_paths(root, json.loads(args.packs))
         print("Selected pack tests: " + json.dumps(tests), flush=True)
-        if tests:
-            subprocess.run([sys.executable, "-m", "pytest", "-q", *tests], check=True)
+        # Separate directories can reuse test module and sibling helper names.
+        groups: dict[Path, list[str]] = {}
+        for test in tests:
+            groups.setdefault(Path(test).parent, []).append(test)
+        for group in groups.values():
+            subprocess.run([sys.executable, "-m", "pytest", "-q", *group], check=True)
         return
     paths = (
         subprocess.check_output(
