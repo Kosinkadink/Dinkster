@@ -93,6 +93,7 @@ def load_pack(manifest_path: Path | str, *, in_process: bool = False) -> Generat
         async def start():
             local, registry, classes, _arms = load_worker_pack(manifest)
             if in_process:
+                await local.start()
                 return local, registry, build_schemas(classes)
             # Register pack-owned codecs in the caller as well as in the child.
             await local.close()
