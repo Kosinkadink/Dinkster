@@ -354,13 +354,26 @@ class Generation:
                 changes.append(f"missing: {name}")
             elif path.is_symlink() or content_digest(path) != sha:
                 changes.append(f"modified: {name}")
-        for path in sorted(root.rglob("*")):
-            name = path.relative_to(root).as_posix()
-            # Pack venvs have their own locks and doctor; bytecode is runtime output.
-            if name.startswith("packs/") or "__pycache__" in path.relative_to(root).parts:
-                continue
-            if path.is_file() and name != "generation.json" and name not in expected:
-                changes.append(f"unexpected: {name}")
+        unexpected: list[Path] = []
+        for directory, directories, filenames in os.walk(root):
+            relative = Path(directory).relative_to(root).as_posix()
+            # Pack venvs have their own doctor; do not traverse their runtime output.
+            directories[:] = [
+                name
+                for name in directories
+                if name != "__pycache__" and not (relative == "." and name == "packs")
+            ]
+            prefix = "" if relative == "." else relative + "/"
+            for filename in filenames:
+                name = prefix + filename
+                if filename == "__pycache__" or name == "generation.json" or name in expected:
+                    continue
+                path = root / name
+                if path.is_file():
+                    unexpected.append(path)
+        changes.extend(
+            f"unexpected: {path.relative_to(root).as_posix()}" for path in sorted(unexpected)
+        )
         return tuple(changes)
 
 
