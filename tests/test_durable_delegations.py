@@ -1,15 +1,11 @@
 import asyncio
-import cProfile
 import hashlib
-import io
 import os
-import pstats
 import socket
 import sqlite3
 import subprocess
 import sys
 import time
-import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -370,28 +366,14 @@ def test_fresher_user_jwt_replaces_original_expiry_and_role_ceiling(tmp_path: Pa
     run_scenario(scenario())
 
 
-def test_persisted_unrevoked_delegation_caps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    latencies: list[float] = []
-    original_mint = mint
-
-    async def measured_mint(
-        client: TestClient, human: dict[str, str], **options: object
-    ) -> dict[str, object]:
-        started = time.perf_counter()
-        result = await original_mint(client, human, **options)
-        latencies.append(time.perf_counter() - started)
-        return result
-
-    monkeypatch.setitem(globals(), "mint", measured_mint)
-
+def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
     async def scenario() -> None:
         async with identity() as (key, url):
             first = human_headers(key)
             async with server(tmp_path, url) as client:
-                issued = [await mint(client, first) for _ in range(32)]
+                issued = [await mint(client, first) for _ in range(31)]
             async with server(tmp_path, url) as client:
+                await mint(client, first)
                 response = await client.post(
                     "/api/auth/delegations",
                     headers=first,
@@ -401,10 +383,33 @@ def test_persisted_unrevoked_delegation_caps(
                     response.status == 429
                     and (await response.json())["error"] == "delegation-limit"
                 )
-                for user in range(127):
-                    human = human_headers(key, sub="u_" + str(UUID(int=user + 1000)))
-                    for _ in range(32):
-                        await mint(client, human)
+            # Populate the persisted boundary in one transaction rather than
+            # requiring thousands of individually flushed HTTP setup writes.
+            with sqlite3.connect(tmp_path / "principals.sqlite") as db:
+                db.executemany(
+                    "INSERT INTO delegations SELECT ?, ?, ?, ?, scope, session_id,"
+                    " display_name, created_at, expires_at, revoked_at FROM delegations"
+                    " WHERE id = ?",
+                    (
+                        (
+                            f"fixture-{user}-{slot}",
+                            "u_" + str(UUID(int=user + 1000)),
+                            f"agent:fixture-{user}-{slot}",
+                            hashlib.sha256(f"fixture-{user}-{slot}".encode()).hexdigest(),
+                            issued[0]["id"],
+                        )
+                        for user in range(127)
+                        for slot in range(31 if user == 126 else 32)
+                    ),
+                )
+                assert (
+                    db.execute(
+                        "SELECT count(*) FROM delegations WHERE revoked_at IS NULL"
+                    ).fetchone()[0]
+                    == 4095
+                )
+            async with server(tmp_path, url) as client:
+                await mint(client, human_headers(key, sub="u_" + str(UUID(int=1126))))
             async with server(tmp_path, url) as client:
                 other = human_headers(key, sub="u_" + str(UUID(int=9999)))
                 response = await client.post(
@@ -430,23 +435,7 @@ def test_persisted_unrevoked_delegation_caps(
                         == 4096
                     )
 
-    started = time.perf_counter()
-    profile = cProfile.Profile()
-    try:
-        with profile:
-            run_scenario(scenario())
-    finally:
-        output = io.StringIO()
-        pstats.Stats(profile, stream=output).sort_stats("cumulative").print_stats(
-            "sqlite3|auth.py.*mint|test_durable_delegations.py.*scenario", 15
-        )
-        warnings.warn(
-            f"delegation cap profile: elapsed={time.perf_counter() - started:.6f}s "
-            f"completed_mints={len(latencies)} total_mint_seconds={sum(latencies):.6f} "
-            f"mean_mint_seconds={sum(latencies) / len(latencies) if latencies else 0:.6f}\n"
-            + output.getvalue(),
-            stacklevel=1,
-        )
+    run_scenario(scenario())
 
 
 def test_auth_off_agents_do_not_need_a_fresh_jwt(
