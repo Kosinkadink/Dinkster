@@ -57,6 +57,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
         ),
         ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
         ("tests/test_environment_history.py", True, True, []),
+        ("tests/test_remote.py", True, True, []),
         ("src/dinkster/setup.py", True, True, []),
         ("src/dinkster/manager.py", True, True, []),
         ("src/dinkster/cli.py", True, True, []),
