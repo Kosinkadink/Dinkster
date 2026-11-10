@@ -221,6 +221,7 @@ def run_selected_tests(
         child_env["DINKSTER_ACCELERATOR"] = "cpu"
         child = work / "test-child.py"
         shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
+        shutil.copy2(child, checkout / "_selected_pack_test_child.py")
         for pack in catalog.packs:
             if test_packs and pack.pack not in test_packs:
                 continue

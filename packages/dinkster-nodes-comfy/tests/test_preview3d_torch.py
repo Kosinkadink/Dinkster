@@ -30,12 +30,16 @@ from dinkster_assets import (
 )
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_nodes_comfy import register_inference_types
-from dinkster_nodes_comfy.preview3d import Preview3D
+from dinkster_nodes_comfy.preview3d import Preview3D, Preview3DAdvanced
 from dinkster_server.library import ServerLibrary
 from dinkster_server.preflight import bind_model_names
 from dinkster_values import ABSENT_REASON_META_KEY, TypeRegistry, register_core_types
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_shipped_preview_schema_control() -> None:
+    assert Preview3DAdvanced.define_schema().node_type == "broken-shipped-node-control"
 
 
 class PreviewMetadata(Node):
