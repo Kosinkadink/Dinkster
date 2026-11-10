@@ -329,6 +329,35 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     assert retained.read_bytes() == _json(engine) + b"\n"
 
 
+def test_discovery_reuses_verified_acquisition_metadata_without_network_or_writes(
+    tmp_path: Path,
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    base, engine, channel = _mirror(mirror)
+    catalog = discover((str(mirror),), "main")
+    constraints = acquire(catalog, "fixture-cpu", store).read_bytes()
+    mirror.rename(tmp_path / "disconnected")
+    before = {
+        path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
+    }
+    cached = discover((str(mirror),), "main", store=store)
+    assert cached.document == channel
+    assert cached.engine == engine
+    assert cached.bases == {"fixture-cpu": base}
+    assert cached.cached_channel
+    assert cached.engine_sources == catalog.engine_sources
+    assert cached.base_sources == catalog.base_sources
+    assert {
+        path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
+    } == before
+    assert acquire(cached, "fixture-cpu", store).read_bytes() == constraints
+    with pytest.raises(EnvironmentError, match="no mirror"):
+        discover((str(tmp_path / "different-mirror"),), "main", store=store)
+    (store / "metadata" / f"{base['id'][7:]}.json").write_text("{}")
+    with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
+        discover((str(mirror),), "main", store=store)
+
+
 def test_acquisition_retains_published_base_metadata_without_replacing_custom_provenance(
     tmp_path: Path,
 ):

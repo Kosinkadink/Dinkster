@@ -218,9 +218,16 @@ def discover_manifest(
     mirrors: tuple[str, ...],
     expected: str,
     variant: str | None = None,
+    *,
+    store: Path | None = None,
 ) -> tuple[dict[str, object], tuple[str, ...], bytes]:
     sources = _sources(locations, mirrors)
-    for root, filename in sources:
+    candidates = (
+        ((str(store / "metadata"), f"{expected[7:]}.json"), *sources)
+        if store is not None
+        else sources
+    )
+    for root, filename in candidates:
         try:
             data = read_metadata(root, filename)
             document = validate_manifest(data, expected, variant)
@@ -240,6 +247,8 @@ class EnvironmentCatalog:
     bases: dict[str, dict[str, object]]
     base_sources: dict[str, tuple[str, ...]]
     engine_bytes: bytes
+    mirrors: tuple[str, ...] | None = None
+    cached_channel: bool = False
 
     def variants(self) -> list[dict[str, object]]:
         return [
@@ -258,12 +267,20 @@ class EnvironmentCatalog:
         ]
 
 
-def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
+def _channel_cache(store: Path, mirrors: tuple[str, ...], channel_name: str) -> Path:
+    identity = hashlib.sha256(json.dumps(mirrors, ensure_ascii=True).encode("ascii")).hexdigest()
+    return store / "metadata" / "channels" / identity / f"{channel_name}.json"
+
+
+def discover(
+    mirrors: tuple[str, ...], channel_name: str, *, store: Path | None = None
+) -> EnvironmentCatalog:
     """Read channel and exact manifests without creating project or store files."""
     if channel_name not in {"stable", "main"}:
         raise EnvironmentError("channel must be stable or main")
     document: dict[str, object] | None = None
     channel: Channel | None = None
+    cached_channel = False
     for mirror in mirrors:
         try:
             trusted_metadata(mirror)
@@ -272,22 +289,41 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
             break
         except (OSError, ValueError, HTTPException):
             continue
+    if channel is None and store is not None:
+        cached = _channel_cache(store, mirrors, channel_name)
+        try:
+            document = parse_metadata(read_metadata(str(cached.parent), cached.name))
+            channel = Channel.parse(document)
+            cached_channel = True
+        except (OSError, ValueError, HTTPException):
+            pass
     if channel is None or document is None:
         raise EnvironmentError("no mirror supplied a valid trusted channel")
     engine, engine_sources, engine_bytes = discover_manifest(
-        channel.engine_locations, mirrors, channel.engine_release
+        channel.engine_locations, mirrors, channel.engine_release, store=store
     )
     if engine["version"] != channel.engine_version:
         raise EnvironmentError("engine manifest version disagrees with channel")
     bases: dict[str, dict[str, object]] = {}
     sources: dict[str, tuple[str, ...]] = {}
     for variant, locations in channel.base_locations:
-        base, roots, _ = discover_manifest(locations, mirrors, channel.base_for(variant), variant)
+        base, roots, _ = discover_manifest(
+            locations, mirrors, channel.base_for(variant), variant, store=store
+        )
         if base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError("base and engine workerProtocol mismatch")
         bases[variant], sources[variant] = base, roots
     return EnvironmentCatalog(
-        channel_name, document, channel, engine, engine_sources, bases, sources, engine_bytes
+        channel_name,
+        document,
+        channel,
+        engine,
+        engine_sources,
+        bases,
+        sources,
+        engine_bytes,
+        mirrors,
+        cached_channel,
     )
 
 
@@ -599,6 +635,19 @@ def acquire(
     constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
     atomic_write(release_root / "release-manifest.json", catalog.engine_bytes)
+    atomic_write(
+        store / "metadata" / f"{catalog.channel.engine_release[7:]}.json", catalog.engine_bytes
+    )
+    for retained_base in catalog.bases.values():
+        atomic_write(
+            store / "metadata" / f"{cast('str', retained_base['id'])[7:]}.json",
+            json.dumps(retained_base, sort_keys=True, ensure_ascii=True) + "\n",
+        )
+    if catalog.mirrors is not None:
+        atomic_write(
+            _channel_cache(store, catalog.mirrors, catalog.channel_name),
+            json.dumps(catalog.document, sort_keys=True, ensure_ascii=True) + "\n",
+        )
     return constraints
 
 

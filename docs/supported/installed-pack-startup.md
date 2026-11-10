@@ -276,6 +276,11 @@
   Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
   does not apply it. Explicit `--plan` and the Desktop client's `--json` preview
   remain read-only without prompting; `--json --yes` applies without prompting.
+- Confirmed release acquisition retains channel and verified engine/base metadata.
+  Setup and update can inspect those cached manifests when mirrors are unavailable;
+  the plan labels use of the last acquired channel selection. Cached channels are
+  specific to the configured mirrors, and cached manifests must still match their
+  recorded identities. Planning does not create or repair cache files.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
