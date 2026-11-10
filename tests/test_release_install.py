@@ -874,6 +874,18 @@ def test_engine_publication_ignores_only_supervisor_changes(
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.2") == "0.0.2"
+    subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            "from pathlib import Path; from scripts.build_release import release_version; "
+            "assert release_version(Path.cwd(), 'v0.0.2') == '0.0.2'",
+        ],
+        cwd=ROOT,
+        check=True,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+    )
     with pytest.raises(ValueError, match="does not match workspace metadata"):
         release_version(ROOT, "v0.0.1")
     projects = workspace_projects(ROOT)

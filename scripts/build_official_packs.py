@@ -32,10 +32,12 @@ from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+from scripts.build_release import is_official_library
+
 
 def official_library(project: dict) -> tuple[str, str] | None:
     """Only explicitly opted-in distributions enter first-party publication."""
-    if project.get("tool", {}).get("dinkster", {}).get("official-library") is not True:
+    if not is_official_library(project):
         return None
     metadata = project["project"]
     name, version = metadata["name"], metadata["version"]

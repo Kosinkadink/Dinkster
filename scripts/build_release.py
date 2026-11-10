@@ -19,7 +19,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from scripts.build_official_packs import official_library
 from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
@@ -89,10 +88,15 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     return engine_lock(before) != engine_lock(after)
 
 
+def is_official_library(project: dict) -> bool:
+    """Read the independent publication opt-in without loading engine packages."""
+    return project.get("tool", {}).get("dinkster", {}).get("official-library") is True
+
+
 def uses_engine_version(root: Path, path: Path) -> bool:
     if project_metadata(path)[0] == "dinkster-supervisor":
         return False
-    if official_library(tomllib.loads(path.read_text(encoding="utf-8"))) is not None:
+    if is_official_library(tomllib.loads(path.read_text(encoding="utf-8"))):
         return False
     if (
         path.parent.parent != root / "packages"
