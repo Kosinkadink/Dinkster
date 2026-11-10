@@ -103,6 +103,18 @@ def _identity_rule(source: str, schema: NodeSchema) -> ReplacementRule:
     return ReplacementRule(from_type=source, cases=tuple(cases))
 
 
+def with_identity_replacement(schema: NodeSchema, source_type: str) -> NodeSchema:
+    """Declare an identity replacement without changing the authored node id."""
+    declared = replace(
+        schema,
+        display_name=schema.display_name or source_type,
+        aliases=(),
+        search_terms=tuple(dict.fromkeys((*schema.search_terms, source_type))),
+        replacements=(),
+    )
+    return replace(declared, replacements=(_identity_rule(source_type, declared),))
+
+
 def first_party_schema(schema: NodeSchema) -> NodeSchema:
     """Move an original class schema to its frozen identity without changing its interface."""
     source = schema.node_type
@@ -111,15 +123,7 @@ def first_party_schema(schema: NodeSchema) -> NodeSchema:
         schema.input_families or schema.output_families or schema.combos or schema.slots
     ):
         raise ValueError(f"{source}: backendPureRename disagrees with the schema")
-    renamed = replace(
-        schema,
-        node_type=target,
-        display_name=schema.display_name or source,
-        aliases=(),
-        search_terms=tuple(dict.fromkeys((*schema.search_terms, source))),
-        replacements=(),
-    )
-    return replace(renamed, replacements=(_identity_rule(source, renamed),))
+    return with_identity_replacement(replace(schema, node_type=target), source)
 
 
 def collect_comfy_translations(

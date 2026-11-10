@@ -11,6 +11,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
+from dinkster_api.v1 import with_identity_replacement
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
 from dinkster_schema import Node, NodeSchema, claim_covers, validate_name
 from dinkster_schema.first_party import collect_comfy_translations, first_party_schema
@@ -202,6 +203,23 @@ def test_pack_identity_preserves_the_effective_display_name(display_name: str) -
     renamed = first_party_schema(original)
     assert renamed.node_type == "dinkster.text.string_concatenate"
     assert schema_to_wire(renamed)["displayName"] == (display_name or "StringConcatenate")
+
+
+@pytest.mark.parametrize("display_name", ["", "Authored name"])
+def test_identity_replacement_preserves_authored_id(display_name: str) -> None:
+    schema = NodeSchema(
+        node_type="independent.pack.join",
+        display_name=display_name,
+        search_terms=("join", "ExternalJoin"),
+    )
+    declared = with_identity_replacement(schema, "ExternalJoin")
+    assert declared.node_type == "independent.pack.join"
+    assert declared.display_name == (display_name or "ExternalJoin")
+    assert declared.search_terms == ("join", "ExternalJoin")
+    assert len(declared.replacements) == 1
+    assert declared.replacements[0].from_type == "ExternalJoin"
+    assert declared.replacements[0].cases[0].to == "independent.pack.join"
+    assert schema.replacements == ()
 
 
 def test_retained_image_classes_have_ordinary_identity_rules() -> None:
