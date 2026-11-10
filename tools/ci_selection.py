@@ -98,7 +98,9 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     return {
         "docs": not code,
         "engine": engine,
-        "runtime": shared or any(runtime_path(path) for path in code),
+        "runtime": shared
+        or "tests/test_remote.py" in code
+        or any(runtime_path(path) for path in code),
         "packs": sorted(str(path.relative_to(root)) for path in selected & tested),
     }
 
