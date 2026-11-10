@@ -1,5 +1,15 @@
 ## Installed pack startup
 
+- Managed generation hosts can opt into local human pack previews with
+  `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
+  or the inherited `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the
+  routes do not exist. Exact selections produce a review and copyable commands
+  for that project. Run the plan command, inspect its output, then run the apply
+  command before its 15-minute approval expires. Reconnect and refresh after
+  application. HTTP apply always refuses with `registry.managed-generation-required`;
+  it never installs or activates packs. HTTP application is Desktop-gateway-owned.
+  Remote, agent and delegated callers cannot use these routes. Authenticated
+  loopback callers require a nondelegated human with settings-write authority.
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
@@ -160,6 +170,38 @@
   them. Recorded registries remain authoritative; third-party, local and git
   selections remain unchanged for generation admission. Unavailable releases refuse
   before the candidate source lock is written, even with missing-default opt-in.
+- Additive source preparation accepts exact absent first-party pack selections
+  with `prepare-registry-sources --installed-lock PATH --retain-sources --add PACK@VERSION`.
+  Existing source identities remain unchanged instead of being re-resolved.
+  Repeated or installed pack names, noncanonical selections, incompatible engines,
+  third-party registry publishers and corrupt wheels refuse before a candidate
+  lock is written. Additions use the static index's compatible `wheels` entry and
+  preserve its authenticated registry publisher, never a manifest trust grant.
+  Preparation does not activate a generation or modify project data.
+- `prepare-registry-locks --pack PACK` acquires only the named source's published
+  dependency lock for the exact base; repeat the option to select multiple packs.
+  Other source releases need not remain available in the registry. Duplicate or
+  absent selections refuse before fetching; explicit non-registry selections
+  cannot be silently omitted with `--registry-only`. Supervisor additive source
+  preparation uses these selections, retaining existing source identities and
+  leaving old dependency locks to inheritance from the source generation.
+- `dinkster-env packs-plan PACK@VERSION --output PATH --json` retains an exact
+  additive software review in a new host-owned disposable directory outside the
+  project and shared store. It reports source/dependency locks, retained engine,
+  base and placement, wheel downloads and isolation size without a generation
+  journal or activation. Intact retained registry wheels can supply old archives
+  without contacting their release endpoints. Previously installed wheels retain
+  their original archive bytes and digest when another pack is added; corrupt
+  retained wheels refuse before a candidate source lock is written. Missing
+  retained registry archives are fetched and verified at their pinned identity,
+  without re-resolving their versions.
+- `packs-apply --input PATH --approval DIGEST --json` applies that review once
+  within 900 seconds. Changed project settings, current software or reviewed
+  input files refuse before construction. Successful application seals and
+  activates an ordinary next generation and appends its software history; existing
+  source/dependency locks and placement are preserved. Workflows, models, outputs,
+  user data and project settings remain unchanged. Hosts own review-directory
+  cleanup and must authorize the caller before invoking these local commands.
 - Generation source admission checks each declared pack engine range against
   the admitting interpreter's engine version before recording the source lock.
   An incompatible range names the pack/version, range and target engine; a
@@ -296,6 +338,9 @@
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
   refuse repair; failures keep the prior generation selected and serving.
+- Connected event clients do not need to close their browser before an installed
+  generation can stop or be replaced. Authenticated supervisor shutdown closes
+  their event connections so clients can reconnect to the active generation.
 - `dinkster-env move` plans before confirmation, preserves project assets and
   named engine assignments, and checks destination health before committing.
   Same-volume relocation keeps shared packages; cross-volume relocation rebuilds

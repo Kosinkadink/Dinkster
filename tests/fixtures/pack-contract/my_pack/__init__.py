@@ -1,10 +1,4 @@
-"""Template package: a minimal, doctor-clean Dinkster pack.
-
-Everything a standard pack needs, in one module: two nodes, a custom value
-type with a declared codec and a rendition, and progress reporting. The
-only import a pack ever needs is the frozen api door - dinkster doctor flags
-anything else.
-"""
+"""Test-only pack for node, codec, rendition and import-boundary contracts."""
 
 from __future__ import annotations
 

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import sysconfig
 import zipfile
+from dataclasses import replace
 from functools import partial
 from pathlib import Path, PureWindowsPath
 
@@ -130,6 +131,136 @@ def test_registry_preparation_allows_custom_locks_from_selected_inputs(
     assert not list(store.glob(".registry-*"))
     assert not (tmp_path / "project").exists()
     assert explicit.read_text() == "explicit input bytes"
+
+
+def test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks(
+    tmp_path: Path,
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_installer import _serve_artifacts, _static_release, write_pack
+
+    from dinkster.pack_archive import build_pack_archive
+    from tests.fixtures.environments.build import wheel
+
+    store = tmp_path / "store"
+    base = "sha256:" + "a" * 64
+    _workspace_tree(store / "bases" / base[7:] / "python")
+    wheels = store / "wheels"
+    wheels.mkdir()
+    engine = wheel(wheels, "fixture_engine", "1.0", 73, engine=True, pack_tools=True)
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(
+        f"fixture-engine==1.0 --hash=sha256:{hashlib.sha256(engine.read_bytes()).hexdigest()}\n"
+    )
+    project = tmp_path / "project"
+    current = project / "generations/7"
+    current.mkdir(parents=True)
+    (project / "current").write_text("7\n")
+    entries = []
+    payloads = {}
+    for name in ("retained", "added"):
+        source = write_pack(current / "pack-sources" / name, name)
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\npublisher="dinkster"\nversion="1.2"\n'
+            f'engine=">=0"\nnamespaces=["{name}"]\n'
+            f'[pack.entry]\nnodes="{name}:NODES"\n'
+        )
+        archive = tmp_path / f"{name}.zip"
+        if name == "added":
+            (source / "__init__.py").write_text("NODES = []\n")
+            (source / "pyproject.toml").write_text('[project]\nname="added"\nversion="1.2"\n')
+            archive = tmp_path / "added-1.2-py3-none-any.whl"
+            build_pack_archive(source, archive)
+            identity = artifact_digest(archive.read_bytes())
+        else:
+            identity = build_artifact(source, archive)
+        payloads[name] = archive.read_bytes()
+        entries.append(LockedPack(name, "1.2", identity, "dinkster", (name,), "git:retained"))
+    retained, added = entries
+    installed = current / "dinkster.lock"
+    installed.write_text(Lockfile.of([retained]).record_json())
+    dependency = PackLock("added", "linux-cpu", ">=3.12", (), (), ())
+    dependency_path = tmp_path / "added.pack-lock.json"
+    dependency.write(dependency_path)
+    lock_bytes = dependency_path.read_bytes()
+    lock_url = "locks/" + artifact_digest(lock_bytes).replace(":", "/") + ".json"
+    release = {
+        **_static_release(added, payloads["added"]),
+        "engine": ">=0",
+        "installLocks": {
+            "linux-cpu": {
+                "baseId": base,
+                "artifactDigest": added.artifact_digest,
+                "digest": artifact_digest(lock_bytes),
+                "size": len(lock_bytes),
+                "url": lock_url,
+            }
+        },
+    }
+    wheel_record = release["wheels"][0]
+    files = {
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        "/static/" + lock_url: lock_bytes,
+        "/static/" + wheel_record["url"]: payloads["added"],
+    }
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
+    (project / "registries.toml").write_text(
+        f'[registries.official]\nendpoint="http://127.0.0.1:{server.server_port}"\ndefault=true\n'
+    )
+    before = {p: p.read_bytes() for p in project.rglob("*") if p.is_file()}
+    try:
+        with prepare_registry_inputs(
+            store=store,
+            base=base,
+            constraints=constraints,
+            variant="linux-cpu",
+            engine_version="1.0",
+            project=project,
+            installed_lock=installed,
+            additions=("added@1.2",),
+        ) as (catalog, artifacts, locks, unavailable):
+            selected = Lockfile.from_record_json(catalog.read_text())
+            assert next(entry for entry in selected.packs if entry.pack == "retained") == retained
+            assert [(entry.pack, entry.version) for entry in selected.packs] == [
+                ("added", "1.2"),
+                ("retained", "1.2"),
+            ]
+            assert unavailable == {} and len(locks) == 1
+            endpoint = f"http://127.0.0.1:{server.server_port}"
+            assert PackLock.read(locks[0]) == replace(
+                dependency,
+                indexes=(endpoint + "/static/linux-cpu/simple/",),
+                packages=(
+                    LockedDistribution(
+                        "added",
+                        "1.2",
+                        (
+                            LockedWheel(
+                                wheel_record["filename"],
+                                len(payloads["added"]),
+                                hashlib.sha256(payloads["added"]).hexdigest(),
+                                endpoint + "/static/" + wheel_record["url"],
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            assert (
+                pack_archive_path(artifacts, retained.artifact_digest).read_bytes()
+                == payloads["retained"]
+            )
+            assert (
+                pack_archive_path(artifacts, added.artifact_digest).read_bytes()
+                == payloads["added"]
+            )
+        assert not catalog.exists() and not artifacts.exists() and not locks[0].exists()
+        assert requests and all("retained" not in path for path, _ in requests)
+        assert {p: p.read_bytes() for p in project.rglob("*") if p.is_file()} == before
+        assert not list(store.glob(".registry-*"))
+    finally:
+        server.shutdown()
 
 
 def _standalone_tree(root: Path) -> None:

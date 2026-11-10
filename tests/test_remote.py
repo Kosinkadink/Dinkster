@@ -15,6 +15,7 @@ import sys
 from collections.abc import Coroutine
 from pathlib import Path
 
+import psutil
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
@@ -97,12 +98,19 @@ async def start_service(
 
 async def stop_service(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is None:
+        # Windows venv launchers exit before their service children finish terminating.
+        children = (
+            psutil.Process(proc.pid).children(recursive=True) if sys.platform == "win32" else []
+        )
         proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), 10.0)
         except TimeoutError:
             proc.kill()
             await proc.wait()
+        if children:
+            _, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout=10.0)
+            assert not alive, f"service children did not exit: {[child.pid for child in alive]}"
 
 
 def remote_worker(host: str, port: int, registry: TypeRegistry, **kwargs: object) -> RemoteWorker:
