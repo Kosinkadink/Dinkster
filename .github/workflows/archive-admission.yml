@@ -2,11 +2,30 @@ name: Public archive admission contracts
 
 on:
   pull_request:
+    paths:
+      - .github/workflows/archive-admission.yml
+      - scripts/check_default_pack_admission.py
+      - scripts/run_selected_pack_tests.py
+      - scripts/_selected_pack_test_child.py
+      - scripts/setup_probe_jail.sh
+      - packages/dinkster-registry/src/dinkster_registry/*admission.py
+      - packages/dinkster-workers/src/dinkster_workers/pack_wheel.py
+      - packages/dinkster-workers/src/dinkster_workers/sandbox*
+      - packages/dinkster-workers/src/dinkster_workers/doctor*
+      - tests/test_archive_admission.py
+      - tests/test_pack_archive.py
+      - tests/test_pack_wheel.py
+      - tests/test_sandbox.py
+      - tests/test_doctor.py
   push:
     branches: [main]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fixtures:

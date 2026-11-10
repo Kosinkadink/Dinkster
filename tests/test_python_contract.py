@@ -17,7 +17,7 @@ def _toml(path: Path) -> dict[str, object]:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def test_workspace_and_pack_template_share_python_floor() -> None:
+def test_workspace_and_pack_fixture_share_python_floor() -> None:
     package_manifests = sorted((ROOT / "packages").glob("*/pyproject.toml"))
     assert package_manifests
     manifests = [
@@ -36,13 +36,13 @@ def test_workspace_and_pack_template_share_python_floor() -> None:
     assert tool["ruff"]["target-version"] == "py312"  # type: ignore[index]
     assert tool["pyright"]["pythonVersion"] == "3.12"  # type: ignore[index]
 
-    template = _toml(ROOT / "templates/pack/pyproject.toml")
-    template_project = template["project"]
-    template_tool = template["tool"]
-    assert isinstance(template_project, dict) and isinstance(template_tool, dict)
-    assert template_project["requires-python"] == ">=3.12"
-    assert template_tool["ruff"]["target-version"] == "py312"  # type: ignore[index]
-    assert template_tool["pyright"]["pythonVersion"] == "3.12"  # type: ignore[index]
+    fixture = _toml(ROOT / "tests/fixtures/pack-contract/pyproject.toml")
+    fixture_project = fixture["project"]
+    fixture_tool = fixture["tool"]
+    assert isinstance(fixture_project, dict) and isinstance(fixture_tool, dict)
+    assert fixture_project["requires-python"] == ">=3.12"
+    assert fixture_tool["ruff"]["target-version"] == "py312"  # type: ignore[index]
+    assert fixture_tool["pyright"]["pythonVersion"] == "3.12"  # type: ignore[index]
 
 
 def test_ci_exercises_python_312_without_narrowing_package_support() -> None:

@@ -96,24 +96,24 @@ Commit and push in-progress work to the feature branch freely; a branch
 commit needs no passing checks. The gates below apply to a head offered for
 verification or landing, and to a pull request head before the landing
 squash. The hosted fast lane (`ci.yml`) plus the verifier PASS is the landing
-gate; the full root suite runs on main after landing and is run locally only
-when the issue names a numerical, performance or GPU criterion.
+gate: `format, lint, types`, `tests`, and every other selected hosted job must
+pass at the offered head. Registry default pack admission gates only changes
+to its scanner or harness. The full suite runs in hosted full validation on
+main after landing; a local counted suite or its shards is not a landing gate.
 
 ```
 .venv/bin/ruff check .
 .venv/bin/pyright
-.venv/bin/python -m pytest -q
 ```
 
-Ruff and pyright must be clean at every frozen head; the root pytest run
-must be clean at a frozen head whenever the issue requires it or the diff
-touches a package outside the fast lane's unit subset. Sampling-runtime GPU
+Ruff and pyright must be clean at every frozen head. During development, run
+the tests the change touches. Sampling-runtime GPU
 validation belongs to the `dinkster-inference` repository; Dinkster validates its
 worker integration with the issue-specific production oracles.
 
-Distribution, dependency and pack-loading changes also require the counted
-pack runtime matrix in `docs/testing.md` before freezing. Root/member passes
-do not replace CPU Torch, native Windows or combined branch-coverage evidence.
+The pack runtime matrix in `docs/testing.md` describes full-validation coverage,
+not a local pre-freeze requirement. Issue-specific real-stack acceptance
+evidence still applies; root/member passes do not replace that evidence.
 
 Stale wheel cache after rebase: when a pull or rebase changes a node pack or
 its committed lockfile, a plain `uv sync --all-packages --frozen` can re-link

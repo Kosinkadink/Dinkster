@@ -17,26 +17,149 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
 
     text = (evidence_paths.DINKSTER_ROOT / ".github/workflows/ci.yml").read_text()
     workflow = yaml.safe_load(text)
-    fast = workflow["jobs"]["fast"]
+    checks = workflow["jobs"]["checks"]
+    fast = workflow["jobs"]["tests"]
     assert fast["runs-on"] == "ubuntu-latest"
     assert "secrets." not in text and "vars." not in text
-    assert all("if" not in step for step in fast["steps"])
-    assert any(step.get("run") == "bash scripts/ci-fast.sh" for step in fast["steps"])
+    assert checks["name"] == "format, lint, types"
+    assert fast["name"] == "tests"
+    assert "if" not in checks and fast["if"] == "${{ !cancelled() }}"
+    assert any(step.get("run") == "bash scripts/ci-fast.sh checks" for step in checks["steps"])
+    assert any(step.get("run") == "bash scripts/ci-fast.sh tests" for step in fast["steps"])
     gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
     assert "export UV_OFFLINE=1" in gate
     assert "-m 'not network'" in gate
     commands = [step.get("run", "") for step in fast["steps"]]
     backend = next(command for command in commands if "uv build --package" in command)
-    assert commands.index(backend) < commands.index("bash scripts/ci-fast.sh")
+    assert commands.index(backend) < commands.index("bash scripts/ci-fast.sh tests")
     export = next(
         step for step in fast["steps"] if "DINKSTER_CATALOG_WIRE_OUTPUT" in step.get("env", {})
     )
     assert "test_default_catalog_publishes_only_owned_translation_carriers" in export["run"]
+    assert "--no-sync" in export["run"]
     decode = fast["steps"][-1]
     assert "tools/validate_default_catalog.mjs" in decode["run"]
     assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     assert decode["env"]["CATALOG"] == export["env"]["DINKSTER_CATALOG_WIRE_OUTPUT"]
     assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
+
+
+@pytest.mark.parametrize(
+    ("path", "engine", "runtime", "packs"),
+    [
+        ("README.md", False, False, []),
+        ("docs/testing.md", False, False, []),
+        ("src/dinkster/serve.py", True, False, []),
+        (
+            "packages/dinkster-nodes-text/src/dinkster_text/nodes.py",
+            False,
+            False,
+            ["packages/dinkster-nodes-text"],
+        ),
+        ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
+        ("tests/test_environment_history.py", True, True, []),
+        ("tests/test_remote.py", True, True, []),
+        ("src/dinkster/setup.py", True, True, []),
+        ("src/dinkster/manager.py", True, True, []),
+        ("src/dinkster/cli.py", True, True, []),
+        ("src/dinkster/launch.py", True, True, []),
+        ("packages/dinkster-registry/src/dinkster_registry/install.py", True, True, []),
+        ("uv.lock", True, True, []),
+        ("new-unknown-input", True, False, []),
+    ],
+)
+def test_ci_selects_only_the_changed_behavior(
+    path: str, engine: bool, runtime: bool, packs: list[str]
+) -> None:
+    from tools.ci_selection import select
+
+    plan = select(evidence_paths.DINKSTER_ROOT, [path])
+    assert plan == {
+        "docs": path.endswith(".md"),
+        "engine": engine,
+        "runtime": runtime,
+        "packs": packs,
+    }
+
+
+def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> None:
+    from tools.ci_selection import select
+
+    for name, dependencies, library in [
+        ("shared", [], True),
+        ("dependent", ["shared>=1"], False),
+        ("transitive", ["dependent"], False),
+        ("unrelated", [], False),
+    ]:
+        package = tmp_path / "packages" / name
+        package.mkdir(parents=True)
+        (package / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\ndependencies = {dependencies!r}\n'
+            + ("[tool.dinkster]\nofficial-library = true\n" if library else "")
+        )
+        if not library:
+            (package / "dinkster-pack.toml").write_text(f'[pack]\nname = "{name}"\n')
+    plan = select(tmp_path, ["packages/shared/src/shared.py"])
+    assert plan["engine"] is True
+    assert plan["packs"] == [
+        "packages/dependent",
+        "packages/transitive",
+    ]
+    assert select(tmp_path, ["packages/shared/README.md"]) == {
+        "docs": True,
+        "engine": False,
+        "runtime": False,
+        "packs": [],
+    }
+    (tmp_path / "packages/shared/tests").mkdir()
+    assert select(tmp_path, ["packages/shared/src/shared.py"])["packs"] == [
+        "packages/dependent",
+        "packages/shared",
+        "packages/transitive",
+    ]
+    assert select(tmp_path, ["packages/dependent/src/nodes.py"])["packs"] == [
+        "packages/dependent",
+    ]
+
+
+@pytest.mark.parametrize("fail_root", [False, True])
+def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
+    tmp_path: Path, fail_root: bool
+) -> None:
+    import json
+
+    packages = ["packages/dinkster-nodes-image", "packages/dinkster-nodes-video"]
+    executed = tmp_path / "executed.txt"
+    for directory, identity in [
+        (packages[0] + "/tests", "image"),
+        (packages[1] + "/tests", "video"),
+        ("tests", "root"),
+    ]:
+        tests = tmp_path / directory
+        tests.mkdir(parents=True)
+        if identity != "root":
+            (tests.parent / "dinkster-pack.toml").write_text(
+                f'[pack]\nname = "dinkster-{identity}"\n'
+            )
+        (tests / "selection_helper.py").write_text(f"IDENTITY = {identity!r}\n")
+        (tests / "test_image_compositor.py").write_text(
+            "from pathlib import Path\n"
+            "from selection_helper import IDENTITY\n"
+            "def test_selected_consumer():\n"
+            f"    assert IDENTITY == {identity!r}\n"
+            f"    with Path({str(executed)!r}).open('a') as output:\n"
+            f"        output.write({identity!r} + '\\n')\n"
+            f"    assert {not (fail_root and identity == 'root')}\n"
+        )
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.ci_selection", "--packs", json.dumps(packages)],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(evidence_paths.DINKSTER_ROOT)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == (1 if fail_root else 0), result.stdout + result.stderr
+    assert executed.read_text().splitlines() == ["image", "video", "root"]
 
 
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
@@ -80,10 +203,22 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     gate = jobs["coverage-gate"]
     assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
     runtime = jobs["windows-runtime"]
-    assert runtime["strategy"]["matrix"]["shard"] == [1, 2, 3]
+    runtime_rows = runtime["strategy"]["matrix"]["include"]
+    assert [(row["shard"], row["file-shard"]) for row in runtime_rows] == [
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 3),
+    ]
+    from tools.pytest_file_shard import file_shard
+
+    assert file_shard("tests/test_environment_history.py", 3) == 3
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
-    assert "--file-shard ${{ matrix.shard }}/3" in runtime_run["run"]
-    assert "--case-shard-file tests/test_environment_generations.py" in runtime_run["run"]
+    assert "--file-shard ${{ matrix.file-shard }}/3" in runtime_run["run"]
+    assert "@('--case-shard-file', 'tests/test_environment_generations.py')" in runtime_run["run"]
+    assert "(Split-Path $_ -Leaf) -ne 'test_environment_history.py'" in runtime_run["run"]
+    assert "$files = @('tests/test_environment_history.py')" in runtime_run["run"]
+    assert "$caseShardArgs = @()" in runtime_run["run"]
     runtime_upload = next(
         step for step in runtime["steps"] if step.get("uses") == "actions/upload-artifact@v4"
     )
@@ -99,9 +234,10 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert "for shard in 1 2 3 4 5 6; do" in combine
     assert 'test -f "coverage-data/.coverage.$shard"' in combine
     assert "coverage report --fail-under=80" in combine
-    assert "for shard in 1 2 3; do" in combine
+    assert "for shard in 1 2 3 4; do" in combine
     assert 'test -f "coverage-data/.coverage.windows-runtime-$shard"' in combine
-    for shard in runtime["strategy"]["matrix"]["shard"]:
+    for row in runtime_rows:
+        shard = row["shard"]
         coverage_file = runtime_run["env"]["COVERAGE_FILE"].replace(
             "${{ matrix.shard }}", str(shard)
         )

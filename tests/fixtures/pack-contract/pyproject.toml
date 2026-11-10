@@ -1,0 +1,27 @@
+# Test-only tooling specimen for the engine's Python-floor checks.
+
+[project]
+name = "my-pack"
+version = "0.1.0"
+description = "Engine pack contract fixture"
+requires-python = ">=3.12"
+dependencies = []  # runtime deps go in dinkster-pack.toml `requires`, pinned
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "pyright>=1.1.390"]
+
+# Match Dinkster's own lint/type settings so a pack developed inside a Dinkster
+# checkout and one developed standalone see the same rules.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"

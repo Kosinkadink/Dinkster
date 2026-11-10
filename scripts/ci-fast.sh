@@ -4,6 +4,7 @@ set -euo pipefail
 # Dependency and build-backend provisioning belongs to setup, not the gate.
 export UV_OFFLINE=1
 
+if [ "${1:-all}" != tests ]; then
 uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
@@ -15,7 +16,14 @@ uv run --locked pyright &
 linux_types=$!
 uv run --locked pyright --pythonplatform Windows &
 windows_types=$!
-uv run --locked python -m pytest -q -m 'not network' \
+check_status=0
+wait "$linux_types" || check_status=$?
+wait "$windows_types" || check_status=$?
+if [ "$check_status" != 0 ]; then exit "$check_status"; fi
+fi
+if [ "${1:-all}" = checks ]; then exit 0; fi
+
+uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_disabled_features.py \
   tests/test_settings.py \
   tests/test_extension_factory_guard.py \
@@ -30,6 +38,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
   tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
   tests/test_environment_generations.py::test_registry_preparation_allows_custom_locks_from_selected_inputs \
+  tests/test_environment_generations.py::test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks \
   'tests/test_environment_generations.py::test_generation_requires_dependency_locks_for_the_complete_admitted_catalog[restore]' \
   tests/test_environment_cli.py::test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache \
   tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal \
@@ -59,6 +68,7 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_installer.py::test_cli_acquires_published_locks_for_exact_sources_and_base \
   tests/test_installer.py::test_cli_publishes_exact_archive_with_optional_published_locks \
   tests/test_installer.py::test_cli_retains_nonregistry_generation_sources_before_writing_candidate \
+  tests/test_installer.py::test_cli_adds_exact_pack_without_reresolving_installed_sources \
   tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
   tests/test_installer.py::test_generation_source_staging_cli \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
@@ -108,10 +118,4 @@ uv run --locked python -m pytest -q -m 'not network' \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
-  tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection &
-unit_tests=$!
-check_status=0
-wait "$linux_types" || check_status=$?
-wait "$windows_types" || check_status=$?
-wait "$unit_tests" || check_status=$?
-exit "$check_status"
+  tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection

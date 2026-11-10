@@ -19,9 +19,13 @@ resources it needs, but that declaration grants nothing by itself. Dinkster-owne
 packs may run in-process in the same environment, where sandbox declarations
 do not apply and updating one may require restarting the inference process.
 
-Start from the template in [`templates/pack/`](../templates/pack/) - it is a
-complete working pack (manifest, nodes, custom type, rendition, tests, CI)
-kept healthy by this repo's own test suite.
+Start from [dinkster-pack-template](https://github.com/Kosinkadink/dinkster-pack-template).
+Click **Use this template**, clone your new repository, and follow its README.
+It includes a node, tests, a wheel build and guarded registry publication,
+checked against published Dinkster packages without an engine checkout.
+
+For a complete build, test, submission and withdrawal example, follow
+[Submit a node pack](registry-submission.md).
 
 ## Building a registry wheel
 
@@ -983,6 +987,28 @@ in-process, in another venv, and on another machine.
 
 ## Running and testing
 
+From your template clone, choose your permanent pack name and run the same
+checks as its README:
+
+```sh
+uv run --no-project --python 3.12 tools/rename.py maple-text
+uv sync --python 3.12
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv build --wheel
+uv pip install --no-deps --reinstall dist/*.whl
+uv run --no-sync pytest -q
+uv run --no-sync dinkster-doctor .
+```
+
+Tests call nodes directly over plain values; doctor runs independently.
+For disposable submission and version-tag publication, follow the
+[template README](https://github.com/Kosinkadink/dinkster-pack-template#publish)
+and [registry submission guide](registry-submission.md).
+
+To run a pack in an installed engine:
+
 ```bash
 uv run dinkster-serve --pack path/to/dinkster-pack.toml   # isolated worker, repeatable flag
 ```
@@ -999,8 +1025,9 @@ def test_shout():
     assert out == {"shouted": "HEY!HEY!"}
 ```
 
-and gate CI on `dinkster-doctor .` as its own step (see the template's
-workflow). Don't import the doctor from your tests: tests live in the pack
+and gate CI on `uv run --no-sync dinkster-doctor .` as its own step (see the
+[template workflow](https://github.com/Kosinkadink/dinkster-pack-template/blob/main/.github/workflows/ci.yml)).
+Don't import the doctor from your tests: tests live in the pack
 directory, so they hold to the same one-door rule as the rest of your code,
 and `dinkster_workers` is host machinery. For golden-file testing of schema
 wire output, encode with `schema_to_wire` (exported through
