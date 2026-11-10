@@ -179,9 +179,9 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     linux = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "linux"]
     assert [(row["shard"], row["pytest_args"]) for row in linux] == [
-        (index, f"-p tools.pytest_file_shard --file-shard {index}/6") for index in range(1, 7)
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/12") for index in range(1, 13)
     ]
-    assert [row["run_checks"] for row in linux] == [True, False, False, False, False, False]
+    assert [row["run_checks"] for row in linux] == [True, *([False] * 11)]
     assert all(row["timeout-minutes"] == 30 for row in linux)
     windows = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "windows"]
     assert [row["pytest_args"] for row in windows] == [
@@ -193,6 +193,8 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
     assert run["if"] == "runner.os == 'Linux'"
     assert "${{ matrix.pytest_args }}" in run["run"]
+    assert "--case-shard-file tests/test_environment_history.py" in run["run"]
+    assert "--case-shard-file tests/test_environment_generations.py" in run["run"]
     assert "--durations=0 --durations-min=0" in run["run"]
     assert "--junitxml=test-results/linux-${{ matrix.shard }}.xml" in run["run"]
     assert run["env"]["COVERAGE_FILE"] == ".coverage.${{ matrix.shard }}"
@@ -240,7 +242,7 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     combine = gate["steps"][-1]["run"]
     assert "*/packages/" in combine
     assert 'coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data' in combine
-    assert "for shard in 1 2 3 4 5 6; do" in combine
+    assert "for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do" in combine
     assert 'test -f "coverage-data/.coverage.$shard"' in combine
     assert "coverage report --fail-under=80" in combine
     assert "for shard in 1 2 3 4; do" in combine
