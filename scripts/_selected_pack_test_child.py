@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Never
 
 import pytest
+from dinkster_registry.archive_admission import admission_timing
 
 _running_test = False
 
@@ -110,33 +111,53 @@ def main() -> int:
         print(f"Selected module {module}: {spec.origin}", flush=True)
     if len(sys.argv) > 2 and sys.argv[2] == "--check-only":
         return 0
-    subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            "-B",
-            str(Path(__file__).resolve()),
-            str(config_path),
-            "--check-only",
-        ],
-        check=True,
-    )
+    identity = config["testPack"]
+    with admission_timing(identity, "child-provenance"):
+        subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                str(Path(__file__).resolve()),
+                str(config_path),
+                "--check-only",
+            ],
+            check=True,
+        )
     from dinkster_workers.doctor import prepare_catalog
 
     from dinkster.compose import default_pack_spec
 
     for name in config["packs"]:
-        spec = default_pack_spec(name)
-        report = prepare_catalog(spec.manifest, interpreter=sys.executable, environment=spec.env)
-        if not report.ok:
-            raise RuntimeError(f"selected {name} runtime catalog refused: {report.to_json()}")
+        with admission_timing(identity, f"catalog:{name}"):
+            spec = default_pack_spec(name)
+            report = prepare_catalog(
+                spec.manifest, interpreter=sys.executable, environment=spec.env
+            )
+            if not report.ok:
+                raise RuntimeError(f"selected {name} runtime catalog refused: {report.to_json()}")
     # Importlib collection isolates duplicate test names; sibling helpers still need search paths.
     for directory in dict.fromkeys(str(Path(test).resolve().parent) for test in config["tests"]):
         sys.path.append(directory)
-    select_available_tests(config["tests"], config["modules"])
+    with admission_timing(identity, "available-imports"):
+        select_available_tests(config["tests"], config["modules"])
 
     class RequireExecutedTests:
         passed: set[str] = set()
+
+        @pytest.hookimpl(wrapper=True)
+        def pytest_collection(self, session: pytest.Session) -> Generator[None, object, object]:
+            with admission_timing(identity, "pytest-collection"):
+                return (yield)
+
+        def pytest_collection_finish(self, session: pytest.Session) -> None:
+            for item in session.items:
+                print(
+                    json.dumps(
+                        {"admissionTests": "collected", "pack": identity, "nodeid": item.nodeid}
+                    ),
+                    flush=True,
+                )
 
         @pytest.hookimpl(wrapper=True)
         def pytest_runtest_protocol(
@@ -150,6 +171,21 @@ def main() -> int:
                 _running_test = False
 
         def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+            if report.when == "call" or report.failed or report.skipped:
+                print(
+                    json.dumps(
+                        {
+                            "admissionTests": "result",
+                            "pack": identity,
+                            "nodeid": report.nodeid,
+                            "when": report.when,
+                            "outcome": report.outcome,
+                            "wasxfail": getattr(report, "wasxfail", None),
+                            "elapsedSeconds": report.duration,
+                        }
+                    ),
+                    flush=True,
+                )
             if report.when == "call" and report.passed:
                 self.passed.add(report.nodeid)
             if report.skipped:
@@ -160,11 +196,13 @@ def main() -> int:
             if not self.passed:
                 session.exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
 
-    return int(
-        pytest.main(
-            ["-q", "--import-mode=importlib", *config["tests"]], plugins=[RequireExecutedTests()]
+    with admission_timing(identity, "pytest"):
+        return int(
+            pytest.main(
+                ["-q", "--import-mode=importlib", *config["tests"]],
+                plugins=[RequireExecutedTests()],
+            )
         )
-    )
 
 
 if __name__ == "__main__":

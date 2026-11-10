@@ -19,6 +19,7 @@ from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_registry.archive_admission import (
     ProbeSettings,
     StageResult,
+    admission_timing,
     run_doctor_static,
     run_executable_probe,
     run_fast_security,
@@ -127,7 +128,8 @@ def check_defaults(
             )
             if candidates:
                 output = work / "candidate"
-                build(root, output, packs=candidates)
+                with admission_timing("defaults", "candidate-build"):
+                    build(root, output, packs=candidates)
                 selected = Lockfile.from_record_json((output / "official-packs.lock").read_text())
                 for pack in selected.packs:
                     shutil.copyfile(
@@ -155,12 +157,15 @@ def check_defaults(
                     continue
                 while True:
                     try:
-                        release = resolve_release(
-                            registry,
-                            pack.pack,
-                            pack.version,
-                            engine_version=None if pack.pack in library_names else engine_version,
-                        )
+                        with admission_timing(pack.pack, "published-resolution"):
+                            release = resolve_release(
+                                registry,
+                                pack.pack,
+                                pack.version,
+                                engine_version=None
+                                if pack.pack in library_names
+                                else engine_version,
+                            )
                         break
                     except InstallError:
                         if time.monotonic() >= deadline:
@@ -169,19 +174,21 @@ def check_defaults(
                 if release.artifact_digest != pack.artifact_digest:
                     raise ValueError(f"published {pack.pack}@{pack.version} digest mismatch")
                 archive = artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip"
-                archive.write_bytes(http_registry_fetcher(registry.endpoint)(release))
+                with admission_timing(pack.pack, "published-download"):
+                    archive.write_bytes(http_registry_fetcher(registry.endpoint)(release))
                 entries.append(
                     release
                     if pack.pack in library_names
                     else registry_source_lock(release, archive, engine_version=engine_version)
                 )
             selected = Lockfile.of(entries)
-        catalog, _ = prepare_registry_sources(
-            registry,
-            {name: version for name, version in minimums.items() if selected.get(name) is None},
-            artifacts,
-            engine_version=engine_version,
-        )
+        with admission_timing("defaults", "registry-resolution-download"):
+            catalog, _ = prepare_registry_sources(
+                registry,
+                {name: version for name, version in minimums.items() if selected.get(name) is None},
+                artifacts,
+                engine_version=engine_version,
+            )
         catalog = Lockfile.of((*catalog.packs, *selected.packs))
         if not catalog.packs:
             raise ValueError("engine admission requires a nonempty default set")
@@ -202,43 +209,57 @@ def check_defaults(
                     if canonicalize_name(Requirement(value).name) in libraries
                 }
                 continue
-            _require_accepted(run_ingest_integrity(data, len(data), pack.artifact_digest), identity)
-            source = unpack_artifact(archive, work / "sources" / pack.pack, pack.artifact_digest)
-            source = pack_manifest_path(source).parent
-            _require_accepted(
-                run_manifest_admission(
-                    source,
-                    pack.pack,
-                    pack.version,
-                    publisher="dinkster",
-                    engine_version=engine_version,
-                ),
-                identity,
-            )
-            manifest = load_manifest(source / "dinkster-pack.toml")
-            dependencies = {dependency.pack for dependency in manifest.dependencies}
-            if missing := dependencies - entries.keys():
-                raise ValueError(
-                    f"default {pack.pack} has unresolved pack dependencies: {sorted(missing)}"
+            with admission_timing(identity, "ingest-integrity"):
+                _require_accepted(
+                    run_ingest_integrity(data, len(data), pack.artifact_digest), identity
                 )
-            for dependency in manifest.dependencies:
-                dependency_pack = entries[dependency.pack]
-                if not SpecifierSet(dependency.version).contains(
-                    dependency_pack.version, prereleases=True
-                ):
+            with admission_timing(identity, "unpack"):
+                source = unpack_artifact(
+                    archive, work / "sources" / pack.pack, pack.artifact_digest
+                )
+                source = pack_manifest_path(source).parent
+            with admission_timing(identity, "manifest-admission"):
+                _require_accepted(
+                    run_manifest_admission(
+                        source,
+                        pack.pack,
+                        pack.version,
+                        publisher="dinkster",
+                        engine_version=engine_version,
+                    ),
+                    identity,
+                )
+            with admission_timing(identity, "dependency-graph"):
+                manifest = load_manifest(source / "dinkster-pack.toml")
+                dependencies = {dependency.pack for dependency in manifest.dependencies}
+                if missing := dependencies - entries.keys():
                     raise ValueError(
-                        f"default {identity} dependency "
-                        f"{dependency.pack}@{dependency_pack.version} "
-                        f"does not satisfy {dependency.version!r}"
+                        f"default {pack.pack} has unresolved pack dependencies: {sorted(missing)}"
                     )
-            for value in manifest.requires_for("cpu"):
-                requirement = Requirement(value)
-                name = canonicalize_name(requirement.name)
-                if name in libraries and (not requirement.marker or requirement.marker.evaluate()):
-                    if not requirement.specifier.contains(entries[name].version, prereleases=True):
-                        raise ValueError(f"default {identity} library does not satisfy {value!r}")
-                    dependencies.add(name)
-            graph[pack.pack] = dependencies
+                for dependency in manifest.dependencies:
+                    dependency_pack = entries[dependency.pack]
+                    if not SpecifierSet(dependency.version).contains(
+                        dependency_pack.version, prereleases=True
+                    ):
+                        raise ValueError(
+                            f"default {identity} dependency "
+                            f"{dependency.pack}@{dependency_pack.version} "
+                            f"does not satisfy {dependency.version!r}"
+                        )
+                for value in manifest.requires_for("cpu"):
+                    requirement = Requirement(value)
+                    name = canonicalize_name(requirement.name)
+                    if name in libraries and (
+                        not requirement.marker or requirement.marker.evaluate()
+                    ):
+                        if not requirement.specifier.contains(
+                            entries[name].version, prereleases=True
+                        ):
+                            raise ValueError(
+                                f"default {identity} library does not satisfy {value!r}"
+                            )
+                        dependencies.add(name)
+                graph[pack.pack] = dependencies
             sources[pack.pack] = (source, data)
         order = tuple(TopologicalSorter(graph).static_order())
         results = []
@@ -248,18 +269,22 @@ def check_defaults(
                 identity = f"{name}@{pack.version}"
                 if name not in libraries:
                     source, data = sources[name]
-                    _require_accepted(run_doctor_static(source), identity)
-                    probe = (
-                        run_executable_probe(source, settings=settings)
-                        if settings
-                        else run_executable_probe(source)
-                    )
-                    _require_accepted(probe, identity)
-                    _require_accepted(run_fast_security(data), identity)
+                    with admission_timing(identity, "doctor-static"):
+                        _require_accepted(run_doctor_static(source), identity)
+                    with admission_timing(identity, "executable-probe"):
+                        probe = (
+                            run_executable_probe(source, settings=settings)
+                            if settings
+                            else run_executable_probe(source)
+                        )
+                        _require_accepted(probe, identity)
+                    with admission_timing(identity, "fast-security"):
+                        _require_accepted(run_fast_security(data), identity)
                 results.append(
                     {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
                 )
-        run_selected_tests(root, catalog, artifacts)
+        with admission_timing("defaults", "selected-tests"):
+            run_selected_tests(root, catalog, artifacts)
         return {"engineVersion": engine_version, "packs": results}
 
 
