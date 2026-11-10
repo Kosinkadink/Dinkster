@@ -556,6 +556,7 @@ def _cmd_apply(args: argparse.Namespace) -> None:
         target = _claims_from_manifests(installer, target)
     number, _ = installer.apply(
         target,
+        expected_base=record.base,
         venvs=record.venvs,
         venv_specs=dict(record.venv_specs),
         allow_doctor_findings=record.allow_doctor_findings,
