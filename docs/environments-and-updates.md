@@ -569,7 +569,9 @@ then after its acknowledged listener/child shutdown receipt. Busy acquisition
 locks and overlapping collectors retry after 30 seconds instead of waiting an
 hour. Opt-out is checked on each attempt. Cleanup warnings do not change the
 successful command result; unreadable maintenance state is also logged. Missing
-legacy history and unrecorded or linked pack runtime payloads still defer.
+or invalid legacy history still defers collection. Recorded software identity
+covers disposable pack runtime payloads without a per-file inventory; collection
+removes links inside those runtimes without deleting their external targets.
 
 Interpreter acquisition and collection share a runtime admission lock in
 addition to the existing project transaction lock. A pending launch protects
