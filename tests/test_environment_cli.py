@@ -146,6 +146,53 @@ def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(tmp_
     } == before
 
 
+@pytest.mark.parametrize("selection", ["matching", "engine", "base", "unpaired", "local"])
+def test_setup_requires_reviewed_release_before_creating_project_or_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str
+):
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    base, _, channel = _mirror(mirror)
+    release = channel["engine"]["release"]
+    arguments = [
+        "setup",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--engine-release",
+        "sha256:" + "a" * 64 if selection == "engine" else release,
+    ]
+    if selection != "unpaired":
+        arguments.extend(("--base-id", "sha256:" + "b" * 64 if selection == "base" else base["id"]))
+    if selection == "local":
+        arguments.append("--from-scratch")
+    arguments.append("--plan" if selection == "matching" else "--yes")
+    code, result = _run(root, *arguments)
+    if selection == "matching":
+        assert code == 0, result
+        assert result["status"] == "planned"
+        assert any(base["id"] in line for line in result["plan"])
+    else:
+        assert code != 0, result
+        expected = {
+            "engine": "does not match the approved engine release/base",
+            "base": "does not match the approved engine release/base",
+            "unpaired": "requires both --engine-release and --base-id",
+            "local": "cannot use --from-scratch",
+        }
+        assert expected[selection] in result["error"]
+    assert not root.exists()
+    assert not store.exists()
+    assert not (tmp_path / "user-data").exists()
+
+
 @pytest.mark.parametrize(
     ("host", "architecture", "override", "expected"),
     [
@@ -1246,7 +1293,15 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert not list((root / "journal").glob("*.json"))
         assert not list(store.glob(".registry-*"))
     monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
-    code, installed = _run(root, *arguments, "--yes")
+    code, installed = _run(
+        root,
+        *arguments,
+        "--engine-release",
+        selected_release.channel.engine_release,
+        "--base-id",
+        base["id"],
+        "--yes",
+    )
     assert code == 0, installed
     try:
         assert installed["current"] == 1 and installed["status"] == "applied"
@@ -1294,6 +1349,18 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
             if p.is_file()
             and not (p.is_relative_to(root / "runtime") and p.name.endswith((".log", ".lock")))
         }
+        code, stale = _run(
+            root,
+            "update",
+            "--channel",
+            "stable",
+            "--engine-release",
+            selected_release.channel.engine_release,
+            "--base-id",
+            base["id"],
+            "--yes",
+        )
+        assert code == 1 and "approved engine release/base" in stale["error"], stale
         code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
         assert code == 0 and any(
             "change project selection" in step for step in selection_plan["plan"]
@@ -1339,7 +1406,18 @@ environment.main()
         assert Journal.read(journals[-1]).stage == "building"
         assert (root / "current").read_text() == "1\n"
         started = time.monotonic()
-        code, updated = _run(root, "update", "--channel", "stable", "--yes")
+        reviewed = discover((str(mirror),), "stable")
+        code, updated = _run(
+            root,
+            "update",
+            "--channel",
+            "stable",
+            "--engine-release",
+            reviewed.channel.engine_release,
+            "--base-id",
+            base["id"],
+            "--yes",
+        )
         elapsed = time.monotonic() - started
         assert code == 0, updated
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"

@@ -300,10 +300,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError(
             "adoption requires explicit --engine-release, --base-id and --variant"
         )
-    if adopting is None and (
-        getattr(args, "engine_release", None) or getattr(args, "base_id", None)
-    ):
-        raise EnvironmentError("--engine-release and --base-id require --adopt-from")
+    if (args.engine_release is None) != (args.base_id is None):
+        raise EnvironmentError(
+            "exact release selection requires both --engine-release and --base-id"
+        )
+    if args.engine_release is not None and getattr(args, "from_scratch", False):
+        raise EnvironmentError("exact published release selection cannot use --from-scratch")
     if args.yes and root.is_dir():
         _recover_pending(root)
     settings = _settings(root)
@@ -437,7 +439,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         ]
     else:
         catalog = discover(mirrors, channel, store=store)
-        if adoption is not None and (
+        if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
         ):
@@ -467,9 +469,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             if definitions is not None:
                 template = native_template(catalog.bases)
                 selection = custom_selection(definitions, variant, template)
-        if adoption is not None and selection is not None:
+        if args.engine_release is not None and (custom is not None or selection is not None):
             raise EnvironmentError(
-                "adoption requires an exact published base, not a custom definition"
+                "exact release selection requires a published base, not a custom definition"
             )
         if custom is not None or selection is not None:
             template = template or native_template(catalog.bases)
@@ -1288,10 +1290,10 @@ def main(argv: list[str] | None = None) -> None:
     setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
-    setup.add_argument("--engine-release", help="explicit published engine digest for adoption")
-    setup.add_argument("--base-id", help="explicit published base digest for adoption")
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
+        command.add_argument("--engine-release", help="require this exact published engine digest")
+        command.add_argument("--base-id", help="require this exact published base digest")
         command.add_argument("--mirror", action="append", default=[])
         command.add_argument(
             "--package-index", help="simple package index for exact locked third-party wheels"
