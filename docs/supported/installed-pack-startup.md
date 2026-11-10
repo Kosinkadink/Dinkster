@@ -150,6 +150,10 @@
   from files requiring review. These checks need no private checkout, registry
   database or publication credentials. Missing or degraded probe isolation
   refuses rather than skipping executable checks.
+- Probe dependency provisioning can use a complete operator-staged CPU wheel
+  index for all requirements, including torch and torchvision, without a public
+  package-index fallback. Missing or incompatible wheels refuse admission.
+  The default CPU dependency source and all probe limits remain unchanged.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified
