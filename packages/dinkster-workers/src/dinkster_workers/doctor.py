@@ -474,6 +474,8 @@ def _classify_import(
                     "imports.private-module",
                     "underscore-private names carry no compatibility promise; use dinkster_api.v1",
                 )
+    if module == "dinkster_engine.testing":
+        return None
     if root in _HOST_MACHINERY:
         return (
             "imports.host-machinery",

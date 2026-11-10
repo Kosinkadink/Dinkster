@@ -29,6 +29,7 @@ from scripts.build_release import (
     read_base_manifest,
     release_version,
     select_dependency_wheels,
+    validate_engine_wheels,
     versioned_sources,
     workspace_projects,
     write_constraints,
@@ -65,7 +66,8 @@ def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
 
 
 @pytest.mark.parametrize(
-    "project", ["dinkster", "dinkster-api", "dinkster-supervisor", "dinkster-workers"]
+    "project",
+    ["dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor", "dinkster-workers"],
 )
 def test_source_distribution_rebuilds_the_complete_direct_wheel(
     tmp_path: Path, project: str
@@ -78,7 +80,7 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
-    if project != "dinkster":
+    if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [
                 sys.executable,
@@ -185,6 +187,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "channel",
         "publish",
         "publish-api",
+        "publish-engine",
         "publish-supervisor",
     }
     assert workflow["jobs"]["validation"] == {
@@ -387,6 +390,7 @@ def test_release_acquires_each_selected_base_without_pack_lock_matrix(
     [
         ("publish", "dinkster", "pypi"),
         ("publish-api", "dinkster-api", "pypi-dinkster-api"),
+        ("publish-engine", "dinkster-engine", "pypi-dinkster-engine"),
         ("publish-supervisor", "dinkster-supervisor", "pypi-dinkster-supervisor"),
     ],
 )
@@ -419,6 +423,7 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     for name in (
         "dinkster-1.2.3-py3-none-any.whl",
         "dinkster_api-1.2.3-py3-none-any.whl",
+        "dinkster_engine-1.2.3-py3-none-any.whl",
         "dinkster_supervisor-1.2.3-py3-none-any.whl",
         "dinkster_inference-1.2.3-py3-none-any.whl",
         "official-packs.lock",
@@ -972,12 +977,13 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             )["project"]["version"]
             actual = tomllib.loads((staged / relative).read_text())["project"]["version"]
             assert actual == (committed if member in {"remote", "image"} else version)
-        for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
+        for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
                 cwd=staged,
                 check=True,
             )
+    validate_engine_wheels(list(output.glob("*.whl")))
     [wheel] = output.glob("dinkster-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
@@ -992,8 +998,6 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             if name.startswith("dinkster/") and name.endswith(".py")
         }
         for member in (
-            "graph",
-            "engine",
             "server",
             "native",
             "collab",
@@ -1061,6 +1065,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert source_modules == wheel_modules
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
+    assert f"Requires-Dist: dinkster-engine=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
     assert "Requires-Dist: dinkster-inference==0.1.1\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
@@ -1077,6 +1082,22 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         check=True,
     )
     assert hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest() == original_lock
+
+
+@pytest.mark.parametrize("namespace", ["dinkster_engine", "dinkster_graph"])
+@pytest.mark.parametrize("owner", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+def test_release_refuses_duplicate_engine_modules(
+    tmp_path: Path, namespace: str, owner: str
+) -> None:
+    wheel = tmp_path / f"{owner.replace('-', '_')}-1.2.3-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{owner.replace('-', '_')}-1.2.3.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: {owner}\nVersion: 1.2.3\n",
+        )
+        archive.writestr(f"{namespace}/__init__.py", "")
+    with pytest.raises(ValueError, match="must ship only in dinkster-engine"):
+        validate_engine_wheels([wheel])
 
 
 def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_path: Path) -> None:
@@ -1511,8 +1532,11 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
+            'dependencies = ["dinkster-engine==1.2.3"]\n'
             "[tool.uv.workspace]\n"
-            'members = ["packages/dinkster-api", "packages/dinkster-supervisor"]\n'
+            'members = ["packages/dinkster-api", "packages/dinkster-engine", '
+            '"packages/dinkster-supervisor"]\n'
+            "[tool.uv.sources]\ndinkster-engine = { workspace = true }\n"
             "[dependency-groups]\nengine-base = []\n"
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         ),
@@ -1520,12 +1544,24 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
         "scripts/release_sources.json": json.dumps(frontend_pin),
     }
-    for member in ("api", "supervisor"):
+    for member in ("api", "engine", "supervisor"):
         files[f"packages/dinkster-{member}/pyproject.toml"] = (
             f'[project]\nname = "dinkster-{member}"\nversion = "1.2.3"\n'
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         )
         files[f"packages/dinkster-{member}/src/dinkster_{member}/__init__.py"] = ""
+    files["packages/dinkster-engine/pyproject.toml"] += (
+        '[tool.hatch.build.targets.wheel.force-include]\n"src/dinkster_graph" = "dinkster_graph"\n'
+    )
+    files["packages/dinkster-engine/pyproject.toml"] = files[
+        "packages/dinkster-engine/pyproject.toml"
+    ].replace(
+        "[build-system]",
+        'dependencies = ["dinkster-api==1.2.3"]\n'
+        "[tool.uv.sources]\ndinkster-api = { workspace = true }\n[build-system]",
+    )
+    files["packages/dinkster-engine/src/dinkster_graph/__init__.py"] = ""
+    files["packages/dinkster-engine/src/dinkster_engine/testing.py"] = ""
     for name, value in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1572,6 +1608,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     assert set(manifest["workspaceWheels"]) == {
         f"dinkster-{version}-py2.py3-none-any.whl",
         f"dinkster_api-{version}-py2.py3-none-any.whl",
+        f"dinkster_engine-{version}-py2.py3-none-any.whl",
         "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
     with zipfile.ZipFile(output / f"dinkster-{version}-py2.py3-none-any.whl") as wheel:

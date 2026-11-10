@@ -868,10 +868,21 @@ def test_environment_checks_are_advisory_and_gpu_free(
     assert any(f.severity == "error" for f in report.findings)
 
 
+def test_public_pack_testing_import_is_allowed(tmp_path: Path) -> None:
+    manifest = write_pack(tmp_path / "tested", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
+    tests = manifest.parent / "tests"
+    tests.mkdir()
+    (tests / "test_nodes.py").write_text("from dinkster_engine.testing import load_pack\n")
+    report = diagnose_static(manifest.parent, load_manifest(manifest))
+    assert not [finding for finding in report.findings if finding.code.startswith("imports.")]
+
+
 def test_private_and_host_imports_are_errors(tmp_path: Path) -> None:
     source = (
         "from dinkster_workers._doctor_probe import probe\n"
         "from dinkster_engine import Engine\n"
+        "from dinkster_engine.engine import Engine\n"
+        "from dinkster_engine.testing import _engine\n"
         # The execution boundary is host machinery too: packs author
         # through dinkster_api, never against Invocation/Worker directly.
         "from dinkster_protocol import Invocation\n"
@@ -890,7 +901,10 @@ def test_private_and_host_imports_are_errors(tmp_path: Path) -> None:
     assert by_code["imports.internal-module"].severity == "warning"
     assert "dinkster_api.v1" in by_code["imports.internal-module"].fix
     # findings point at the offending file:line
-    assert by_code["imports.private-module"].location.endswith(":1")
+    assert any(
+        finding.code == "imports.private-module" and finding.location.endswith(":1")
+        for finding in report.findings
+    )
 
 
 def test_cross_pack_implementation_import_is_an_error_but_own_module_is_allowed(

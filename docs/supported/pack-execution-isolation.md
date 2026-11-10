@@ -1,5 +1,10 @@
 ## Pack execution isolation
 
+- Pack authors can test a node or Python-declared graph from synchronous
+  pytest through `dinkster_engine.testing`. The separately installable
+  `dinkster-engine` wheel needs no Torch. Tests share an isolated worker by
+  default, can opt into in-process execution, and receive decoded outputs plus
+  executed and cached node sets. Doctor and registry validation do not run nodes.
 - Doctor permits public `dinkster_nodes_<name>` helpers when the consumer
   declares the corresponding `dinkster-<name>` runtime pack dependency.
   Hyphenated pack names use underscores in Python modules. Private symbols,

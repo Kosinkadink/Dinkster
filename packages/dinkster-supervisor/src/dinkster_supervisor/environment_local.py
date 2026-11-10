@@ -318,7 +318,7 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
         effective = work / "effective.txt"
         effective.write_text(effective_constraints(exported.read_text(), base))
         built = work / "built"
-        for package in ("dinkster", "dinkster-api", "dinkster-supervisor"):
+        for package in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             run_local_command(
                 ["uv", "build", "--package", package, "--wheel", "--out-dir", str(built)],
                 cwd=source,
