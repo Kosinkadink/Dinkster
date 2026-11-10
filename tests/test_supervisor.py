@@ -478,6 +478,51 @@ def test_proxy_websocket_events() -> None:
     run_scenario(scenario())
 
 
+def test_shutdown_closes_connected_event_clients() -> None:
+    async def scenario() -> None:
+        engine_server = TestServer(make_engine_app())
+        await engine_server.start_server()
+        stopped = asyncio.Event()
+        link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
+        server = TestServer(
+            create_supervisor_app(
+                link,
+                instance="launcher-instance",
+                shutdown_token="shutdown-token",
+                shutdown=stopped.set,
+            )
+        )
+        client = TestClient(server)
+        await client.start_server()
+        cleanup = None
+        try:
+            sockets = [await client.ws_connect("/api/events") for _ in range(2)]
+            for ws in sockets:
+                assert (await ws.receive(timeout=5)).data == "hello"
+            response = await client.post(
+                "/supervisor/shutdown",
+                headers={
+                    "X-Dinkster-Instance": "launcher-instance",
+                    "X-Dinkster-Shutdown-Token": "shutdown-token",
+                },
+            )
+            assert response.status == 200
+            await asyncio.wait_for(stopped.wait(), timeout=5)
+            cleanup = asyncio.create_task(server.close())
+            for ws in sockets:
+                message = await ws.receive(timeout=5)
+                assert message.type == WSMsgType.CLOSE
+                assert message.data == aiohttp.WSCloseCode.GOING_AWAY
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+        finally:
+            await client.close()
+            if cleanup is not None:
+                await cleanup
+            await engine_server.close()
+
+    run_scenario(scenario())
+
+
 STUB_ENGINE = textwrap.dedent(
     """
     import argparse
