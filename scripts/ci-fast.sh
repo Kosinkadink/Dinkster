@@ -80,6 +80,8 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
   tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
   tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
+  tests/test_library_publication.py::test_default_admission_probes_and_tests_selected_library_dependency \
+  tests/test_library_publication.py::test_admission_library_closure_intersects_ranges_and_activates_extras \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \

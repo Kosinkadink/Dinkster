@@ -276,14 +276,21 @@ def test_library_preparation_and_native_locks_preserve_exact_sources(
     assert {path.name: path.read_bytes() for path in sources.iterdir()} == source_bytes
 
 
-@pytest.mark.parametrize("mode", ["candidate", "published", "prepared"])
+@pytest.mark.parametrize(
+    "mode", ["candidate", "published", "prepared", "registry", "missing", "installer"]
+)
 def test_default_admission_probes_and_tests_selected_library_dependency(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
     mode: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     import shutil
+
+    published = (
+        False if mode == "candidate" else True if mode in {"published", "prepared"} else mode
+    )
 
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_workers.pack_wheel import build_pack_archive
@@ -297,7 +304,12 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     (library / "pyproject.toml").write_text(
         '[project]\nname = "dinkster-test-helpers"\nversion = "0.0.1"\n'
         'requires-python = ">=3.12"\n'
-        '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        + (
+            'dependencies = ["dinkster-unavailable-test-library==0.0.1"]\n'
+            if published == "installer"
+            else ""
+        )
+        + '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         '[tool.hatch.build.targets.wheel]\npackages = ["src/dinkster_test_helpers"]\n'
         "[tool.dinkster]\nofficial-library = true\n"
     )
@@ -373,11 +385,77 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     monkeypatch.setattr(
         admission, "prepare_registry_sources", lambda *args, **kwargs: (Lockfile.of([]), {})
     )
+    registry_url = "https://registry.invalid"
+    ordinary_requests: list[tuple[str, str | None]] = []
+    ordinary_url = ""
+    if isinstance(published, str):
+        from test_installer import _serve_artifacts, _static_release
+
+        library_entry = entries[1]
+        archive = wheels / "dinkster_test_helpers-0.0.1-py3-none-any.whl"
+        data = archive.read_bytes()
+        row = {**_static_release(library_entry, data), "library": True}
+        files = {
+            "/static/packs/index.json": json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "items": [
+                        {
+                            "name": library_entry.pack,
+                            "latestVersion": "0.0.1",
+                            "publisher": "dinkster",
+                            "library": True,
+                            "url": f"packs/{library_entry.pack}/index.json",
+                        }
+                    ],
+                }
+            ).encode(),
+            f"/static/packs/{library_entry.pack}/index.json": json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "name": library_entry.pack,
+                    "items": [] if published == "missing" else [row],
+                }
+            ).encode(),
+            f"/static/wheels/{hashlib.sha256(data).hexdigest()}/{archive.name}": data,
+        }
+        server = _serve_artifacts(files, [])
+        request.addfinalizer(server.shutdown)
+        registry_url = f"http://127.0.0.1:{server.server_port}"
+        ordinary = _serve_artifacts({}, ordinary_requests)
+        request.addfinalizer(ordinary.shutdown)
+        ordinary_url = f"http://127.0.0.1:{ordinary.server_port}"
+
+        def registry_defaults(registry, minimums, artifacts, *, engine_version):
+            entry = entries[0]
+            (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
+                (wheels / "dinkster_text-0.0.1-py3-none-any.whl").read_bytes()
+            )
+            return Lockfile.of([entry]), {}
+
+        monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
+        # Keep fallback requests observable and off the public package index.
+        from http.server import BaseHTTPRequestHandler
+
+        send_header = BaseHTTPRequestHandler.send_header
+
+        def no_redirect(self, keyword, value):
+            if keyword.lower() == "location":
+                value = ordinary_url + "/" + value.rstrip("/").rsplit("/", 1)[-1] + "/"
+            return send_header(self, keyword, value)
+
+        monkeypatch.setattr(BaseHTTPRequestHandler, "send_header", no_redirect)
     probe = admission.run_executable_probe
+
+    def executable_probe(root, **kwargs):
+        if ordinary_url and kwargs.get("settings") is None:
+            kwargs["settings"] = admission.ProbeSettings(probe_package_index_url=ordinary_url)
+        return probe(root, require_isolation=False, **kwargs)
+
     monkeypatch.setattr(
         admission,
         "run_executable_probe",
-        lambda root, **kwargs: probe(root, require_isolation=False, **kwargs),
+        executable_probe,
     )
     publication = None
     if mode in {"published", "prepared"}:
@@ -416,6 +494,26 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
             candidate_base="b" * 40,
             prepare_output=prepared,
         )
+    if published == "missing":
+        with pytest.raises(ValueError, match=r"dinkster-test-helpers.*>=0\.0\.1"):
+            admission.check_defaults(
+                admission.NamedRegistry("", registry_url), engine_version="0.0.3"
+            )
+        assert ordinary_requests == []
+        return
+    if published == "installer":
+        if sys.platform == "win32":
+            pytest.skip("probe installer requires POSIX process limits")
+        with pytest.raises(ValueError, match="probe.dependencies-unresolved"):
+            admission.check_defaults(
+                admission.NamedRegistry("", registry_url), engine_version="0.0.3"
+            )
+        output = capfd.readouterr().out
+        assert '"returnCode": 1' in output
+        assert '"stderrTail":' in output
+        assert "dinkster-unavailable-test-library" in output
+        assert not any("dinkster-test-helpers" in path for path, _ in ordinary_requests)
+        return
     # The service probe requires POSIX process groups and resource limits.
     with (
         pytest.raises(
@@ -427,7 +525,7 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         else nullcontext()
     ):
         result = admission.check_defaults(
-            admission.NamedRegistry("", "https://registry.invalid"),
+            admission.NamedRegistry("", registry_url),
             engine_version="0.0.3",
             candidate_base="b" * 40 if mode == "candidate" else None,
             published_sources=publication,
@@ -449,6 +547,9 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     assert "selected dinkster-test-helpers@0.0.1" in output
     assert ("Testing dinkster-text@0.0.1" in output) is (sys.platform != "win32")
     assert "Testing dinkster-test-helpers" not in output
+    assert ordinary_requests == []
+    if isinstance(published, str):
+        return
     with ZipFile(wheels / "dinkster_test_helpers-0.0.1-py3-none-any.whl", "a") as wheel:
         wheel.writestr("changed.txt", "library drift")
     if prepared is not None:
@@ -466,3 +567,116 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
             prepared_sources=prepared,
             test_packs=("dinkster-text",) if prepared is not None else (),
         )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "dependency", ["consumers", "transitive", "extras", "missing-extra", "fixed"]
+)
+def test_admission_library_closure_intersects_ranges_and_activates_extras(
+    tmp_path: Path, dependency: str, reverse: bool
+) -> None:
+    from dataclasses import replace
+
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_store import pack_archive_path
+    from dinkster_workers.pack_wheel import build_pack_archive
+    from test_installer import _serve_artifacts, _static_release
+    from test_pack_environment import _wheel
+
+    from scripts.check_default_pack_admission import NamedRegistry, prepare_library_sources
+
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    rows = []
+    files = {}
+    library_entries = {}
+    for name, versions in (("library-a", ("1.5", "2.0")), ("library-z", ("1.0",))):
+        for version in versions:
+            requires = ()
+            if name == "library-a" and dependency in {"extras", "missing-extra"}:
+                requires = ('library-z>=1; extra == "helpers"',)
+            if name == "library-z" and dependency == "transitive":
+                requires = ("library-a<2",)
+            wheel = _wheel(wheels, name, version, name.replace("-", "_"), "", requires=requires)
+            data = (wheels / wheel.filename).read_bytes()
+            entry = LockedPack(name, version, artifact_digest(data), "dinkster", ())
+            library_entries[name, version] = entry
+            if name == "library-z" and dependency == "missing-extra":
+                continue
+            rows.append({**_static_release(entry, data), "library": True})
+            files[f"/static/wheels/{wheel.sha256}/{wheel.filename}"] = data
+    files["/static/packs/index.json"] = json.dumps(
+        {
+            "schemaVersion": 2,
+            "items": [
+                {
+                    "name": name,
+                    "latestVersion": version,
+                    "publisher": "dinkster",
+                    "library": True,
+                    "url": f"packs/{name}/index.json",
+                }
+                for name, version in (("library-a", "2.0"), ("library-z", "1.0"))
+            ],
+        }
+    ).encode()
+    for name in ("library-a", "library-z"):
+        files[f"/static/packs/{name}/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "name": name,
+                "items": [row for row in rows if row["name"] == name],
+            }
+        ).encode()
+    requirements = ["library-a>=1", "library-a<2"]
+    if dependency in {"extras", "missing-extra"}:
+        requirements = ["library-a[helpers]>=1", "library-a>=1"]
+    elif dependency == "transitive":
+        requirements = ["library-a>=1", "library-z>=1"]
+    elif dependency == "fixed":
+        requirements = ["library-a<2", "library-a>=1"]
+    if reverse:
+        requirements.reverse()
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    entries = []
+    for number, requirement in enumerate(requirements):
+        name = f"consumer-{number}"
+        source = tmp_path / name
+        source.mkdir()
+        module = name.replace("-", "_")
+        (source / module).mkdir()
+        (source / module / "__init__.py").write_text("NODES = []\n")
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\nversion = "1.0"\npublisher = "dinkster"\n'
+            f'engine = ">=0.0.2,<0.1"\nrequires = ["{requirement}"]\n'
+            f'[pack.entry]\nnodes = "{module}:NODES"\n'
+            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+        )
+        archive = wheels / f"{name.replace('-', '_')}-1.0-py3-none-any.whl"
+        build_pack_archive(source, archive)
+        entry = LockedPack(name, "1.0", artifact_digest(archive.read_bytes()), "dinkster", ())
+        pack_archive_path(artifacts, entry.artifact_digest).write_bytes(archive.read_bytes())
+        entries.append(entry)
+    if dependency == "fixed":
+        entry = replace(library_entries["library-a", "2.0"], source="git:fixed-publication")
+        pack_archive_path(artifacts, entry.artifact_digest).write_bytes(
+            (wheels / "library_a-2.0-py3-none-any.whl").read_bytes()
+        )
+        entries.append(entry)
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+        if dependency in {"missing-extra", "fixed"}:
+            with pytest.raises(ValueError, match=r"library-(z.*>=1|a.*<2)"):
+                prepare_library_sources(registry, Lockfile.of(entries), artifacts, tmp_path)
+        else:
+            selected = prepare_library_sources(registry, Lockfile.of(entries), artifacts, tmp_path)
+            versions = {pack.pack: pack.version for pack in selected.packs}
+            assert versions["library-a"] == ("2.0" if dependency == "extras" else "1.5")
+            assert versions.get("library-z") == (
+                "1.0" if dependency in {"extras", "transitive"} else None
+            )
+    finally:
+        server.shutdown()
