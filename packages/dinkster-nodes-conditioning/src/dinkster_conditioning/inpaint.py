@@ -21,8 +21,7 @@ from dinkster_api.v1 import (
     first_party_schema,
     materialize_image,
 )
-
-from .conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 

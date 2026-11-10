@@ -50,7 +50,7 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     changed = {
         path
         for path in projects
-        if any(name.startswith(f"{path.relative_to(root)}/") for name in code)
+        if any(name.startswith(f"{path.relative_to(root).as_posix()}/") for name in code)
     }
     library_paths = {
         path
@@ -90,7 +90,9 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
         shared
         or bool(changed & library_paths)
         or any(
-            not any(path.startswith(f"{package.relative_to(root)}/") for package in owned)
+            not any(
+                path.startswith(f"{package.relative_to(root).as_posix()}/") for package in owned
+            )
             for path in code
         )
     )
@@ -98,8 +100,10 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     return {
         "docs": not code,
         "engine": engine,
-        "runtime": shared or any(runtime_path(path) for path in code),
-        "packs": sorted(str(path.relative_to(root)) for path in selected & tested),
+        "runtime": shared
+        or "tests/test_remote.py" in code
+        or any(runtime_path(path) for path in code),
+        "packs": sorted(path.relative_to(root).as_posix() for path in selected & tested),
     }
 
 
@@ -143,8 +147,12 @@ def main() -> None:
     if args.packs is not None:
         tests = test_paths(root, json.loads(args.packs))
         print("Selected pack tests: " + json.dumps(tests), flush=True)
-        if tests:
-            subprocess.run([sys.executable, "-m", "pytest", "-q", *tests], check=True)
+        # Separate directories can reuse test module and sibling helper names.
+        groups: dict[Path, list[str]] = {}
+        for test in tests:
+            groups.setdefault(Path(test).parent, []).append(test)
+        for group in groups.values():
+            subprocess.run([sys.executable, "-m", "pytest", "-q", *group], check=True)
         return
     paths = (
         subprocess.check_output(

@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-sd"
-version = "0.0.2"
+version = "0.0.3"
 description = "Dinkster sd nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "torch",
     "dinkster-conditioning>=0.0.1,<1",
     "dinkster-sampling>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -27,3 +28,4 @@ packages = ["src/dinkster_sd"]
 dinkster-api = { workspace = true }
 dinkster-conditioning = { workspace = true }
 dinkster-sampling = { workspace = true }
+dinkster-pack-helpers = { workspace = true }

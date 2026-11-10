@@ -1,4 +1,4 @@
-"""Conversion between public multi-stream latents and sampler runtime values."""
+"""Shared conversion between public multi-stream latents and sampler runtime values."""
 
 from __future__ import annotations
 

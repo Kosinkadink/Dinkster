@@ -1,4 +1,4 @@
-"""Generic video latent schema and tensor creation helpers."""
+"""Video latent schema and tensor creation helpers shared by node packs."""
 
 from __future__ import annotations
 

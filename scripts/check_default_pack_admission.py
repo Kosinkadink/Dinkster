@@ -7,12 +7,17 @@ import json
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+import tomllib
+from contextlib import contextmanager
 from graphlib import TopologicalSorter
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from dinkster_registry import Lockfile, unpack_artifact
 from dinkster_registry.archive_admission import (
+    ProbeSettings,
     StageResult,
     admission_timing,
     run_doctor_static,
@@ -24,7 +29,9 @@ from dinkster_registry.archive_admission import (
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
 from dinkster_workers.pack_wheel import pack_manifest_path
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 from dinkster.installer import InstallError, http_registry_fetcher
 from dinkster.registries import (
@@ -34,9 +41,60 @@ from dinkster.registries import (
     registry_source_lock,
     resolve_release,
 )
-from scripts.build_official_packs import build
-from scripts.run_selected_pack_tests import run_selected_tests
+from scripts.build_official_packs import build, library_metadata, official_library
+from scripts.run_selected_pack_tests import run_selected_tests, selected_library_wheels
 from scripts.select_official_packs import select_packs
+
+
+@contextmanager
+def library_probe_index(libraries: dict[str, Path]):
+    """Serve the selected wheels to the unchanged probe dependency installer."""
+    if not libraries:
+        yield None
+        return
+    wheels = {}
+    for name, archive in libraries.items():
+        _, version, _ = library_metadata(archive)
+        filename = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
+        wheels[f"/{filename}"] = archive
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            name = self.path.strip("/")
+            if archive := wheels.get(self.path):
+                payload = archive.read_bytes()
+                content_type = "application/octet-stream"
+            elif name in libraries:
+                _, version, _ = library_metadata(libraries[name])
+                filename = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
+                payload = f'<a href="/{filename}">{filename}</a>'.encode()
+                content_type = "text/html"
+            else:
+                self.send_response(302)
+                self.send_header("Location", f"https://pypi.org/simple/{name}/")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(payload)
+
+        do_HEAD = do_GET
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield ProbeSettings(probe_package_index_url=f"http://127.0.0.1:{server.server_port}")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def _require_accepted(result: StageResult, identity: str) -> None:
@@ -97,6 +155,11 @@ def check_defaults(
                     )
         elif published_sources is not None:
             published = Lockfile.from_record_json(published_sources.read_text())
+            library_names = {
+                identity[0]
+                for path in (root / "packages").glob("*/pyproject.toml")
+                if (identity := official_library(tomllib.loads(path.read_text())))
+            }
             head = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=root, text=True
             ).strip()
@@ -107,13 +170,18 @@ def check_defaults(
             deadline = time.monotonic() + 600
             entries = []
             for pack in published.packs:
-                if pack.pack not in minimums:
+                if pack.pack not in minimums and pack.pack not in library_names:
                     continue
                 while True:
                     try:
                         with admission_timing(pack.pack, "published-resolution"):
                             release = resolve_release(
-                                registry, pack.pack, pack.version, engine_version=engine_version
+                                registry,
+                                pack.pack,
+                                pack.version,
+                                engine_version=None
+                                if pack.pack in library_names
+                                else engine_version,
                             )
                         break
                     except InstallError:
@@ -126,7 +194,9 @@ def check_defaults(
                 with admission_timing(pack.pack, "published-download"):
                     archive.write_bytes(http_registry_fetcher(registry.endpoint)(release))
                 entries.append(
-                    registry_source_lock(release, archive, engine_version=engine_version)
+                    release
+                    if pack.pack in library_names
+                    else registry_source_lock(release, archive, engine_version=engine_version)
                 )
             selected = Lockfile.of(entries)
         if prepared_sources is not None:
@@ -167,6 +237,7 @@ def check_defaults(
         if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
             raise ValueError(f"requested admission packs are not in the catalog: {sorted(missing)}")
         entries = {pack.pack: pack for pack in catalog.packs}
+        libraries = selected_library_wheels(catalog, artifacts)
         graph: dict[str, set[str]] = {}
         sources = {}
         for pack in catalog.packs:
@@ -174,6 +245,14 @@ def check_defaults(
             data = archive.read_bytes()
             identity = f"{pack.pack}@{pack.version}"
             print(f"selected {identity} {pack.artifact_digest} from {pack.source}", flush=True)
+            if pack.pack in libraries:
+                _, _, requires = library_metadata(archive)
+                graph[pack.pack] = {
+                    canonicalize_name(Requirement(value).name)
+                    for value in requires
+                    if canonicalize_name(Requirement(value).name) in libraries
+                }
+                continue
             with admission_timing(identity, "ingest-integrity"):
                 _require_accepted(
                     run_ingest_integrity(data, len(data), pack.artifact_digest), identity
@@ -211,25 +290,45 @@ def check_defaults(
                             f"{dependency.pack}@{dependency_pack.version} "
                             f"does not satisfy {dependency.version!r}"
                         )
+                for value in manifest.requires_for("cpu"):
+                    requirement = Requirement(value)
+                    name = canonicalize_name(requirement.name)
+                    if name in libraries and (
+                        not requirement.marker or requirement.marker.evaluate()
+                    ):
+                        if not requirement.specifier.contains(
+                            entries[name].version, prereleases=True
+                        ):
+                            raise ValueError(
+                                f"default {identity} library does not satisfy {value!r}"
+                            )
+                        dependencies.add(name)
                 graph[pack.pack] = dependencies
             sources[pack.pack] = (source, data)
         order = tuple(TopologicalSorter(graph).static_order())
         results = []
-        for name in order:
-            if test_packs and name not in test_packs:
-                continue
-            pack = entries[name]
-            identity = f"{name}@{pack.version}"
-            source, data = sources[name]
-            with admission_timing(identity, "doctor-static"):
-                _require_accepted(run_doctor_static(source), identity)
-            with admission_timing(identity, "executable-probe"):
-                _require_accepted(run_executable_probe(source), identity)
-            with admission_timing(identity, "fast-security"):
-                _require_accepted(run_fast_security(data), identity)
-            results.append(
-                {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
-            )
+        with library_probe_index(libraries) as settings:
+            for name in order:
+                if test_packs and name not in test_packs:
+                    continue
+                pack = entries[name]
+                identity = f"{name}@{pack.version}"
+                if name not in libraries:
+                    source, data = sources[name]
+                    with admission_timing(identity, "doctor-static"):
+                        _require_accepted(run_doctor_static(source), identity)
+                    with admission_timing(identity, "executable-probe"):
+                        probe = (
+                            run_executable_probe(source, settings=settings)
+                            if settings
+                            else run_executable_probe(source)
+                        )
+                        _require_accepted(probe, identity)
+                    with admission_timing(identity, "fast-security"):
+                        _require_accepted(run_fast_security(data), identity)
+                results.append(
+                    {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
+                )
         with admission_timing("defaults", "selected-tests"):
             if test_packs:
                 run_selected_tests(root, catalog, artifacts, test_packs=test_packs)

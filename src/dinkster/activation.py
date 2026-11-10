@@ -339,9 +339,13 @@ async def _read_pinned_generation(request: web.Request) -> int | None:
 
 
 def add_activation_routes(
-    app: web.Application, composer: ServingComposer, installer: Installer
+    app: web.Application,
+    composer: ServingComposer,
+    installer: Installer,
+    *,
+    busy: asyncio.Lock | None = None,
 ) -> None:
-    busy = asyncio.Lock()
+    busy = busy if busy is not None else asyncio.Lock()
 
     async def handle_plan(request: web.Request) -> web.Response:
         plan, _ = compute_plan(composer, installer)

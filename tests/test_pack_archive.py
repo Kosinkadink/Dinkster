@@ -287,6 +287,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         "dinkster-image",
         "dinkster-utilities",
         "dinkster-nodes-remote",
+        "dinkster-pack-helpers",
         "dinkster-qwen",
         "dinkster-sampling",
         "dinkster-sd",
@@ -331,6 +332,16 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
         archive = first[0].parent / f"{package_name}-{pack.version}-py3-none-any.whl"
         with zipfile.ZipFile(archive) as contents:
             assert not any("tests" in Path(name).parts for name in contents.namelist())
+            if pack.pack == "dinkster-pack-helpers":
+                assert pack.claims == ()
+                assert not any(name.endswith("dinkster-pack.toml") for name in contents.namelist())
+                for name in contents.namelist():
+                    if name.startswith(f"{package_name}/"):
+                        expected_source = subprocess.check_output(
+                            ["git", "show", f"HEAD:packages/{pack.pack}/src/{name}"], cwd=root
+                        )
+                        assert contents.read(name) == expected_source
+                continue
         extracted = (
             unpack_artifact(archive, tmp_path / "unpacked" / pack.pack, pack.artifact_digest)
             / package_name
@@ -971,7 +982,8 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             )
         elif problem == "corrupt-artifact":
             digest = entries["candidate"].artifact_digest.removeprefix("blake3:")
-            (prepared / "artifacts" / f"{digest}.zip").write_bytes(b"corrupted")
+            with zipfile.ZipFile(prepared / "artifacts" / f"{digest}.zip", "a") as wheel:
+                wheel.writestr("changed.txt", "digest drift")
     publication = None
     if mode == "published":
         publication = tmp_path / "official-packs.lock"
@@ -1634,6 +1646,8 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_registry.archive_admission import run_ingest_integrity, run_manifest_admission
 
+    from scripts.build_official_packs import library_metadata
+
     root = Path(__file__).resolve().parents[1]
     first = build_official_packs(root, tmp_path / "first")
     second = build_official_packs(root, tmp_path / "second")
@@ -1641,11 +1655,19 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         path.name: path.read_bytes() for path in second
     }
     catalog = Lockfile.from_record_json(first[-1].read_text())
-    assert len(catalog.packs) == 36
+    assert len(catalog.packs) == 37
     for pack in catalog.packs:
         package_name = pack.pack.replace("-", "_")
         archive = first[-1].parent / f"{package_name}-{pack.version}-py3-none-any.whl"
         data = archive.read_bytes()
+        if pack.pack == "dinkster-pack-helpers":
+            assert library_metadata(archive) == (
+                "dinkster-pack-helpers",
+                "0.0.1",
+                ("dinkster-api", "dinkster-inference==0.1.1", "numpy>=1.26", "pillow>=10", "torch"),
+            )
+            assert f"blake3:{blake3(data).hexdigest()}" == pack.artifact_digest
+            continue
         assert not run_ingest_integrity(data, len(data), pack.artifact_digest).blocked
         source = (
             unpack_artifact(archive, tmp_path / "sources" / pack.pack, pack.artifact_digest)
@@ -1691,6 +1713,9 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
     lock = Lockfile.from_record_json(payloads[-1].read_text())
     specs = []
     for entry in lock.packs:
+        if entry.pack == "dinkster-pack-helpers":
+            assert entry.claims == ()
+            continue
         filename = f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl"
         source = unpack_artifact(
             payloads[-1].parent / filename,
@@ -1738,7 +1763,7 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
             assert composition.packs["dinkster-text"].version == "0.0.2"
-            assert composition.packs["dinkster-image"].version == "0.0.2"
+            assert composition.packs["dinkster-image"].version == "0.0.3"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )

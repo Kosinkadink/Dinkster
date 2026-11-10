@@ -4,8 +4,7 @@ Nodes are classmethods over plain Python values - no engine, no server,
 no fixtures. report_* calls are silent no-ops outside an execution
 context, so execute() is directly callable here.
 
-The doctor gate is NOT a test import: `dinkster-doctor .` runs as its own CI
-step (see .github/workflows/ci.yml). Importing the doctor here would mean
+The doctor gate is NOT a test import. Importing the doctor here would mean
 importing host machinery (dinkster_workers) from pack code - exactly what
 doctor flags. Tests live in the pack directory, so they hold to the same
 one-door rule: dinkster_api.v1 only."""

@@ -26,7 +26,7 @@ from dinkster_api.v1 import (
     materialize_latent,
     prepare_sampling_model,
 )
-from dinkster_latent.sampling_boundary import to_public, to_runtime
+from dinkster_pack_helpers.sampling_boundary import to_public, to_runtime
 
 from .sampler_factories import SAMPLER_NAMES
 from .sigma_schedulers import SCHEDULER_NAMES

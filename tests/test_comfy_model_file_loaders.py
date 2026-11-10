@@ -8,6 +8,7 @@ import pytest
 from dinkster_api.v1 import ASSET_TYPE, AssetRef, AssetWidget, ComboWidget, TypeExpr, digest_bytes
 from dinkster_ltx import model_file_loaders as ltx_loaders
 from dinkster_models import model_file_loaders
+from dinkster_pack_helpers import model_file_loaders as loader_helpers
 from dinkster_sd import model_file_loaders as sd_loaders
 
 MODEL_FILE_LOADER_NODES = (
@@ -195,6 +196,7 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
     }
     for module in (model_file_loaders, sd_loaders):
         monkeypatch.setattr(module, "initialize_inference_process", lambda: None)
+    for module in (loader_helpers, sd_loaders):
         monkeypatch.setattr(module, "mount_roots_for_kind", lambda kind: (tmp_path,))
     real_import = importlib.import_module
     monkeypatch.setattr(
