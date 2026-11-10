@@ -2189,6 +2189,7 @@ def test_space_report_windows_counts_hardlinks_and_resident_data_and_refuses_nam
     cleanup_project: Path,
 ):
     import ctypes
+    import msvcrt
     from ctypes import wintypes
 
     from dinkster_supervisor.environment_space import space_report
@@ -2210,16 +2211,27 @@ def test_space_report_windows_counts_hardlinks_and_resident_data_and_refuses_nam
     shared.write_bytes(b"large physical allocation" * 8193)
     resident.write_bytes(b"r")
     win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
-    get_error = getattr(ctypes, "get_last_error")  # noqa: B009 - Linux stubs omit it
-    kernel = win_dll("kernel32", use_last_error=True)
-    kernel.GetCompressedFileSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
-    kernel.GetCompressedFileSizeW.restype = wintypes.DWORD
+    get_osfhandle = getattr(msvcrt, "get_osfhandle")  # noqa: B009 - Linux stubs omit it
+    native = win_dll("ntdll")
+    native.NtQueryInformationFile.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+        wintypes.ULONG,
+        ctypes.c_int,
+    ]
+    native.NtQueryInformationFile.restype = wintypes.LONG
 
     def allocation(path: Path) -> int:
-        high = wintypes.DWORD()
-        low = kernel.GetCompressedFileSizeW(str(path), ctypes.byref(high))
-        assert low != 0xFFFFFFFF, get_error()
-        return (high.value << 32) | low
+        # Query allocation independently: GetCompressedFileSizeW is logical for ordinary files.
+        status = ctypes.create_string_buffer(2 * ctypes.sizeof(ctypes.c_void_p))
+        standard = ctypes.create_string_buffer(24)
+        with path.open("rb") as stream:
+            result = native.NtQueryInformationFile(
+                get_osfhandle(stream.fileno()), status, standard, len(standard), 5
+            )
+        assert result == 0, result
+        return struct.unpack_from("=q", standard.raw)[0]
 
     shared_bytes, resident_bytes = allocation(shared), allocation(resident)
     assert shared_bytes > 0 and resident_bytes > 0
