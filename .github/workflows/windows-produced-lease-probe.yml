@@ -1,0 +1,61 @@
+name: Windows produced lease reproduction probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-produced-lease-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.6"
+          python-version: "3.14.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+      - run: uv sync --locked --all-packages
+      - name: Repeat the unchanged cancellation case, stopping at the first failure
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'produced-lease-probe'
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          git rev-parse HEAD | Set-Content "$evidence/head.txt"
+          uv --version | Set-Content "$evidence/uv-version.txt"
+          uv run --no-sync python -VV | Set-Content "$evidence/python-version.txt"
+          uv pip freeze | Set-Content "$evidence/packages.txt"
+          for ($attempt = 1; $attempt -le 300; $attempt++) {
+            $log = Join-Path $evidence "attempt-$attempt.log"
+            $temporary = Join-Path $env:RUNNER_TEMP "produced-lease-attempt-$attempt"
+            $started = [DateTime]::UtcNow
+            & uv run --no-sync python -m pytest -q --showlocals `
+              'tests/test_produced_video_assets.py::test_produced_video_adoption_owns_source_until_finished[repeated-cancel]' `
+              --basetemp $temporary *> $log
+            $result = $LASTEXITCODE
+            $elapsed = ([DateTime]::UtcNow - $started).TotalSeconds
+            $record = "attempt=$attempt exit=$result elapsed_seconds=$elapsed"
+            $record | Tee-Object -FilePath "$evidence/attempts.txt" -Append
+            Get-Content $log
+            if ($result -ne 0) {
+              Get-Process python* -ErrorAction SilentlyContinue |
+                Select-Object Id, ProcessName, Path |
+                Format-Table | Out-String | Set-Content "$evidence/python-processes.txt"
+              exit $result
+            }
+          }
+      - name: Retain reproduction logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-produced-lease-probe
+          path: ${{ runner.temp }}/produced-lease-probe
+          if-no-files-found: warn
