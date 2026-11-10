@@ -161,7 +161,9 @@ def test_audio_wav_refuses_uint16_and_uint32_size_overflow_before_rendering() ->
         render_audio_wav({"waveform": too_many_frames, "sample_rate": 1})
 
 
-@pytest.mark.parametrize("container,data", [("mp4", mp4_bytes()), ("webm", webm_bytes())])
+@pytest.mark.parametrize(
+    "container,data", [("mp4", mp4_bytes()), ("webm", webm_bytes())], ids=["mp4", "webm"]
+)
 def test_video_round_trip_preserves_raw_container_bytes(container: str, data: bytes) -> None:
     value = {"container": container, "bytes": data}
     encoded = encode_video(value)
@@ -205,6 +207,7 @@ def test_video_refuses_unknown_mismatched_and_unrecognized_containers() -> None:
 @pytest.mark.parametrize(
     ("container", "data", "mime"),
     [("mp4", mp4_bytes(), "video/mp4"), ("webm", webm_bytes(), "video/webm")],
+    ids=["mp4", "webm"],
 )
 def test_video_original_rendition_preserves_validated_bytes_and_metadata_mime(
     container: str, data: bytes, mime: str
