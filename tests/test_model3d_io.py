@@ -337,8 +337,21 @@ def test_file3d_source_preflight_distinguishes_empty_default_from_missing_requir
 
 
 @pytest.mark.parametrize("preview_union", [False, True])
-def test_file3d_submission_rejects_missing_companions_as_client_error(
-    tmp_path: Path, preview_union: bool
+@pytest.mark.parametrize(
+    ("document", "error"),
+    [
+        (
+            b'{"asset":{"version":"2.0"},"buffers":[{"uri":"missing.bin"}]}',
+            "selected file is outside its grant or unavailable",
+        ),
+        (b"[]", "glTF source requires a JSON object"),
+        (b'{"buffers":{}}', "glTF buffers must be an array"),
+        (b'{"images":"invalid"}', "glTF images must be an array"),
+        (b'{"buffers":[7]}', "glTF buffers entries must be objects"),
+    ],
+)
+def test_file3d_submission_rejects_invalid_sources_as_client_error(
+    tmp_path: Path, preview_union: bool, document: bytes, error: str
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_engine import EventListener
@@ -348,9 +361,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
 
     root = tmp_path / "input"
     root.mkdir()
-    (root / "scene.gltf").write_bytes(
-        b'{"asset":{"version":"2.0"},"buffers":[{"uri":"missing.bin"}]}'
-    )
+    (root / "scene.gltf").write_bytes(document)
     table = MountTable(tmp_path / "mounts.json")
     table.add(MountDef("models", root, kind="media/model3d"))
     schema = LoadModel3D.define_schema()
@@ -392,9 +403,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
                 },
             )
             assert response.status == 400
-            assert await response.json() == {
-                "error": "selected file is outside its grant or unavailable"
-            }
+            assert await response.json() == {"error": error}
         finally:
             await client.close()
 

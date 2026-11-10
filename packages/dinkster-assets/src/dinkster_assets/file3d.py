@@ -204,8 +204,15 @@ def load_file3d(
                 document = json.loads(handle.read(chunk_length))
             else:
                 document = json.load(handle)
+        if not isinstance(document, dict):
+            raise AssetError("glTF source requires a JSON object")
         for section in ("buffers", "images"):
-            for entry in document.get(section, []):
+            entries = cast("dict[str, object]", document).get(section, [])
+            if not isinstance(entries, list):
+                raise AssetError(f"glTF {section} must be an array")
+            for entry in cast("list[object]", entries):
+                if not isinstance(entry, dict):
+                    raise AssetError(f"glTF {section} entries must be objects")
                 uri = entry.get("uri")
                 if uri is not None and not (isinstance(uri, str) and uri.startswith("data:")):
                     bind(_gltf_resource_name(uri))
