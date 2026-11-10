@@ -2794,6 +2794,68 @@ def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
         server.shutdown()
 
 
+@pytest.mark.parametrize("schema", [1, 2])
+def test_exact_library_release_resolves_and_downloads_without_node_discovery(
+    tmp_path: Path, schema: int
+) -> None:
+    from dinkster.registries import (
+        NamedRegistry,
+        StaticPackIndex,
+        resolve_compatible_release,
+        resolve_release,
+    )
+
+    installer = make_installer(tmp_path)
+    demo = write_pack(tmp_path / "demo", "demo")
+    entry, archive = lock_local_pack(demo, installer.artifacts_dir)
+    data = archive.read_bytes()
+    entry = replace(entry, source="registry", version="1.0.0")
+    record = {**_static_release(entry, data), "library": True}
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    files = {
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+        f"/static/{wheel['url']}": data,
+    }
+    if schema == 2:
+        files["/static/packs/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": "demo",
+                        "latestVersion": "1.0.0",
+                        "publisher": entry.publisher,
+                        "library": True,
+                        "url": "packs/demo/index.json",
+                    }
+                ],
+            }
+        ).encode()
+        files["/static/packs/demo/index.json"] = json.dumps(
+            {"schemaVersion": 2, "name": "demo", "items": [record]}
+        ).encode()
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+        index = StaticPackIndex()
+        selected = resolve_release(registry, "demo", "1.0.0", engine_version="0.5", index=index)
+        assert selected.artifact_digest == entry.artifact_digest
+        assert selected.version == "1.0.0"
+        assert selected.pack == "demo"
+        assert http_registry_fetcher(registry.endpoint, index=index)(selected) == data
+        with pytest.raises(InstallError, match="no release demo@2.0.0"):
+            resolve_release(registry, "demo", "2.0.0", index=index)
+        with pytest.raises(InstallError, match="engine"):
+            resolve_release(registry, "demo", "1.0.0", engine_version="2.0", index=index)
+        assert index.catalog(registry) == ()
+        assert index.releases(registry, "demo") == ()
+        with pytest.raises(InstallError, match="demo"):
+            resolve_compatible_release(registry, "demo", "1.0.0", "0.5", index=index)
+    finally:
+        server.shutdown()
+
+
 def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> None:
     """Index and wheel requests stay under the static prefix with exact hash checks."""
     installer = make_installer(tmp_path)
