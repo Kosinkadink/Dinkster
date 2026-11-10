@@ -1,0 +1,100 @@
+{
+ "ae.safetensors": {
+  "size": 335304388,
+  "mtimeNs": 1767609304599941624,
+  "digest": "blake3:ce21cb76364aa6e2421311cf4a4b5eb052a76c4f1cd207b50703d8978198a068",
+  "verification": {
+   "digest": "blake3:ce21cb76364aa6e2421311cf4a4b5eb052a76c4f1cd207b50703d8978198a068",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54001810,
+   "size": 335304388,
+   "mtimeNs": 1767609304599941624,
+   "ctimeNs": 1767609304599941624
+  }
+ },
+ "flux2-vae.safetensors": {
+  "size": 336213556,
+  "mtimeNs": 1767858967485996960,
+  "digest": "blake3:fcb1d172993424c66d325d139863ccbaadf64a920073b2d005d73a31fa5a851d",
+  "verification": {
+   "digest": "blake3:fcb1d172993424c66d325d139863ccbaadf64a920073b2d005d73a31fa5a851d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039731,
+   "size": 336213556,
+   "mtimeNs": 1767858967485996960,
+   "ctimeNs": 1767858967485996960
+  }
+ },
+ "minimax_h3_audio_vae_fp32.safetensors": {
+  "size": 605254808,
+  "mtimeNs": 1786890919278781247,
+  "digest": "blake3:b39ce3a80299ac3f58297ee773a6d25b97693127dad9bd80de18dc6919816543",
+  "verification": {
+   "digest": "blake3:b39ce3a80299ac3f58297ee773a6d25b97693127dad9bd80de18dc6919816543",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54050146,
+   "size": 605254808,
+   "mtimeNs": 1786890919278781247,
+   "ctimeNs": 1786890919601790787
+  }
+ },
+ "minimax_h3_video_vae_fp16.safetensors": {
+  "size": 5207808496,
+  "mtimeNs": 1786890910011507524,
+  "digest": "blake3:3c54805f24b49cfe118b92b985e7bed5dd5c4921a36b07d39ee718c9fe7fb216",
+  "verification": {
+   "digest": "blake3:3c54805f24b49cfe118b92b985e7bed5dd5c4921a36b07d39ee718c9fe7fb216",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039692,
+   "size": 5207808496,
+   "mtimeNs": 1786890910011507524,
+   "ctimeNs": 1786890912742588190
+  }
+ },
+ "minimax_h3_video_vae_int8_convrot.safetensors": {
+  "size": 3171670912,
+  "mtimeNs": 1786951204928236380,
+  "digest": "blake3:2ee6ea136bb5b5be69487d6c3593361e7a4bb26aa49a9b87a315e6888ece93eb",
+  "verification": {
+   "digest": "blake3:2ee6ea136bb5b5be69487d6c3593361e7a4bb26aa49a9b87a315e6888ece93eb",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54057797,
+   "size": 3171670912,
+   "mtimeNs": 1786951204928236380,
+   "ctimeNs": 1786951282792615495
+  }
+ },
+ "qwen_image_vae.safetensors": {
+  "size": 253806246,
+  "mtimeNs": 1759483388206719319,
+  "digest": "blake3:1018b941788940c4dfc449d5d749950cae58c9a7f6a794b00a2f8321abc885d1",
+  "verification": {
+   "digest": "blake3:1018b941788940c4dfc449d5d749950cae58c9a7f6a794b00a2f8321abc885d1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54034789,
+   "size": 253806246,
+   "mtimeNs": 1759483388206719319,
+   "ctimeNs": 1759483388206719319
+  }
+ },
+ "wan_2.1_vae.safetensors": {
+  "size": 253815318,
+  "mtimeNs": 1767859260325907582,
+  "digest": "blake3:822d712da6c4f99567553f5409d7ebf78842ce2df4f5b0c01e2a159b7e3cbb88",
+  "verification": {
+   "digest": "blake3:822d712da6c4f99567553f5409d7ebf78842ce2df4f5b0c01e2a159b7e3cbb88",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039530,
+   "size": 253815318,
+   "mtimeNs": 1767859260325907582,
+   "ctimeNs": 1767859260325907582
+  }
+ }
+}

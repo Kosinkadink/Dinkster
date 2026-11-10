@@ -1,0 +1,30 @@
+{
+ "domfy29-canny-hint.png": {
+  "size": 1601,
+  "mtimeNs": 1787315702740562163,
+  "digest": "blake3:497d02e23bab51364c29b6d65930e1e2adb177f9f58ba9c7e24341b09ad2c466",
+  "verification": {
+   "digest": "blake3:497d02e23bab51364c29b6d65930e1e2adb177f9f58ba9c7e24341b09ad2c466",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54060575,
+   "size": 1601,
+   "mtimeNs": 1787315702740562163,
+   "ctimeNs": 1787315702740562163
+  }
+ },
+ "example.png": {
+  "size": 8589,
+  "mtimeNs": 1759482788210362495,
+  "digest": "blake3:098c76b688046b11dd9ea1afe4f1f7e66f1e2f0ecc556974a15078736022d8bc",
+  "verification": {
+   "digest": "blake3:098c76b688046b11dd9ea1afe4f1f7e66f1e2f0ecc556974a15078736022d8bc",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003780,
+   "size": 8589,
+   "mtimeNs": 1759482788210362495,
+   "ctimeNs": 1759482788210362495
+  }
+ }
+}

@@ -1,0 +1,44 @@
+{
+ "DreamShaper_8_pruned.safetensors": {
+  "size": 2132625894,
+  "mtimeNs": 1784438221653560259,
+  "digest": "blake3:771c807db56dbfc33feda5638d920f6c507db971da44772ee44a08dc38c3b437",
+  "verification": {
+   "digest": "blake3:771c807db56dbfc33feda5638d920f6c507db971da44772ee44a08dc38c3b437",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54048705,
+   "size": 2132625894,
+   "mtimeNs": 1784438221653560259,
+   "ctimeNs": 1784438221653560259
+  }
+ },
+ "NetaYumev35_pretrained_all_in_one.safetensors": {
+  "size": 10620231237,
+  "mtimeNs": 1767442914482111820,
+  "digest": "blake3:3e84945252f6e757b51ada84726dffd5da38994a3c3fc612b85d3efb15e4cf35",
+  "verification": {
+   "digest": "blake3:3e84945252f6e757b51ada84726dffd5da38994a3c3fc612b85d3efb15e4cf35",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54033958,
+   "size": 10620231237,
+   "mtimeNs": 1767442914482111820,
+   "ctimeNs": 1767442914482111820
+  }
+ },
+ "v1-5-pruned-emaonly-fp16.safetensors": {
+  "size": 2132696762,
+  "mtimeNs": 1773072510928768476,
+  "digest": "blake3:4c50ebc6e2a5cb19e8d19626d5ede1fb64755562085ce7383d86c72d1d03eb7e",
+  "verification": {
+   "digest": "blake3:4c50ebc6e2a5cb19e8d19626d5ede1fb64755562085ce7383d86c72d1d03eb7e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54002526,
+   "size": 2132696762,
+   "mtimeNs": 1773072510928768476,
+   "ctimeNs": 1785114166702865659
+  }
+ }
+}

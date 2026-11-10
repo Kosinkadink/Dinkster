@@ -1,0 +1,16 @@
+{
+ "control_v11p_sd15_canny.safetensors": {
+  "size": 1445157124,
+  "mtimeNs": 1787315612806006565,
+  "digest": "blake3:f00df7ce3d9850211484bbd11c167e87f9368fdbaa2e8b76c1452cb3fdcbce46",
+  "verification": {
+   "digest": "blake3:f00df7ce3d9850211484bbd11c167e87f9368fdbaa2e8b76c1452cb3fdcbce46",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54060574,
+   "size": 1445157124,
+   "mtimeNs": 1787315612806006565,
+   "ctimeNs": 1787315612808006622
+  }
+ }
+}

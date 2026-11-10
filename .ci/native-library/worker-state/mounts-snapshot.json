@@ -1,0 +1,165 @@
+{
+ "mounts": [
+  {
+   "id": "comfy-input",
+   "root": "/home/kosin/ComfyUI/input",
+   "index": ".ci/native-library/asset-indexes/comfy-input.json",
+   "mode": "read",
+   "kind": "",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-audio-encoders-1",
+   "root": "/home/kosin/ComfyUI/models/audio_encoders",
+   "index": ".ci/native-library/asset-indexes/comfy-model-audio-encoders-1.json",
+   "mode": "read",
+   "kind": "model/audio-encoder",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-checkpoints-1",
+   "root": "/home/kosin/ComfyUI/models/checkpoints",
+   "index": ".ci/native-library/asset-indexes/comfy-model-checkpoints-1.json",
+   "mode": "read",
+   "kind": "model/checkpoint",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-clip-vision-1",
+   "root": "/home/kosin/ComfyUI/models/clip_vision",
+   "index": ".ci/native-library/asset-indexes/comfy-model-clip-vision-1.json",
+   "mode": "read",
+   "kind": "model/clip-vision",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-controlnet-1",
+   "root": "/home/kosin/ComfyUI/models/controlnet",
+   "index": ".ci/native-library/asset-indexes/comfy-model-controlnet-1.json",
+   "mode": "read",
+   "kind": "model/controlnet",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-diffusion-models-1",
+   "root": "/home/kosin/ComfyUI/models/unet",
+   "index": ".ci/native-library/asset-indexes/comfy-model-diffusion-models-1.json",
+   "mode": "read",
+   "kind": "model/diffusion",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-diffusion-models-2",
+   "root": "/home/kosin/ComfyUI/models/diffusion_models",
+   "index": ".ci/native-library/asset-indexes/comfy-model-diffusion-models-2.json",
+   "mode": "read",
+   "kind": "model/diffusion",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-embeddings-1",
+   "root": "/home/kosin/ComfyUI/models/embeddings",
+   "index": ".ci/native-library/asset-indexes/comfy-model-embeddings-1.json",
+   "mode": "read",
+   "kind": "model/embedding",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-gligen-1",
+   "root": "/home/kosin/ComfyUI/models/gligen",
+   "index": ".ci/native-library/asset-indexes/comfy-model-gligen-1.json",
+   "mode": "read",
+   "kind": "model/gligen",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-hypernetworks-1",
+   "root": "/home/kosin/ComfyUI/models/hypernetworks",
+   "index": ".ci/native-library/asset-indexes/comfy-model-hypernetworks-1.json",
+   "mode": "read",
+   "kind": "model/hypernetwork",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-latent-upscale-models-1",
+   "root": "/home/kosin/ComfyUI/models/latent_upscale_models",
+   "index": ".ci/native-library/asset-indexes/comfy-model-latent-upscale-models-1.json",
+   "mode": "read",
+   "kind": "model/latent-upscaler",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-loras-1",
+   "root": "/home/kosin/ComfyUI/models/loras",
+   "index": ".ci/native-library/asset-indexes/comfy-model-loras-1.json",
+   "mode": "read",
+   "kind": "model/lora",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-model-patches-1",
+   "root": "/home/kosin/ComfyUI/models/model_patches",
+   "index": ".ci/native-library/asset-indexes/comfy-model-model-patches-1.json",
+   "mode": "read",
+   "kind": "model/patch",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-photomaker-1",
+   "root": "/home/kosin/ComfyUI/models/photomaker",
+   "index": ".ci/native-library/asset-indexes/comfy-model-photomaker-1.json",
+   "mode": "read",
+   "kind": "model/photomaker",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-style-models-1",
+   "root": "/home/kosin/ComfyUI/models/style_models",
+   "index": ".ci/native-library/asset-indexes/comfy-model-style-models-1.json",
+   "mode": "read",
+   "kind": "model/style",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-text-encoders-1",
+   "root": "/home/kosin/ComfyUI/models/text_encoders",
+   "index": ".ci/native-library/asset-indexes/comfy-model-text-encoders-1.json",
+   "mode": "read",
+   "kind": "model/text-encoder",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-text-encoders-2",
+   "root": "/home/kosin/ComfyUI/models/clip",
+   "index": ".ci/native-library/asset-indexes/comfy-model-text-encoders-2.json",
+   "mode": "read",
+   "kind": "model/text-encoder",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-upscale-models-1",
+   "root": "/home/kosin/ComfyUI/models/upscale_models",
+   "index": ".ci/native-library/asset-indexes/comfy-model-upscale-models-1.json",
+   "mode": "read",
+   "kind": "model/upscaler",
+   "priority": 0
+  },
+  {
+   "id": "comfy-model-vae-1",
+   "root": "/home/kosin/ComfyUI/models/vae",
+   "index": ".ci/native-library/asset-indexes/comfy-model-vae-1.json",
+   "mode": "read",
+   "kind": "model/vae",
+   "priority": 0
+  },
+  {
+   "id": "comfy-output",
+   "root": "/home/kosin/ComfyUI/output",
+   "index": ".ci/native-library/asset-indexes/comfy-output.json",
+   "mode": "readwrite",
+   "kind": "",
+   "priority": 0
+  }
+ ],
+ "outputMount": "comfy-output"
+}

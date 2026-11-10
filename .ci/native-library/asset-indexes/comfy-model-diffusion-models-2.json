@@ -1,0 +1,338 @@
+{
+ "flux1-dev-fp8-new.safetensors": {
+  "size": 12327385920,
+  "mtimeNs": 1767608664443611752,
+  "digest": "blake3:d17e6fc16e853a81c17a4598957ea6c43cbeee1c7cc1875dcfb94ef3ff3c614b",
+  "verification": {
+   "digest": "blake3:d17e6fc16e853a81c17a4598957ea6c43cbeee1c7cc1875dcfb94ef3ff3c614b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037622,
+   "size": 12327385920,
+   "mtimeNs": 1767608664443611752,
+   "ctimeNs": 1767608664443611752
+  }
+ },
+ "flux1-dev-fp8.safetensors": {
+  "size": 17246524772,
+  "mtimeNs": 1767608672721833694,
+  "digest": "blake3:2d76cbdb4f17317041248f32a2377d85f2770f35b36a7653944f2c4f614e5743",
+  "verification": {
+   "digest": "blake3:2d76cbdb4f17317041248f32a2377d85f2770f35b36a7653944f2c4f614e5743",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037660,
+   "size": 17246524772,
+   "mtimeNs": 1767608672721833694,
+   "ctimeNs": 1767608672721833694
+  }
+ },
+ "flux1-dev-kontext_fp8_scaled.safetensors": {
+  "size": 11904640136,
+  "mtimeNs": 1767608684711155152,
+  "digest": "blake3:9ae525183205817f3e0bd4e907b78f8c71534985853b0dd0a01163923c8befa2",
+  "verification": {
+   "digest": "blake3:9ae525183205817f3e0bd4e907b78f8c71534985853b0dd0a01163923c8befa2",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037987,
+   "size": 11904640136,
+   "mtimeNs": 1767608684711155152,
+   "ctimeNs": 1767608684711155152
+  }
+ },
+ "flux1-dev-nvfp4.safetensors": {
+  "size": 9189538488,
+  "mtimeNs": 1767608688365253130,
+  "digest": "blake3:dfaea8f5f65f5daa121d4b518a63b1e00d47517789bc6d6a28e09eedf313bd57",
+  "verification": {
+   "digest": "blake3:dfaea8f5f65f5daa121d4b518a63b1e00d47517789bc6d6a28e09eedf313bd57",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037989,
+   "size": 9189538488,
+   "mtimeNs": 1767608688365253130,
+   "ctimeNs": 1767608688365253130
+  }
+ },
+ "flux1-kontext-dev-nvfp4.safetensors": {
+  "size": 9189553304,
+  "mtimeNs": 1767608700352574562,
+  "digest": "blake3:e0690abc6bdbb625f867ed7305cf4ed21e133eb4c1fb49362d50f053f3a0ce68",
+  "verification": {
+   "digest": "blake3:e0690abc6bdbb625f867ed7305cf4ed21e133eb4c1fb49362d50f053f3a0ce68",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037991,
+   "size": 9189553304,
+   "mtimeNs": 1767608700352574562,
+   "ctimeNs": 1767608700352574562
+  }
+ },
+ "flux2-dev-nvfp4-mixed.safetensors": {
+  "size": 22772036568,
+  "mtimeNs": 1767608727331298053,
+  "digest": "blake3:2cfae0780beb76f116ec3e06429e4ed363ddb0a762332a0d0b803b523077b145",
+  "verification": {
+   "digest": "blake3:2cfae0780beb76f116ec3e06429e4ed363ddb0a762332a0d0b803b523077b145",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037992,
+   "size": 22772036568,
+   "mtimeNs": 1767608727331298053,
+   "ctimeNs": 1767608727331298053
+  }
+ },
+ "flux2-dev-nvfp4.safetensors": {
+  "size": 21035602376,
+  "mtimeNs": 1767608735944529056,
+  "digest": "blake3:075e7c32be316e6328a713ed498250b235cd068678ab9b43aad86b005fadf520",
+  "verification": {
+   "digest": "blake3:075e7c32be316e6328a713ed498250b235cd068678ab9b43aad86b005fadf520",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037993,
+   "size": 21035602376,
+   "mtimeNs": 1767608735944529056,
+   "ctimeNs": 1767608735944529056
+  }
+ },
+ "flux2-dev.safetensors": {
+  "size": 64446596128,
+  "mtimeNs": 1767859604272277480,
+  "digest": "blake3:f90dd627db80067ac5bb5bebce5072fde5449064ffa08122ead1b495b1953f1f",
+  "verification": {
+   "digest": "blake3:f90dd627db80067ac5bb5bebce5072fde5449064ffa08122ead1b495b1953f1f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039776,
+   "size": 64446596128,
+   "mtimeNs": 1767859604272277480,
+   "ctimeNs": 1767859604272277480
+  }
+ },
+ "flux2_dev_fp8mixed.safetensors": {
+  "size": 35455599592,
+  "mtimeNs": 1767608762072229850,
+  "digest": "blake3:69fd5346768a9109a74c9ba62d14e94ec6ed2e9750713c38573c2a3488490393",
+  "verification": {
+   "digest": "blake3:69fd5346768a9109a74c9ba62d14e94ec6ed2e9750713c38573c2a3488490393",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037615,
+   "size": 35455599592,
+   "mtimeNs": 1767608762072229850,
+   "ctimeNs": 1767608762072229850
+  }
+ },
+ "minimax_h3_fl2va_bf16.safetensors": {
+  "size": 66280487368,
+  "mtimeNs": 1786890513797807126,
+  "digest": "blake3:6759179d068c9f652db4c6da95bdeaf33d8cff53ef3d594c68e1fe96cec4576d",
+  "verification": {
+   "digest": "blake3:6759179d068c9f652db4c6da95bdeaf33d8cff53ef3d594c68e1fe96cec4576d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54055662,
+   "size": 66280487368,
+   "mtimeNs": 1786890513797807126,
+   "ctimeNs": 1786890572205531569
+  }
+ },
+ "minimax_h3_fl2va_int8_convrot.safetensors": {
+  "size": 34038892334,
+  "mtimeNs": 1786930138095963383,
+  "digest": "blake3:62765781ea110681a51be859a0b93e4b2fdf26478d67c29ef0ad5883edb9b9a7",
+  "verification": {
+   "digest": "blake3:62765781ea110681a51be859a0b93e4b2fdf26478d67c29ef0ad5883edb9b9a7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54057508,
+   "size": 34038892334,
+   "mtimeNs": 1786930138095963383,
+   "ctimeNs": 1786930138102963577
+  }
+ },
+ "minimax_h3_ref2va_bf16.safetensors": {
+  "size": 66280487368,
+  "mtimeNs": 1786896340757558178,
+  "digest": "blake3:f7d3fd85ee7c0ef11f4291a2b9723e9dbf5b30d353e5272d868b26e3899f1269",
+  "verification": {
+   "digest": "blake3:f7d3fd85ee7c0ef11f4291a2b9723e9dbf5b30d353e5272d868b26e3899f1269",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039275,
+   "size": 66280487368,
+   "mtimeNs": 1786896340757558178,
+   "ctimeNs": 1786896340757558178
+  }
+ },
+ "minimax_h3_ref2va_int8_convrot.safetensors": {
+  "size": 34038894550,
+  "mtimeNs": 1786930644512217431,
+  "digest": "blake3:5a541e9011baf13d35c3f52875230bd6199505f721c80ce052da7e54263a59e8",
+  "verification": {
+   "digest": "blake3:5a541e9011baf13d35c3f52875230bd6199505f721c80ce052da7e54263a59e8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54057514,
+   "size": 34038894550,
+   "mtimeNs": 1786930644512217431,
+   "ctimeNs": 1786930644517217574
+  }
+ },
+ "qwen_image_2512_bf16.safetensors": {
+  "size": 40861031488,
+  "mtimeNs": 1767610706399765021,
+  "digest": "blake3:6e219194c56edc0dd08e2a39ffbf49331589759b484ffaab732af60f136d8520",
+  "verification": {
+   "digest": "blake3:6e219194c56edc0dd08e2a39ffbf49331589759b484ffaab732af60f136d8520",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038289,
+   "size": 40861031488,
+   "mtimeNs": 1767610706399765021,
+   "ctimeNs": 1767610706399765021
+  }
+ },
+ "qwen_image_2512_fp8_e4m3fn.safetensors": {
+  "size": 20430679792,
+  "mtimeNs": 1767610688506783973,
+  "digest": "blake3:54e241fbdde5b847885409dbf4f91ec8d0b088fdebae7ad005f4677925e3c702",
+  "verification": {
+   "digest": "blake3:54e241fbdde5b847885409dbf4f91ec8d0b088fdebae7ad005f4677925e3c702",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038536,
+   "size": 20430679792,
+   "mtimeNs": 1767610688506783973,
+   "ctimeNs": 1767610688506783973
+  }
+ },
+ "qwen_image_bf16.safetensors": {
+  "size": 40861031488,
+  "mtimeNs": 1759483291718549780,
+  "digest": "blake3:d834b2740ee10a114d4472a541a8e0427a733a028194fb907d3df5454a4d5ac7",
+  "verification": {
+   "digest": "blake3:d834b2740ee10a114d4472a541a8e0427a733a028194fb907d3df5454a4d5ac7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54002913,
+   "size": 40861031488,
+   "mtimeNs": 1759483291718549780,
+   "ctimeNs": 1759483291718549780
+  }
+ },
+ "qwen_image_fp8_e4m3fn.safetensors": {
+  "size": 20430635136,
+  "mtimeNs": 1759483273916149174,
+  "digest": "blake3:e792e6d19bed5838e71ee3947c0f10af0d188e487fd79d93c3b312e0433ab308",
+  "verification": {
+   "digest": "blake3:e792e6d19bed5838e71ee3947c0f10af0d188e487fd79d93c3b312e0433ab308",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54034785,
+   "size": 20430635136,
+   "mtimeNs": 1759483273916149174,
+   "ctimeNs": 1759483273916149174
+  }
+ },
+ "wan2.1_t2v_1.3B_fp16.safetensors": {
+  "size": 2838303560,
+  "mtimeNs": 1787610196352343279,
+  "digest": "blake3:0f84c6d87440cd058b6acd525774c63367c10ebcec911c817d68390accc11a5c",
+  "verification": {
+   "digest": "blake3:0f84c6d87440cd058b6acd525774c63367c10ebcec911c817d68390accc11a5c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54060580,
+   "size": 2838303560,
+   "mtimeNs": 1787610196352343279,
+   "ctimeNs": 1787610322997068568
+  }
+ },
+ "wan2.2_t2v_high_noise_14B_fp16.safetensors": {
+  "size": 28577095592,
+  "mtimeNs": 1767859199957933720,
+  "digest": "blake3:e503f3cbe94736a1073134e219c38e210d97ae620204e583784958314183eccf",
+  "verification": {
+   "digest": "blake3:e503f3cbe94736a1073134e219c38e210d97ae620204e583784958314183eccf",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039769,
+   "size": 28577095592,
+   "mtimeNs": 1767859199957933720,
+   "ctimeNs": 1767859199957933720
+  }
+ },
+ "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors": {
+  "size": 14293923632,
+  "mtimeNs": 1767859175162609402,
+  "digest": "blake3:bd71ac0b527fccb3a334d2ec7b64578e33e192d8362e382181032c3e197f407f",
+  "verification": {
+   "digest": "blake3:bd71ac0b527fccb3a334d2ec7b64578e33e192d8362e382181032c3e197f407f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039770,
+   "size": 14293923632,
+   "mtimeNs": 1767859175162609402,
+   "ctimeNs": 1767859175162609402
+  }
+ },
+ "wan2.2_t2v_low_noise_14B_fp16.safetensors": {
+  "size": 28577095592,
+  "mtimeNs": 1767859223820288439,
+  "digest": "blake3:0391a90ce67042e9a1969d9adbd3970dc6666230733fc40b69208725db6506c7",
+  "verification": {
+   "digest": "blake3:0391a90ce67042e9a1969d9adbd3970dc6666230733fc40b69208725db6506c7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039771,
+   "size": 28577095592,
+   "mtimeNs": 1767859223820288439,
+   "ctimeNs": 1767859223820288439
+  }
+ },
+ "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors": {
+  "size": 14293923632,
+  "mtimeNs": 1767859224279295661,
+  "digest": "blake3:c91b6776bd509549c533cd3a99b47ebf5f8728f5616a3da26b605c3317793f9c",
+  "verification": {
+   "digest": "blake3:c91b6776bd509549c533cd3a99b47ebf5f8728f5616a3da26b605c3317793f9c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039766,
+   "size": 14293923632,
+   "mtimeNs": 1767859224279295661,
+   "ctimeNs": 1767859224279295661
+  }
+ },
+ "z_image_turbo_bf16.safetensors": {
+  "size": 12309866400,
+  "mtimeNs": 1767609301790317690,
+  "digest": "blake3:7d3a32a8606c3c562227e8dfca24e9b142ce68c5825fbfbaf27067d6ff59af78",
+  "verification": {
+   "digest": "blake3:7d3a32a8606c3c562227e8dfca24e9b142ce68c5825fbfbaf27067d6ff59af78",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038315,
+   "size": 12309866400,
+   "mtimeNs": 1767609301790317690,
+   "ctimeNs": 1767609301790317690
+  }
+ },
+ "z_image_turbo_nvfp4.safetensors": {
+  "size": 4509509600,
+  "mtimeNs": 1767609295101851359,
+  "digest": "blake3:dd1e9b22ed16944aa2eb269b442308915edf9795462f770823aef5abd608cc31",
+  "verification": {
+   "digest": "blake3:dd1e9b22ed16944aa2eb269b442308915edf9795462f770823aef5abd608cc31",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038530,
+   "size": 4509509600,
+   "mtimeNs": 1767609295101851359,
+   "ctimeNs": 1767609295101851359
+  }
+ }
+}

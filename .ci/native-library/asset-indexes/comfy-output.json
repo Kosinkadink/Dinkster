@@ -1,0 +1,3082 @@
+{
+ "ComfyUI_00001_.png": {
+  "size": 2673513,
+  "mtimeNs": 1759483566233119366,
+  "digest": "blake3:137a49968cdff5677cc94623061c6cd3fe2b9288fdf4e51297de406f3a3cd786",
+  "verification": {
+   "digest": "blake3:137a49968cdff5677cc94623061c6cd3fe2b9288fdf4e51297de406f3a3cd786",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003018,
+   "size": 2673513,
+   "mtimeNs": 1759483566233119366,
+   "ctimeNs": 1759483566233119366
+  }
+ },
+ "ComfyUI_00002_.png": {
+  "size": 2673513,
+  "mtimeNs": 1759483690941606663,
+  "digest": "blake3:86fe0cfc3f9962e74506234859227f9ff29defe3aaa09a94cf14c2315dbf8669",
+  "verification": {
+   "digest": "blake3:86fe0cfc3f9962e74506234859227f9ff29defe3aaa09a94cf14c2315dbf8669",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54034798,
+   "size": 2673513,
+   "mtimeNs": 1759483690941606663,
+   "ctimeNs": 1759483690941606663
+  }
+ },
+ "ComfyUI_00003_.png": {
+  "size": 2673515,
+  "mtimeNs": 1759484055573223583,
+  "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+  "verification": {
+   "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003017,
+   "size": 2673515,
+   "mtimeNs": 1759484055573223583,
+   "ctimeNs": 1759484055573223583
+  }
+ },
+ "ComfyUI_00004_.png": {
+  "size": 2673515,
+  "mtimeNs": 1759484197533245256,
+  "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+  "verification": {
+   "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54035254,
+   "size": 2673515,
+   "mtimeNs": 1759484197533245256,
+   "ctimeNs": 1759484197533245256
+  }
+ },
+ "ComfyUI_00005_.png": {
+  "size": 2673515,
+  "mtimeNs": 1759484337258171711,
+  "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+  "verification": {
+   "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003921,
+   "size": 2673515,
+   "mtimeNs": 1759484337258171711,
+   "ctimeNs": 1759484337258171711
+  }
+ },
+ "ComfyUI_00006_.png": {
+  "size": 2673515,
+  "mtimeNs": 1759484466840436782,
+  "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+  "verification": {
+   "digest": "blake3:68bf7001684447e32d0b7230f5f51cc3a03768765ab3fd0d301cd941faa2f227",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54002763,
+   "size": 2673515,
+   "mtimeNs": 1759484466840436782,
+   "ctimeNs": 1759484466840436782
+  }
+ },
+ "ComfyUI_00007_.png": {
+  "size": 2636496,
+  "mtimeNs": 1767442728289927894,
+  "digest": "blake3:b8686d54c6b296cdfb29b5ac01ac5f4022438d0570ef6b9f59dbcd3eceeb0d64",
+  "verification": {
+   "digest": "blake3:b8686d54c6b296cdfb29b5ac01ac5f4022438d0570ef6b9f59dbcd3eceeb0d64",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54033994,
+   "size": 2636496,
+   "mtimeNs": 1767442728289927894,
+   "ctimeNs": 1767442728289927894
+  }
+ },
+ "ComfyUI_00008_.png": {
+  "size": 1131329,
+  "mtimeNs": 1767831965907670874,
+  "digest": "blake3:df2dd244e1096e4d8bd2b7b13d5376bccb975e72a4edac39df27c96d4d5534af",
+  "verification": {
+   "digest": "blake3:df2dd244e1096e4d8bd2b7b13d5376bccb975e72a4edac39df27c96d4d5534af",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039272,
+   "size": 1131329,
+   "mtimeNs": 1767831965907670874,
+   "ctimeNs": 1767831965907670874
+  }
+ },
+ "ComfyUI_00009_.png": {
+  "size": 1066236,
+  "mtimeNs": 1767832017245084760,
+  "digest": "blake3:affefd358d96fe9bd50cec9dfdd429a505035e96234b537854a226cb9ec4a672",
+  "verification": {
+   "digest": "blake3:affefd358d96fe9bd50cec9dfdd429a505035e96234b537854a226cb9ec4a672",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039274,
+   "size": 1066236,
+   "mtimeNs": 1767832017245084760,
+   "ctimeNs": 1767832017245084760
+  }
+ },
+ "ComfyUI_00010_.png": {
+  "size": 1171135,
+  "mtimeNs": 1767833107964816989,
+  "digest": "blake3:16bda22e06b5f5d3dd2ea6c8ccfa46aa747bcf395ed9e149d044e925ac5806db",
+  "verification": {
+   "digest": "blake3:16bda22e06b5f5d3dd2ea6c8ccfa46aa747bcf395ed9e149d044e925ac5806db",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038887,
+   "size": 1171135,
+   "mtimeNs": 1767833107964816989,
+   "ctimeNs": 1767833107964816989
+  }
+ },
+ "ComfyUI_00011_.png": {
+  "size": 1170951,
+  "mtimeNs": 1767833152988417333,
+  "digest": "blake3:e8e4883d5642567183323839ffa28ca8177d29ba8443446a646a6743ce2b1318",
+  "verification": {
+   "digest": "blake3:e8e4883d5642567183323839ffa28ca8177d29ba8443446a646a6743ce2b1318",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54005298,
+   "size": 1170951,
+   "mtimeNs": 1767833152988417333,
+   "ctimeNs": 1767833152988417333
+  }
+ },
+ "ComfyUI_00012_.png": {
+  "size": 1066472,
+  "mtimeNs": 1767833176765607417,
+  "digest": "blake3:0c474f0969a8b0e1139ec9db99f34be12f612238bbea621cb7c2e16ee22582b2",
+  "verification": {
+   "digest": "blake3:0c474f0969a8b0e1139ec9db99f34be12f612238bbea621cb7c2e16ee22582b2",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039394,
+   "size": 1066472,
+   "mtimeNs": 1767833176765607417,
+   "ctimeNs": 1767833176765607417
+  }
+ },
+ "ComfyUI_00013_.png": {
+  "size": 1071116,
+  "mtimeNs": 1767833188013467968,
+  "digest": "blake3:22d6065cdb2fd00643532aa78eb1251f81406874e8af5b68fb89a1d1d6719c63",
+  "verification": {
+   "digest": "blake3:22d6065cdb2fd00643532aa78eb1251f81406874e8af5b68fb89a1d1d6719c63",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039397,
+   "size": 1071116,
+   "mtimeNs": 1767833188013467968,
+   "ctimeNs": 1767833188013467968
+  }
+ },
+ "ComfyUI_00014_.png": {
+  "size": 1570158,
+  "mtimeNs": 1767833230751438032,
+  "digest": "blake3:1e3af08e2655de38d5dfc4be06b411822255dbaa2cf4d9b654d4c0c02b6f0b80",
+  "verification": {
+   "digest": "blake3:1e3af08e2655de38d5dfc4be06b411822255dbaa2cf4d9b654d4c0c02b6f0b80",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039398,
+   "size": 1570158,
+   "mtimeNs": 1767833230751438032,
+   "ctimeNs": 1767833230751438032
+  }
+ },
+ "ComfyUI_00015_.png": {
+  "size": 1646267,
+  "mtimeNs": 1767833264141795431,
+  "digest": "blake3:2d0f9378bc826e08d6e9abe0d2c999573c8681ff97a468c216dec150cb0f06b6",
+  "verification": {
+   "digest": "blake3:2d0f9378bc826e08d6e9abe0d2c999573c8681ff97a468c216dec150cb0f06b6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54029878,
+   "size": 1646267,
+   "mtimeNs": 1767833264141795431,
+   "ctimeNs": 1767833264141795431
+  }
+ },
+ "ComfyUI_00016_.png": {
+  "size": 1793054,
+  "mtimeNs": 1767833324469310347,
+  "digest": "blake3:3e95dcc7a321263ced1644edcdbab178430bce2887b4b90c3e6dbc3999dda476",
+  "verification": {
+   "digest": "blake3:3e95dcc7a321263ced1644edcdbab178430bce2887b4b90c3e6dbc3999dda476",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039401,
+   "size": 1793054,
+   "mtimeNs": 1767833324469310347,
+   "ctimeNs": 1767833324469310347
+  }
+ },
+ "ComfyUI_00017_.png": {
+  "size": 1646469,
+  "mtimeNs": 1767833336671866066,
+  "digest": "blake3:aa7e5146ae19275e4016dd1dc7860bbef5868274090984fa63486d1607fee761",
+  "verification": {
+   "digest": "blake3:aa7e5146ae19275e4016dd1dc7860bbef5868274090984fa63486d1607fee761",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039402,
+   "size": 1646469,
+   "mtimeNs": 1767833336671866066,
+   "ctimeNs": 1767833336671866066
+  }
+ },
+ "ComfyUI_00018_.png": {
+  "size": 1616282,
+  "mtimeNs": 1767833371719722384,
+  "digest": "blake3:b38c6041f7fff6fb3ccd9fb8eb22017925c1ebdb5158f7a5eccb2abd7aa1fb35",
+  "verification": {
+   "digest": "blake3:b38c6041f7fff6fb3ccd9fb8eb22017925c1ebdb5158f7a5eccb2abd7aa1fb35",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039346,
+   "size": 1616282,
+   "mtimeNs": 1767833371719722384,
+   "ctimeNs": 1767833371719722384
+  }
+ },
+ "ComfyUI_00019_.png": {
+  "size": 169220,
+  "mtimeNs": 1771325838556601088,
+  "digest": "blake3:04d6cae466ffd425b46c1d41b4756fa9e5bc3c2a4428cb91e423d62ff3f65575",
+  "verification": {
+   "digest": "blake3:04d6cae466ffd425b46c1d41b4756fa9e5bc3c2a4428cb91e423d62ff3f65575",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042321,
+   "size": 169220,
+   "mtimeNs": 1771325838556601088,
+   "ctimeNs": 1771325838556601088
+  }
+ },
+ "ComfyUI_00020_.png": {
+  "size": 376964,
+  "mtimeNs": 1776222456397554373,
+  "digest": "blake3:89c02dec1bc4ab9ece1b1b01362288b27cc4d13608bef225802de86bf0e0e731",
+  "verification": {
+   "digest": "blake3:89c02dec1bc4ab9ece1b1b01362288b27cc4d13608bef225802de86bf0e0e731",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54043016,
+   "size": 376964,
+   "mtimeNs": 1776222456397554373,
+   "ctimeNs": 1776222456397554373
+  }
+ },
+ "Flux2_dev_00001_.png": {
+  "size": 1730894,
+  "mtimeNs": 1767859820062396460,
+  "digest": "blake3:8297a7defab3313c0ddd5ea7588805fb3c303e6708c7b83e73a007aa3dffcef8",
+  "verification": {
+   "digest": "blake3:8297a7defab3313c0ddd5ea7588805fb3c303e6708c7b83e73a007aa3dffcef8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039772,
+   "size": 1730894,
+   "mtimeNs": 1767859820062396460,
+   "ctimeNs": 1767859820062396460
+  }
+ },
+ "Flux2_dev_00002_.png": {
+  "size": 2030301,
+  "mtimeNs": 1767859959182202632,
+  "digest": "blake3:816ace418ce808d5324ce6ca48432d562a9a9a0ceb4ca0d80c62ea95debda91f",
+  "verification": {
+   "digest": "blake3:816ace418ce808d5324ce6ca48432d562a9a9a0ceb4ca0d80c62ea95debda91f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039778,
+   "size": 2030301,
+   "mtimeNs": 1767859959182202632,
+   "ctimeNs": 1767859959182202632
+  }
+ },
+ "Flux2_dev_00003_.png": {
+  "size": 2030301,
+  "mtimeNs": 1767860169096550375,
+  "digest": "blake3:d23f837af644c493e8190a473d31895cc3176ab53925aca8c34c35c178b8b5cc",
+  "verification": {
+   "digest": "blake3:d23f837af644c493e8190a473d31895cc3176ab53925aca8c34c35c178b8b5cc",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039777,
+   "size": 2030301,
+   "mtimeNs": 1767860169096550375,
+   "ctimeNs": 1767860169096550375
+  }
+ },
+ "Flux2_dev_00004_.png": {
+  "size": 2033827,
+  "mtimeNs": 1767860290376187784,
+  "digest": "blake3:481e5b0f412a5dfe05c74f5a672a371dda7fe50f040d6f2ae6db10993d14ed00",
+  "verification": {
+   "digest": "blake3:481e5b0f412a5dfe05c74f5a672a371dda7fe50f040d6f2ae6db10993d14ed00",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039780,
+   "size": 2033827,
+   "mtimeNs": 1767860290376187784,
+   "ctimeNs": 1767860290376187784
+  }
+ },
+ "Flux2_dev_00005_.png": {
+  "size": 2033794,
+  "mtimeNs": 1767862099769178975,
+  "digest": "blake3:a3ff3037692c7f092c30a50cb78fba443abfa0c41c25c3c40eac900bebfdc5d9",
+  "verification": {
+   "digest": "blake3:a3ff3037692c7f092c30a50cb78fba443abfa0c41c25c3c40eac900bebfdc5d9",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039723,
+   "size": 2033794,
+   "mtimeNs": 1767862099769178975,
+   "ctimeNs": 1767862099769178975
+  }
+ },
+ "Flux2_dev_00006_.png": {
+  "size": 2029818,
+  "mtimeNs": 1767862312874902379,
+  "digest": "blake3:e9ee9b63272f253c72f3ac79e67956450d05e5fc39ebcb221a2238d4c77e4047",
+  "verification": {
+   "digest": "blake3:e9ee9b63272f253c72f3ac79e67956450d05e5fc39ebcb221a2238d4c77e4047",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039724,
+   "size": 2029818,
+   "mtimeNs": 1767862312874902379,
+   "ctimeNs": 1767862312874902379
+  }
+ },
+ "Flux2_dev_00007_.png": {
+  "size": 2029818,
+  "mtimeNs": 1767862659439250193,
+  "digest": "blake3:9e8608fbd3b9d63cb94d78154fb16090ead838515ec0be30820d78eb295caa2b",
+  "verification": {
+   "digest": "blake3:9e8608fbd3b9d63cb94d78154fb16090ead838515ec0be30820d78eb295caa2b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039725,
+   "size": 2029818,
+   "mtimeNs": 1767862659439250193,
+   "ctimeNs": 1767862659439250193
+  }
+ },
+ "Flux2_dev_00008_.png": {
+  "size": 2033794,
+  "mtimeNs": 1767862930840108494,
+  "digest": "blake3:082e9622bbf56a862c1a0283b2b173a5f2fb799f773e03b4b64f5130638c232d",
+  "verification": {
+   "digest": "blake3:082e9622bbf56a862c1a0283b2b173a5f2fb799f773e03b4b64f5130638c232d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039726,
+   "size": 2033794,
+   "mtimeNs": 1767862930840108494,
+   "ctimeNs": 1767862930840108494
+  }
+ },
+ "Flux2_dev_00009_.png": {
+  "size": 1967712,
+  "mtimeNs": 1767865404426007941,
+  "digest": "blake3:9cc9d1e5ac2a4f231fe2c78aa9c735099ca8ea1097083c8513b6d4b1af879f5a",
+  "verification": {
+   "digest": "blake3:9cc9d1e5ac2a4f231fe2c78aa9c735099ca8ea1097083c8513b6d4b1af879f5a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039824,
+   "size": 1967712,
+   "mtimeNs": 1767865404426007941,
+   "ctimeNs": 1767865404426007941
+  }
+ },
+ "Flux2_dev_00010_.png": {
+  "size": 1966363,
+  "mtimeNs": 1767865644477033568,
+  "digest": "blake3:5a5bee9a8203398346ba3c9ae32b5508892377d5e95248873ab13acc6bba11e6",
+  "verification": {
+   "digest": "blake3:5a5bee9a8203398346ba3c9ae32b5508892377d5e95248873ab13acc6bba11e6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039831,
+   "size": 1966363,
+   "mtimeNs": 1767865644477033568,
+   "ctimeNs": 1767865644477033568
+  }
+ },
+ "Flux2_dev_00011_.png": {
+  "size": 1966363,
+  "mtimeNs": 1767865906235354979,
+  "digest": "blake3:bdd12bad66f612e4dad5d03ed3e47d2c96e37cec405e5420b3f744af565d4a0a",
+  "verification": {
+   "digest": "blake3:bdd12bad66f612e4dad5d03ed3e47d2c96e37cec405e5420b3f744af565d4a0a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039830,
+   "size": 1966363,
+   "mtimeNs": 1767865906235354979,
+   "ctimeNs": 1767865906235354979
+  }
+ },
+ "Flux2_dev_00012_.png": {
+  "size": 1966750,
+  "mtimeNs": 1767866047882370947,
+  "digest": "blake3:d6197701f4d5040a977ffe23c2889d805ca42fac73b435f0d0ce9ffe11d061c8",
+  "verification": {
+   "digest": "blake3:d6197701f4d5040a977ffe23c2889d805ca42fac73b435f0d0ce9ffe11d061c8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039833,
+   "size": 1966750,
+   "mtimeNs": 1767866047882370947,
+   "ctimeNs": 1767866047882370947
+  }
+ },
+ "NetaYume_Lumina_3.5_00001_.png": {
+  "size": 1389216,
+  "mtimeNs": 1767442936609719906,
+  "digest": "blake3:e0903a7eafe2a8970f0e402c49648992d9888ccbeca0450323664535a80b2382",
+  "verification": {
+   "digest": "blake3:e0903a7eafe2a8970f0e402c49648992d9888ccbeca0450323664535a80b2382",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54034068,
+   "size": 1389216,
+   "mtimeNs": 1767442936609719906,
+   "ctimeNs": 1767442936609719906
+  }
+ },
+ "NetaYume_Lumina_3.5_00002_.png": {
+  "size": 1388302,
+  "mtimeNs": 1771325867177895178,
+  "digest": "blake3:8451b72a7b37a556d2aa5306e96414c97c4fd78e7555378991e1fb21a204fdc7",
+  "verification": {
+   "digest": "blake3:8451b72a7b37a556d2aa5306e96414c97c4fd78e7555378991e1fb21a204fdc7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042324,
+   "size": 1388302,
+   "mtimeNs": 1771325867177895178,
+   "ctimeNs": 1771325867177895178
+  }
+ },
+ "NetaYume_Lumina_3.5_00003_.png": {
+  "size": 1351937,
+  "mtimeNs": 1771331816769882341,
+  "digest": "blake3:0f299c448c8142d4cf2028b062896e25a172b203c78bb7e7d825b663f062578a",
+  "verification": {
+   "digest": "blake3:0f299c448c8142d4cf2028b062896e25a172b203c78bb7e7d825b663f062578a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042123,
+   "size": 1351937,
+   "mtimeNs": 1771331816769882341,
+   "ctimeNs": 1771331816769882341
+  }
+ },
+ "NetaYume_Lumina_3.5_00004_.png": {
+  "size": 1389686,
+  "mtimeNs": 1771331851341157807,
+  "digest": "blake3:d0fa513492e29d33663f46838b8134459fe134e1470904075168ce0eb631879c",
+  "verification": {
+   "digest": "blake3:d0fa513492e29d33663f46838b8134459fe134e1470904075168ce0eb631879c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042126,
+   "size": 1389686,
+   "mtimeNs": 1771331851341157807,
+   "ctimeNs": 1771331851341157807
+  }
+ },
+ "NetaYume_Lumina_3.5_00005_.png": {
+  "size": 1390275,
+  "mtimeNs": 1771331878540456538,
+  "digest": "blake3:e6e984af65d114872f542c8155b173aa166be5fd1a38a8f3e3d35f5fbec9d132",
+  "verification": {
+   "digest": "blake3:e6e984af65d114872f542c8155b173aa166be5fd1a38a8f3e3d35f5fbec9d132",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042135,
+   "size": 1390275,
+   "mtimeNs": 1771331878540456538,
+   "ctimeNs": 1771331878540456538
+  }
+ },
+ "NetaYume_Lumina_3.5_00006_.png": {
+  "size": 1390199,
+  "mtimeNs": 1771332029789597999,
+  "digest": "blake3:49b18e5fef257ca6ac8ca59b6fd66e07a07f4bf326ccb9c523de90d730f54888",
+  "verification": {
+   "digest": "blake3:49b18e5fef257ca6ac8ca59b6fd66e07a07f4bf326ccb9c523de90d730f54888",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042143,
+   "size": 1390199,
+   "mtimeNs": 1771332029789597999,
+   "ctimeNs": 1771332029789597999
+  }
+ },
+ "NetaYume_Lumina_3.5_00007_.png": {
+  "size": 1357404,
+  "mtimeNs": 1771332068091894935,
+  "digest": "blake3:6191b468dcc6eb8d4f9a63acd3846a66782466a558382e04630c1e15de598a6d",
+  "verification": {
+   "digest": "blake3:6191b468dcc6eb8d4f9a63acd3846a66782466a558382e04630c1e15de598a6d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042149,
+   "size": 1357404,
+   "mtimeNs": 1771332068091894935,
+   "ctimeNs": 1771332068091894935
+  }
+ },
+ "NetaYume_Lumina_3.5_00008_.png": {
+  "size": 1357538,
+  "mtimeNs": 1771332085311095039,
+  "digest": "blake3:e53c0308870f10e47c19a9653237d20437e2c6508e1cc501f23e723ecbf2f0d0",
+  "verification": {
+   "digest": "blake3:e53c0308870f10e47c19a9653237d20437e2c6508e1cc501f23e723ecbf2f0d0",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042153,
+   "size": 1357538,
+   "mtimeNs": 1771332085311095039,
+   "ctimeNs": 1771332085311095039
+  }
+ },
+ "NetaYume_Lumina_3.5_00009_.png": {
+  "size": 1356994,
+  "mtimeNs": 1771332123030665762,
+  "digest": "blake3:535c4449bd5565840fd09e863abc4809926a4da8c333a6816748f0b540c68926",
+  "verification": {
+   "digest": "blake3:535c4449bd5565840fd09e863abc4809926a4da8c333a6816748f0b540c68926",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042155,
+   "size": 1356994,
+   "mtimeNs": 1771332123030665762,
+   "ctimeNs": 1771332123030665762
+  }
+ },
+ "NetaYume_Lumina_3.5_00010_.png": {
+  "size": 1278355,
+  "mtimeNs": 1771332123129096196,
+  "digest": "blake3:fb50f38ee1b204c167487ffbba4513bda44101cfc76c015ea5147b8fd4df69f6",
+  "verification": {
+   "digest": "blake3:fb50f38ee1b204c167487ffbba4513bda44101cfc76c015ea5147b8fd4df69f6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042167,
+   "size": 1278355,
+   "mtimeNs": 1771332123129096196,
+   "ctimeNs": 1771332123129096196
+  }
+ },
+ "NetaYume_Lumina_3.5_00011_.png": {
+  "size": 1356864,
+  "mtimeNs": 1771332174718658758,
+  "digest": "blake3:b6c70df093e0f7591fd6932f0c2945bd768873604c4f6bb35eae499e8a6bfbd5",
+  "verification": {
+   "digest": "blake3:b6c70df093e0f7591fd6932f0c2945bd768873604c4f6bb35eae499e8a6bfbd5",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042170,
+   "size": 1356864,
+   "mtimeNs": 1771332174718658758,
+   "ctimeNs": 1771332174718658758
+  }
+ },
+ "NetaYume_Lumina_3.5_00012_.png": {
+  "size": 1278225,
+  "mtimeNs": 1771332174818040998,
+  "digest": "blake3:4f3a4635d59d39e3d3a4be21c820fc7025aed98bbcf8654beb8270157c284e5e",
+  "verification": {
+   "digest": "blake3:4f3a4635d59d39e3d3a4be21c820fc7025aed98bbcf8654beb8270157c284e5e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042178,
+   "size": 1278225,
+   "mtimeNs": 1771332174818040998,
+   "ctimeNs": 1771332174818040998
+  }
+ },
+ "NetaYume_Lumina_3.5_00013_.png": {
+  "size": 1357541,
+  "mtimeNs": 1771332229594336821,
+  "digest": "blake3:aa05835dff12e52f5f4f18748fbb60abf4dc77c1123da6e7a0357c30b23d4c56",
+  "verification": {
+   "digest": "blake3:aa05835dff12e52f5f4f18748fbb60abf4dc77c1123da6e7a0357c30b23d4c56",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042197,
+   "size": 1357541,
+   "mtimeNs": 1771332229594336821,
+   "ctimeNs": 1771332229594336821
+  }
+ },
+ "NetaYume_Lumina_3.5_00014_.png": {
+  "size": 1357407,
+  "mtimeNs": 1771332257721603674,
+  "digest": "blake3:4fd8f0fd4d39279307ca4c1b2f5bf450719f99dc51a6c7ce5bb475c988a85910",
+  "verification": {
+   "digest": "blake3:4fd8f0fd4d39279307ca4c1b2f5bf450719f99dc51a6c7ce5bb475c988a85910",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042201,
+   "size": 1357407,
+   "mtimeNs": 1771332257721603674,
+   "ctimeNs": 1771332257721603674
+  }
+ },
+ "NetaYume_Lumina_3.5_00015_.png": {
+  "size": 1357180,
+  "mtimeNs": 1771332361560432242,
+  "digest": "blake3:0983e4ecffc8a0b4b6012d72725046167656b3bd1b39632f6019728d18cd8d9b",
+  "verification": {
+   "digest": "blake3:0983e4ecffc8a0b4b6012d72725046167656b3bd1b39632f6019728d18cd8d9b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042205,
+   "size": 1357180,
+   "mtimeNs": 1771332361560432242,
+   "ctimeNs": 1771332361560432242
+  }
+ },
+ "NetaYume_Lumina_3.5_00016_.png": {
+  "size": 1357541,
+  "mtimeNs": 1771332749830647538,
+  "digest": "blake3:c0169a0a9bf654ef6b47654a8059f571974c3d955f90fc53135991db8d8183f7",
+  "verification": {
+   "digest": "blake3:c0169a0a9bf654ef6b47654a8059f571974c3d955f90fc53135991db8d8183f7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042202,
+   "size": 1357541,
+   "mtimeNs": 1771332749830647538,
+   "ctimeNs": 1771332749830647538
+  }
+ },
+ "NetaYume_Lumina_3.5_00017_.png": {
+  "size": 1357409,
+  "mtimeNs": 1771332775145580314,
+  "digest": "blake3:ff674696654f2989eb209a8de2b1047f781a06e689d09f0a2323a91d56636204",
+  "verification": {
+   "digest": "blake3:ff674696654f2989eb209a8de2b1047f781a06e689d09f0a2323a91d56636204",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042215,
+   "size": 1357409,
+   "mtimeNs": 1771332775145580314,
+   "ctimeNs": 1771332775145580314
+  }
+ },
+ "NetaYume_Lumina_3.5_00018_.png": {
+  "size": 2058336,
+  "mtimeNs": 1771333104135242120,
+  "digest": "blake3:81269d2724adbdfdc71d9b62cfb880657fdf4a05c73a2e426f1d343bc231222c",
+  "verification": {
+   "digest": "blake3:81269d2724adbdfdc71d9b62cfb880657fdf4a05c73a2e426f1d343bc231222c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042229,
+   "size": 2058336,
+   "mtimeNs": 1771333104135242120,
+   "ctimeNs": 1771333104135242120
+  }
+ },
+ "NetaYume_Lumina_3.5_00019_.png": {
+  "size": 2058335,
+  "mtimeNs": 1771333145663412261,
+  "digest": "blake3:82a343deb2e3a9679d4f1e3c75eb45f6156d8163f26c1952227fec3d4a744a28",
+  "verification": {
+   "digest": "blake3:82a343deb2e3a9679d4f1e3c75eb45f6156d8163f26c1952227fec3d4a744a28",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042175,
+   "size": 2058335,
+   "mtimeNs": 1771333145663412261,
+   "ctimeNs": 1771333145663412261
+  }
+ },
+ "NetaYume_Lumina_3.5_00020_.png": {
+  "size": 1389686,
+  "mtimeNs": 1771339830481956037,
+  "digest": "blake3:fcc01a43f9344c40e064a52049f0b1cc10fbec1fde162e9230d3b4470a3ad30e",
+  "verification": {
+   "digest": "blake3:fcc01a43f9344c40e064a52049f0b1cc10fbec1fde162e9230d3b4470a3ad30e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54041741,
+   "size": 1389686,
+   "mtimeNs": 1771339830481956037,
+   "ctimeNs": 1771339830481956037
+  }
+ },
+ "NetaYume_Lumina_3.5_00021_.png": {
+  "size": 1390276,
+  "mtimeNs": 1771339856215535052,
+  "digest": "blake3:da0c3b7eba693f2adbb3ee3029b86594f2a6bb970aed40c4913b2ea2f5ad4981",
+  "verification": {
+   "digest": "blake3:da0c3b7eba693f2adbb3ee3029b86594f2a6bb970aed40c4913b2ea2f5ad4981",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54042214,
+   "size": 1390276,
+   "mtimeNs": 1771339856215535052,
+   "ctimeNs": 1771339856215535052
+  }
+ },
+ "Qwen-Image-2512_00001_.png": {
+  "size": 2510402,
+  "mtimeNs": 1767855315982252383,
+  "digest": "blake3:6338f31a5bfba19bb6a717380f8e7a08af02092cf6b2f92bcc3583fbf41ee405",
+  "verification": {
+   "digest": "blake3:6338f31a5bfba19bb6a717380f8e7a08af02092cf6b2f92bcc3583fbf41ee405",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039664,
+   "size": 2510402,
+   "mtimeNs": 1767855315982252383,
+   "ctimeNs": 1767855315982252383
+  }
+ },
+ "Qwen-Image-2512_00002_.png": {
+  "size": 2474650,
+  "mtimeNs": 1767855364296995710,
+  "digest": "blake3:17f31478443013cd856f2ed1ff64d157759d3f11a7dbf85ff1a53267feee8b7e",
+  "verification": {
+   "digest": "blake3:17f31478443013cd856f2ed1ff64d157759d3f11a7dbf85ff1a53267feee8b7e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039696,
+   "size": 2474650,
+   "mtimeNs": 1767855364296995710,
+   "ctimeNs": 1767855364296995710
+  }
+ },
+ "Qwen-Image-2512_00003_.png": {
+  "size": 2474151,
+  "mtimeNs": 1767855457637787635,
+  "digest": "blake3:0a55cd221d81a13018d8c749ef6fde485638207ce531ac01858ec6150c7e4647",
+  "verification": {
+   "digest": "blake3:0a55cd221d81a13018d8c749ef6fde485638207ce531ac01858ec6150c7e4647",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039707,
+   "size": 2474151,
+   "mtimeNs": 1767855457637787635,
+   "ctimeNs": 1767855457637787635
+  }
+ },
+ "Qwen-Image-2512_00004_.png": {
+  "size": 2503912,
+  "mtimeNs": 1767855501848865807,
+  "digest": "blake3:c3bb196b938949363527c08611c93ef2ad194b99b077eb369ec5aa91358692d7",
+  "verification": {
+   "digest": "blake3:c3bb196b938949363527c08611c93ef2ad194b99b077eb369ec5aa91358692d7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039708,
+   "size": 2503912,
+   "mtimeNs": 1767855501848865807,
+   "ctimeNs": 1767855501848865807
+  }
+ },
+ "Qwen-Image-2512_00005_.png": {
+  "size": 2510314,
+  "mtimeNs": 1767855557688627354,
+  "digest": "blake3:f45a5803626793c1a8fcf7d1bf31fb33bb485e0c95ee92d7fd3eff0f7aca06e4",
+  "verification": {
+   "digest": "blake3:f45a5803626793c1a8fcf7d1bf31fb33bb485e0c95ee92d7fd3eff0f7aca06e4",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039404,
+   "size": 2510314,
+   "mtimeNs": 1767855557688627354,
+   "ctimeNs": 1767855557688627354
+  }
+ },
+ "Qwen-Image-2512_00006_.png": {
+  "size": 2474650,
+  "mtimeNs": 1767855605691411629,
+  "digest": "blake3:17f31478443013cd856f2ed1ff64d157759d3f11a7dbf85ff1a53267feee8b7e",
+  "verification": {
+   "digest": "blake3:17f31478443013cd856f2ed1ff64d157759d3f11a7dbf85ff1a53267feee8b7e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039649,
+   "size": 2474650,
+   "mtimeNs": 1767855605691411629,
+   "ctimeNs": 1767855605691411629
+  }
+ },
+ "Qwen-Image-2512_00007_.png": {
+  "size": 2473310,
+  "mtimeNs": 1767857092189273640,
+  "digest": "blake3:63491b9abffafb92e239f14d231726c11e881ebe64324c050991842e8cf0f2e4",
+  "verification": {
+   "digest": "blake3:63491b9abffafb92e239f14d231726c11e881ebe64324c050991842e8cf0f2e4",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038901,
+   "size": 2473310,
+   "mtimeNs": 1767857092189273640,
+   "ctimeNs": 1767857092189273640
+  }
+ },
+ "Qwen-Image-2512_00008_.png": {
+  "size": 2510310,
+  "mtimeNs": 1767857228934717448,
+  "digest": "blake3:6232ad6ae796cecf92090bb06f2676b86907a59e6fef5666a895aaf448cbef0a",
+  "verification": {
+   "digest": "blake3:6232ad6ae796cecf92090bb06f2676b86907a59e6fef5666a895aaf448cbef0a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039285,
+   "size": 2510310,
+   "mtimeNs": 1767857228934717448,
+   "ctimeNs": 1767857228934717448
+  }
+ },
+ "Qwen-Image-2512_00009_.png": {
+  "size": 414475,
+  "mtimeNs": 1767857302045349016,
+  "digest": "blake3:e346ca3454906c1b69fe52790acb0c51d3074110e6c94ede219a143a5f77ae82",
+  "verification": {
+   "digest": "blake3:e346ca3454906c1b69fe52790acb0c51d3074110e6c94ede219a143a5f77ae82",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039343,
+   "size": 414475,
+   "mtimeNs": 1767857302045349016,
+   "ctimeNs": 1767857302045349016
+  }
+ },
+ "Qwen-Image-2512_00010_.png": {
+  "size": 420511,
+  "mtimeNs": 1767857369207904575,
+  "digest": "blake3:03da1510bc4a0d12878453bfab406397330f114e1b49576d5a192bfc8e67fec0",
+  "verification": {
+   "digest": "blake3:03da1510bc4a0d12878453bfab406397330f114e1b49576d5a192bfc8e67fec0",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039408,
+   "size": 420511,
+   "mtimeNs": 1767857369207904575,
+   "ctimeNs": 1767857369207904575
+  }
+ },
+ "Qwen-Image-2512_00011_.png": {
+  "size": 2510317,
+  "mtimeNs": 1767857396305666021,
+  "digest": "blake3:b21abe533b22e9ca1ebe89773790be6b0be85afb8b91d766f4e717db22d1b1de",
+  "verification": {
+   "digest": "blake3:b21abe533b22e9ca1ebe89773790be6b0be85afb8b91d766f4e717db22d1b1de",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039409,
+   "size": 2510317,
+   "mtimeNs": 1767857396305666021,
+   "ctimeNs": 1767857396305666021
+  }
+ },
+ "Qwen-Image-2512_00012_.png": {
+  "size": 2470019,
+  "mtimeNs": 1767857424377185348,
+  "digest": "blake3:b52d9b6426e4394d40e3e05ae98818dc81fb4cb7d4c770265916a83fa8032907",
+  "verification": {
+   "digest": "blake3:b52d9b6426e4394d40e3e05ae98818dc81fb4cb7d4c770265916a83fa8032907",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039695,
+   "size": 2470019,
+   "mtimeNs": 1767857424377185348,
+   "ctimeNs": 1767857424377185348
+  }
+ },
+ "Qwen-Image-2512_00013_.png": {
+  "size": 2473289,
+  "mtimeNs": 1767857592880803140,
+  "digest": "blake3:b9b864a95d1ab95182dd02fbd911a4f5bb8cfce1a3754ff949acae4033d0535b",
+  "verification": {
+   "digest": "blake3:b9b864a95d1ab95182dd02fbd911a4f5bb8cfce1a3754ff949acae4033d0535b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039721,
+   "size": 2473289,
+   "mtimeNs": 1767857592880803140,
+   "ctimeNs": 1767857592880803140
+  }
+ },
+ "Qwen-Image-2512_00014_.png": {
+  "size": 2473310,
+  "mtimeNs": 1767857840611160262,
+  "digest": "blake3:a494ea9f055737f9a5a863ac4a2d3c95a1c9fd663ca4ff53b7d3054a9c84b8c1",
+  "verification": {
+   "digest": "blake3:a494ea9f055737f9a5a863ac4a2d3c95a1c9fd663ca4ff53b7d3054a9c84b8c1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54001707,
+   "size": 2473310,
+   "mtimeNs": 1767857840611160262,
+   "ctimeNs": 1767857840611160262
+  }
+ },
+ "Qwen-Image-2512_00015_.png": {
+  "size": 2471828,
+  "mtimeNs": 1767857893896338951,
+  "digest": "blake3:bf926c6451bf76d4486f0ec74ed840a5f7a8d1a9071adc82893ee219604508c7",
+  "verification": {
+   "digest": "blake3:bf926c6451bf76d4486f0ec74ed840a5f7a8d1a9071adc82893ee219604508c7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039728,
+   "size": 2471828,
+   "mtimeNs": 1767857893896338951,
+   "ctimeNs": 1767857893896338951
+  }
+ },
+ "Qwen-Image-2512_00016_.png": {
+  "size": 2473801,
+  "mtimeNs": 1767858502169312839,
+  "digest": "blake3:1a4df26490b5a35908f9a2d50473de1beb29fd5cc61f6743ba9b5f87e38762bd",
+  "verification": {
+   "digest": "blake3:1a4df26490b5a35908f9a2d50473de1beb29fd5cc61f6743ba9b5f87e38762bd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039729,
+   "size": 2473801,
+   "mtimeNs": 1767858502169312839,
+   "ctimeNs": 1767858502169312839
+  }
+ },
+ "Qwen-Image-2512_00017_.png": {
+  "size": 2439517,
+  "mtimeNs": 1767858529449745477,
+  "digest": "blake3:fb4af1302e33d0b3b3157371c5d52124e34e0ad90b6c6fbe6921f8487245c06d",
+  "verification": {
+   "digest": "blake3:fb4af1302e33d0b3b3157371c5d52124e34e0ad90b6c6fbe6921f8487245c06d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039730,
+   "size": 2439517,
+   "mtimeNs": 1767858529449745477,
+   "ctimeNs": 1767858529449745477
+  }
+ },
+ "Qwen-Image-2512_00018_.png": {
+  "size": 2474694,
+  "mtimeNs": 1767858598816475102,
+  "digest": "blake3:14acf49919319723d66955bcdf134c4f278296f10ceefddbb3cf0a74818d2140",
+  "verification": {
+   "digest": "blake3:14acf49919319723d66955bcdf134c4f278296f10ceefddbb3cf0a74818d2140",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039759,
+   "size": 2474694,
+   "mtimeNs": 1767858598816475102,
+   "ctimeNs": 1767858598816475102
+  }
+ },
+ "Qwen-Image-2512_00019_.png": {
+  "size": 414891,
+  "mtimeNs": 1767858675644722336,
+  "digest": "blake3:04b707aa5473c5c41107394113e42eb30c8a23763f3bc5f0134e9a15565b3f93",
+  "verification": {
+   "digest": "blake3:04b707aa5473c5c41107394113e42eb30c8a23763f3bc5f0134e9a15565b3f93",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039762,
+   "size": 414891,
+   "mtimeNs": 1767858675644722336,
+   "ctimeNs": 1767858675644722336
+  }
+ },
+ "Qwen-Image-2512_00020_.png": {
+  "size": 2510808,
+  "mtimeNs": 1767858720128225012,
+  "digest": "blake3:522630907e39bf6769b3cf8b87867329bcda45a8f56be9d76c7516e1854d9f54",
+  "verification": {
+   "digest": "blake3:522630907e39bf6769b3cf8b87867329bcda45a8f56be9d76c7516e1854d9f54",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039763,
+   "size": 2510808,
+   "mtimeNs": 1767858720128225012,
+   "ctimeNs": 1767858720128225012
+  }
+ },
+ "Qwen-Image-2512_00021_.png": {
+  "size": 2504223,
+  "mtimeNs": 1767859395797918615,
+  "digest": "blake3:b0bc8b7e06a918daf49911ef501abc3bae9a4f55b7006c6716b5b1ab8e9be449",
+  "verification": {
+   "digest": "blake3:b0bc8b7e06a918daf49911ef501abc3bae9a4f55b7006c6716b5b1ab8e9be449",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039703,
+   "size": 2504223,
+   "mtimeNs": 1767859395797918615,
+   "ctimeNs": 1767859395797918615
+  }
+ },
+ "Qwen-Image-2512_00022_.png": {
+  "size": 2470508,
+  "mtimeNs": 1767859427824774257,
+  "digest": "blake3:5432a679ed4b2b1ed3f1ff644e9703000616438e1cb1f04bbd2ce724630d299f",
+  "verification": {
+   "digest": "blake3:5432a679ed4b2b1ed3f1ff644e9703000616438e1cb1f04bbd2ce724630d299f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039773,
+   "size": 2470508,
+   "mtimeNs": 1767859427824774257,
+   "ctimeNs": 1767859427824774257
+  }
+ },
+ "Qwen-Image-2512_00023_.png": {
+  "size": 2483961,
+  "mtimeNs": 1767861644701587807,
+  "digest": "blake3:865c86fc355ee6ffedf3d9d24071e9483c80fa5be76d5ffb0ef2f86b512f66d6",
+  "verification": {
+   "digest": "blake3:865c86fc355ee6ffedf3d9d24071e9483c80fa5be76d5ffb0ef2f86b512f66d6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039670,
+   "size": 2483961,
+   "mtimeNs": 1767861644701587807,
+   "ctimeNs": 1767861644701587807
+  }
+ },
+ "Qwen-Image-2512_00024_.png": {
+  "size": 2509160,
+  "mtimeNs": 1767861696557466362,
+  "digest": "blake3:f20d642428dec220c6839db88ea443fc5dbe24b7dee61dbc3c31e2120b13a921",
+  "verification": {
+   "digest": "blake3:f20d642428dec220c6839db88ea443fc5dbe24b7dee61dbc3c31e2120b13a921",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039699,
+   "size": 2509160,
+   "mtimeNs": 1767861696557466362,
+   "ctimeNs": 1767861696557466362
+  }
+ },
+ "Qwen-Image-2512_00025_.png": {
+  "size": 2475265,
+  "mtimeNs": 1767861750347051725,
+  "digest": "blake3:1373edc809906ba2aae013ac9358fb05c330a500a3de18e7752c20455622f3b8",
+  "verification": {
+   "digest": "blake3:1373edc809906ba2aae013ac9358fb05c330a500a3de18e7752c20455622f3b8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039704,
+   "size": 2475265,
+   "mtimeNs": 1767861750347051725,
+   "ctimeNs": 1767861750347051725
+  }
+ },
+ "Qwen-Image-2512_00026_.png": {
+  "size": 2469480,
+  "mtimeNs": 1767861801956704154,
+  "digest": "blake3:6ae1507adfc1cc17ddb00353928351a779a389605edd2e5fdbceb1f5db97f6ec",
+  "verification": {
+   "digest": "blake3:6ae1507adfc1cc17ddb00353928351a779a389605edd2e5fdbceb1f5db97f6ec",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039722,
+   "size": 2469480,
+   "mtimeNs": 1767861801956704154,
+   "ctimeNs": 1767861801956704154
+  }
+ },
+ "Qwen-Image-2512_00027_.png": {
+  "size": 2458740,
+  "mtimeNs": 1767864718831079145,
+  "digest": "blake3:9614fdee174f0f76ad4856e2e3214770fbfbc5fb5cfc3305a20a40fad2c0758f",
+  "verification": {
+   "digest": "blake3:9614fdee174f0f76ad4856e2e3214770fbfbc5fb5cfc3305a20a40fad2c0758f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039736,
+   "size": 2458740,
+   "mtimeNs": 1767864718831079145,
+   "ctimeNs": 1767864718831079145
+  }
+ },
+ "Qwen-Image-2512_00028_.png": {
+  "size": 2467748,
+  "mtimeNs": 1767864824892673930,
+  "digest": "blake3:8361fb345c383897eaec59d9b93f4181e01cb5aa30b013513f31671742e52dcf",
+  "verification": {
+   "digest": "blake3:8361fb345c383897eaec59d9b93f4181e01cb5aa30b013513f31671742e52dcf",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039764,
+   "size": 2467748,
+   "mtimeNs": 1767864824892673930,
+   "ctimeNs": 1767864824892673930
+  }
+ },
+ "Qwen-Image-2512_00029_.png": {
+  "size": 2480542,
+  "mtimeNs": 1767864998564641244,
+  "digest": "blake3:cb8c5f7856a2ca07fa0fea6678d0cd1244d596eef6bb1857aef13e1fdb326500",
+  "verification": {
+   "digest": "blake3:cb8c5f7856a2ca07fa0fea6678d0cd1244d596eef6bb1857aef13e1fdb326500",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039828,
+   "size": 2480542,
+   "mtimeNs": 1767864998564641244,
+   "ctimeNs": 1767864998564641244
+  }
+ },
+ "Qwen-Image-2512_00030_.png": {
+  "size": 2476051,
+  "mtimeNs": 1767865151522284269,
+  "digest": "blake3:2e50e393cc6e09e6c1d283ea7405a13ff31e97ce941859169f73b0024999fbac",
+  "verification": {
+   "digest": "blake3:2e50e393cc6e09e6c1d283ea7405a13ff31e97ce941859169f73b0024999fbac",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039829,
+   "size": 2476051,
+   "mtimeNs": 1767865151522284269,
+   "ctimeNs": 1767865151522284269
+  }
+ },
+ "SD1.5_00001_.png": {
+  "size": 449920,
+  "mtimeNs": 1773072548104469445,
+  "digest": "blake3:8e1a97367d8f5937c8a4b523d898c0c5de558ccc881e637646565de809c4ab52",
+  "verification": {
+   "digest": "blake3:8e1a97367d8f5937c8a4b523d898c0c5de558ccc881e637646565de809c4ab52",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54002539,
+   "size": 449920,
+   "mtimeNs": 1773072548104469445,
+   "ctimeNs": 1773072548104469445
+  }
+ },
+ "SD1.5_00002_.png": {
+  "size": 449570,
+  "mtimeNs": 1773072561479390372,
+  "digest": "blake3:13c6e276b6ed210881dc432786b31f6d9d59fa30cf9e0305e41a0df8d1c6f65f",
+  "verification": {
+   "digest": "blake3:13c6e276b6ed210881dc432786b31f6d9d59fa30cf9e0305e41a0df8d1c6f65f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54002560,
+   "size": 449570,
+   "mtimeNs": 1773072561479390372,
+   "ctimeNs": 1773072561479390372
+  }
+ },
+ "_output_images_will_be_put_here": {
+  "size": 0,
+  "mtimeNs": 1759482788211063634,
+  "digest": "blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+  "verification": {
+   "digest": "blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003841,
+   "size": 0,
+   "mtimeNs": 1759482788211063634,
+   "ctimeNs": 1759482788211063634
+  }
+ },
+ "benchmark/benchmark_20260107_160223.json": {
+  "size": 15327,
+  "mtimeNs": 1767830553393633461,
+  "digest": "blake3:7a544cde2f787ae581f4c7979448d5bd1ba38007e9b574c4f1ef4c1d35efa0de",
+  "verification": {
+   "digest": "blake3:7a544cde2f787ae581f4c7979448d5bd1ba38007e9b574c4f1ef4c1d35efa0de",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666579,
+   "size": 15327,
+   "mtimeNs": 1767830553393633461,
+   "ctimeNs": 1767830553393633461
+  }
+ },
+ "benchmark/benchmark_20260107_161105.json": {
+  "size": 12957,
+  "mtimeNs": 1767831071986832998,
+  "digest": "blake3:80f8a9616fd8db63ed3a38eb5af09a154db428e8c6306746c793b37bba8b2122",
+  "verification": {
+   "digest": "blake3:80f8a9616fd8db63ed3a38eb5af09a154db428e8c6306746c793b37bba8b2122",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666582,
+   "size": 12957,
+   "mtimeNs": 1767831071986832998,
+   "ctimeNs": 1767831071986832998
+  }
+ },
+ "benchmark/benchmark_20260107_161940.json": {
+  "size": 11689,
+  "mtimeNs": 1767831586974666110,
+  "digest": "blake3:a4ae3a5b1921db4b2139930a195909e4f56ea0b9d58cb93ebf089a68c177c277",
+  "verification": {
+   "digest": "blake3:a4ae3a5b1921db4b2139930a195909e4f56ea0b9d58cb93ebf089a68c177c277",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682063,
+   "size": 11689,
+   "mtimeNs": 1767831586974666110,
+   "ctimeNs": 1767831586974666110
+  }
+ },
+ "benchmark/benchmark_20260107_162019.json": {
+  "size": 16775,
+  "mtimeNs": 1767831636025548753,
+  "digest": "blake3:dd9aa452ce37f7483351d8ae4ff34804f70d117e375bdb06a49ec8c904fa2d72",
+  "verification": {
+   "digest": "blake3:dd9aa452ce37f7483351d8ae4ff34804f70d117e375bdb06a49ec8c904fa2d72",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682072,
+   "size": 16775,
+   "mtimeNs": 1767831636025548753,
+   "ctimeNs": 1767831636025548753
+  }
+ },
+ "benchmark/benchmark_20260107_162101.json": {
+  "size": 11203,
+  "mtimeNs": 1767831672299249441,
+  "digest": "blake3:ac99ce2550203c4e22100f24085b8b68615b8e933d965ab5c9fc27397ea28eb4",
+  "verification": {
+   "digest": "blake3:ac99ce2550203c4e22100f24085b8b68615b8e933d965ab5c9fc27397ea28eb4",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682073,
+   "size": 11203,
+   "mtimeNs": 1767831672299249441,
+   "ctimeNs": 1767831672299249441
+  }
+ },
+ "benchmark/benchmark_20260107_162154.json": {
+  "size": 11571,
+  "mtimeNs": 1767831720787615346,
+  "digest": "blake3:5c28864d49f6bb9aca2deffcc68e7e0acf69486ddcf6c44af237d587a6e63dc1",
+  "verification": {
+   "digest": "blake3:5c28864d49f6bb9aca2deffcc68e7e0acf69486ddcf6c44af237d587a6e63dc1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682074,
+   "size": 11571,
+   "mtimeNs": 1767831720787615346,
+   "ctimeNs": 1767831720787615346
+  }
+ },
+ "benchmark/benchmark_20260107_162207.json": {
+  "size": 7993,
+  "mtimeNs": 1767831732149538117,
+  "digest": "blake3:beab423d8acb10a9a972f203e79b2c879c2f637bc92983dc3dd21223f8e72672",
+  "verification": {
+   "digest": "blake3:beab423d8acb10a9a972f203e79b2c879c2f637bc92983dc3dd21223f8e72672",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682075,
+   "size": 7993,
+   "mtimeNs": 1767831732149538117,
+   "ctimeNs": 1767831732149538117
+  }
+ },
+ "benchmark/benchmark_20260107_162308.json": {
+  "size": 10298,
+  "mtimeNs": 1767831794840979537,
+  "digest": "blake3:942f89cf9be79752daf342bf1238faa43cdb1465828c9865a73e1bae0e40a483",
+  "verification": {
+   "digest": "blake3:942f89cf9be79752daf342bf1238faa43cdb1465828c9865a73e1bae0e40a483",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682076,
+   "size": 10298,
+   "mtimeNs": 1767831794840979537,
+   "ctimeNs": 1767831794840979537
+  }
+ },
+ "benchmark/benchmark_20260107_162558.json": {
+  "size": 11880,
+  "mtimeNs": 1767831965908623597,
+  "digest": "blake3:2dce75e601637406558d27d7b7dc74730debd3b8e985421e3bd2a5112e7aa037",
+  "verification": {
+   "digest": "blake3:2dce75e601637406558d27d7b7dc74730debd3b8e985421e3bd2a5112e7aa037",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682077,
+   "size": 11880,
+   "mtimeNs": 1767831965908623597,
+   "ctimeNs": 1767831965908623597
+  }
+ },
+ "benchmark/benchmark_20260107_162640.json": {
+  "size": 14218,
+  "mtimeNs": 1767832017245340562,
+  "digest": "blake3:a51de05e50481580086130e9cde714f4b72386ad4d37ca54f314d552d17bdcb1",
+  "verification": {
+   "digest": "blake3:a51de05e50481580086130e9cde714f4b72386ad4d37ca54f314d552d17bdcb1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682078,
+   "size": 14218,
+   "mtimeNs": 1767832017245340562,
+   "ctimeNs": 1767832017245340562
+  }
+ },
+ "benchmark/benchmark_20260107_163615.json": {
+  "size": 11562,
+  "mtimeNs": 1767832581477703896,
+  "digest": "blake3:b38409d603f82fcfb684a7ae57633279a85574538cb31649f65a83de731d524a",
+  "verification": {
+   "digest": "blake3:b38409d603f82fcfb684a7ae57633279a85574538cb31649f65a83de731d524a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690101,
+   "size": 11562,
+   "mtimeNs": 1767832581477703896,
+   "ctimeNs": 1767832581477703896
+  }
+ },
+ "benchmark/benchmark_20260107_163626.json": {
+  "size": 5881,
+  "mtimeNs": 1767832588566626715,
+  "digest": "blake3:c8e0019dc07e89a95aed2f16231ae737342cbad40ca4f4dca3ede5b9955bbabd",
+  "verification": {
+   "digest": "blake3:c8e0019dc07e89a95aed2f16231ae737342cbad40ca4f4dca3ede5b9955bbabd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690102,
+   "size": 5881,
+   "mtimeNs": 1767832588566626715,
+   "ctimeNs": 1767832588566626715
+  }
+ },
+ "benchmark/benchmark_20260107_163635.json": {
+  "size": 6750,
+  "mtimeNs": 1767832597067481933,
+  "digest": "blake3:a5d64c51345a6321b11e0fce80a7bc6048ed5d3183c9e4b48142a7211a17fd55",
+  "verification": {
+   "digest": "blake3:a5d64c51345a6321b11e0fce80a7bc6048ed5d3183c9e4b48142a7211a17fd55",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690103,
+   "size": 6750,
+   "mtimeNs": 1767832597067481933,
+   "ctimeNs": 1767832597067481933
+  }
+ },
+ "benchmark/benchmark_20260107_163724.json": {
+  "size": 16502,
+  "mtimeNs": 1767832660353847223,
+  "digest": "blake3:92c4e77c2de3b48fc4a2bf663953c749e16adc7e91cccde858bb319645b73183",
+  "verification": {
+   "digest": "blake3:92c4e77c2de3b48fc4a2bf663953c749e16adc7e91cccde858bb319645b73183",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690104,
+   "size": 16502,
+   "mtimeNs": 1767832660353847223,
+   "ctimeNs": 1767832660353847223
+  }
+ },
+ "benchmark/benchmark_20260107_163745.json": {
+  "size": 7560,
+  "mtimeNs": 1767832669264646779,
+  "digest": "blake3:0a4a821d7f5bc04a7c7de339170741f3e49d42494b3b8d6fb8e531d8cce6494d",
+  "verification": {
+   "digest": "blake3:0a4a821d7f5bc04a7c7de339170741f3e49d42494b3b8d6fb8e531d8cce6494d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690105,
+   "size": 7560,
+   "mtimeNs": 1767832669264646779,
+   "ctimeNs": 1767832669264646779
+  }
+ },
+ "benchmark/benchmark_20260107_163911.json": {
+  "size": 8602,
+  "mtimeNs": 1767832756048803527,
+  "digest": "blake3:95dc0984a97b445d81cee2d230f2f37fb8ada77352f2137f4b205b0f243d4172",
+  "verification": {
+   "digest": "blake3:95dc0984a97b445d81cee2d230f2f37fb8ada77352f2137f4b205b0f243d4172",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690106,
+   "size": 8602,
+   "mtimeNs": 1767832756048803527,
+   "ctimeNs": 1767832756048803527
+  }
+ },
+ "benchmark/benchmark_20260107_163928.json": {
+  "size": 13459,
+  "mtimeNs": 1767832781265865552,
+  "digest": "blake3:f9bd509851932876c12289095dd692359577c9008f0834ec659f16a91eea7f89",
+  "verification": {
+   "digest": "blake3:f9bd509851932876c12289095dd692359577c9008f0834ec659f16a91eea7f89",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690107,
+   "size": 13459,
+   "mtimeNs": 1767832781265865552,
+   "ctimeNs": 1767832781265865552
+  }
+ },
+ "benchmark/benchmark_20260107_163955.json": {
+  "size": 14651,
+  "mtimeNs": 1767832809822608583,
+  "digest": "blake3:231a0ecf0e4c315ac26369ee3705b0937bf9d07af968bb35f54f736de5ab9a18",
+  "verification": {
+   "digest": "blake3:231a0ecf0e4c315ac26369ee3705b0937bf9d07af968bb35f54f736de5ab9a18",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690108,
+   "size": 14651,
+   "mtimeNs": 1767832809822608583,
+   "ctimeNs": 1767832809822608583
+  }
+ },
+ "benchmark/benchmark_20260107_164020.json": {
+  "size": 7541,
+  "mtimeNs": 1767832823506675121,
+  "digest": "blake3:4b1c59773aefadd1fca141efd42e0354d45498f2425d91a448a53fac9ff57c6f",
+  "verification": {
+   "digest": "blake3:4b1c59773aefadd1fca141efd42e0354d45498f2425d91a448a53fac9ff57c6f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690109,
+   "size": 7541,
+   "mtimeNs": 1767832823506675121,
+   "ctimeNs": 1767832823506675121
+  }
+ },
+ "benchmark/benchmark_20260107_164445.json": {
+  "size": 20804,
+  "mtimeNs": 1767833107966848261,
+  "digest": "blake3:a59cf1bc351feb0f6119bc8826ba7fef7b1071af2ad8d3f57a43df7c2cde537b",
+  "verification": {
+   "digest": "blake3:a59cf1bc351feb0f6119bc8826ba7fef7b1071af2ad8d3f57a43df7c2cde537b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690117,
+   "size": 20804,
+   "mtimeNs": 1767833107966848261,
+   "ctimeNs": 1767833107966848261
+  }
+ },
+ "benchmark/benchmark_20260107_164728.json": {
+  "size": 14911,
+  "mtimeNs": 1767833264168100307,
+  "digest": "blake3:096323217bcb64390b532f2c6cc902e70d53cd40e2fd533fd2ecad6acffaedb5",
+  "verification": {
+   "digest": "blake3:096323217bcb64390b532f2c6cc902e70d53cd40e2fd533fd2ecad6acffaedb5",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690122,
+   "size": 14911,
+   "mtimeNs": 1767833264168100307,
+   "ctimeNs": 1767833264168100307
+  }
+ },
+ "benchmark/benchmark_20260107_164832.json": {
+  "size": 11730,
+  "mtimeNs": 1767833324470342666,
+  "digest": "blake3:eb383c44488b184cae0597e4d9b45daeb17537b1aecf8f5b0947a9a97a3bc14c",
+  "verification": {
+   "digest": "blake3:eb383c44488b184cae0597e4d9b45daeb17537b1aecf8f5b0947a9a97a3bc14c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690123,
+   "size": 11730,
+   "mtimeNs": 1767833324470342666,
+   "ctimeNs": 1767833324470342666
+  }
+ },
+ "benchmark/benchmark_20260107_165559.json": {
+  "size": 11510,
+  "mtimeNs": 1767833766536905665,
+  "digest": "blake3:575bdadd43938b8c80f1362618de4a8790529733ff03e106e0043fc3a7a3334c",
+  "verification": {
+   "digest": "blake3:575bdadd43938b8c80f1362618de4a8790529733ff03e106e0043fc3a7a3334c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666817,
+   "size": 11510,
+   "mtimeNs": 1767833766536905665,
+   "ctimeNs": 1767833766536905665
+  }
+ },
+ "benchmark/benchmark_20260107_201725.json": {
+  "size": 10334,
+  "mtimeNs": 1767845849345322166,
+  "digest": "blake3:119c96ef416b2ef99427c427658dec7586d76cea8ed9fc004688f7bb96324e4e",
+  "verification": {
+   "digest": "blake3:119c96ef416b2ef99427c427658dec7586d76cea8ed9fc004688f7bb96324e4e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666818,
+   "size": 10334,
+   "mtimeNs": 1767845849345322166,
+   "ctimeNs": 1767845849345322166
+  }
+ },
+ "benchmark/benchmark_20260107_201911.json": {
+  "size": 8053,
+  "mtimeNs": 1767845955851844835,
+  "digest": "blake3:c77a38744d796c1358bcde67c87c5276792457d777d293a70782b7d278fa0ff6",
+  "verification": {
+   "digest": "blake3:c77a38744d796c1358bcde67c87c5276792457d777d293a70782b7d278fa0ff6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666821,
+   "size": 8053,
+   "mtimeNs": 1767845955851844835,
+   "ctimeNs": 1767845955851844835
+  }
+ },
+ "benchmark/benchmark_20260107_211344.json": {
+  "size": 7487,
+  "mtimeNs": 1767849228020554745,
+  "digest": "blake3:c6ca7b31b06270413cd771842b52e968a8354d09e25948b4dc4e4474d1133052",
+  "verification": {
+   "digest": "blake3:c6ca7b31b06270413cd771842b52e968a8354d09e25948b4dc4e4474d1133052",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666823,
+   "size": 7487,
+   "mtimeNs": 1767849228020554745,
+   "ctimeNs": 1767849228020554745
+  }
+ },
+ "benchmark/benchmark_20260107_225404.json": {
+  "size": 30421,
+  "mtimeNs": 1767855287596627821,
+  "digest": "blake3:6f02b84cea66c5bde32c9ccf789cd19f2f1ff9e1cbae8b4c0ba853a873ecefd1",
+  "verification": {
+   "digest": "blake3:6f02b84cea66c5bde32c9ccf789cd19f2f1ff9e1cbae8b4c0ba853a873ecefd1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674142,
+   "size": 30421,
+   "mtimeNs": 1767855287596627821,
+   "ctimeNs": 1767855287596627821
+  }
+ },
+ "benchmark/benchmark_20260107_225453.json": {
+  "size": 16861,
+  "mtimeNs": 1767855316007273527,
+  "digest": "blake3:f75f8ddd98e4b0dc0c7cbb3f2553e645363ea1508cb3f283cbdc00d0c5ef740e",
+  "verification": {
+   "digest": "blake3:f75f8ddd98e4b0dc0c7cbb3f2553e645363ea1508cb3f283cbdc00d0c5ef740e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674143,
+   "size": 16861,
+   "mtimeNs": 1767855316007273527,
+   "ctimeNs": 1767855316007273527
+  }
+ },
+ "benchmark/benchmark_20260107_225532.json": {
+  "size": 21295,
+  "mtimeNs": 1767855364320379588,
+  "digest": "blake3:0e2019d88b95c2f7a021d5145142dbf98e2b8f74c2da61d542baac30a51f97a8",
+  "verification": {
+   "digest": "blake3:0e2019d88b95c2f7a021d5145142dbf98e2b8f74c2da61d542baac30a51f97a8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674144,
+   "size": 21295,
+   "mtimeNs": 1767855364320379588,
+   "ctimeNs": 1767855364320379588
+  }
+ },
+ "benchmark/benchmark_20260107_225706.json": {
+  "size": 25141,
+  "mtimeNs": 1767855457639586696,
+  "digest": "blake3:d8b4c7080efa0fc60896cd7d3115375ab9e343ea169b6673e087563a261e0a4a",
+  "verification": {
+   "digest": "blake3:d8b4c7080efa0fc60896cd7d3115375ab9e343ea169b6673e087563a261e0a4a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674145,
+   "size": 25141,
+   "mtimeNs": 1767855457639586696,
+   "ctimeNs": 1767855457639586696
+  }
+ },
+ "benchmark/benchmark_20260107_225758.json": {
+  "size": 17433,
+  "mtimeNs": 1767855501849904141,
+  "digest": "blake3:7d0e8cab076ae9f0e1fc8350d15c6be365f5b0371833b045e09b93af75b7d3d3",
+  "verification": {
+   "digest": "blake3:7d0e8cab076ae9f0e1fc8350d15c6be365f5b0371833b045e09b93af75b7d3d3",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674146,
+   "size": 17433,
+   "mtimeNs": 1767855501849904141,
+   "ctimeNs": 1767855501849904141
+  }
+ },
+ "benchmark/benchmark_20260107_225852.json": {
+  "size": 22128,
+  "mtimeNs": 1767855557691078990,
+  "digest": "blake3:62a99eb76835f42329041a0bca9fdffc9b9c328813784e2304bd9b7a959f7147",
+  "verification": {
+   "digest": "blake3:62a99eb76835f42329041a0bca9fdffc9b9c328813784e2304bd9b7a959f7147",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674147,
+   "size": 22128,
+   "mtimeNs": 1767855557691078990,
+   "ctimeNs": 1767855557691078990
+  }
+ },
+ "benchmark/benchmark_20260107_225938.json": {
+  "size": 19111,
+  "mtimeNs": 1767855605698880772,
+  "digest": "blake3:dd684d0a5c59b6cad165d8f8b758860ed647f4e1f7152da671ea8c38032a1ebd",
+  "verification": {
+   "digest": "blake3:dd684d0a5c59b6cad165d8f8b758860ed647f4e1f7152da671ea8c38032a1ebd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674148,
+   "size": 19111,
+   "mtimeNs": 1767855605698880772,
+   "ctimeNs": 1767855605698880772
+  }
+ },
+ "benchmark/benchmark_20260107_232421.json": {
+  "size": 25485,
+  "mtimeNs": 1767857092192043666,
+  "digest": "blake3:624adb6a4d2e2ec4c676cedccb3b248f3e55ad0c7010f2466655928806053cd6",
+  "verification": {
+   "digest": "blake3:624adb6a4d2e2ec4c676cedccb3b248f3e55ad0c7010f2466655928806053cd6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674152,
+   "size": 25485,
+   "mtimeNs": 1767857092192043666,
+   "ctimeNs": 1767857092192043666
+  }
+ },
+ "benchmark/benchmark_20260107_232645.json": {
+  "size": 17777,
+  "mtimeNs": 1767857228935717538,
+  "digest": "blake3:89b99bc9e758fb535fb352e3ed7760a6a9acf68081e0d3e53ab6d0d90897fd82",
+  "verification": {
+   "digest": "blake3:89b99bc9e758fb535fb352e3ed7760a6a9acf68081e0d3e53ab6d0d90897fd82",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674153,
+   "size": 17777,
+   "mtimeNs": 1767857228935717538,
+   "ctimeNs": 1767857228935717538
+  }
+ },
+ "benchmark/benchmark_20260107_232804.json": {
+  "size": 14992,
+  "mtimeNs": 1767857302046349108,
+  "digest": "blake3:77af37a602b8499a3cff70e2e4961b563ba388e63d8dacef15438e209c7195a7",
+  "verification": {
+   "digest": "blake3:77af37a602b8499a3cff70e2e4961b563ba388e63d8dacef15438e209c7195a7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54674154,
+   "size": 14992,
+   "mtimeNs": 1767857302046349108,
+   "ctimeNs": 1767857302046349108
+  }
+ },
+ "benchmark/benchmark_20260107_232907.json": {
+  "size": 20906,
+  "mtimeNs": 1767857369209904377,
+  "digest": "blake3:84f2472e553ffb24520c435cd59b61fe6cf00ff70254ebde8b7484ef5daacf33",
+  "verification": {
+   "digest": "blake3:84f2472e553ffb24520c435cd59b61fe6cf00ff70254ebde8b7484ef5daacf33",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54681794,
+   "size": 20906,
+   "mtimeNs": 1767857369209904377,
+   "ctimeNs": 1767857369209904377
+  }
+ },
+ "benchmark/benchmark_20260107_232938.json": {
+  "size": 15521,
+  "mtimeNs": 1767857396308552538,
+  "digest": "blake3:4111b0d7527001c1200846ed19b3171cfb35889dd61c06c28af6b432a56d11c8",
+  "verification": {
+   "digest": "blake3:4111b0d7527001c1200846ed19b3171cfb35889dd61c06c28af6b432a56d11c8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682051,
+   "size": 15521,
+   "mtimeNs": 1767857396308552538,
+   "ctimeNs": 1767857396308552538
+  }
+ },
+ "benchmark/benchmark_20260107_233002.json": {
+  "size": 17374,
+  "mtimeNs": 1767857424378589829,
+  "digest": "blake3:c7bec33513464b52d0de5a875e85b792cc233723c802d1bd173b4b449a9c86eb",
+  "verification": {
+   "digest": "blake3:c7bec33513464b52d0de5a875e85b792cc233723c802d1bd173b4b449a9c86eb",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682052,
+   "size": 17374,
+   "mtimeNs": 1767857424378589829,
+   "ctimeNs": 1767857424378589829
+  }
+ },
+ "benchmark/benchmark_20260107_233249.json": {
+  "size": 21724,
+  "mtimeNs": 1767857592882676023,
+  "digest": "blake3:96d0deeb684a16834c251584307aec73f0d4cec28c662533f9ae2d2473109f70",
+  "verification": {
+   "digest": "blake3:96d0deeb684a16834c251584307aec73f0d4cec28c662533f9ae2d2473109f70",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682053,
+   "size": 21724,
+   "mtimeNs": 1767857592882676023,
+   "ctimeNs": 1767857592882676023
+  }
+ },
+ "benchmark/benchmark_20260107_233655.json": {
+  "size": 22343,
+  "mtimeNs": 1767857840613008239,
+  "digest": "blake3:f20e62800f7cb15fbe98690aa210019f851303c9f81946177ad00617d856540b",
+  "verification": {
+   "digest": "blake3:f20e62800f7cb15fbe98690aa210019f851303c9f81946177ad00617d856540b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682054,
+   "size": 22343,
+   "mtimeNs": 1767857840613008239,
+   "ctimeNs": 1767857840613008239
+  }
+ },
+ "benchmark/benchmark_20260107_233748.json": {
+  "size": 22993,
+  "mtimeNs": 1767857893897338927,
+  "digest": "blake3:8b41f1b36f048e9783137b333f307fee1b562db0ad88ab53c30b4218b6eb0664",
+  "verification": {
+   "digest": "blake3:8b41f1b36f048e9783137b333f307fee1b562db0ad88ab53c30b4218b6eb0664",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682055,
+   "size": 22993,
+   "mtimeNs": 1767857893897338927,
+   "ctimeNs": 1767857893897338927
+  }
+ },
+ "benchmark/benchmark_20260108_000752.json": {
+  "size": 9901,
+  "mtimeNs": 1767859688026276830,
+  "digest": "blake3:9f94abc7ea0a1e85f9b226d5dfd7acf3fd20b670a76f58e03cf90ccf18c5e0fd",
+  "verification": {
+   "digest": "blake3:9f94abc7ea0a1e85f9b226d5dfd7acf3fd20b670a76f58e03cf90ccf18c5e0fd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54682062,
+   "size": 9901,
+   "mtimeNs": 1767859688026276830,
+   "ctimeNs": 1767859688026276830
+  }
+ },
+ "benchmark/benchmark_20260217_025712.json": {
+  "size": 8440,
+  "mtimeNs": 1771325838557438410,
+  "digest": "blake3:2b77e894ff17ae7b9aa94d129752e9c4478e50e5baf47e1e8a9b3110da5d8a1c",
+  "verification": {
+   "digest": "blake3:2b77e894ff17ae7b9aa94d129752e9c4478e50e5baf47e1e8a9b3110da5d8a1c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690157,
+   "size": 8440,
+   "mtimeNs": 1771325838557438410,
+   "ctimeNs": 1771325838557438410
+  }
+ },
+ "benchmark/benchmark_20260217_025736.json": {
+  "size": 8054,
+  "mtimeNs": 1771325867179711926,
+  "digest": "blake3:a55e4606e25cf27ba35f52d83771a73ae49f4d3ff34164a5701771ccc986416b",
+  "verification": {
+   "digest": "blake3:a55e4606e25cf27ba35f52d83771a73ae49f4d3ff34164a5701771ccc986416b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690158,
+   "size": 8054,
+   "mtimeNs": 1771325867179711926,
+   "ctimeNs": 1771325867179711926
+  }
+ },
+ "benchmark/benchmark_20260217_025803.json": {
+  "size": 3023,
+  "mtimeNs": 1771325885280548648,
+  "digest": "blake3:4f6566549349d59964d936609285ed3d37ead2ad0ae61fbece82065747705e77",
+  "verification": {
+   "digest": "blake3:4f6566549349d59964d936609285ed3d37ead2ad0ae61fbece82065747705e77",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690159,
+   "size": 3023,
+   "mtimeNs": 1771325885280548648,
+   "ctimeNs": 1771325885280548648
+  }
+ },
+ "benchmark/benchmark_20260217_025915.json": {
+  "size": 5733,
+  "mtimeNs": 1771325958247315472,
+  "digest": "blake3:1f3f8d91ef1850b39cf928f0d3f69e1b1b946f550c07acc3f798ab1b2a714f32",
+  "verification": {
+   "digest": "blake3:1f3f8d91ef1850b39cf928f0d3f69e1b1b946f550c07acc3f798ab1b2a714f32",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690160,
+   "size": 5733,
+   "mtimeNs": 1771325958247315472,
+   "ctimeNs": 1771325958247315472
+  }
+ },
+ "benchmark/benchmark_20260217_030232.json": {
+  "size": 7537,
+  "mtimeNs": 1771326156030396757,
+  "digest": "blake3:ace0e24d8b297d1c430042fcef9e426600853e6450bb5c99cac4f42b025785f2",
+  "verification": {
+   "digest": "blake3:ace0e24d8b297d1c430042fcef9e426600853e6450bb5c99cac4f42b025785f2",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690161,
+   "size": 7537,
+   "mtimeNs": 1771326156030396757,
+   "ctimeNs": 1771326156030396757
+  }
+ },
+ "benchmark/benchmark_20260217_030338.json": {
+  "size": 7526,
+  "mtimeNs": 1771326330238269089,
+  "digest": "blake3:249b5f0a7eedd050de91df84053c6b55a65adcf1fcc89b20e8b738c17c830c2b",
+  "verification": {
+   "digest": "blake3:249b5f0a7eedd050de91df84053c6b55a65adcf1fcc89b20e8b738c17c830c2b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690162,
+   "size": 7526,
+   "mtimeNs": 1771326330238269089,
+   "ctimeNs": 1771326330238269089
+  }
+ },
+ "benchmark/benchmark_20260217_042709.json": {
+  "size": 6463,
+  "mtimeNs": 1771331232801413401,
+  "digest": "blake3:570b12a8f453728676fafd6e1173708f460e691a00cf971f022635c881458ea0",
+  "verification": {
+   "digest": "blake3:570b12a8f453728676fafd6e1173708f460e691a00cf971f022635c881458ea0",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690163,
+   "size": 6463,
+   "mtimeNs": 1771331232801413401,
+   "ctimeNs": 1771331232801413401
+  }
+ },
+ "benchmark/benchmark_20260217_042820.json": {
+  "size": 8263,
+  "mtimeNs": 1771331515588370726,
+  "digest": "blake3:5dbdc1fdda351013419bea2895eca65d14f67b0305dd01a794a12bdf96b907e1",
+  "verification": {
+   "digest": "blake3:5dbdc1fdda351013419bea2895eca65d14f67b0305dd01a794a12bdf96b907e1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690164,
+   "size": 8263,
+   "mtimeNs": 1771331515588370726,
+   "ctimeNs": 1771331515588370726
+  }
+ },
+ "benchmark/benchmark_20260217_043314.json": {
+  "size": 8302,
+  "mtimeNs": 1771331617268615196,
+  "digest": "blake3:01a8bf3b18f31871ef41150973835ea44972f790b0827644aa4c2bc5b9ad3c90",
+  "verification": {
+   "digest": "blake3:01a8bf3b18f31871ef41150973835ea44972f790b0827644aa4c2bc5b9ad3c90",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690165,
+   "size": 8302,
+   "mtimeNs": 1771331617268615196,
+   "ctimeNs": 1771331617268615196
+  }
+ },
+ "benchmark/benchmark_20260217_043645.json": {
+  "size": 10201,
+  "mtimeNs": 1771331816771736673,
+  "digest": "blake3:f02b3a6ee4a3fd29f9f0c6f16685e949fba9ed5d22aa4eb4369d708cf77aa1bb",
+  "verification": {
+   "digest": "blake3:f02b3a6ee4a3fd29f9f0c6f16685e949fba9ed5d22aa4eb4369d708cf77aa1bb",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690166,
+   "size": 10201,
+   "mtimeNs": 1771331816771736673,
+   "ctimeNs": 1771331816771736673
+  }
+ },
+ "benchmark/benchmark_20260217_043720.json": {
+  "size": 5739,
+  "mtimeNs": 1771331851341863597,
+  "digest": "blake3:bde789474e646564a616cc5311afbb5855e9aa6eed219d5de2da0854c3f1a2bf",
+  "verification": {
+   "digest": "blake3:bde789474e646564a616cc5311afbb5855e9aa6eed219d5de2da0854c3f1a2bf",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690167,
+   "size": 5739,
+   "mtimeNs": 1771331851341863597,
+   "ctimeNs": 1771331851341863597
+  }
+ },
+ "benchmark/benchmark_20260217_043747.json": {
+  "size": 7530,
+  "mtimeNs": 1771331878540635223,
+  "digest": "blake3:fb1d7de2d2683029d69e6c8c5dfba6b05121ec95124942430f0c4c71db1497e4",
+  "verification": {
+   "digest": "blake3:fb1d7de2d2683029d69e6c8c5dfba6b05121ec95124942430f0c4c71db1497e4",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690168,
+   "size": 7530,
+   "mtimeNs": 1771331878540635223,
+   "ctimeNs": 1771331878540635223
+  }
+ },
+ "benchmark/benchmark_20260217_044018.json": {
+  "size": 5740,
+  "mtimeNs": 1771332029790373551,
+  "digest": "blake3:6822ee2b59072f78c98a5e0015c329d910f70dc627988c1139f3bb39b66f1dcf",
+  "verification": {
+   "digest": "blake3:6822ee2b59072f78c98a5e0015c329d910f70dc627988c1139f3bb39b66f1dcf",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690169,
+   "size": 5740,
+   "mtimeNs": 1771332029790373551,
+   "ctimeNs": 1771332029790373551
+  }
+ },
+ "benchmark/benchmark_20260217_044049.json": {
+  "size": 6481,
+  "mtimeNs": 1771332068092617736,
+  "digest": "blake3:7a2fc4eec7703acb4196205565f12733583f8c5d4b1dad3ec3c49266b57fbb0b",
+  "verification": {
+   "digest": "blake3:7a2fc4eec7703acb4196205565f12733583f8c5d4b1dad3ec3c49266b57fbb0b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690170,
+   "size": 6481,
+   "mtimeNs": 1771332068092617736,
+   "ctimeNs": 1771332068092617736
+  }
+ },
+ "benchmark/benchmark_20260217_044111.json": {
+  "size": 8281,
+  "mtimeNs": 1771332085311810939,
+  "digest": "blake3:e89dfecc5907cf5433304f9d9877c270c84d984d1fc468cab7dc44a1c676086c",
+  "verification": {
+   "digest": "blake3:e89dfecc5907cf5433304f9d9877c270c84d984d1fc468cab7dc44a1c676086c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690171,
+   "size": 8281,
+   "mtimeNs": 1771332085311810939,
+   "ctimeNs": 1771332085311810939
+  }
+ },
+ "benchmark/benchmark_20260217_044143.json": {
+  "size": 7117,
+  "mtimeNs": 1771332123129779416,
+  "digest": "blake3:12424cccc2755dfcef722e25066fabccbcfafb3d496079fb68c7cf0225a95d06",
+  "verification": {
+   "digest": "blake3:12424cccc2755dfcef722e25066fabccbcfafb3d496079fb68c7cf0225a95d06",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690172,
+   "size": 7117,
+   "mtimeNs": 1771332123129779416,
+   "ctimeNs": 1771332123129779416
+  }
+ },
+ "benchmark/benchmark_20260217_044217.json": {
+  "size": 6449,
+  "mtimeNs": 1771332174818779189,
+  "digest": "blake3:8d792d3aad09d5436e0f0cabe6ceffeaa9426424e8a44e1fc30e2efb5ecd542b",
+  "verification": {
+   "digest": "blake3:8d792d3aad09d5436e0f0cabe6ceffeaa9426424e8a44e1fc30e2efb5ecd542b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690173,
+   "size": 6449,
+   "mtimeNs": 1771332174818779189,
+   "ctimeNs": 1771332174818779189
+  }
+ },
+ "benchmark/benchmark_20260217_044335.json": {
+  "size": 8283,
+  "mtimeNs": 1771332229594572648,
+  "digest": "blake3:ef95aebfeb317e5074c8cdfbdf9fef663a0d7e099fe85dee90634ec008e1bab9",
+  "verification": {
+   "digest": "blake3:ef95aebfeb317e5074c8cdfbdf9fef663a0d7e099fe85dee90634ec008e1bab9",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690174,
+   "size": 8283,
+   "mtimeNs": 1771332229594572648,
+   "ctimeNs": 1771332229594572648
+  }
+ },
+ "benchmark/benchmark_20260217_044359.json": {
+  "size": 6463,
+  "mtimeNs": 1771332257722325154,
+  "digest": "blake3:703aa80f934566ce9f8cbe817948292b322de7b79334f6586b7fa1346ee4d1eb",
+  "verification": {
+   "digest": "blake3:703aa80f934566ce9f8cbe817948292b322de7b79334f6586b7fa1346ee4d1eb",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690175,
+   "size": 6463,
+   "mtimeNs": 1771332257722325154,
+   "ctimeNs": 1771332257722325154
+  }
+ },
+ "benchmark/benchmark_20260217_044540.json": {
+  "size": 9574,
+  "mtimeNs": 1771332361561364009,
+  "digest": "blake3:2e17cae6fec2fbc49e357564541e7dbe93a72fd76e0947c3ed9c4c83f39f6e23",
+  "verification": {
+   "digest": "blake3:2e17cae6fec2fbc49e357564541e7dbe93a72fd76e0947c3ed9c4c83f39f6e23",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690176,
+   "size": 9574,
+   "mtimeNs": 1771332361561364009,
+   "ctimeNs": 1771332361561364009
+  }
+ },
+ "benchmark/benchmark_20260217_045215.json": {
+  "size": 10945,
+  "mtimeNs": 1771332749831591295,
+  "digest": "blake3:2bd13972c59fe0c4398d383f0e1748bafe3dfa3bf8091b639e2eb0b192601130",
+  "verification": {
+   "digest": "blake3:2bd13972c59fe0c4398d383f0e1748bafe3dfa3bf8091b639e2eb0b192601130",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690177,
+   "size": 10945,
+   "mtimeNs": 1771332749831591295,
+   "ctimeNs": 1771332749831591295
+  }
+ },
+ "benchmark/benchmark_20260217_045236.json": {
+  "size": 6464,
+  "mtimeNs": 1771332775146328655,
+  "digest": "blake3:16ab6329cb917acc451f0e3c74c156f53c581070984a5360f0a22dbbeee4cb6c",
+  "verification": {
+   "digest": "blake3:16ab6329cb917acc451f0e3c74c156f53c581070984a5360f0a22dbbeee4cb6c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690178,
+   "size": 6464,
+   "mtimeNs": 1771332775146328655,
+   "ctimeNs": 1771332775146328655
+  }
+ },
+ "benchmark/benchmark_20260217_045802.json": {
+  "size": 8281,
+  "mtimeNs": 1771333104137349519,
+  "digest": "blake3:20d67ec8a8373228ae89023d6f4eacde51241265e44ff8fa2e997cb9b01c5095",
+  "verification": {
+   "digest": "blake3:20d67ec8a8373228ae89023d6f4eacde51241265e44ff8fa2e997cb9b01c5095",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690179,
+   "size": 8281,
+   "mtimeNs": 1771333104137349519,
+   "ctimeNs": 1771333104137349519
+  }
+ },
+ "benchmark/benchmark_20260217_045833.json": {
+  "size": 6462,
+  "mtimeNs": 1771333145665325164,
+  "digest": "blake3:1a181df5de2172eaff0691d1bb11abc395cc9d2613685d9b1e1c7e0fd1cd8313",
+  "verification": {
+   "digest": "blake3:1a181df5de2172eaff0691d1bb11abc395cc9d2613685d9b1e1c7e0fd1cd8313",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690180,
+   "size": 6462,
+   "mtimeNs": 1771333145665325164,
+   "ctimeNs": 1771333145665325164
+  }
+ },
+ "benchmark/benchmark_20260217_065015.json": {
+  "size": 8764,
+  "mtimeNs": 1771339830483759488,
+  "digest": "blake3:478068ba744b5f752b51855c0ab740ab39e0bded67257d9b771a0b888de74dac",
+  "verification": {
+   "digest": "blake3:478068ba744b5f752b51855c0ab740ab39e0bded67257d9b771a0b888de74dac",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690184,
+   "size": 8764,
+   "mtimeNs": 1771339830483759488,
+   "ctimeNs": 1771339830483759488
+  }
+ },
+ "benchmark/benchmark_20260217_065046.json": {
+  "size": 7478,
+  "mtimeNs": 1771339856217059804,
+  "digest": "blake3:9ba2577b061e7f581e8b2b83bac102d499c025223e6c6be767e3d509822d2619",
+  "verification": {
+   "digest": "blake3:9ba2577b061e7f581e8b2b83bac102d499c025223e6c6be767e3d509822d2619",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690185,
+   "size": 7478,
+   "mtimeNs": 1771339856217059804,
+   "ctimeNs": 1771339856217059804
+  }
+ },
+ "benchmark/benchmark_20260217_065213.json": {
+  "size": 8932,
+  "mtimeNs": 1771339956044306341,
+  "digest": "blake3:bd2ff1c8078592577477df7557a37b7d033b783ae0e6e2589786eb581918735a",
+  "verification": {
+   "digest": "blake3:bd2ff1c8078592577477df7557a37b7d033b783ae0e6e2589786eb581918735a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690186,
+   "size": 8932,
+   "mtimeNs": 1771339956044306341,
+   "ctimeNs": 1771339956044306341
+  }
+ },
+ "benchmark/benchmark_20260217_065251.json": {
+  "size": 5369,
+  "mtimeNs": 1771339976030198619,
+  "digest": "blake3:275563976fb41b38a11589412b134a09f1669a974b7f4cffa23196a10efeab72",
+  "verification": {
+   "digest": "blake3:275563976fb41b38a11589412b134a09f1669a974b7f4cffa23196a10efeab72",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690187,
+   "size": 5369,
+   "mtimeNs": 1771339976030198619,
+   "ctimeNs": 1771339976030198619
+  }
+ },
+ "benchmark/benchmark_20260217_065256.json": {
+  "size": 3841,
+  "mtimeNs": 1771339999187504003,
+  "digest": "blake3:2eac889e4787c184963e825c1fabdde5b54f552ad64f0b4cbcb1f261bd50ddd0",
+  "verification": {
+   "digest": "blake3:2eac889e4787c184963e825c1fabdde5b54f552ad64f0b4cbcb1f261bd50ddd0",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690188,
+   "size": 3841,
+   "mtimeNs": 1771339999187504003,
+   "ctimeNs": 1771339999187504003
+  }
+ },
+ "benchmark/benchmark_20260217_065332.json": {
+  "size": 10959,
+  "mtimeNs": 1771340237611735056,
+  "digest": "blake3:d9ff18093b5bd2c6c5ab2004aa514cc978740de9b8f1b20179883e5234e67571",
+  "verification": {
+   "digest": "blake3:d9ff18093b5bd2c6c5ab2004aa514cc978740de9b8f1b20179883e5234e67571",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690189,
+   "size": 10959,
+   "mtimeNs": 1771340237611735056,
+   "ctimeNs": 1771340237611735056
+  }
+ },
+ "benchmark/benchmark_20260309_090906.json": {
+  "size": 8477,
+  "mtimeNs": 1773072548105278024,
+  "digest": "blake3:1c774e58a33a56ae04bcd88811056548f49e63080d66e7190719768d0f03eb65",
+  "verification": {
+   "digest": "blake3:1c774e58a33a56ae04bcd88811056548f49e63080d66e7190719768d0f03eb65",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690181,
+   "size": 8477,
+   "mtimeNs": 1773072548105278024,
+   "ctimeNs": 1773072548105278024
+  }
+ },
+ "benchmark/benchmark_20260309_090914.json": {
+  "size": 2638,
+  "mtimeNs": 1773072554963800345,
+  "digest": "blake3:67391e47306077e47544b6378a69684d6b2ede69d8dcdb685fcd3ecf54d967ce",
+  "verification": {
+   "digest": "blake3:67391e47306077e47544b6378a69684d6b2ede69d8dcdb685fcd3ecf54d967ce",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690182,
+   "size": 2638,
+   "mtimeNs": 1773072554963800345,
+   "ctimeNs": 1773072554963800345
+  }
+ },
+ "benchmark/benchmark_20260309_090918.json": {
+  "size": 7166,
+  "mtimeNs": 1773072561480120199,
+  "digest": "blake3:96125a1e19adf12747d20e58eca9a5404db6918da6e470bda2adaf4364ba69fe",
+  "verification": {
+   "digest": "blake3:96125a1e19adf12747d20e58eca9a5404db6918da6e470bda2adaf4364ba69fe",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690183,
+   "size": 7166,
+   "mtimeNs": 1773072561480120199,
+   "ctimeNs": 1773072561480120199
+  }
+ },
+ "benchmark/benchmark_20260414_200734.json": {
+  "size": 9674,
+  "mtimeNs": 1776222456400080651,
+  "digest": "blake3:c80b4557d3c3d562ee2081d101d66b8419381578845415649bde4964a82bb53c",
+  "verification": {
+   "digest": "blake3:c80b4557d3c3d562ee2081d101d66b8419381578845415649bde4964a82bb53c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690463,
+   "size": 9674,
+   "mtimeNs": 1776222456400080651,
+   "ctimeNs": 1776222456400080651
+  }
+ },
+ "benchmark/benchmark_20260414_200810.json": {
+  "size": 14862,
+  "mtimeNs": 1776222509652670584,
+  "digest": "blake3:c0b8a4365e0042e06afc61773ba49db9cb56b7c3c368d8e0742340fb58c9806a",
+  "verification": {
+   "digest": "blake3:c0b8a4365e0042e06afc61773ba49db9cb56b7c3c368d8e0742340fb58c9806a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690464,
+   "size": 14862,
+   "mtimeNs": 1776222509652670584,
+   "ctimeNs": 1776222509652670584
+  }
+ },
+ "benchmark/zimage_fp8_e4m3fn_fast_6000pro_benchmark_20260113_003735.json": {
+  "size": 18682,
+  "mtimeNs": 1768293476193698600,
+  "digest": "blake3:0471ad0d8098eb786884c4ec573cc30f848c6baba9dc5bcfe425fc6c1363fc96",
+  "verification": {
+   "digest": "blake3:0471ad0d8098eb786884c4ec573cc30f848c6baba9dc5bcfe425fc6c1363fc96",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54666580,
+   "size": 18682,
+   "mtimeNs": 1768293476193698600,
+   "ctimeNs": 1768293476193698600
+  }
+ },
+ "benchmark/zimage_fp8_e4m3fn_fast_6000pro_benchmark_20260113_003806.json": {
+  "size": 10528,
+  "mtimeNs": 1768293495988652882,
+  "digest": "blake3:06ef1b58d3767ab0b5930734c7fe718384b6872270f29e33823d24a818eae143",
+  "verification": {
+   "digest": "blake3:06ef1b58d3767ab0b5930734c7fe718384b6872270f29e33823d24a818eae143",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54690151,
+   "size": 10528,
+   "mtimeNs": 1768293495988652882,
+   "ctimeNs": 1768293495988652882
+  }
+ },
+ "domfy29/live-gain0_00001.png": {
+  "size": 348097,
+  "mtimeNs": 1787318108758257556,
+  "digest": "blake3:a2f004c88722d430a55830b33f0c2d5b5274160e039244363cd69038f78e40b3",
+  "verification": {
+   "digest": "blake3:a2f004c88722d430a55830b33f0c2d5b5274160e039244363cd69038f78e40b3",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54430323,
+   "size": 348097,
+   "mtimeNs": 1787318108758257556,
+   "ctimeNs": 1787318108759243505
+  }
+ },
+ "domfy29/live-gain1_00001.png": {
+  "size": 481650,
+  "mtimeNs": 1787318081141187809,
+  "digest": "blake3:6d937158becfcd11f5b99e0e43a534854b0012ee7bf2bfb4aa27990239403927",
+  "verification": {
+   "digest": "blake3:6d937158becfcd11f5b99e0e43a534854b0012ee7bf2bfb4aa27990239403927",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54430327,
+   "size": 481650,
+   "mtimeNs": 1787318081141187809,
+   "ctimeNs": 1787318081142408555
+  }
+ },
+ "video/ComfyUI_00001_.mp4": {
+  "size": 700934,
+  "mtimeNs": 1767860550746689847,
+  "digest": "blake3:867b5343560251acc5b0e58722414e382e368b1868584682d0133894711baabd",
+  "verification": {
+   "digest": "blake3:867b5343560251acc5b0e58722414e382e368b1868584682d0133894711baabd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296863,
+   "size": 700934,
+   "mtimeNs": 1767860550746689847,
+   "ctimeNs": 1767860550746689847
+  }
+ },
+ "video/ComfyUI_00002_.mp4": {
+  "size": 683220,
+  "mtimeNs": 1767860714330740500,
+  "digest": "blake3:50c67795cd41298a087f3f7f9a6b12a4c3d7c797c76455ecc0eec8c2b4e48e58",
+  "verification": {
+   "digest": "blake3:50c67795cd41298a087f3f7f9a6b12a4c3d7c797c76455ecc0eec8c2b4e48e58",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296864,
+   "size": 683220,
+   "mtimeNs": 1767860714330740500,
+   "ctimeNs": 1767860714330740500
+  }
+ },
+ "video/ComfyUI_00003_.mp4": {
+  "size": 684195,
+  "mtimeNs": 1767860875105752901,
+  "digest": "blake3:bfe8c175e74118a9c27bc60e3a456197c869742b77275ed51d6e7f15d5a5756e",
+  "verification": {
+   "digest": "blake3:bfe8c175e74118a9c27bc60e3a456197c869742b77275ed51d6e7f15d5a5756e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296865,
+   "size": 684195,
+   "mtimeNs": 1767860875105752901,
+   "ctimeNs": 1767860875105752901
+  }
+ },
+ "video/ComfyUI_00004_.mp4": {
+  "size": 716514,
+  "mtimeNs": 1767860972649393230,
+  "digest": "blake3:897b8dc6bd2ed8cf474dee452b52e0a3d5d555f601e7cb8cae7951c864cf1374",
+  "verification": {
+   "digest": "blake3:897b8dc6bd2ed8cf474dee452b52e0a3d5d555f601e7cb8cae7951c864cf1374",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296866,
+   "size": 716514,
+   "mtimeNs": 1767860972649393230,
+   "ctimeNs": 1767860972649393230
+  }
+ },
+ "video/ComfyUI_00005_.mp4": {
+  "size": 650441,
+  "mtimeNs": 1767863394508338493,
+  "digest": "blake3:8c8779f12a4d6eb2409157eac016430123d8bfcf1b758ad222c5699e6b6ae3de",
+  "verification": {
+   "digest": "blake3:8c8779f12a4d6eb2409157eac016430123d8bfcf1b758ad222c5699e6b6ae3de",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54292604,
+   "size": 650441,
+   "mtimeNs": 1767863394508338493,
+   "ctimeNs": 1767863394508338493
+  }
+ },
+ "video/ComfyUI_00006_.mp4": {
+  "size": 696617,
+  "mtimeNs": 1767863615412816910,
+  "digest": "blake3:aba4196939c51e8e4c1d5094c3249082f383a7384ff763955197a0ec3967d9cc",
+  "verification": {
+   "digest": "blake3:aba4196939c51e8e4c1d5094c3249082f383a7384ff763955197a0ec3967d9cc",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296867,
+   "size": 696617,
+   "mtimeNs": 1767863615412816910,
+   "ctimeNs": 1767863615412816910
+  }
+ },
+ "video/ComfyUI_00007_.mp4": {
+  "size": 696015,
+  "mtimeNs": 1767863953523791237,
+  "digest": "blake3:3f27ecf7162d493c8acb45ac508b330d5b2f6d7ce6a8804e57988fe0f4f555cb",
+  "verification": {
+   "digest": "blake3:3f27ecf7162d493c8acb45ac508b330d5b2f6d7ce6a8804e57988fe0f4f555cb",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296868,
+   "size": 696015,
+   "mtimeNs": 1767863953523791237,
+   "ctimeNs": 1767863953523791237
+  }
+ },
+ "video/ComfyUI_00008_.mp4": {
+  "size": 640762,
+  "mtimeNs": 1767864253603313627,
+  "digest": "blake3:d717febe5f270fab3bec257c40bebbe21f319a75bc86808ced5264435928c420",
+  "verification": {
+   "digest": "blake3:d717febe5f270fab3bec257c40bebbe21f319a75bc86808ced5264435928c420",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296869,
+   "size": 640762,
+   "mtimeNs": 1767864253603313627,
+   "ctimeNs": 1767864253603313627
+  }
+ },
+ "video/ComfyUI_00009_.mp4": {
+  "size": 658131,
+  "mtimeNs": 1767866448271084794,
+  "digest": "blake3:36424226ff4020ec67cf1b406f831f6b609546c7888912508ec81e5864013338",
+  "verification": {
+   "digest": "blake3:36424226ff4020ec67cf1b406f831f6b609546c7888912508ec81e5864013338",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296870,
+   "size": 658131,
+   "mtimeNs": 1767866448271084794,
+   "ctimeNs": 1767866448271084794
+  }
+ },
+ "video/ComfyUI_00010_.mp4": {
+  "size": 683953,
+  "mtimeNs": 1767866707661694569,
+  "digest": "blake3:dd2cfd9579138ed7b317b1f377eb8e4d1f84a5ca490f07edf58bb4946193037a",
+  "verification": {
+   "digest": "blake3:dd2cfd9579138ed7b317b1f377eb8e4d1f84a5ca490f07edf58bb4946193037a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296871,
+   "size": 683953,
+   "mtimeNs": 1767866707661694569,
+   "ctimeNs": 1767866707661694569
+  }
+ },
+ "video/ComfyUI_00011_.mp4": {
+  "size": 683701,
+  "mtimeNs": 1767867375275412858,
+  "digest": "blake3:6b364138e6a50127d81b2adbbeb1b6e983a0cef3c867e11e8febe1030ba3736c",
+  "verification": {
+   "digest": "blake3:6b364138e6a50127d81b2adbbeb1b6e983a0cef3c867e11e8febe1030ba3736c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296872,
+   "size": 683701,
+   "mtimeNs": 1767867375275412858,
+   "ctimeNs": 1767867375275412858
+  }
+ },
+ "video/ComfyUI_00012_.mp4": {
+  "size": 673843,
+  "mtimeNs": 1767867542866794515,
+  "digest": "blake3:ec7be8b568cba08a6732c353e2156697c0601e308d383d8abade15219b2b9614",
+  "verification": {
+   "digest": "blake3:ec7be8b568cba08a6732c353e2156697c0601e308d383d8abade15219b2b9614",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296873,
+   "size": 673843,
+   "mtimeNs": 1767867542866794515,
+   "ctimeNs": 1767867542866794515
+  }
+ },
+ "video/ComfyUI_00013_.mp4": {
+  "size": 590836,
+  "mtimeNs": 1771340237609870544,
+  "digest": "blake3:f1d5b8ffb1876744ff78642a35821137fb0fc8ac366c269cc215785c70d2f31d",
+  "verification": {
+   "digest": "blake3:f1d5b8ffb1876744ff78642a35821137fb0fc8ac366c269cc215785c70d2f31d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54296969,
+   "size": 590836,
+   "mtimeNs": 1771340237609870544,
+   "ctimeNs": 1771340237609870544
+  }
+ },
+ "z-image_00001_.png": {
+  "size": 1966651,
+  "mtimeNs": 1767609666653771563,
+  "digest": "blake3:c903733c5ffd60f1ab10a7d5711afc8ce8a226e37674bcdf9173fa252dadef21",
+  "verification": {
+   "digest": "blake3:c903733c5ffd60f1ab10a7d5711afc8ce8a226e37674bcdf9173fa252dadef21",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037376,
+   "size": 1966651,
+   "mtimeNs": 1767609666653771563,
+   "ctimeNs": 1767609666653771563
+  }
+ },
+ "z-image_00002_.png": {
+  "size": 1862073,
+  "mtimeNs": 1767609697133557447,
+  "digest": "blake3:db2bdb5d4061f6fc584f7664d69f091fab987c3293acbfb91fba19985238c45b",
+  "verification": {
+   "digest": "blake3:db2bdb5d4061f6fc584f7664d69f091fab987c3293acbfb91fba19985238c45b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037982,
+   "size": 1862073,
+   "mtimeNs": 1767609697133557447,
+   "ctimeNs": 1767609697133557447
+  }
+ },
+ "z-image_00003_.png": {
+  "size": 2159891,
+  "mtimeNs": 1767609707565996531,
+  "digest": "blake3:57026ed6d26b0c692c22c95fda7a27b9c37090f5e38aa84509d0b4f6cd562c39",
+  "verification": {
+   "digest": "blake3:57026ed6d26b0c692c22c95fda7a27b9c37090f5e38aa84509d0b4f6cd562c39",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038537,
+   "size": 2159891,
+   "mtimeNs": 1767609707565996531,
+   "ctimeNs": 1767609707565996531
+  }
+ },
+ "z-image_00004_.png": {
+  "size": 2211643,
+  "mtimeNs": 1767615275057702790,
+  "digest": "blake3:e3949b144dcfd77fe5020b0c75b6b30defa984a97dfdf99cf88182c74ca86b82",
+  "verification": {
+   "digest": "blake3:e3949b144dcfd77fe5020b0c75b6b30defa984a97dfdf99cf88182c74ca86b82",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54029922,
+   "size": 2211643,
+   "mtimeNs": 1767615275057702790,
+   "ctimeNs": 1767615275057702790
+  }
+ },
+ "z-image_00005_.png": {
+  "size": 2235463,
+  "mtimeNs": 1767615983686567716,
+  "digest": "blake3:b6990717e6017927143344e0ec26ecf2b1f1f272b4d5385ed9938e247ce0d609",
+  "verification": {
+   "digest": "blake3:b6990717e6017927143344e0ec26ecf2b1f1f272b4d5385ed9938e247ce0d609",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54030012,
+   "size": 2235463,
+   "mtimeNs": 1767615983686567716,
+   "ctimeNs": 1767615983686567716
+  }
+ },
+ "z-image_00006_.png": {
+  "size": 1284646,
+  "mtimeNs": 1767830553391266785,
+  "digest": "blake3:cfde1ea38147dfb3eb28ac960337a0616fa37c712a1fe1b11dbd043a41e7cf89",
+  "verification": {
+   "digest": "blake3:cfde1ea38147dfb3eb28ac960337a0616fa37c712a1fe1b11dbd043a41e7cf89",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54037218,
+   "size": 1284646,
+   "mtimeNs": 1767830553391266785,
+   "ctimeNs": 1767830553391266785
+  }
+ },
+ "z-image_00007_.png": {
+  "size": 1284646,
+  "mtimeNs": 1767831071984719390,
+  "digest": "blake3:cfde1ea38147dfb3eb28ac960337a0616fa37c712a1fe1b11dbd043a41e7cf89",
+  "verification": {
+   "digest": "blake3:cfde1ea38147dfb3eb28ac960337a0616fa37c712a1fe1b11dbd043a41e7cf89",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039251,
+   "size": 1284646,
+   "mtimeNs": 1767831071984719390,
+   "ctimeNs": 1767831071984719390
+  }
+ },
+ "z-image_00008_.png": {
+  "size": 1284646,
+  "mtimeNs": 1767831586951939702,
+  "digest": "blake3:cfde1ea38147dfb3eb28ac960337a0616fa37c712a1fe1b11dbd043a41e7cf89",
+  "verification": {
+   "digest": "blake3:cfde1ea38147dfb3eb28ac960337a0616fa37c712a1fe1b11dbd043a41e7cf89",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039258,
+   "size": 1284646,
+   "mtimeNs": 1767831586951939702,
+   "ctimeNs": 1767831586951939702
+  }
+ },
+ "z-image_00009_.png": {
+  "size": 1283989,
+  "mtimeNs": 1767831636024975233,
+  "digest": "blake3:8d5ecb0b56ff2a366253a97fc3ed413fa957bc9413979d734529e7dc10614eb2",
+  "verification": {
+   "digest": "blake3:8d5ecb0b56ff2a366253a97fc3ed413fa957bc9413979d734529e7dc10614eb2",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039257,
+   "size": 1283989,
+   "mtimeNs": 1767831636024975233,
+   "ctimeNs": 1767831636024975233
+  }
+ },
+ "z-image_00010_.png": {
+  "size": 1331130,
+  "mtimeNs": 1767831672298130781,
+  "digest": "blake3:c0478709ba1dc043a086a9bcadd3d3030415127f54350934e1ff8013583addf5",
+  "verification": {
+   "digest": "blake3:c0478709ba1dc043a086a9bcadd3d3030415127f54350934e1ff8013583addf5",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039248,
+   "size": 1331130,
+   "mtimeNs": 1767831672298130781,
+   "ctimeNs": 1767831672298130781
+  }
+ },
+ "z-image_00011_.png": {
+  "size": 1333128,
+  "mtimeNs": 1767831720750482438,
+  "digest": "blake3:9ae4b706de399809fdd95b58b20967f0cd2d59458dc0241a83f088995691940c",
+  "verification": {
+   "digest": "blake3:9ae4b706de399809fdd95b58b20967f0cd2d59458dc0241a83f088995691940c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039266,
+   "size": 1333128,
+   "mtimeNs": 1767831720750482438,
+   "ctimeNs": 1767831720750482438
+  }
+ },
+ "z-image_00012_.png": {
+  "size": 1284648,
+  "mtimeNs": 1767831732147083532,
+  "digest": "blake3:1ea296a801d61cc27bbfd2f6eb909cf1b9567913f9bc6bf4ba650528973eb210",
+  "verification": {
+   "digest": "blake3:1ea296a801d61cc27bbfd2f6eb909cf1b9567913f9bc6bf4ba650528973eb210",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039259,
+   "size": 1284648,
+   "mtimeNs": 1767831732147083532,
+   "ctimeNs": 1767831732147083532
+  }
+ },
+ "z-image_00013_.png": {
+  "size": 1287334,
+  "mtimeNs": 1767832581475777809,
+  "digest": "blake3:cf705bbf6c1f5402510d23da6222c1f5729b3889ff3b66c49df54244bc20014c",
+  "verification": {
+   "digest": "blake3:cf705bbf6c1f5402510d23da6222c1f5729b3889ff3b66c49df54244bc20014c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54034234,
+   "size": 1287334,
+   "mtimeNs": 1767832581475777809,
+   "ctimeNs": 1767832581475777809
+  }
+ },
+ "z-image_00014_.png": {
+  "size": 1291575,
+  "mtimeNs": 1767832588565710307,
+  "digest": "blake3:e2a4298b7fbd74a341b4f61f9c0276f8de3600589db68c2b7ba550129a0eb114",
+  "verification": {
+   "digest": "blake3:e2a4298b7fbd74a341b4f61f9c0276f8de3600589db68c2b7ba550129a0eb114",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039348,
+   "size": 1291575,
+   "mtimeNs": 1767832588565710307,
+   "ctimeNs": 1767832588565710307
+  }
+ },
+ "z-image_00015_.png": {
+  "size": 1338798,
+  "mtimeNs": 1767832597066654826,
+  "digest": "blake3:099207d28836c003bdd02547a0a2bcc88ba2759595097889fffd9775f9f0cddc",
+  "verification": {
+   "digest": "blake3:099207d28836c003bdd02547a0a2bcc88ba2759595097889fffd9775f9f0cddc",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039349,
+   "size": 1338798,
+   "mtimeNs": 1767832597066654826,
+   "ctimeNs": 1767832597066654826
+  }
+ },
+ "z-image_00016_.png": {
+  "size": 1283860,
+  "mtimeNs": 1767832660351441778,
+  "digest": "blake3:a5cbe77785819db0d1bfe011cdd7e63190711203c56f5decdba6b5ac66a4b2e7",
+  "verification": {
+   "digest": "blake3:a5cbe77785819db0d1bfe011cdd7e63190711203c56f5decdba6b5ac66a4b2e7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039350,
+   "size": 1283860,
+   "mtimeNs": 1767832660351441778,
+   "ctimeNs": 1767832660351441778
+  }
+ },
+ "z-image_00017_.png": {
+  "size": 1332683,
+  "mtimeNs": 1767832669264302801,
+  "digest": "blake3:6265f575fce7b5ee4277b1c364f5d34e1ee7e2139d1988a8a3259615f8adb9a6",
+  "verification": {
+   "digest": "blake3:6265f575fce7b5ee4277b1c364f5d34e1ee7e2139d1988a8a3259615f8adb9a6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039351,
+   "size": 1332683,
+   "mtimeNs": 1767832669264302801,
+   "ctimeNs": 1767832669264302801
+  }
+ },
+ "z-image_00018_.png": {
+  "size": 2049034,
+  "mtimeNs": 1767832756047803501,
+  "digest": "blake3:48d81805783d71425eb4b2a0bbbbac75b56600036a780f2547c58162671ba0b5",
+  "verification": {
+   "digest": "blake3:48d81805783d71425eb4b2a0bbbbac75b56600036a780f2547c58162671ba0b5",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003002,
+   "size": 2049034,
+   "mtimeNs": 1767832756047803501,
+   "ctimeNs": 1767832756047803501
+  }
+ },
+ "z-image_00019_.png": {
+  "size": 1956642,
+  "mtimeNs": 1767832781240480070,
+  "digest": "blake3:c770f2c70dfa2a4c35233d81603d272e82c4a7f37451eb9962c4fe3677ed5923",
+  "verification": {
+   "digest": "blake3:c770f2c70dfa2a4c35233d81603d272e82c4a7f37451eb9962c4fe3677ed5923",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039253,
+   "size": 1956642,
+   "mtimeNs": 1767832781240480070,
+   "ctimeNs": 1767832781240480070
+  }
+ },
+ "z-image_00020_.png": {
+  "size": 1896312,
+  "mtimeNs": 1767832809820272667,
+  "digest": "blake3:b0cbfd26d430be8be66758f4655ae6375300a4df21b36c3131b55155213fe669",
+  "verification": {
+   "digest": "blake3:b0cbfd26d430be8be66758f4655ae6375300a4df21b36c3131b55155213fe669",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039260,
+   "size": 1896312,
+   "mtimeNs": 1767832809820272667,
+   "ctimeNs": 1767832809820272667
+  }
+ },
+ "z-image_00021_.png": {
+  "size": 1932735,
+  "mtimeNs": 1767832823505863818,
+  "digest": "blake3:3a17b8d3867ab2f3f5a8c51178315116e55d70f7fb92664744aa09f6fe2a1bf8",
+  "verification": {
+   "digest": "blake3:3a17b8d3867ab2f3f5a8c51178315116e55d70f7fb92664744aa09f6fe2a1bf8",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039269,
+   "size": 1932735,
+   "mtimeNs": 1767832823505863818,
+   "ctimeNs": 1767832823505863818
+  }
+ },
+ "z-image_00022_.png": {
+  "size": 1947643,
+  "mtimeNs": 1767832865797896992,
+  "digest": "blake3:d2227df8ba2c915111af369f41c24df8e0cdf0f64b487b9801c0974edac01320",
+  "verification": {
+   "digest": "blake3:d2227df8ba2c915111af369f41c24df8e0cdf0f64b487b9801c0974edac01320",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54003023,
+   "size": 1947643,
+   "mtimeNs": 1767832865797896992,
+   "ctimeNs": 1767832865797896992
+  }
+ },
+ "z-image_00023_.png": {
+  "size": 1933213,
+  "mtimeNs": 1767832899436784307,
+  "digest": "blake3:7b51f7964532e65abf24fd55c483c269227504004f6298e6ec3a7b1da9ca4cc1",
+  "verification": {
+   "digest": "blake3:7b51f7964532e65abf24fd55c483c269227504004f6298e6ec3a7b1da9ca4cc1",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039277,
+   "size": 1933213,
+   "mtimeNs": 1767832899436784307,
+   "ctimeNs": 1767832899436784307
+  }
+ },
+ "z-image_00024_.png": {
+  "size": 1896790,
+  "mtimeNs": 1767832922391627505,
+  "digest": "blake3:bbde4d44c9046e9291838b3a2b12bec76adae24afa824d52063b9609fafe8b3c",
+  "verification": {
+   "digest": "blake3:bbde4d44c9046e9291838b3a2b12bec76adae24afa824d52063b9609fafe8b3c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039312,
+   "size": 1896790,
+   "mtimeNs": 1767832922391627505,
+   "ctimeNs": 1767832922391627505
+  }
+ },
+ "z-image_00025_.png": {
+  "size": 1838572,
+  "mtimeNs": 1767832939542501888,
+  "digest": "blake3:b4fa30c62bd0accdcf9ee7c98e21f1c104e4e8708d85e8793715f977966a101b",
+  "verification": {
+   "digest": "blake3:b4fa30c62bd0accdcf9ee7c98e21f1c104e4e8708d85e8793715f977966a101b",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039342,
+   "size": 1838572,
+   "mtimeNs": 1767832939542501888,
+   "ctimeNs": 1767832939542501888
+  }
+ },
+ "z-image_00026_.png": {
+  "size": 1883420,
+  "mtimeNs": 1767832979905319117,
+  "digest": "blake3:0288711cdb1f4eb24ef3b51b858a332de5da3fdafdadfd6c76b0110620bc1633",
+  "verification": {
+   "digest": "blake3:0288711cdb1f4eb24ef3b51b858a332de5da3fdafdadfd6c76b0110620bc1633",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039384,
+   "size": 1883420,
+   "mtimeNs": 1767832979905319117,
+   "ctimeNs": 1767832979905319117
+  }
+ },
+ "z-image_00027_.png": {
+  "size": 1832036,
+  "mtimeNs": 1767832988786368147,
+  "digest": "blake3:cdc97b8b7218e29f4e00ec90d89f9ae1de85f87b471e1c945e787d376191931d",
+  "verification": {
+   "digest": "blake3:cdc97b8b7218e29f4e00ec90d89f9ae1de85f87b471e1c945e787d376191931d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039385,
+   "size": 1832036,
+   "mtimeNs": 1767832988786368147,
+   "ctimeNs": 1767832988786368147
+  }
+ },
+ "z-image_00028_.png": {
+  "size": 1806672,
+  "mtimeNs": 1767833023995141908,
+  "digest": "blake3:800e4a43fcdc0715157765c381b678129a5e24e4ff64f2a0786f2b6f5ae0d4e0",
+  "verification": {
+   "digest": "blake3:800e4a43fcdc0715157765c381b678129a5e24e4ff64f2a0786f2b6f5ae0d4e0",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039393,
+   "size": 1806672,
+   "mtimeNs": 1767833023995141908,
+   "ctimeNs": 1767833023995141908
+  }
+ },
+ "z-image_00029_.png": {
+  "size": 1909912,
+  "mtimeNs": 1767833470338400937,
+  "digest": "blake3:2b84784030432a562e0d8c02a01b5474c1d2fb40b8e182e3d4651db463fbf87d",
+  "verification": {
+   "digest": "blake3:2b84784030432a562e0d8c02a01b5474c1d2fb40b8e182e3d4651db463fbf87d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039406,
+   "size": 1909912,
+   "mtimeNs": 1767833470338400937,
+   "ctimeNs": 1767833470338400937
+  }
+ },
+ "z-image_00030_.png": {
+  "size": 1933034,
+  "mtimeNs": 1767833766535990637,
+  "digest": "blake3:c9f7873b472afa005208b24f7a7d562b063df1a35ddbe0d5909619a020b60d27",
+  "verification": {
+   "digest": "blake3:c9f7873b472afa005208b24f7a7d562b063df1a35ddbe0d5909619a020b60d27",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039489,
+   "size": 1933034,
+   "mtimeNs": 1767833766535990637,
+   "ctimeNs": 1767833766535990637
+  }
+ },
+ "z-image_00031_.png": {
+  "size": 2004679,
+  "mtimeNs": 1767845849343227118,
+  "digest": "blake3:e05c1512edda7abee1b51b191831b35c26a69654a64c6af83cd5fda6da2ebcd6",
+  "verification": {
+   "digest": "blake3:e05c1512edda7abee1b51b191831b35c26a69654a64c6af83cd5fda6da2ebcd6",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039405,
+   "size": 2004679,
+   "mtimeNs": 1767845849343227118,
+   "ctimeNs": 1767845849343227118
+  }
+ },
+ "z-image_00032_.png": {
+  "size": 1894710,
+  "mtimeNs": 1767845879078055058,
+  "digest": "blake3:5760c824b65f5d7afee8b9d57ac1b2ec52721197050272bc69a51625cdad380e",
+  "verification": {
+   "digest": "blake3:5760c824b65f5d7afee8b9d57ac1b2ec52721197050272bc69a51625cdad380e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039663,
+   "size": 1894710,
+   "mtimeNs": 1767845879078055058,
+   "ctimeNs": 1767845879078055058
+  }
+ },
+ "z-image_00033_.png": {
+  "size": 1842319,
+  "mtimeNs": 1767845955850958140,
+  "digest": "blake3:cd5cd90b582702dd642e76199c341487f04754a07760445fd03596ecace18b6f",
+  "verification": {
+   "digest": "blake3:cd5cd90b582702dd642e76199c341487f04754a07760445fd03596ecace18b6f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54029945,
+   "size": 1842319,
+   "mtimeNs": 1767845955850958140,
+   "ctimeNs": 1767845955850958140
+  }
+ },
+ "z-image_00034_.png": {
+  "size": 1902495,
+  "mtimeNs": 1767845964696365109,
+  "digest": "blake3:efd1da4d103d08e8e01d2c23dd2ac92e89177cb9cec568bfae9079915e7b913e",
+  "verification": {
+   "digest": "blake3:efd1da4d103d08e8e01d2c23dd2ac92e89177cb9cec568bfae9079915e7b913e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039665,
+   "size": 1902495,
+   "mtimeNs": 1767845964696365109,
+   "ctimeNs": 1767845964696365109
+  }
+ },
+ "z-image_00035_.png": {
+  "size": 1910138,
+  "mtimeNs": 1767849228019729990,
+  "digest": "blake3:3329c62e8dc81d0f7da4dbfcd9b534bafffa766bf42e52a499c7b1670fbd502c",
+  "verification": {
+   "digest": "blake3:3329c62e8dc81d0f7da4dbfcd9b534bafffa766bf42e52a499c7b1670fbd502c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039672,
+   "size": 1910138,
+   "mtimeNs": 1767849228019729990,
+   "ctimeNs": 1767849228019729990
+  }
+ },
+ "z-image_00036_.png": {
+  "size": 1880579,
+  "mtimeNs": 1767849256728121069,
+  "digest": "blake3:22b56e97860a28c424319ea934d72196aa9ed9573f1ea0585d517ef1af33e92a",
+  "verification": {
+   "digest": "blake3:22b56e97860a28c424319ea934d72196aa9ed9573f1ea0585d517ef1af33e92a",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039399,
+   "size": 1880579,
+   "mtimeNs": 1767849256728121069,
+   "ctimeNs": 1767849256728121069
+  }
+ },
+ "z-image_00037_.png": {
+  "size": 1797410,
+  "mtimeNs": 1767849276049710765,
+  "digest": "blake3:c41ef60c99e5306fd168bb22787365f191c0acae1a08483f6b4cf84f5c336088",
+  "verification": {
+   "digest": "blake3:c41ef60c99e5306fd168bb22787365f191c0acae1a08483f6b4cf84f5c336088",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039411,
+   "size": 1797410,
+   "mtimeNs": 1767849276049710765,
+   "ctimeNs": 1767849276049710765
+  }
+ },
+ "z-image_00038_.png": {
+  "size": 1847378,
+  "mtimeNs": 1768293476191698549,
+  "digest": "blake3:7decb602977609504a3ad99491595645ddc58e5b5d5480b34f029d3f6f5f7825",
+  "verification": {
+   "digest": "blake3:7decb602977609504a3ad99491595645ddc58e5b5d5480b34f029d3f6f5f7825",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54036529,
+   "size": 1847378,
+   "mtimeNs": 1768293476191698549,
+   "ctimeNs": 1768293476191698549
+  }
+ },
+ "z-image_00039_.png": {
+  "size": 1890763,
+  "mtimeNs": 1768293495986197147,
+  "digest": "blake3:5ffe11004d490d71a81d4a5ca0f1dc867f62bfac3f500ba149af7129d86b381e",
+  "verification": {
+   "digest": "blake3:5ffe11004d490d71a81d4a5ca0f1dc867f62bfac3f500ba149af7129d86b381e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54033878,
+   "size": 1890763,
+   "mtimeNs": 1768293495986197147,
+   "ctimeNs": 1768293495986197147
+  }
+ }
+}

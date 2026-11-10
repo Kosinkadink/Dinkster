@@ -1,0 +1,310 @@
+{
+ "clip_l.safetensors": {
+  "size": 246144152,
+  "mtimeNs": 1767831917934977405,
+  "digest": "blake3:bf86febd867144a59e170de1d6d6aa0198108dd7623f98f4408749e665f7793e",
+  "verification": {
+   "digest": "blake3:bf86febd867144a59e170de1d6d6aa0198108dd7623f98f4408749e665f7793e",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039261,
+   "size": 246144152,
+   "mtimeNs": 1767831917934977405,
+   "ctimeNs": 1767831917934977405
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00001-of-00010.safetensors": {
+  "size": 4883550696,
+  "mtimeNs": 1787940125135586569,
+  "digest": "blake3:03250d2a4cb75a990efcc1cb393a8c4c2c8220107784af77d5a73d8acd6c251f",
+  "verification": {
+   "digest": "blake3:03250d2a4cb75a990efcc1cb393a8c4c2c8220107784af77d5a73d8acd6c251f",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560560,
+   "size": 4883550696,
+   "mtimeNs": 1787940125135586569,
+   "ctimeNs": 1787940125135586569
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00002-of-00010.safetensors": {
+  "size": 4781593336,
+  "mtimeNs": 1787941480486432778,
+  "digest": "blake3:de9c9bea007abc2d4ec8f73b492e79355ba67d275f197ad4ff53edfbc4482c82",
+  "verification": {
+   "digest": "blake3:de9c9bea007abc2d4ec8f73b492e79355ba67d275f197ad4ff53edfbc4482c82",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560727,
+   "size": 4781593336,
+   "mtimeNs": 1787941480486432778,
+   "ctimeNs": 1787941480486432778
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00003-of-00010.safetensors": {
+  "size": 4886472224,
+  "mtimeNs": 1787941487354888883,
+  "digest": "blake3:5a6277a62b1cf0b3732622613e789702887b2a05520570df29df20c042b43dd5",
+  "verification": {
+   "digest": "blake3:5a6277a62b1cf0b3732622613e789702887b2a05520570df29df20c042b43dd5",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560726,
+   "size": 4886472224,
+   "mtimeNs": 1787941487354888883,
+   "ctimeNs": 1787941487354888883
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00004-of-00010.safetensors": {
+  "size": 4781593376,
+  "mtimeNs": 1787941442429705515,
+  "digest": "blake3:7e4b79d73d6cc164fd616b2656d79752e7fe41be932db3f6c003445f56d3c18d",
+  "verification": {
+   "digest": "blake3:7e4b79d73d6cc164fd616b2656d79752e7fe41be932db3f6c003445f56d3c18d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560728,
+   "size": 4781593376,
+   "mtimeNs": 1787941442429705515,
+   "ctimeNs": 1787941442429705515
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00005-of-00010.safetensors": {
+  "size": 4781593368,
+  "mtimeNs": 1787941456514075466,
+  "digest": "blake3:439078c8d697291576b5b04138ad461acb1c047c1894a7770c462f2a083a6bdc",
+  "verification": {
+   "digest": "blake3:439078c8d697291576b5b04138ad461acb1c047c1894a7770c462f2a083a6bdc",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560725,
+   "size": 4781593368,
+   "mtimeNs": 1787941456514075466,
+   "ctimeNs": 1787941456514075466
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00006-of-00010.safetensors": {
+  "size": 4886472248,
+  "mtimeNs": 1787941602290956593,
+  "digest": "blake3:314b214d52d1771000d5167585f87dbbc6c107882180551f59d03bbc80442e73",
+  "verification": {
+   "digest": "blake3:314b214d52d1771000d5167585f87dbbc6c107882180551f59d03bbc80442e73",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560732,
+   "size": 4886472248,
+   "mtimeNs": 1787941602290956593,
+   "ctimeNs": 1787941602290956593
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00007-of-00010.safetensors": {
+  "size": 4781593376,
+  "mtimeNs": 1787941641035002137,
+  "digest": "blake3:ad207a199fb1cca757a4a201558364b6622fb5bd45394b13a9949717e8e6cb3d",
+  "verification": {
+   "digest": "blake3:ad207a199fb1cca757a4a201558364b6622fb5bd45394b13a9949717e8e6cb3d",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560733,
+   "size": 4781593376,
+   "mtimeNs": 1787941641035002137,
+   "ctimeNs": 1787941641035002137
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00008-of-00010.safetensors": {
+  "size": 4781593368,
+  "mtimeNs": 1787941668054734319,
+  "digest": "blake3:e7d341895d708b29db8edb91a6c3291399430ad38ba770aa10ca9f880516e537",
+  "verification": {
+   "digest": "blake3:e7d341895d708b29db8edb91a6c3291399430ad38ba770aa10ca9f880516e537",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560698,
+   "size": 4781593368,
+   "mtimeNs": 1787941668054734319,
+   "ctimeNs": 1787941668054734319
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00009-of-00010.safetensors": {
+  "size": 4886472248,
+  "mtimeNs": 1787941676986976887,
+  "digest": "blake3:99011ea8f331b985ad2fce801554146ffbb430add3d01c2741f14369f988eab7",
+  "verification": {
+   "digest": "blake3:99011ea8f331b985ad2fce801554146ffbb430add3d01c2741f14369f988eab7",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560720,
+   "size": 4886472248,
+   "mtimeNs": 1787941676986976887,
+   "ctimeNs": 1787941676986976887
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model-00010-of-00010.safetensors": {
+  "size": 4571866320,
+  "mtimeNs": 1787941729808416332,
+  "digest": "blake3:fe4a08afed9173fa97422897e0c9f0626d401df4714dfc6c174f6d307f2ca095",
+  "verification": {
+   "digest": "blake3:fe4a08afed9173fa97422897e0c9f0626d401df4714dfc6c174f6d307f2ca095",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560740,
+   "size": 4571866320,
+   "mtimeNs": 1787941729808416332,
+   "ctimeNs": 1787941729808416332
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/model.safetensors.index.json": {
+  "size": 57907,
+  "mtimeNs": 1787941730083423847,
+  "digest": "blake3:cd081e2aa5e0b7500fad1a7cd250293c9f7a2f890c147ad39b2d1d921df6360c",
+  "verification": {
+   "digest": "blake3:cd081e2aa5e0b7500fad1a7cd250293c9f7a2f890c147ad39b2d1d921df6360c",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560745,
+   "size": 57907,
+   "mtimeNs": 1787941730083423847,
+   "ctimeNs": 1787941730083423847
+  }
+ },
+ "mistral-small-3.1-24b-instruct-2503-hf/tekken.json": {
+  "size": 14801330,
+  "mtimeNs": 1787941730971448118,
+  "digest": "blake3:0826aa4abf30d416ee2266d4e896576a43ca5839f9f391b812f768d5e6f60862",
+  "verification": {
+   "digest": "blake3:0826aa4abf30d416ee2266d4e896576a43ca5839f9f391b812f768d5e6f60862",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 76560746,
+   "size": 14801330,
+   "mtimeNs": 1787941730971448118,
+   "ctimeNs": 1787941730971448118
+  }
+ },
+ "mistral_3_small_flux2_bf16.safetensors": {
+  "size": 35584897447,
+  "mtimeNs": 1767859026163744019,
+  "digest": "blake3:bccf96b33766858d043f5ce3b187a63ee6b24851048e1d8bc20e1ac91c8838fc",
+  "verification": {
+   "digest": "blake3:bccf96b33766858d043f5ce3b187a63ee6b24851048e1d8bc20e1ac91c8838fc",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039733,
+   "size": 35584897447,
+   "mtimeNs": 1767859026163744019,
+   "ctimeNs": 1767859026163744019
+  }
+ },
+ "mistral_3_small_full_instruct_2503_flux2_bf16.safetensors": {
+  "size": 45822072183,
+  "mtimeNs": 1787942652957366384,
+  "digest": "blake3:a0cfa2f733e28ae7f7f0e5259937fc8d52c1cd3c234fb070734553b0d2fc0073",
+  "verification": {
+   "digest": "blake3:a0cfa2f733e28ae7f7f0e5259937fc8d52c1cd3c234fb070734553b0d2fc0073",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54029564,
+   "size": 45822072183,
+   "mtimeNs": 1787942652957366384,
+   "ctimeNs": 1787942652977366955
+  }
+ },
+ "qwen3vl_32b_minimax_h3_int8_convrot.safetensors": {
+  "size": 27141342152,
+  "mtimeNs": 1786890843471542223,
+  "digest": "blake3:8f0310d55387b528c47d03af87ff3084e80b28bfb3a0c6decae4414d81fbeee4",
+  "verification": {
+   "digest": "blake3:8f0310d55387b528c47d03af87ff3084e80b28bfb3a0c6decae4414d81fbeee4",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039239,
+   "size": 27141342152,
+   "mtimeNs": 1786890843471542223,
+   "ctimeNs": 1786890857889968071
+  }
+ },
+ "qwen_2.5_vl_7b.safetensors": {
+  "size": 16584415576,
+  "mtimeNs": 1759483383521614024,
+  "digest": "blake3:7723fa808b784deab89a2cf77234bd385a2351a7e186c4d763f15d71392e2c96",
+  "verification": {
+   "digest": "blake3:7723fa808b784deab89a2cf77234bd385a2351a7e186c4d763f15d71392e2c96",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54002192,
+   "size": 16584415576,
+   "mtimeNs": 1759483383521614024,
+   "ctimeNs": 1759483383521614024
+  }
+ },
+ "qwen_2.5_vl_7b_fp8_scaled.safetensors": {
+  "size": 9384670680,
+  "mtimeNs": 1759483372858374361,
+  "digest": "blake3:6f5249d557373ca144505c1d4193adffdf33e4d3a8ded719de65a8cb77780722",
+  "verification": {
+   "digest": "blake3:6f5249d557373ca144505c1d4193adffdf33e4d3a8ded719de65a8cb77780722",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54034788,
+   "size": 9384670680,
+   "mtimeNs": 1759483372858374361,
+   "ctimeNs": 1759483372858374361
+  }
+ },
+ "qwen_3_4b.safetensors": {
+  "size": 8044982048,
+  "mtimeNs": 1767609355734108104,
+  "digest": "blake3:8a77d18d5fd922d034a5b50ce7d262098b316632706fd62221f7ba1eab1e27dd",
+  "verification": {
+   "digest": "blake3:8a77d18d5fd922d034a5b50ce7d262098b316632706fd62221f7ba1eab1e27dd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038509,
+   "size": 8044982048,
+   "mtimeNs": 1767609355734108104,
+   "ctimeNs": 1767609355734108104
+  }
+ },
+ "t5xxl_fp16.safetensors": {
+  "size": 9787841024,
+  "mtimeNs": 1767831926053408107,
+  "digest": "blake3:f864c5b4b5bf39a408830e36138c790d1edac082127faff30b126f5a9c7c08c0",
+  "verification": {
+   "digest": "blake3:f864c5b4b5bf39a408830e36138c790d1edac082127faff30b126f5a9c7c08c0",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039271,
+   "size": 9787841024,
+   "mtimeNs": 1767831926053408107,
+   "ctimeNs": 1767831926053408107
+  }
+ },
+ "umt5-xxl-encoder-Q8_0.gguf": {
+  "size": 6043068256,
+  "mtimeNs": 1787610239730620020,
+  "digest": "blake3:cb6deed8e3087a979a19f2c57ed1524b777f59e71b11046d0bed2d7fbc991b44",
+  "verification": {
+   "digest": "blake3:cb6deed8e3087a979a19f2c57ed1524b777f59e71b11046d0bed2d7fbc991b44",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54038255,
+   "size": 6043068256,
+   "mtimeNs": 1787610239730620020,
+   "ctimeNs": 1787610322997068568
+  }
+ },
+ "umt5_xxl_fp8_e4m3fn_scaled.safetensors": {
+  "size": 6735906897,
+  "mtimeNs": 1767860450659830706,
+  "digest": "blake3:08fc8a4dedd056a24acabd1be42092e61b806056b72fcbdb3f8a98f1c3b9f8cd",
+  "verification": {
+   "digest": "blake3:08fc8a4dedd056a24acabd1be42092e61b806056b72fcbdb3f8a98f1c3b9f8cd",
+   "scheme": "posix-v1",
+   "device": 66306,
+   "inode": 54039781,
+   "size": 6735906897,
+   "mtimeNs": 1767860450659830706,
+   "ctimeNs": 1767860450659830706
+  }
+ }
+}
