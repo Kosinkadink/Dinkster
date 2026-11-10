@@ -281,7 +281,13 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         candidate_base=None if published else "b" * 40,
         published_sources=publication,
     )
-    assert [row["pack"] for row in result["packs"]] == ["dinkster-test-helpers", "dinkster-text"]
+    assert result == {
+        "engineVersion": "0.0.3",
+        "packs": [
+            {"pack": entry.pack, "version": entry.version, "artifactDigest": entry.artifact_digest}
+            for entry in (entries[1], entries[0])
+        ],
+    }
     output = capfd.readouterr().out
     assert "selected dinkster-test-helpers@0.0.1" in output
     assert "Testing dinkster-text@0.0.1" in output
