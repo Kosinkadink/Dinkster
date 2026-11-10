@@ -36,6 +36,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
         step for step in fast["steps"] if "DINKSTER_CATALOG_WIRE_OUTPUT" in step.get("env", {})
     )
     assert "test_default_catalog_publishes_only_owned_translation_carriers" in export["run"]
+    assert "--no-sync" in export["run"]
     decode = fast["steps"][-1]
     assert "tools/validate_default_catalog.mjs" in decode["run"]
     assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]

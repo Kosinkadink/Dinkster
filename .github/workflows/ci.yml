@@ -222,7 +222,7 @@ jobs:
         run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
+        run: uv run --no-sync pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
