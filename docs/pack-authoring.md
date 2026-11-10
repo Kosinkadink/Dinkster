@@ -76,6 +76,8 @@ The host selects compatible tags and verifies the selected wheel's hashes.
 The reader also accepts the schema 1 all-releases catalog during the registry
 transition. Each operation caches its catalog and reads only selected per-pack
 files; no dynamic API is needed, including on a static file-copy mirror.
+Managed preparation shares the snapshot between source selection and dependency
+lock acquisition in disposable scratch storage, removed when preparation ends.
 
 Shared implementation belongs in a library wheel without a pack manifest or
 node/type claims, such as `my-core`, listed in the pack's `requires`.

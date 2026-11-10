@@ -1107,8 +1107,8 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
             raise InstallError(f"duplicate minimum for {pack}")
         minimums[pack] = minimum
     try:
+        index = StaticPackIndex(args.index_snapshot)
         if args.installed_lock:
-            index = StaticPackIndex()
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
             if args.add:
                 selections: dict[str, str] = {}
@@ -1203,6 +1203,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 args.artifacts.resolve(),
                 engine_version=dinkster_version,
                 allow_missing=args.allow_missing,
+                index=index,
             )
         args.catalog_lock.parent.mkdir(parents=True, exist_ok=True)
         args.catalog_lock.write_text(lock.record_json() + "\n", encoding="utf-8", newline="\n")
@@ -1255,6 +1256,7 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
             variant=args.variant,
             base_id=args.base_id,
             selected=select_registry(config, args.registry) if args.registry else None,
+            index=StaticPackIndex(args.index_snapshot),
         )
     except OSError as exc:
         raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
@@ -1394,6 +1396,11 @@ def main() -> None:
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
+    sources.add_argument(
+        "--index-snapshot",
+        type=Path,
+        help="operation-owned scratch directory shared with dependency lock preparation",
+    )
     selection = sources.add_mutually_exclusive_group()
     selection.add_argument(
         "--minimum",
@@ -1430,6 +1437,11 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--index-snapshot",
+        type=Path,
+        help="reuse this operation's source-selection static index snapshot",
+    )
     locks.add_argument(
         "--pack",
         action="append",

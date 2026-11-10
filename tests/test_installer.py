@@ -3318,6 +3318,51 @@ def test_split_registry_reads_only_selected_packs_and_refuses_substitution(
         server.shutdown()
 
 
+def test_registry_preparation_snapshot_isolates_endpoints_and_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster.registries import NamedRegistry, StaticPackIndex, resolve_release
+
+    entry = LockedPack("demo", "1.0", "blake3:" + "b" * 64, "acme", ())
+    payload = json.dumps({"schemaVersion": 1, "items": [_static_release(entry, b"wheel")]}).encode()
+    requests: list[tuple[str, str | None]] = []
+    path = "/static/packs/index.json"
+    first = _serve_artifacts({path: payload}, requests)
+    second = _serve_artifacts({path: payload}, requests)
+    snapshot = tmp_path / "operation-index"
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{first.server_port}", "FIXTURE_TOKEN")
+        monkeypatch.setenv("FIXTURE_TOKEN", "first-fixture-credential")
+        for _ in range(2):
+            assert (
+                resolve_release(
+                    registry, "demo", "1.0", index=StaticPackIndex(snapshot)
+                ).artifact_digest
+                == entry.artifact_digest
+            )
+        monkeypatch.setenv("FIXTURE_TOKEN", "second-fixture-credential")
+        resolve_release(registry, "demo", "1.0", index=StaticPackIndex(snapshot))
+        resolve_release(
+            replace(registry, endpoint=f"http://127.0.0.1:{second.server_port}"),
+            "demo",
+            "1.0",
+            index=StaticPackIndex(snapshot),
+        )
+        assert requests == [
+            (path, "Bearer first-fixture-credential"),
+            (path, "Bearer second-fixture-credential"),
+            (path, "Bearer second-fixture-credential"),
+        ]
+        assert len(list(snapshot.iterdir())) == 3
+        assert all("fixture-credential" not in p.name + p.read_text() for p in snapshot.iterdir())
+        resolve_release(registry, "demo", "1.0", index=StaticPackIndex(tmp_path / "next-operation"))
+        assert len(requests) == 4
+    finally:
+        first.shutdown()
+        second.shutdown()
+
+
 @pytest.mark.parametrize("engine", [None, "", "not-a-range"])
 def test_registry_compatible_selection_refuses_only_undeclared_releases(engine: str | None) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release

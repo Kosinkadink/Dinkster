@@ -52,6 +52,7 @@ counts as the right bytes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -467,10 +468,16 @@ def _index_get(
 
 
 class StaticPackIndex:
-    """Cache static documents for one operation, isolated by endpoint and credential."""
+    """Cache one operation's documents, isolated by endpoint and credential.
 
-    def __init__(self) -> None:
+    A caller-owned scratch directory shares the snapshot across preparation
+    subprocesses. The caller removes it with the rest of the operation's inputs.
+    Credentials are hashed into filenames, never written to the snapshot.
+    """
+
+    def __init__(self, directory: Path | None = None) -> None:
         self._documents: dict[tuple[str, str, str], dict[str, object]] = {}
+        self._directory = directory
 
     def _read(
         self, registry: NamedRegistry, path: str, timeout: float, token: str | None
@@ -478,14 +485,28 @@ class StaticPackIndex:
         credential = registry.token() if token is None else token
         key = (registry.endpoint, credential, path)
         if key not in self._documents:
-            document = _index_get(
-                registry,
-                path,
-                action="reading static pack index",
-                subject="static pack index",
-                timeout=timeout,
-                token=credential,
+            cached = (
+                self._directory / (hashlib.sha256(json.dumps(key).encode()).hexdigest() + ".json")
+                if self._directory is not None
+                else None
             )
+            if cached is not None and cached.exists():
+                try:
+                    raw: object = json.loads(cached.read_bytes())
+                except ValueError as exc:
+                    raise InstallError("operation static index snapshot is invalid") from exc
+                if not isinstance(raw, dict):
+                    raise InstallError("operation static index snapshot is not an object")
+                document = cast("dict[str, object]", raw)
+            else:
+                document = _index_get(
+                    registry,
+                    path,
+                    action="reading static pack index",
+                    subject="static pack index",
+                    timeout=timeout,
+                    token=credential,
+                )
             schema = document.get("schemaVersion")
             if type(schema) is not int or schema not in (1, 2):
                 raise InstallError(
@@ -495,6 +516,9 @@ class StaticPackIndex:
                 raise InstallError(
                     "registry static index has an unsupported schema or missing items"
                 )
+            if cached is not None and not cached.exists():
+                cached.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                cached.write_text(json.dumps(document), encoding="utf-8")
             self._documents[key] = document
         return self._documents[key]
 
@@ -928,13 +952,14 @@ def prepare_registry_pack_locks(
     base_id: str,
     selected: NamedRegistry | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+    index: StaticPackIndex | None = None,
 ) -> tuple[Path, ...]:
     """Acquire published dependency locks for exact selected sources and base.
 
     Refuse the whole set before exposing output if any binding or bytes differ.
     No dependency resolution or generation mutation occurs here.
     """
-    index = StaticPackIndex()
+    index = index or StaticPackIndex()
     if output.exists():
         raise InstallError("published lock output directory already exists")
     if (
