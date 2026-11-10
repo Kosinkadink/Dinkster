@@ -251,7 +251,7 @@ supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 
 The counted root command above uses the same branch-coverage source list as
 the hosted Linux root and Windows runtime jobs. Hosted coverage combines all
-six Linux and four Windows runtime artifacts before running
+Linux root and Windows runtime artifacts in the matrix above before running
 `coverage report --fail-under=80`; a missing artifact or failed shard fails
 the gate. A local root report alone is not the combined hosted result.
 
