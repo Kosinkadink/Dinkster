@@ -227,17 +227,27 @@ def test_pack_compositor_codec_is_independent_of_registration_order() -> None:
     ):
         for hook in hooks:
             hook(registry)
-    value = {"version": 2, "documentDigest": None, "commands": []}
+    value = {
+        "version": 2,
+        "documentDigest": "blake3:" + "a" * 64,
+        "commands": [{"op": "layer", "id": "foreground", "changes": {"visible": False}}],
+    }
     specs = tuple(registry.spec(COMPOSITOR_TYPE) for registry in registries)
     encoded = tuple(spec.encode(value) for spec in specs)
     assert encoded[0] == encoded[1]
     assert json.loads(encoded[0]) == value
     for spec, data in zip(specs, reversed(encoded), strict=True):
         assert spec.decode(data) == value
-        assert spec.coerce({}) == value
+        assert spec.coerce is not None
+        assert spec.coerce({}) == {"version": 2, "documentDigest": None, "commands": []}
+        assert spec.meta is not None
         assert spec.meta(value) == {"version": 2}
         with pytest.raises(ValueError, match="invalid compositor document digest"):
             spec.encode({"version": 2, "documentDigest": "invalid", "commands": []})
+        assert spec.validate_encoded is not None
+        spec.validate_encoded(data, {"version": 2})
+        with pytest.raises(ValueError, match="compositor commands must be an array"):
+            spec.validate_encoded(b'{"version":2,"documentDigest":null,"commands":{}}', {})
 
 
 @pytest.mark.parametrize("image_first", [False, True])
