@@ -244,6 +244,9 @@
   to start; an explicit engine variant must still match the generation.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
+- A managed engine or supervisor launcher that exits before readiness reports
+  its exit code and up to the last 64 KiB of captured output from that launch.
+  Older launches are excluded; truncation and unavailable output are explicit.
 - Stopped engine bindings retain their assigned ports across update and rollback;
   restarting an existing named binding defaults to its saved port.
 - Generation construction admits verified pack archives before sealing sources.
