@@ -1161,7 +1161,10 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     if not cached.exists():
                         cached.parent.mkdir(parents=True, exist_ok=True)
                         retained = args.installed_lock.parent / "pack-sources" / entry.pack
-                        if retained.is_dir() or not (
+                        retained_wheel = retained.parent / f"{entry.pack}.whl"
+                        if retained_wheel.is_file():
+                            cached.write_bytes(retained_wheel.read_bytes())
+                        elif retained.is_dir() or not (
                             entry.source == "registry" or entry.source.startswith("registry:")
                         ):
                             actual = build_artifact(retained, cached)
