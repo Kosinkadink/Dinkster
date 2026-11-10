@@ -872,22 +872,22 @@ def test_engine_publication_ignores_only_supervisor_changes(
     assert inputs_changed(tmp_path, before, snapshot()) is expected
 
 
-def test_repository_versions_match_first_release_tag() -> None:
-    assert release_version(ROOT, "v0.0.2") == "0.0.2"
+def test_repository_versions_match_engine_release_tag() -> None:
+    assert release_version(ROOT, "v0.0.3") == "0.0.3"
     subprocess.run(
         [
             sys.executable,
             "-S",
             "-c",
             "from pathlib import Path; from scripts.build_release import release_version; "
-            "assert release_version(Path.cwd(), 'v0.0.2') == '0.0.2'",
+            "assert release_version(Path.cwd(), 'v0.0.3') == '0.0.3'",
         ],
         cwd=ROOT,
         check=True,
         env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
     )
     with pytest.raises(ValueError, match="does not match workspace metadata"):
-        release_version(ROOT, "v0.0.1")
+        release_version(ROOT, "v0.0.2")
     projects = workspace_projects(ROOT)
     assert "dinkster-nodes-std" not in projects
     dev = tomllib.loads(projects["dinkster-nodes-dev"].read_text(encoding="utf-8"))
@@ -939,7 +939,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     tmp_path: Path,
 ) -> None:
     version = development_version(ROOT)
-    assert version.startswith("0.0.3.dev")
+    assert version.startswith("0.0.4.dev")
     assert version.endswith(
         "+g" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     )
@@ -2790,7 +2790,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.3")
+                ("dinkster-image", "0.0.4")
             ]
     finally:
         server.shutdown()
