@@ -32,7 +32,7 @@ Packs are independently installable Python distributions with a
 point, dependencies, and optional frontend module; the server composes those
 contracts and starts a pack worker only when execution needs it. Start with
 the [pack authoring guide](docs/pack-authoring.md) and
-[pack template](templates/pack/).
+[pack template](https://github.com/Kosinkadink/dinkster-pack-template).
 
 - Launch the browser editor: [docs/quickstart.md](docs/quickstart.md)
 - End-user backend and Desktop installation: [docs/install.md](docs/install.md)
@@ -48,10 +48,9 @@ the [pack authoring guide](docs/pack-authoring.md) and
   dinkster-gateway catalog and executes authenticated jobs with verified asset
   downloads; see [remote nodes](docs/supported/remote-nodes.md).
 - Writing a pack: [docs/pack-authoring.md](docs/pack-authoring.md), starting
-  from the template in [templates/pack/](templates/pack/) - a complete
-  doctor-clean pack (manifest, nodes, custom type, icon, tests, CI) kept
-  healthy by this repo's own suite. `uv run --no-sync dinkster-doctor <pack-dir>` is the
-  pack linter and publish gate.
+  from [dinkster-pack-template](https://github.com/Kosinkadink/dinkster-pack-template).
+  Its own checks build the wheel, test the installed pack and run doctor
+  against published Dinkster packages.
 - Companion frontend: [Dinkster-Frontend](https://github.com/Kosinkadink/Dinkster-Frontend)
 
 Status: in progress. No stable package or Desktop release exists yet. See
