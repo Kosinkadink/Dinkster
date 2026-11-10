@@ -221,10 +221,14 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
 def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
     if args.yes:
         return True
-    if not args.plan and not args.json and sys.stdin.isatty():
-        print("\n".join(plan), file=sys.stderr)
-        return input("Apply this plan? [y/N] ").strip().lower() in {"y", "yes"}
-    return False
+    if args.plan or args.json:
+        return False
+    if not sys.stdin.isatty():
+        raise EnvironmentError(
+            "confirmation requires a terminal; use --yes to apply or --plan to inspect"
+        )
+    print("\n".join(plan), file=sys.stderr)
+    return input("Apply this plan? [y/N] ").strip().lower() in {"y", "yes"}
 
 
 def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
@@ -1239,7 +1243,7 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, required=True, help="absolute prospective project root"
@@ -1363,7 +1367,7 @@ def main() -> None:
         move,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.root.is_absolute():
         parser.error("--root must be absolute")
     result: dict[str, object] = {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import marshal
 import os
@@ -949,6 +950,62 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
         assert not list(store.glob(".workflow-*"))
     finally:
         _run(root, "stop", "--yes")
+
+
+@pytest.mark.parametrize(
+    ("flags", "terminal", "answer", "code", "status", "prompted"),
+    [
+        ((), False, "", 1, "error", False),
+        ((), True, "n\n", 0, "planned", True),
+        ((), True, "yes\n", 0, "applied", True),
+        (("--yes",), False, "", 0, "applied", False),
+        (("--plan",), True, "yes\n", 0, "planned", False),
+        (("--json",), True, "yes\n", 0, "planned", False),
+    ],
+)
+def test_runtime_consent_through_environment_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flags: tuple[str, ...],
+    terminal: bool,
+    answer: str,
+    code: int,
+    status: str,
+    prompted: bool,
+) -> None:
+    from dinkster_supervisor import environment
+
+    _runtime_project(tmp_path)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    stream = io.StringIO(answer)
+    monkeypatch.setattr(stream, "isatty", lambda: terminal)
+    monkeypatch.setattr(sys, "stdin", stream)
+    monkeypatch.setattr(sys, "argv", ["caller", "unrelated-argument"])
+    with pytest.raises(SystemExit) as exited:
+        environment.main(["--root", str(tmp_path), "stop", *flags])
+    captured = capsys.readouterr()
+    assert exited.value.code == code
+    assert sys.argv == ["caller", "unrelated-argument"]
+    if "--json" in flags:
+        assert json.loads(captured.out)["status"] == status
+    else:
+        assert f"stop: {status}" in captured.out
+    assert ("Apply this plan? [y/N]" in captured.out) is prompted
+    if code:
+        assert "--yes" in captured.err and "--plan" in captured.err
+    if status != "applied":
+        after = {
+            path.relative_to(tmp_path): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+        assert not (tmp_path / ".lock").exists()
 
 
 def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Path):
