@@ -566,8 +566,11 @@ class StaticPackIndex:
         *,
         timeout: float = DEFAULT_RESOLVE_TIMEOUT,
         token: str | None = None,
+        include_libraries: bool = False,
     ) -> tuple[dict[str, object], ...]:
-        catalog = self.catalog(registry, timeout=timeout, token=token, include_libraries=True)
+        catalog = self.catalog(
+            registry, timeout=timeout, token=token, include_libraries=include_libraries
+        )
         document = self._read(registry, "/static/packs/index.json", timeout, token)
         if document["schemaVersion"] == 1:
             return tuple(row for row in catalog if row["name"] == pack)
@@ -577,7 +580,7 @@ class StaticPackIndex:
         document = self._read(registry, "/static/" + str(entry["url"]), timeout, token)
         if document["schemaVersion"] != 2 or document.get("name") != pack:
             raise InstallError(f"registry static per-pack index identity differs for {pack}")
-        releases = _static_releases(registry, document, include_libraries=True)
+        releases = _static_releases(registry, document, include_libraries=include_libraries)
         if any(row["name"] != pack for row in releases):
             raise InstallError(
                 f"registry static per-pack index substitutes another pack for {pack}"
@@ -586,7 +589,10 @@ class StaticPackIndex:
 
 
 def _static_releases(
-    registry: NamedRegistry, document: Mapping[str, object], *, include_libraries: bool = False
+    registry: NamedRegistry,
+    document: Mapping[str, object],
+    *,
+    include_libraries: bool = False,
 ) -> tuple[dict[str, object], ...]:
     rows = document.get("items")
     releases: list[dict[str, object]] = []
@@ -672,7 +678,9 @@ def static_pack_release(
     token: str | None = None,
     index: StaticPackIndex | None = None,
 ) -> dict[str, object]:
-    for row in (index or StaticPackIndex()).releases(registry, pack, timeout=timeout, token=token):
+    for row in (index or StaticPackIndex()).releases(
+        registry, pack, timeout=timeout, token=token, include_libraries=True
+    ):
         if row["name"] == pack and row["version"] == version:
             return row
     raise InstallError(f"registry {registry.label} publishes no release {pack}@{version}")
