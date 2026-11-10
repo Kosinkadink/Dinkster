@@ -1766,13 +1766,19 @@ def test_native_payload_finalization_preserves_and_verifies_existing_release(
     assert json.loads(metadata.read_bytes()) == result
 
 
+@pytest.mark.parametrize("published", [False, True])
 @pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize(
     "corruption", [None, "size", "hash", "upstream-size", "upstream-hash", "missing"]
 )
 def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, corruption: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy: bool,
+    corruption: str | None,
+    published: bool,
 ) -> None:
+    from dinkster_registry import LockedPack, Lockfile
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
 
     from scripts import build_release_pack_locks as builder
@@ -1861,13 +1867,21 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         return (path,)
 
     monkeypatch.setattr(builder, "build", build_pack)
-    if corruption in ("size", "hash") or (corruption and not legacy):
+    sources = tmp_path / "sources" if published else None
+    if sources is not None:
+        sources.mkdir()
+        (sources / "official-packs.lock").write_text(
+            Lockfile.of(
+                [LockedPack("example", "1.2.3", "blake3:" + "a" * 64, "dinkster", ())]
+            ).record_json()
+        )
+    if corruption in ("size", "hash") or (corruption and not legacy and not published):
         with pytest.raises(ValueError, match="portable.*provenance"):
-            builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+            builder.build_locks(tmp_path, release, manifest, tmp_path / "locks", sources=sources)
         assert not (tmp_path / "locks").exists()
         return
     before = hashlib.sha256(metadata.read_bytes()).hexdigest()
-    [first] = builder.build_locks(tmp_path, release, manifest, tmp_path / "locks")
+    [first] = builder.build_locks(tmp_path, release, manifest, tmp_path / "locks", sources=sources)
     first_lock = PackLock.read(first)
     expected = (
         "https://github.com/Kosinkadink/Dinkster/releases/download/main-"
@@ -1876,8 +1890,17 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         if legacy
         else upstream
     )
+    if published and not legacy:
+        expected = (
+            "https://github.com/Kosinkadink/Dinkster/releases/download/"
+            f"main-2026-10-31-1.2.3-{before[:8]}/"
+            "example_dependency-2.0%2Bnative-py3-none-any.whl"
+        )
     assert first_lock.packages[0].wheels[0].url == expected
     assert first_lock.packages[0].wheels[0].sha256 == digest
+    if published:
+        assert hashlib.sha256(metadata.read_bytes()).hexdigest() == before
+        return
     shutil.copyfile(first, release / first.name)
     engine["artifacts"].append(
         {
