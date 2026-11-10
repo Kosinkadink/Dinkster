@@ -317,6 +317,9 @@
   Official packs built from the explicitly selected checkout may serve under
   reserved namespaces in that local generation. Other Git, local and pip
   sources do not gain reserved-namespace trust, even with publisher `dinkster`.
+  Libraries built alongside those packs supply their locked dependencies
+  without a registry download and must match the dependency lock's digest.
+  Libraries are not installed or cataloged as node packs.
   Default setup and Desktop remain published-bundle consumers.
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the

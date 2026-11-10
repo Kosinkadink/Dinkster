@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -470,13 +471,15 @@ def prepare_local_packs(
     )
     catalog_lock = artifacts / "official-packs.lock"
     catalog = json.loads(catalog_lock.read_text(encoding="utf-8"))
-    for entry in catalog["packs"]:
-        entry["source"] = "local-build:" + entry["source"]
-    write_document(catalog_lock, catalog)
-    locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
+    libraries: set[str] = set()
+    library_wheels: set[str] = set()
     for archive in artifacts.glob("*.whl"):
         digest = blake3(archive.read_bytes()).hexdigest()
         pack, version, _, _ = parse_wheel_filename(archive.name)
+        with zipfile.ZipFile(archive) as wheel_file:
+            if not any(Path(name).name == "dinkster-pack.toml" for name in wheel_file.namelist()):
+                libraries.add(pack)
+                library_wheels.add(archive.name)
         cached = pack_archive_path(
             artifacts,
             "blake3:" + digest,
@@ -485,6 +488,27 @@ def prepare_local_packs(
         if archive != cached:
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(archive, cached)
+    locks: list[Path] = []
+    for path in sorted(artifacts.glob("*.pack-lock.json")):
+        dependency_lock = json.loads(path.read_text(encoding="utf-8"))
+        if dependency_lock["pack"] in libraries:
+            continue
+        locks.append(path)
+        for distribution in dependency_lock["packages"]:
+            for wheel in distribution["wheels"]:
+                if wheel["filename"] in library_wheels:
+                    cached = object_path(store / "wheels", "sha256:" + wheel["sha256"])
+                    fetch_artifact(
+                        (str(artifacts),),
+                        wheel["filename"],
+                        cached / wheel["filename"],
+                        wheel["sha256"],
+                        wheel["size"],
+                    )
+    catalog["packs"] = [entry for entry in catalog["packs"] if entry["pack"] not in libraries]
+    for entry in catalog["packs"]:
+        entry["source"] = "local-build:" + entry["source"]
+    write_document(catalog_lock, catalog)
     for operation in ("preflight", "rebuild", "doctor"):
         pack_operation(
             operation,
@@ -493,7 +517,7 @@ def prepare_local_packs(
             variant=selection["variant"],
             worker_protocol=selection["workerProtocol"],
             own_environment_size=0,
-            locks=locks if operation != "doctor" else (),
+            locks=tuple(locks) if operation != "doctor" else (),
             in_process_packs=in_process,
         )
     stage_pack_sources(generation, catalog_lock=catalog_lock, artifacts=artifacts)
