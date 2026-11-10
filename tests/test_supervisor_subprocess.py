@@ -51,6 +51,34 @@ def test_completed_and_refused_operations_retain_separate_timings(tmp_path: Path
     assert "supervisor child wait" in report
 
 
+def test_timeout_retains_unfinished_operation(tmp_path: Path, expire_after_ready) -> None:
+    (tmp_path / "source").write_bytes(b"payload")
+    expire_after_ready(lambda process: wait_until((tmp_path / "ready").exists))
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        run(
+            [
+                sys.executable,
+                "-c",
+                "import hashlib, threading\n"
+                "from pathlib import Path\n"
+                "from dinkster_supervisor import environment_downloads as downloads\n"
+                f"root = Path({str(tmp_path)!r})\n"
+                "def blocked(*args, **kwargs):\n"
+                "    (root / 'ready').touch()\n"
+                "    threading.Event().wait(90)\n"
+                "downloads._download_local = blocked\n"
+                "downloads.fetch_artifact((str(root),), 'source', root / 'copied', "
+                "hashlib.sha256(b'payload').hexdigest(), 7)\n",
+            ]
+        )
+    assert raised.value.timeout == 0
+    notes = "\n".join(raised.value.__notes__)
+    assert "start dinkster_supervisor.environment_downloads.fetch_artifact" in notes
+    assert "return dinkster_supervisor.environment_downloads.fetch_artifact" not in notes
+    assert "unwind dinkster_supervisor.environment_downloads.fetch_artifact" not in notes
+    assert "Requested timeout snapshot" in notes
+
+
 @pytest.fixture
 def expire_after_ready(
     monkeypatch: pytest.MonkeyPatch,
