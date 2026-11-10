@@ -1108,6 +1108,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
         minimums[pack] = minimum
     try:
         if args.installed_lock:
+            index = StaticPackIndex()
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
             if args.add:
                 selections: dict[str, str] = {}
@@ -1121,7 +1122,6 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                         raise InstallError(f"{pack}: --add requires a distinct absent pack")
                     selections[pack] = version
                 registry = select_registry(config, args.registry)
-                index = StaticPackIndex()
                 fetch = routing_registry_fetcher(config, registry, index=index)
                 entries = list(installed.packs)
                 args.artifacts.mkdir(parents=True, exist_ok=True)
@@ -1149,11 +1149,14 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     args.artifacts.resolve(),
                     engine_version=dinkster_version,
                     selected=select_registry(config, args.registry) if args.registry else None,
+                    index=index,
                 )
             if args.retain_sources:
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 fetch = routing_registry_fetcher(
-                    config, select_registry(config, args.registry) if args.registry else None
+                    config,
+                    select_registry(config, args.registry) if args.registry else None,
+                    index=index,
                 )
                 for entry in lock.packs:
                     cached = pack_archive_path(

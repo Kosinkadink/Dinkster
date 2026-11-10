@@ -883,13 +883,14 @@ def prepare_registry_update_sources(
     *,
     engine_version: str,
     selected: NamedRegistry | None = None,
+    index: StaticPackIndex | None = None,
 ) -> Lockfile:
     """Re-resolve installed official registry packs without adding or dropping packs.
 
     Other selections remain unchanged for generation admission. Official registry
     selections cannot downgrade or switch their recorded source on engine update.
     """
-    index = StaticPackIndex()
+    index = index or StaticPackIndex()
     entries: list[LockedPack] = []
     for entry in installed.packs:
         if entry.publisher != "dinkster" or (

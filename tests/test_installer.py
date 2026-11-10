@@ -3727,6 +3727,7 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         "corrupt",
         "retained-corrupt",
         "retained-missing",
+        "update-retained-missing",
     ],
 )
 def test_cli_adds_exact_pack_without_reresolving_installed_sources(
@@ -3745,15 +3746,25 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         source = tmp_path / name
         (source / name).mkdir(parents=True)
         (source / name / "__init__.py").write_text("raise RuntimeError('must not import')\n")
+        manifest_publisher = (
+            "third-party"
+            if name == "retained" and problem == "update-retained-missing"
+            else "dinkster"
+        )
         (source / "dinkster-pack.toml").write_text(
-            f'[pack]\nname="{name}"\npublisher="dinkster"\n'
+            f'[pack]\nname="{name}"\npublisher="{manifest_publisher}"\n'
             f'version="{version}"\nengine=">=0"\nnamespaces=["{name}"]\n'
             f'[pack.entry]\nnodes="{name}:NODES"\n'
         )
         (source / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="{version}"\n')
         archive = tmp_path / f"{name}-{version}-py3-none-any.whl"
         build_pack_archive(source, archive)
-        publisher = "third-party" if name == "added" and problem == "third-party" else "dinkster"
+        publisher = (
+            "third-party"
+            if (name == "added" and problem == "third-party")
+            or (name == "retained" and problem == "update-retained-missing")
+            else "dinkster"
+        )
         entries.append(
             LockedPack(name, version, artifact_digest(archive.read_bytes()), publisher, (name,))
         )
@@ -3767,24 +3778,47 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
         ),
     }
-    if problem == "retained-missing":
+    if problem in {"retained-missing", "update-retained-missing"}:
         old_release = {**_static_release(old, archives["retained"]), "engine": ">=0"}
         old_wheel = cast("list[dict[str, object]]", old_release["wheels"])[0]
         files["/static/packs/index.json"] = json.dumps(
-            {"schemaVersion": 1, "items": [old_release, release]}
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": row["name"],
+                        "publisher": row["publisher"],
+                        "latestVersion": row["version"],
+                        "library": False,
+                        "url": f"packs/{row['name']}/index.json",
+                    }
+                    for row in (old_release, release)
+                ],
+            }
         ).encode()
+        for row in (old_release, release):
+            files[f"/static/packs/{row['name']}/index.json"] = json.dumps(
+                {"schemaVersion": 2, "name": row["name"], "items": [row]}
+            ).encode()
         files[f"/static/{old_wheel['url']}"] = archives["retained"]
-    server = _serve_artifacts(files, [])
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
     generation = tmp_path / "generation"
     generation.mkdir()
+    installed_entries = [old, added] if problem == "update-retained-missing" else [old]
     stage_generation_packs(
-        generation, Lockfile.of([old]), {"retained": tmp_path / "retained-1.0-py3-none-any.whl"}
+        generation,
+        Lockfile.of(installed_entries),
+        {
+            "retained": tmp_path / "retained-1.0-py3-none-any.whl",
+            "added": tmp_path / "added-1.2-py3-none-any.whl",
+        },
     )
     installed = generation / "dinkster.lock"
     original = installed.read_bytes()
     if problem == "retained-corrupt":
         (generation / "pack-sources/retained.whl").write_bytes(b"corrupt retained wheel")
-    elif problem == "retained-missing":
+    elif problem in {"retained-missing", "update-retained-missing"}:
         (generation / "pack-sources/retained.whl").unlink()
     before = {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()}
     # Only a missing retained archive permits retrieval of the pinned old release.
@@ -3803,13 +3837,13 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         str(output),
         "--artifacts",
         str(artifacts),
-        "--add",
-        requested,
     ]
+    if problem != "update-retained-missing":
+        args.extend(["--add", requested])
     if problem == "duplicate":
         args.extend(["--add", requested])
     try:
-        if problem is not None and problem != "retained-missing":
+        if problem is not None and problem not in {"retained-missing", "update-retained-missing"}:
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err
@@ -3838,6 +3872,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
                 pack_archive_path(artifacts, old.artifact_digest).read_bytes()
                 == archives["retained"]
             )
+            if problem in {"retained-missing", "update-retained-missing"}:
+                paths = [path for path, _ in requests]
+                assert paths.count("/static/packs/index.json") == 1
+                assert paths.count("/static/packs/added/index.json") == 1
+                assert paths.count("/static/packs/retained/index.json") == 1
+                assert len(paths) == 5
         assert installed.read_bytes() == original
         assert {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()} == before
     finally:

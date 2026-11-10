@@ -937,7 +937,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             try:
                 monkeypatch.setenv("DINKSTER_REGISTRY", f"http://127.0.0.1:{server.server_port}")
                 rebuilt = invoke(number=2, artifacts=retained, acquire_pack_sources=True)
-                assert len(requests) == 4
+                assert [path for path, _ in requests] == [
+                    "/static/packs/index.json",
+                    *(wheel_urls[entry.pack] for entry in entries),
+                ]
                 assert rebuilt.drift(root / "generations/2") == ()
                 assert (root / "generations/2/dinkster.lock").read_bytes() == (
                     target / "dinkster.lock"
