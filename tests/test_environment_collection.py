@@ -2087,3 +2087,65 @@ def test_collection_journal_refuses_unsafe_generation_sets(tmp_path: Path, numbe
     )
     with pytest.raises(ValueError):
         Journal.read(path)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux physical extent observation")
+@pytest.mark.parametrize("enabled", [True, False])
+def test_space_report_counts_shared_allocation_once_without_changing_project(
+    cleanup_project: Path, enabled: bool
+):
+    root = cleanup_project
+    (root / "store").unlink()
+    write_document(
+        root / "cleanup.json",
+        {"format": "dinkster.cleanup/1", "automatic": enabled},
+    )
+    candidate = root / "generations/2/__pycache__"
+    retained = root / "generations/3/__pycache__"
+    candidate.mkdir()
+    retained.mkdir()
+    shared = candidate / "shared.bin"
+    shared.write_bytes(b"a" * 8193)
+    os.link(shared, retained / "shared.bin")
+    external = candidate / "external.bin"
+    external.write_bytes(b"b" * 16385)
+    os.link(external, root / "models/external.bin")
+    for path in root.rglob("*"):
+        if path.is_file():
+            with path.open("rb") as stream:
+                os.fsync(stream.fileno())
+    protected = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    trees = list((root / "generations").iterdir())
+    expected = sum(
+        int(line.split()[0])
+        for line in subprocess.check_output(
+            ["du", "-s", "--block-size=1", "--", *map(str, trees)], text=True
+        ).splitlines()
+    )
+    eligible = sum(
+        p.lstat().st_blocks * 512
+        for number in (2, 7)
+        for p in [root / f"generations/{number}", *(root / f"generations/{number}").rglob("*")]
+        if p.is_dir() or p.lstat().st_nlink == 1
+    )
+    code, result = _run(root, "space")
+    assert code == 0, result
+    report = result["space"]
+    assert report["complete"], report
+    assert report["allocatedBytes"] == expected
+    assert (
+        report["sharedAllocatedBytes"]
+        == (shared.stat().st_blocks + external.stat().st_blocks) * 512
+    )
+    assert report["groups"]["generation/3"]["sharedAllocatedBytes"] == shared.stat().st_blocks * 512
+    assert (
+        sum(g["exclusiveAllocatedBytes"] for g in report["groups"].values())
+        + report["sharedAllocatedBytes"]
+        == expected
+    )
+    assert report["eligibleGenerationReclaimableBytes"] == eligible
+    assert report["automaticReclaimableBytes"] == (eligible if enabled else 0)
+    assert report["additionalExplicitReclaimableBytes"] == (0 if enabled else eligible)
+    assert "user data" in report["scope"]
+    assert "--keep-previous" in report["settingsCommand"]
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == protected

@@ -353,6 +353,15 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env --root ROOT space --json` observes managed generation and shared
+  store allocation without collecting or changing cleanup settings. Linux uses
+  physical extents, counts hardlinks and overlapping clone extents once, and
+  separates shared bytes from exclusive rows. It reports automatic cleanup
+  policy, generation retention reasons, eligible backlog and additional explicit
+  cleanup allocation. User libraries are excluded. Unsupported, changing,
+  delayed or encoded allocation is unavailable, not replaced by logical file
+  sizes. Shared clone references outside the scan make reclaimability unknown.
+  Native Windows physical measurement is not available in this command.
 - `dinkster-env cleanup --plan` reports retained, candidate and deferred
   generation numbers with reasons without recovering or modifying the project.
   Status includes the same preview and visible pending quarantine warnings.

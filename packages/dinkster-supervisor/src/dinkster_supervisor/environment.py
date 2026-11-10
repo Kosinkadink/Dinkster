@@ -59,6 +59,7 @@ from .environment_runtime import (
     stop_engine,
     validate_assignment,
 )
+from .environment_space import space_report
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -117,6 +118,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     current = read_current(root)
     result["current"] = current
+    if args.operation == "space":
+        result["space"] = space_report(root)
+        return 0
     if args.operation == "history":
         entries = history(root)
         if args.history_action == "show":
@@ -1258,6 +1262,7 @@ def main(argv: list[str] | None = None) -> None:
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
+    space = commands.add_parser("space", help="observe managed software disk allocation")
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -1352,6 +1357,7 @@ def main(argv: list[str] | None = None) -> None:
         tools,
         catalog,
         status,
+        space,
         packs_plan,
         packs_apply,
         doctor,
@@ -1477,6 +1483,8 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
             )
+        if args.operation == "space" and code == 0:
+            print(json.dumps(result["space"], indent=2, ensure_ascii=True))
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     raise SystemExit(code)
