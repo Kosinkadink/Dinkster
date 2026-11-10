@@ -1,4 +1,4 @@
-# Dinkster
+# Dinkster engine
 
 Dinkster is a pre-release local engine and browser editor for image, video,
 audio, and model-training workflows. Workflows are node graphs executed by
