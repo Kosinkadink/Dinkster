@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -2629,8 +2630,16 @@ def test_official_publication_recovery_reuses_inputs_without_resolving_locks(
 def test_interrupted_publication_recovery_requires_original_complete_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, problem: str | None
 ) -> None:
+    from scripts import recover_official_publication
     from scripts.recover_official_publication import recovery_inputs
 
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as inputs:
+        inputs.writestr("sources/official-packs.lock", "{}")
+        inputs.writestr("engine/release-manifest.json", "{}")
+    monkeypatch.setattr(
+        recover_official_publication, "validate_recovered_sources", lambda *args: None
+    )
     variants = json.loads((ROOT / "scripts/base_bundles.json").read_bytes())
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/base_bundles.json").write_text(json.dumps(variants))
@@ -2690,6 +2699,8 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     def read(command, **kwargs):
         assert command[:2] == ["gh", "api"]
         path = command[-1]
+        if path.endswith("/zip"):
+            return archive.getvalue()
         if "/workflows/" in path:
             return json.dumps([{"workflow_runs": runs}]).encode()
         if "/80/" in path:
@@ -2747,14 +2758,14 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
 
 
 @pytest.mark.parametrize(
-    "change", [None, "code", "pack-tests", "removed", "engine", "catalog", "bases"]
+    "change", [None, "code", "older-valid", "pack-tests", "removed", "engine", "catalog", "bases"]
 )
 def test_publication_continuation_requires_unchanged_selected_git_sources(
-    tmp_path: Path, change: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, change: str | None
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile
 
-    from scripts.recover_official_publication import validate_recovered_sources
+    from scripts.recover_official_publication import recovery_inputs, validate_recovered_sources
 
     root = tmp_path / "repo"
     subprocess.run(["git", "init", "--quiet", str(root)], check=True)
@@ -2767,10 +2778,14 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
     )
     code = manifest.parent / "nodes.py"
     code.write_text("NODES = {}\n")
+    if change == "older-valid":
+        unchanged = root / "packages/dinkster-nodes-unchanged/dinkster-pack.toml"
+        unchanged.parent.mkdir()
+        unchanged.write_text(manifest.read_text().replace("foundation", "unchanged"))
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     head = subprocess.check_output(["git", "-C", str(root), "write-tree"], text=True).strip()
     (root / ".git/HEAD").write_text(head + "\n")
-    if change == "code":
+    if change in {"code", "older-valid"}:
         code.write_text("NODES = {'changed': 1}\n")
     elif change == "pack-tests":
         (manifest.parent / "tests").mkdir()
@@ -2817,6 +2832,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
             ValueError,
             match={
                 "code": "selected source bytes changed",
+                "older-valid": "selected source bytes changed",
                 "removed": "source identity removed",
                 "engine": "engine identity differs",
                 "catalog": "catalog must identify",
@@ -2824,6 +2840,107 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
             }[change],
         ):
             validate_recovered_sources(root, work, head)
+
+    variants = json.loads((ROOT / "scripts/base_bundles.json").read_bytes())
+    (root / "scripts").mkdir(exist_ok=True)
+    (root / "scripts/base_bundles.json").write_text(json.dumps(variants))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as inputs:
+        for name in ("sources/official-packs.lock", "engine/release-manifest.json"):
+            inputs.write(work / name, name)
+    older_archive = io.BytesIO()
+    if change == "older-valid":
+        with zipfile.ZipFile(older_archive, "w") as inputs:
+            inputs.writestr(
+                "sources/official-packs.lock",
+                Lockfile.of(
+                    [
+                        LockedPack(
+                            "dinkster-nodes-unchanged",
+                            "2.7rc1",
+                            "blake3:" + "2" * 64,
+                            "dinkster",
+                            (),
+                            source=f"git:Kosinkadink/Dinkster@{head}",
+                        )
+                    ]
+                ).record_json(),
+            )
+            inputs.write(work / "engine/release-manifest.json", "engine/release-manifest.json")
+    jobs = [{"name": "sources", "conclusion": "success"}] + [
+        {"name": f"locks ({v}, runner)", "conclusion": "success"} for v in variants
+    ]
+    artifacts = [
+        {"id": i, "name": name, "expired": False, "workflow_run": {"id": 70, "head_sha": head}}
+        for i, name in enumerate(
+            ["official-publication-inputs", *(f"publication-locks-{v}" for v in variants)], 100
+        )
+    ]
+    original_read = subprocess.check_output
+    original_run = subprocess.run
+
+    def read(command, **kwargs):
+        if command[:2] != ["gh", "api"]:
+            return original_read(command, **kwargs)
+        path = command[-1]
+        if path.endswith("/zip"):
+            if "/200/" in path:
+                return older_archive.getvalue()
+            return archive.getvalue()
+        if "/workflows/" in path:
+            pages = [
+                {
+                    "workflow_runs": [
+                        {
+                            "id": 70,
+                            "head_sha": head,
+                            "head_branch": "main",
+                            "head_repository": {"full_name": "Kosinkadink/Dinkster"},
+                            "path": ".github/workflows/official-packs.yml",
+                            "event": "workflow_run",
+                            "conclusion": "cancelled",
+                        }
+                    ]
+                }
+            ]
+            if change == "older-valid":
+                pages[0]["workflow_runs"].append({**pages[0]["workflow_runs"][0], "id": 60})
+            return json.dumps(pages).encode()
+        if "/60/" in path:
+            return json.dumps(
+                [
+                    {"jobs": jobs}
+                    if "/jobs?" in path
+                    else {
+                        "artifacts": [
+                            {**a, "id": a["id"] + 100, "workflow_run": {"id": 60, "head_sha": head}}
+                            for a in artifacts
+                        ]
+                    }
+                ]
+            ).encode()
+        return json.dumps(
+            [{"jobs": jobs} if "/jobs?" in path else {"artifacts": artifacts}]
+        ).encode()
+
+    def run(command, **kwargs):
+        if "merge-base" in command:
+            return subprocess.CompletedProcess(command, 0)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "check_output", read)
+    monkeypatch.setattr(subprocess, "run", run)
+    if change in {None, "pack-tests"}:
+        assert recovery_inputs(root, 90)["recovery_run"] == "70"
+    elif change == "older-valid":
+        assert recovery_inputs(root, 90)["recovery_run"] == "60"
+        assert "publication run 70: continuation skipped; recovered" in capsys.readouterr().out
+    elif change in {"code", "removed", "bases"}:
+        assert recovery_inputs(root, 90) == {}
+        assert "publication run 70: continuation skipped; recovered" in capsys.readouterr().out
+    else:
+        with pytest.raises(ValueError, match="identity differs|catalog must identify"):
+            recovery_inputs(root, 90)
 
 
 @pytest.mark.parametrize(

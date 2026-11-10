@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
+from zipfile import ZipFile
 
 from dinkster_registry import Lockfile
 
 from scripts.select_official_packs import select_packs
+
+
+class SupersededPublication(ValueError):
+    """Original publication inputs no longer match the continuing source tree."""
 
 
 def _pages(path: str, key: str) -> list[dict]:
@@ -95,12 +102,31 @@ def recovery_inputs(root: Path, current_run: int) -> dict[str, str]:
             for artifact in selected
         ):
             raise ValueError(f"publication run {run['id']}: artifact run identity differs")
+        source_artifact = next(
+            a["id"] for a in selected if a["name"] == "official-publication-inputs"
+        )
+        archive = subprocess.check_output(
+            ["gh", "api", f"{repository}/actions/artifacts/{source_artifact}/zip"]
+        )
+        with tempfile.TemporaryDirectory(prefix="publication-recovery-") as directory:
+            work = Path(directory)
+            with ZipFile(io.BytesIO(archive)) as inputs:
+                for name in ("sources/official-packs.lock", "engine/release-manifest.json"):
+                    matches = [entry for entry in inputs.infolist() if entry.filename == name]
+                    if len(matches) != 1:
+                        raise ValueError(f"publication run {run['id']}: unique {name} required")
+                    target = work / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(inputs.read(matches[0]))
+            try:
+                validate_recovered_sources(root, work, head)
+            except SupersededPublication as error:
+                print(f"publication run {run['id']}: continuation skipped; {error}")
+                continue
         return {
             "recovery_run": str(run["id"]),
             "recovery_head": head,
-            "recovery_artifact": str(
-                next(a["id"] for a in selected if a["name"] == "official-publication-inputs")
-            ),
+            "recovery_artifact": str(source_artifact),
             "recovery_locks": ",".join(
                 str(a["id"]) for a in selected if a["name"].startswith("publication-locks-")
             ),
@@ -112,18 +138,15 @@ def validate_recovered_sources(root: Path, work: Path, head: str) -> None:
     """Check the original selected Git bytes, not newly built wheels or newer engine pins."""
     catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
     names = {pack.pack for pack in catalog.packs}
-    if not names or any(
-        pack.source != f"git:Kosinkadink/Dinkster@{head}" for pack in catalog.packs
-    ):
+    if not names:
         raise ValueError("recovered source catalog must identify the original publication commit")
-    engine = json.loads((work / "engine/release-manifest.json").read_bytes())
-    if engine["repository"] != "Kosinkadink/Dinkster" or engine["commit"] != head:
-        raise ValueError("recovered engine identity differs from the original publication commit")
     if not names.issubset(select_packs(root, before="0" * 40)):
-        raise ValueError("recovered selected source identity removed at continuing head")
+        raise SupersededPublication("recovered selected source identity removed at continuing head")
     changed = names.intersection(select_packs(root, before=head, exclude_tests=True))
     if changed:
-        raise ValueError(f"recovered selected source bytes changed: {', '.join(sorted(changed))}")
+        raise SupersededPublication(
+            f"recovered selected source bytes changed: {', '.join(sorted(changed))}"
+        )
     if subprocess.check_output(
         [
             "git",
@@ -137,7 +160,12 @@ def validate_recovered_sources(root: Path, work: Path, head: str) -> None:
             "scripts/base_bundles.json",
         ]
     ).strip():
-        raise ValueError("recovered supported base selection changed")
+        raise SupersededPublication("recovered supported base selection changed")
+    if any(pack.source != f"git:Kosinkadink/Dinkster@{head}" for pack in catalog.packs):
+        raise ValueError("recovered source catalog must identify the original publication commit")
+    engine = json.loads((work / "engine/release-manifest.json").read_bytes())
+    if engine["repository"] != "Kosinkadink/Dinkster" or engine["commit"] != head:
+        raise ValueError("recovered engine identity differs from the original publication commit")
 
 
 if __name__ == "__main__":
