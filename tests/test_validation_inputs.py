@@ -56,6 +56,12 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
             False,
             ["packages/dinkster-nodes-text"],
         ),
+        (
+            "packages/dinkster-nodes-dev/pyproject.toml",
+            False,
+            False,
+            ["packages/dinkster-nodes-dev"],
+        ),
         ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
         ("tests/test_environment_history.py", True, True, []),
         ("tests/test_remote.py", True, True, []),
@@ -71,7 +77,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
 def test_ci_selects_only_the_changed_behavior(
     path: str, engine: bool, runtime: bool, packs: list[str]
 ) -> None:
-    from tools.ci_selection import select
+    from tools.ci_selection import select, test_paths
 
     plan = select(evidence_paths.DINKSTER_ROOT, [path])
     assert plan == {
@@ -80,6 +86,8 @@ def test_ci_selects_only_the_changed_behavior(
         "runtime": runtime,
         "packs": packs,
     }
+    for pack in packs:
+        assert test_paths(evidence_paths.DINKSTER_ROOT, [pack])
 
 
 def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> None:
