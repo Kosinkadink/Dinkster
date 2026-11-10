@@ -1,10 +1,10 @@
 [pack]
 name = "dinkster-vision-sdpose"
-version = "0.0.2"
+version = "0.0.3"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.sdpose"]
-requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26"]
+requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26", "dinkster-pack-helpers>=0.0.1,<1"]
 
 [pack.inference]
 imports = ["model_management", "sample", "utils"]
@@ -19,7 +19,6 @@ api = "dinkster-api/v1"
 
 [pack.dependencies]
 dinkster-misc-models = ">=0.0.1,<1"
-dinkster-image = ">=0.0.1,<1"
 
 [pack.entry]
 nodes = "dinkster_vision_sdpose:NODES"

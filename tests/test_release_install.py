@@ -853,6 +853,12 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     package.write_text('[project]\nname = "one"\nversion = "1.2.4"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="one=1.2.4"):
         release_version(tmp_path, "v1.2.3")
+    metadata = package.read_text()
+    package.write_text(metadata + "\n[tool.dinkster]\nofficial-library = true\n")
+    assert release_version(tmp_path, "v1.2.3") == "1.2.3"
+    package.write_text(metadata + "\n[tool.dinkster]\nofficial-library = false\n")
+    with pytest.raises(ValueError, match="one=1.2.4"):
+        release_version(tmp_path, "v1.2.3")
 
 
 @pytest.mark.parametrize(
@@ -905,6 +911,18 @@ def test_engine_publication_ignores_only_supervisor_changes(
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.2") == "0.0.2"
+    subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            "from pathlib import Path; from scripts.build_release import release_version; "
+            "assert release_version(Path.cwd(), 'v0.0.2') == '0.0.2'",
+        ],
+        cwd=ROOT,
+        check=True,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+    )
     with pytest.raises(ValueError, match="does not match workspace metadata"):
         release_version(ROOT, "v0.0.1")
     projects = workspace_projects(ROOT)
@@ -972,6 +990,14 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             )["project"]["version"]
             actual = tomllib.loads((staged / relative).read_text())["project"]["version"]
             assert actual == (committed if member in {"remote", "image"} else version)
+        helper = tomllib.loads(
+            (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
+        )["project"]
+        assert helper["version"] == "0.0.1"
+        models = tomllib.loads(
+            (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
+        )["project"]
+        assert "dinkster-pack-helpers==0.0.1" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -2801,7 +2827,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.2")
+                ("dinkster-image", "0.0.3")
             ]
     finally:
         server.shutdown()

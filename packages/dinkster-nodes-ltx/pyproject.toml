@@ -1,17 +1,16 @@
 [project]
 name = "dinkster-ltx"
-version = "0.0.2"
+version = "0.0.3"
 description = "Dinkster ltx model nodes"
 requires-python = ">=3.12"
 dependencies = [
     "dinkster-api",
     "torch",
     "dinkster-inference==0.1.1",
-    "dinkster-conditioning>=0.0.1",
     "dinkster-latent>=0.0.1",
     "dinkster-llm>=0.0.1",
     "dinkster-models>=0.0.1",
-    "dinkster-video>=0.0.1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -28,8 +27,7 @@ packages = ["src/dinkster_ltx"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-conditioning = { workspace = true }
 dinkster-latent = { workspace = true }
 dinkster-llm = { workspace = true }
 dinkster-models = { workspace = true }
-dinkster-video = { workspace = true }
+dinkster-pack-helpers = { workspace = true }

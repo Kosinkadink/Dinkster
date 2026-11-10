@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-vision-sdpose"
-version = "0.0.2"
+version = "0.0.3"
 description = "ComfyUI-origin vision-sdpose nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "dinkster-inference==0.1.1",
     "numpy>=1.26",
     "dinkster-misc-models>=0.0.1,<1",
-    "dinkster-image>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -27,4 +27,4 @@ packages = ["src/dinkster_vision_sdpose"]
 [tool.uv.sources]
 dinkster-api = { workspace = true }
 dinkster-misc-models = { workspace = true }
-dinkster-image = { workspace = true }
+dinkster-pack-helpers = { workspace = true }

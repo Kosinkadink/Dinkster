@@ -928,8 +928,8 @@ def test_compose_serving_default_resolution_is_atomic(
     ("pack_id", "directory", "expected_version"),
     [
         ("dinkster-text", "dinkster-nodes-text", "0.0.2"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.2"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.2"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.3"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.3"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
 )
