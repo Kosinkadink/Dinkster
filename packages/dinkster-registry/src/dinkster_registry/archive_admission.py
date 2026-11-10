@@ -1,4 +1,4 @@
-"""Archive admission shared by engine validation and registry publication."""
+"""Archive admission for engine validation and registry publication."""
 
 from __future__ import annotations
 
