@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import FunctionType
 from typing import Any, cast
 from uuid import uuid4
 
@@ -64,7 +65,7 @@ def _trace_operations(path: Path):
         if (function := getattr(module, name))
     }
     operations[subprocess.run.__code__] = "subprocess.run"
-    operations[shutil.rmtree.__code__] = "shutil.rmtree"
+    operations[cast(FunctionType, shutil.rmtree).__code__] = "shutil.rmtree"
     monitoring = sys.monitoring
     tool = monitoring.PROFILER_ID
     monitoring.use_tool_id(tool, "supervisor operation timings")
