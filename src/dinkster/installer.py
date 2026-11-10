@@ -44,7 +44,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from dinkster_registry import (
     InstallError,
@@ -83,6 +83,9 @@ from . import __version__ as dinkster_version
 from .compose import PackSpec
 from .packs import pack_info_from_manifest
 from .storelock import StoreLockTimeout, hold_lock
+
+if TYPE_CHECKING:
+    from .registries import StaticPackIndex
 
 LOCAL_PUBLISHER = "local"
 """Publisher id for unpublished packs installed from local directories.
@@ -159,23 +162,33 @@ def _is_registry_source(source: str) -> bool:
 
 
 def http_registry_fetcher(
-    endpoint: str, *, token: str = "", timeout: float = DEFAULT_REGISTRY_TIMEOUT
+    endpoint: str,
+    *,
+    token: str = "",
+    timeout: float = DEFAULT_REGISTRY_TIMEOUT,
+    index: StaticPackIndex | None = None,
 ) -> RegistryFetcher:
     """Acquire a hash-pinned wheel using only the registry's static prefix."""
+    from .registries import (
+        NamedRegistry,
+        StaticPackIndex,
+        static_pack_release,
+        static_release_wheel,
+    )
+
     base = endpoint.rstrip("/")
     if not base.startswith(("http://", "https://")):
         raise InstallError(f"registry endpoint {endpoint!r} must be an http(s) URL")
+    index = index or StaticPackIndex()
 
     def fetch(entry: LockedPack) -> bytes:
-        from .registries import NamedRegistry, static_pack_release, static_release_wheel
-
         headers = {"User-Agent": "dinkster-pack"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         try:
             registry = NamedRegistry("", base)
             fields = static_pack_release(
-                registry, entry.pack, entry.version, timeout=timeout, token=token
+                registry, entry.pack, entry.version, timeout=timeout, token=token, index=index
             )
             wheel, digest = static_release_wheel(registry, fields)
             if digest != entry.artifact_digest:

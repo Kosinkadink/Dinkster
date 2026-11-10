@@ -59,8 +59,9 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_installer.py::test_cli_restore_downloads_registry_sources \
   tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
   tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
-  tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
+  tests/test_installer.py::test_registry_selection_snapshot_refreshes_between_operations \
   tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
+  tests/test_installer.py::test_split_registry_reads_only_selected_packs_and_refuses_substitution \
   tests/test_installer.py::test_registry_compatible_selection_refuses_only_undeclared_releases \
   tests/test_installer.py::test_registry_source_identity_comes_from_verified_archive \
   tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \

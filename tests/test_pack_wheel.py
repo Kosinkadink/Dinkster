@@ -357,10 +357,12 @@ def test_static_release_refuses_nonuniversal_or_missing_wheel_array(problem: str
 @pytest.mark.parametrize(
     "publisher,compression", [("demo", zipfile.ZIP_STORED), (None, zipfile.ZIP_DEFLATED)]
 )
+@pytest.mark.parametrize("schema", [1, 2])
 def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
     tmp_path: Path,
     publisher: str | None,
     compression: int,
+    schema: int,
 ) -> None:
     root = wheel_pack(tmp_path / "source")
     (root / "src/demo_nodes/__init__.py").write_text("from demo_core import VALUE\nNODES = []\n")
@@ -479,6 +481,35 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
         routes["/static/packs/index.json"] = json.dumps(
             {"schemaVersion": 1, "items": [release]}
         ).encode()
+        if schema == 2:
+            routes["/static/packs/index.json"] = json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "items": [
+                        {
+                            "name": "demo-nodes",
+                            "publisher": publisher,
+                            "latestVersion": "1.2.3",
+                            "library": False,
+                            "url": "packs/demo-nodes/index.json",
+                        },
+                        {
+                            "name": "unrelated",
+                            "publisher": "demo",
+                            "latestVersion": "9.0",
+                            "library": False,
+                            "url": "packs/unrelated/index.json",
+                        },
+                    ],
+                }
+            ).encode()
+            routes["/static/packs/demo-nodes/index.json"] = json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "name": "demo-nodes",
+                    "items": [release],
+                }
+            ).encode()
         for name, row in zip(("demo-nodes", "demo-core"), wheel_rows, strict=True):
             routes[f"/static/cpu/simple/{name}/"] = (
                 f'<a href="{row["url"]}#sha256={row["sha256"]}">{row["filename"]}</a>'
@@ -509,6 +540,7 @@ def test_static_registry_installs_exact_pack_and_library_and_refuses_corruption(
             base_id=base_id,
             selected=registry,
         )
+        assert "/static/packs/unrelated/index.json" not in requested
         lock = PackLock.read(paths[0])
         assert [(p.name, p.version) for p in lock.packages] == [
             ("demo-core", "2.4"),

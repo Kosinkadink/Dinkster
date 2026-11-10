@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Static-only registry installs support both the release catalog and the split
+  catalog with per-pack version files. Selection and acquisition share a snapshot
+  within each operation; the next operation reads current publication state.
+  Unknown index schemas refuse with an instruction to update Dinkster.
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.

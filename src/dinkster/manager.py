@@ -97,6 +97,7 @@ from .registries import (
     DEFAULT_REGISTRIES_FILENAME,
     RegistryConfig,
     RegistryPublishError,
+    StaticPackIndex,
     browse_packs,
     browse_templates,
     default_pack_minimums,
@@ -110,7 +111,6 @@ from .registries import (
     resolve_release,
     routing_registry_fetcher,
     select_registry,
-    static_pack_releases,
 )
 
 GIT_PREFIX = "git+"
@@ -441,7 +441,9 @@ def _cmd_publish(args: argparse.Namespace) -> None:
     if not args.no_preflight:
         report = diagnose(
             manifest_path,
-            published_packs=[cast("str", row["name"]) for row in static_pack_releases(registry)],
+            published_packs=[
+                cast("str", row["name"]) for row in StaticPackIndex().catalog(registry)
+            ],
         )
         if not report.ok:
             print(render_text(report))
@@ -1119,12 +1121,13 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                         raise InstallError(f"{pack}: --add requires a distinct absent pack")
                     selections[pack] = version
                 registry = select_registry(config, args.registry)
-                fetch = routing_registry_fetcher(config, registry)
+                index = StaticPackIndex()
+                fetch = routing_registry_fetcher(config, registry, index=index)
                 entries = list(installed.packs)
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 for pack, version in selections.items():
                     selected = resolve_release(
-                        registry, pack, version, engine_version=dinkster_version
+                        registry, pack, version, engine_version=dinkster_version, index=index
                     )
                     cached = pack_archive_path(
                         args.artifacts,
