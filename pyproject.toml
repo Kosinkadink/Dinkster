@@ -9,7 +9,8 @@ dependencies = [
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
     "comfy-aimdo==0.6.0",
     "comfy-kitchen==0.2.40",
-    "dinkster-api",
+    "dinkster-api==0.0.3",
+    "dinkster-engine==0.0.3",
     "dinkster-inference==0.1.1",
     "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
@@ -115,8 +116,6 @@ packages = [
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.wheel.force-include]
-"packages/dinkster-graph/src/dinkster_graph" = "dinkster_graph"
-"packages/dinkster-engine/src/dinkster_engine" = "dinkster_engine"
 "packages/dinkster-server/src/dinkster_server" = "dinkster_server"
 "packages/dinkster-collab/src/dinkster_collab" = "dinkster_collab"
 

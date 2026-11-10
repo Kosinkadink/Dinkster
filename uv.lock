@@ -856,6 +856,7 @@ dependencies = [
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
     { name = "comfy-kitchen" },
     { name = "dinkster-api" },
+    { name = "dinkster-engine" },
     { name = "dinkster-inference" },
     { name = "dinkster-supervisor" },
     { name = "dinkster-token-verifier" },
@@ -917,6 +918,7 @@ requires-dist = [
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
     { name = "comfy-kitchen", specifier = "==0.2.40" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-engine", editable = "packages/dinkster-engine" },
     { name = "dinkster-inference", specifier = "==0.1.1" },
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'default'", editable = "packages/dinkster-supervisor" },
@@ -1191,19 +1193,11 @@ name = "dinkster-engine"
 version = "0.0.3"
 source = { editable = "packages/dinkster-engine" }
 dependencies = [
-    { name = "dinkster-graph" },
-    { name = "dinkster-protocol" },
-    { name = "dinkster-schema" },
-    { name = "dinkster-values" },
+    { name = "dinkster-api" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "dinkster-graph", editable = "packages/dinkster-graph" },
-    { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
-    { name = "dinkster-schema", editable = "packages/dinkster-schema" },
-    { name = "dinkster-values", editable = "packages/dinkster-values" },
-]
+requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
 name = "dinkster-flux"

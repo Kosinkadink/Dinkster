@@ -19,7 +19,6 @@ from dinkster_values import (
     CLIP_VISION_TYPE,
     COLOR_TYPE,
     COLORS_TYPE,
-    COMPOSITOR_TYPE,
     CONTROL_NET_TYPE,
     FLOATS_TYPE,
     GLIGEN_TYPE,
@@ -162,7 +161,6 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         CAMERA_INFO_STATE_TYPE,
         COLOR_TYPE,
         COLORS_TYPE,
-        COMPOSITOR_TYPE,
         IMAGECOMPARE_TYPE,
         RESOLUTION_PREVIEW_TYPE,
     ):

@@ -37,6 +37,7 @@ _SUITES = {
         pack: (f"packages/{directory}/tests/test_*.py",)
         for pack, directory in _PACK_DIRECTORIES.items()
     },
+    "dinkster-nodes-dev": ("tests/test_gallery.py",),
     "dinkster-utilities": (
         "packages/dinkster-nodes-utilities/tests/test_*.py",
         "tests/test_comfy_loops.py",
@@ -82,7 +83,6 @@ _SUITES = {
         "tests/test_save_text.py",
         "tests/test_text_comfy_goldens.py",
     ),
-    "dinkster-nodes-dev": ("tests/test_gallery.py",),
 }
 
 

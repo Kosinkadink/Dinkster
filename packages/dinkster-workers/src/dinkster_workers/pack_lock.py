@@ -143,6 +143,9 @@ class PackLock:
                     )
 
     def write(self, path: Path) -> None:
+        path.write_text(self.to_json(), encoding="ascii")
+
+    def to_json(self) -> str:
         data = asdict(self)
         data["format"] = (
             "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
@@ -150,12 +153,19 @@ class PackLock:
         if self.engine is None:
             data.pop("engine")
         data["requiresPython"] = data.pop("requires_python")
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="ascii")
+        return json.dumps(data, indent=2, sort_keys=True) + "\n"
 
     @classmethod
     def read(cls, path: Path) -> PackLock:
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            return cls.from_json(path.read_text(encoding="utf-8"))
+        except (ProvisionError, UnicodeError) as exc:
+            raise ProvisionError(f"{path}: {exc}") from exc
+
+    @classmethod
+    def from_json(cls, payload: str | bytes) -> PackLock:
+        try:
+            raw = json.loads(payload)
             if not isinstance(raw, dict):
                 raise ValueError("dependency lock must be an object")
             data = cast("dict[str, Any]", raw)
@@ -182,7 +192,7 @@ class PackLock:
                 engine=engine,
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise ProvisionError(f"invalid dependency lock {path}: {exc}") from exc
+            raise ProvisionError(f"invalid dependency lock: {exc}") from exc
 
 
 @dataclass(frozen=True)
