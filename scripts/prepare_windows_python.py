@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -46,8 +48,21 @@ def prepare(output: Path, uv: str) -> Path:
                 "https://raw.githubusercontent.com/Kosinkadink/Dinkster-Environments/"
                 f"{ENVIRONMENTS_COMMIT}/{filename}"
             )
-            with urllib.request.urlopen(url, timeout=60) as response:
-                payload = response.read()
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(url, timeout=60) as response:
+                        payload = response.read()
+                    break
+                except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+                    if isinstance(error, urllib.error.HTTPError):
+                        transient = 500 <= error.code < 600
+                    elif isinstance(error, urllib.error.URLError):
+                        transient = isinstance(error.reason, (ConnectionError, TimeoutError))
+                    else:
+                        transient = True
+                    if not transient or attempt == 2:
+                        raise
+                    time.sleep(attempt + 1)
             if hashlib.sha256(payload).hexdigest() != digest:
                 raise ValueError(f"Windows runtime input hash mismatch: {filename}")
             (work / filename).write_bytes(payload)
