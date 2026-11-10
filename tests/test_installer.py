@@ -3611,7 +3611,16 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
 
 
 @pytest.mark.parametrize(
-    "problem", [None, "existing", "duplicate", "third-party", "corrupt", "retained-corrupt"]
+    "problem",
+    [
+        None,
+        "existing",
+        "duplicate",
+        "third-party",
+        "corrupt",
+        "retained-corrupt",
+        "retained-missing",
+    ],
 )
 def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
@@ -3651,6 +3660,13 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
         ),
     }
+    if problem == "retained-missing":
+        old_release = {**_static_release(old, archives["retained"]), "engine": ">=0"}
+        old_wheel = cast("list[dict[str, object]]", old_release["wheels"])[0]
+        files["/static/packs/index.json"] = json.dumps(
+            {"schemaVersion": 1, "items": [old_release, release]}
+        ).encode()
+        files[f"/static/{old_wheel['url']}"] = archives["retained"]
     server = _serve_artifacts(files, [])
     generation = tmp_path / "generation"
     generation.mkdir()
@@ -3661,8 +3677,10 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     original = installed.read_bytes()
     if problem == "retained-corrupt":
         (generation / "pack-sources/retained.whl").write_bytes(b"corrupt retained wheel")
+    elif problem == "retained-missing":
+        (generation / "pack-sources/retained.whl").unlink()
     before = {p: p.read_bytes() for p in generation.rglob("*") if p.is_file()}
-    # The old release is unavailable; only its generation retains the pinned wheel.
+    # Only a missing retained archive permits retrieval of the pinned old release.
     output = tmp_path / "candidate.lock"
     requested = "retained@2.0" if problem == "existing" else "added@1.2"
     args = [
@@ -3684,7 +3702,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     if problem == "duplicate":
         args.extend(["--add", requested])
     try:
-        if problem:
+        if problem is not None and problem != "retained-missing":
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err

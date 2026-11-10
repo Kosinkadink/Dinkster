@@ -179,10 +179,12 @@
   additive software review in a new host-owned disposable directory outside the
   project and shared store. It reports source/dependency locks, retained engine,
   base and placement, wheel downloads and isolation size without a generation
-  journal or activation. Intact retained registry sources can supply old archives
+  journal or activation. Intact retained registry wheels can supply old archives
   without contacting their release endpoints. Previously installed wheels retain
   their original archive bytes and digest when another pack is added; corrupt
-  retained wheels refuse before a candidate source lock is written.
+  retained wheels refuse before a candidate source lock is written. Missing
+  retained registry archives are fetched and verified at their pinned identity,
+  without re-resolving their versions.
 - `packs-apply --input PATH --approval DIGEST --json` applies that review once
   within 900 seconds. Changed project settings, current software or reviewed
   input files refuse before construction. Successful application seals and
