@@ -628,6 +628,29 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
     assert not venv_python(tmp_path / "packs/example").exists()
 
 
+def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:
+    older, selected = tmp_path / "older", tmp_path / "selected"
+    older.mkdir()
+    selected.mkdir()
+    stale = _wheel(older, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    chosen = _wheel(selected, "fixture-extra", "1.2", "fixture_extra", "value = 29\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("fixture-extra==1.2\n")
+    lock = resolve_pack_lock(
+        pack="example",
+        variant="linux-cpu",
+        requirements=["fixture-extra>=1", f"fixture-extra @ {chosen.url}"],
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=[older, selected],
+    )
+    assert stale.sha256 != chosen.sha256
+    assert lock.packages == (LockedDistribution("fixture-extra", "1.2", (chosen,)),)
+    path = tmp_path / "pack-lock.json"
+    lock.write(path)
+    assert PackLock.read(path) == lock
+
+
 def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> None:
     archive = tmp_path / "source_only_fixture-1.0.zip"
     with zipfile.ZipFile(archive, "w") as source:

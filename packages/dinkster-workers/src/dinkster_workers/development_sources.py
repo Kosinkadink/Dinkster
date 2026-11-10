@@ -115,7 +115,7 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             variant=inputs["variant"],
             requirements=(
                 *manifest.requires_for(inputs["accelerator"]),
-                *(f"{name}=={value}" for name, value in library_versions.items()),
+                *(f"{name} @ {path.as_uri()}" for name, path in library_wheels.items()),
             ),
             python=Path(sys.executable),
             constraints=constraints,
