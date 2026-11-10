@@ -4347,8 +4347,10 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         ]
         assert fetch(replace(release, source="registry")) == data  # default
         assert fetch(replace(release, source=f"registry:{endpoint}")) == data
-        assert requests[-2:] == [
+        assert requests == [
             (index_path, "Bearer corp-secret"),
+            (artifact_path, "Bearer corp-secret"),
+            (artifact_path, "Bearer corp-secret"),
             (artifact_path, "Bearer corp-secret"),
         ]
 
