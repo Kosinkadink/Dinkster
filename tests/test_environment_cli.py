@@ -83,6 +83,8 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     result = (
         run_with_diagnostics(command, timeout=timeout)
         if "setup" in arguments
+        or "update" in arguments
+        or "restore" in arguments
         or "move" in arguments
         or ("doctor" in arguments and "--repair" in arguments)
         else subprocess.run(command, capture_output=True, text=True, timeout=timeout)
@@ -1265,10 +1267,18 @@ environment.main()
         )
         retained = python.stat()
         retained_digest = content_digest(python)
+        retained_history = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
-        assert rolled_back["current"] == 3 and first.exists() and second.exists()
+        assert rolled_back["current"] == 3 and second.exists()
+        if sys.platform == "linux" or os.name == "nt":
+            assert not first.exists()
+        else:
+            assert first.exists()
+        assert retained_history and all(
+            path.read_bytes() == data for path, data in retained_history.items()
+        )
         after = python.stat()
         assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (
             retained.st_dev,
@@ -1279,6 +1289,18 @@ environment.main()
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
         current = root / "generations/3"
+        restored_python = current / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
+        assert (
+            subprocess.check_output(
+                [
+                    str(restored_python),
+                    "-B",
+                    "-c",
+                    "import fixture_engine; print(fixture_engine.VALUE)",
+                ]
+            ).strip()
+            == b"41"
+        )
         source_release, payloads = _release_sources(mirror)
         supplied = acquire_sources(discover((str(mirror),), "main"), store)
         assert supplied is not None
@@ -1591,7 +1613,14 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert run("rollback")["current"] == 3
         check(3, fixture["expected"]["initial"], "rollback")
         assert (root / "generations/2/generation.json").is_file()
-        assert len(list((root / "journal").glob("*.json"))) == 3
+        journals = [Journal.read(path) for path in (root / "journal").glob("*.json")]
+        assert sorted((row.operation, row.target) for row in journals if row.operation != "gc") == [
+            ("rollback", 3),
+            ("setup", 1),
+            ("update", 2),
+        ]
+        assert all(row.stage == "complete" and row.error is None for row in journals)
+        assert len(list((root / "history").glob("*.json"))) == 3
     finally:
         if (root / "current").exists():
             run("stop")
