@@ -22,6 +22,7 @@ on:
       - .github/workflows/official-packs.yml
       - scripts/select_official_packs.py
       - scripts/prepare_official_publication.py
+      - scripts/recover_official_publication.py
       - scripts/build_official_packs.py
       - scripts/build_release_pack_locks.py
       - scripts/publish_official_packs.py
@@ -33,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: official-packs-${{ inputs.head || github.event.workflow_run.head_sha || github.ref }}
+  group: official-packs-${{ github.event_name == 'workflow_run' && 'main' || inputs.head || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -48,8 +49,10 @@ jobs:
       packs: ${{ steps.select.outputs.packs }}
       engine: ${{ steps.select.outputs.engine }}
       applicable: ${{ steps.select.outputs.applicable }}
-      recovery_run: ${{ steps.engine_release.outputs.recovery_run }}
-      recovery_locks: ${{ steps.engine_release.outputs.recovery_locks }}
+      recovery_run: ${{ steps.continuation.outputs.recovery_run || steps.engine_release.outputs.recovery_run }}
+      recovery_head: ${{ steps.continuation.outputs.recovery_head }}
+      recovery_artifact: ${{ steps.continuation.outputs.recovery_artifact || inputs.recovery_artifact }}
+      recovery_locks: ${{ steps.continuation.outputs.recovery_locks || steps.engine_release.outputs.recovery_locks }}
     steps:
       - name: Check whether the exact commit published an engine
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
@@ -129,6 +132,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
+      - name: Find validated interrupted main publication inputs
+        id: continuation
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && steps.engine_release.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python -m scripts.recover_official_publication --run "${{ github.run_id }}"
       - name: Select committed pack changes or an exact pack tag
         id: select
         env:
@@ -217,9 +226,14 @@ jobs:
       contents: read
       actions: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.engine }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          artifact-ids: ${{ inputs.recovery_artifact }}
+          artifact-ids: ${{ needs.select.outputs.recovery_artifact }}
           run-id: ${{ needs.select.outputs.recovery_run }}
           github-token: ${{ github.token }}
           merge-multiple: true
@@ -231,6 +245,15 @@ jobs:
           github-token: ${{ github.token }}
           merge-multiple: true
           path: .official-publication/locks
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
+      - name: Refuse changed selected sources before continuing
+        if: github.event_name == 'workflow_run'
+        env:
+          ORIGINAL_HEAD: ${{ needs.select.outputs.recovery_head }}
+        run: uv run --no-sync python -m scripts.recover_official_publication --validate .official-publication --head "$ORIGINAL_HEAD"
       - uses: actions/upload-artifact@v4
         with:
           name: official-publication-inputs
@@ -340,6 +363,15 @@ jobs:
           arguments=()
           for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
-          uv run --no-sync python -m scripts.publish_official_packs \
+          timeout --kill-after=30s 12m uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
             --output .official-publication/submitted --publish
+      - name: Record completed natural publication inputs
+        if: github.event_name == 'workflow_run'
+        run: printf '%s\n' '${{ needs.select.outputs.recovery_run || github.run_id }}' > .official-publication/completed-run
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_run'
+        with:
+          name: publication-completed-${{ needs.select.outputs.recovery_run || github.run_id }}
+          path: .official-publication/completed-run
+          if-no-files-found: error

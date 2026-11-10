@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Static-only registry installs support both the release catalog and the split
+  catalog with per-pack version files. Selection and acquisition share a snapshot
+  within each operation; the next operation reads current publication state.
+  Unknown index schemas refuse with an instruction to update Dinkster.
 - Managed generation hosts can opt into local human pack previews with
   `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
   or the inherited `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the
@@ -16,6 +20,10 @@
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
+- Dependency locks declaring engine API compatibility can layer unchanged on
+  later engines inside that range. The target must supply the API, and all
+  ordinary shared dependency versions must still agree exactly. Older exact
+  locks retain their exact-version requirements.
 - Published software history can rebuild a pruned generation without restoring
   workflows, models or outputs. Missing engine inputs expose read-only alternatives
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
@@ -314,6 +322,12 @@
   accepts the same opt-in, with an explicit host interpreter override when its
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
+  Official packs built from the explicitly selected checkout may serve under
+  reserved namespaces in that local generation. Other Git, local and pip
+  sources do not gain reserved-namespace trust, even with publisher `dinkster`.
+  Libraries built alongside those packs supply their locked dependencies
+  without a registry download and must match the dependency lock's digest.
+  Libraries are not installed or cataloged as node packs.
   Default setup and Desktop remain published-bundle consumers.
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the

@@ -928,7 +928,7 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         ("dinkster-text", "dinkster-nodes-text", "0.0.2"),
         ("dinkster-image", "dinkster-nodes-image", "0.0.4"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.3"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.4"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
 )
@@ -1687,7 +1687,9 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             CompositionError,
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
         ):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -2093,7 +2095,7 @@ def test_compose_rejects_uncovered_node_type(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, presentation=False, namespaces=None)
         with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
-            await compose_serving([manifest], worker_env=WORKER_ENV)
+            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -3325,7 +3327,7 @@ def test_pack_spec_attribution_outside_table_fails(tmp_path: Path) -> None:
             attribute=lambda nt: "elsewhere",
         )
         with pytest.raises(CompositionError, match="not among this spec's pack"):
-            await compose_serving([spec])
+            await compose_serving([spec], include_default_packs=False)
 
     run_scenario(scenario())
 
@@ -3364,7 +3366,7 @@ def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
             attribute=lambda nt: "pack-b",
         )
         with pytest.raises(CompositionError, match="different info"):
-            await compose_serving([first, second])
+            await compose_serving([first, second], include_default_packs=False)
 
     run_scenario(scenario())
 

@@ -14,6 +14,7 @@ from urllib.parse import quote, unquote, urlsplit
 from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_archives import extract_base
 from dinkster_supervisor.environment_artifacts import engine_constraints
+from dinkster_supervisor.environment_channels import engine_publication_names
 from dinkster_supervisor.environment_constraints import effective_constraints
 from dinkster_supervisor.environment_downloads import fetch_artifact
 from dinkster_workers.pack_lock import PackLock
@@ -44,6 +45,12 @@ def build_locks(
     if catalog is not None and not catalog.packs:
         raise ValueError("independent pack publication requires selected sources")
     engine = json.loads((release / "release-manifest.json").read_bytes())
+    release_tag = engine.get("tag")
+    if sources is not None:
+        # Independent publication consumes an already finalized engine manifest.
+        _, release_tag = engine_publication_names(
+            engine, "sha256:" + sha256(release / "release-manifest.json"), "main"
+        )
     for row in engine["artifacts"]:
         path = release / row["name"]
         if path.stat().st_size != row["size"] or sha256(path) != row["sha256"]:
@@ -97,10 +104,10 @@ def build_locks(
             if not row["name"].endswith(".whl"):
                 continue
             key = (row["name"], row["size"], row["sha256"])
-            if "tag" in engine:
+            if release_tag is not None:
                 wheel_urls[key] = (
                     "https://github.com/Kosinkadink/Dinkster/releases/download/"
-                    f"{quote(engine['tag'], safe='')}/{quote(row['name'], safe='')}"
+                    f"{quote(release_tag, safe='')}/{quote(row['name'], safe='')}"
                 )
             elif key in upstream:
                 # Lock bytes contribute to the final engine id, so cannot name its tag.

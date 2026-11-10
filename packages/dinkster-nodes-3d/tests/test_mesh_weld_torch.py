@@ -205,12 +205,12 @@ def fill_hole(mesh: object, **options: Any) -> Any:
 def assert_filled(value: object) -> None:
     mesh = materialize_mesh(value)
     source_mesh = hole_source()
-    torch.testing.assert_close(mesh.vertices, source_mesh.vertices, rtol=0, atol=0)
-    torch.testing.assert_close(mesh.faces[0, :4], source_mesh.faces[0], rtol=0, atol=0)
+    torch.testing.assert_close(mesh.vertices.cpu(), source_mesh.vertices, rtol=0, atol=0)
+    torch.testing.assert_close(mesh.faces[0, :4].cpu(), source_mesh.faces[0], rtol=0, atol=0)
     torch.testing.assert_close(
-        mesh.faces[0, 4:], torch.tensor([[2, 1, 0], [3, 2, 0]]), rtol=0, atol=0
+        mesh.faces[0, 4:].cpu(), torch.tensor([[2, 1, 0], [3, 2, 0]]), rtol=0, atol=0
     )
-    torch.testing.assert_close(mesh.vertex_colors, source_mesh.vertex_colors, rtol=0, atol=0)
+    torch.testing.assert_close(mesh.vertex_colors.cpu(), source_mesh.vertex_colors, rtol=0, atol=0)
     assert mesh.vertex_counts.tolist() == [5] and mesh.face_counts.tolist() == [6]
     assert mesh.uvs is None and mesh.normals is None and mesh.tangents is None
     assert mesh.material == {"doubleSided": True} and mesh.unlit
@@ -222,7 +222,7 @@ def test_fill_holes_perimeter_vertex_limits_and_source_preservation() -> None:
     assert_filled(fill_hole(source_mesh, max_perimeter=14.001))
     for options in ({"max_perimeter": 14.0}, {"max_perimeter": 0.0}, {"max_vertices": 3}):
         out = fill_hole(source_mesh, **options)
-        torch.testing.assert_close(out.faces, source_mesh.faces, rtol=0, atol=0)
+        torch.testing.assert_close(out.faces.cpu(), source_mesh.faces, rtol=0, atol=0)
     assert source_mesh.uvs is not None and source_mesh.faces.shape == (1, 4, 3)
 
 
@@ -233,7 +233,7 @@ def test_fill_holes_vertex_and_centroid_fan_threshold(count: int) -> None:
     extra = int(count > 8)
     assert out.vertex_counts.tolist() == [count + 1 + extra]
     assert out.face_counts.tolist() == [count + (count if extra else count - 2)]
-    torch.testing.assert_close(out.faces[0, :count], source_mesh.faces[0], rtol=0, atol=0)
+    torch.testing.assert_close(out.faces[0, :count].cpu(), source_mesh.faces[0], rtol=0, atol=0)
     added = out.faces[0, count:]
     assert added[:, 2].tolist() == [count + 1 if extra else 0] * added.shape[0]
     triangles = out.vertices[0, added]
@@ -242,9 +242,11 @@ def test_fill_holes_vertex_and_centroid_fan_threshold(count: int) -> None:
     )
     assert (cross[:, 2] < 0).all()
     if extra:
-        torch.testing.assert_close(out.vertices[0, -1], source_mesh.vertices[0, :count].mean(0))
         torch.testing.assert_close(
-            out.vertex_colors[0, -1], source_mesh.vertex_colors[0, :count].mean(0)
+            out.vertices[0, -1].cpu(), source_mesh.vertices[0, :count].mean(0)
+        )
+        torch.testing.assert_close(
+            out.vertex_colors[0, -1].cpu(), source_mesh.vertex_colors[0, :count].mean(0)
         )
 
 
@@ -252,11 +254,11 @@ def test_fill_holes_open_chain_requires_opt_in() -> None:
     mesh = hole_source(9)
     mesh.faces = torch.cat([mesh.faces, mesh.faces[:, :1]], dim=1)
     unchanged = fill_hole(mesh)
-    torch.testing.assert_close(unchanged.faces, mesh.faces, rtol=0, atol=0)
+    torch.testing.assert_close(unchanged.faces.cpu(), mesh.faces, rtol=0, atol=0)
     out = fill_hole(mesh, fill_chains=True)
     assert out.vertex_counts.tolist() == [11] and out.face_counts.tolist() == [19]
-    torch.testing.assert_close(out.faces[0, -1], torch.tensor([0, 1, 10]), rtol=0, atol=0)
-    torch.testing.assert_close(out.vertices[0, -1], mesh.vertices[0, :9].mean(0))
+    torch.testing.assert_close(out.faces[0, -1].cpu(), torch.tensor([0, 1, 10]), rtol=0, atol=0)
+    torch.testing.assert_close(out.vertices[0, -1].cpu(), mesh.vertices[0, :9].mean(0))
 
 
 def test_fill_holes_adaptive_weld_and_padded_empty_item() -> None:
@@ -276,7 +278,7 @@ def test_fill_holes_adaptive_weld_and_padded_empty_item() -> None:
     out = fill_hole(mesh)
     assert out.vertex_counts.tolist() == [5, 2] and out.face_counts.tolist() == [6, 0]
     assert out.faces[1].count_nonzero() == 0
-    torch.testing.assert_close(out.vertices[1, :2], mesh.vertices[1, :2], rtol=0, atol=0)
+    torch.testing.assert_close(out.vertices[1, :2].cpu(), mesh.vertices[1, :2], rtol=0, atol=0)
 
 
 class HoleSource(Node):
