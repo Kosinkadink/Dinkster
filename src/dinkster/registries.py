@@ -52,6 +52,7 @@ counts as the right bytes.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -90,7 +91,7 @@ from packaging.tags import sys_tags
 from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
-from dinkster.installer import RegistryFetcher, http_registry_fetcher
+from dinkster.installer import RegistryFetcher, http_registry_fetcher, read_registry_response
 
 DEFAULT_REGISTRIES_FILENAME = "registries.toml"
 DEFAULT_PACKS_PATH = Path(__file__).with_name("default-packs.toml")
@@ -428,7 +429,7 @@ def _index_get(
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     token: str | None = None,
 ) -> dict[str, object]:
-    """One GET against a registry index path, answered as a JSON object
+    """Read a registry index path as a JSON object, with bounded transport retries,
     or refused as an :class:`InstallError` that names the registry and
     what was being asked. ``missing`` is the message a 404 earns when the
     caller knows what absence means; without it a 404 is just another
@@ -440,14 +441,12 @@ def _index_get(
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)  # noqa: S310 - scheme checked at construction
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            payload = response.read()
-            warning = response.headers.get("Warning", "")
+        payload, warning = read_registry_response(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
         if exc.code == 404 and missing:
             raise InstallError(missing) from exc
         raise InstallError(f"{action} against {registry.label} failed: HTTP {exc.code}") from exc
-    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+    except (OSError, urllib.error.URLError, http.client.IncompleteRead) as exc:
         raise InstallError(f"{action} against {registry.label} failed: {exc}") from exc
 
     try:

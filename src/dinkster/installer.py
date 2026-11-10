@@ -29,13 +29,17 @@ under a running server folds into the pack hot-reload work.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
+import logging
 import os
 import platform
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import urllib.error
 import urllib.parse
@@ -158,6 +162,48 @@ def _is_registry_source(source: str) -> bool:
     return source == "registry" or source.startswith("registry:")
 
 
+def read_registry_response(
+    request: urllib.request.Request, *, timeout: float, limit: int | None = None
+) -> tuple[bytes, str]:
+    """Retry interrupted GETs, leaving HTTP and payload validation to the caller."""
+    logger = logging.getLogger(__name__)
+    host = urllib.parse.urlsplit(request.full_url).hostname
+    attempt = 1
+    while True:
+        logger.info("Registry GET %s attempt %d/3", host, attempt)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                payload = response.read(limit)
+                warning = response.headers.get("Warning", "")
+        except urllib.error.HTTPError:
+            raise
+        except (
+            OSError,
+            urllib.error.URLError,
+            http.client.IncompleteRead,
+        ) as exc:
+            reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            if not isinstance(
+                reason, (TimeoutError, ConnectionError, ssl.SSLEOFError, http.client.IncompleteRead)
+            ):
+                raise
+            logger.warning(
+                "Registry GET %s attempt %d/3 interrupted (%s); %s",
+                host,
+                attempt,
+                type(reason).__name__,
+                "retrying" if attempt < 3 else "exhausted",
+            )
+            if attempt == 3:
+                raise
+            time.sleep(attempt)
+            attempt += 1
+        else:
+            if attempt > 1:
+                logger.warning("Registry GET %s attempt %d/3 completed", host, attempt)
+            return payload, warning
+
+
 def http_registry_fetcher(
     endpoint: str, *, token: str = "", timeout: float = DEFAULT_REGISTRY_TIMEOUT
 ) -> RegistryFetcher:
@@ -181,14 +227,19 @@ def http_registry_fetcher(
             if digest != entry.artifact_digest:
                 raise ValueError("wheel.digest-mismatch: index differs from locked release")
             request = urllib.request.Request(wheel.url, headers=headers)
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                data = response.read(wheel.size + 1)
+            data, _ = read_registry_response(request, timeout=timeout, limit=wheel.size + 1)
             if len(data) != wheel.size or hashlib.sha256(data).hexdigest() != wheel.sha256:
                 raise ValueError("wheel.hash-mismatch: bytes differ from published size or sha256")
             if artifact_digest(data) != entry.artifact_digest:
                 raise ValueError("wheel.digest-mismatch: bytes differ from locked release")
             return data
-        except (OSError, urllib.error.URLError, TimeoutError, ValueError, InstallError) as exc:
+        except (
+            OSError,
+            urllib.error.URLError,
+            http.client.IncompleteRead,
+            ValueError,
+            InstallError,
+        ) as exc:
             raise InstallError(
                 f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"
             ) from exc
