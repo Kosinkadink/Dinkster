@@ -32,6 +32,21 @@ def test_completed_and_refused_operations_retain_separate_timings(tmp_path: Path
             "from pathlib import Path\n"
             "from dinkster_supervisor.environment_downloads import fetch_artifact\n"
             "from dinkster_supervisor.environment_state import atomic_write\n"
+            "from dinkster_supervisor.environment_runtime import _request\n"
+            "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+            "from threading import Thread\n"
+            "class Handler(BaseHTTPRequestHandler):\n"
+            "    def do_GET(self):\n"
+            "        self.send_response(200)\n"
+            "        self.end_headers()\n"
+            '        self.wfile.write(b\'{"state": "ready"}\')\n'
+            "    def log_message(self, *args):\n"
+            "        pass\n"
+            "server = HTTPServer(('127.0.0.1', 0), Handler)\n"
+            "Thread(target=server.handle_request, daemon=True).start()\n"
+            "assert _request(f'http://127.0.0.1:{server.server_port}/supervisor/status') "
+            "== {'state': 'ready'}\n"
+            "server.server_close()\n"
             f"root = Path({str(tmp_path)!r})\n"
             "atomic_write(root / 'scratch' / 'state', b'journal bytes')\n"
             "shutil.rmtree(root / 'scratch')\n"
@@ -48,7 +63,11 @@ def test_completed_and_refused_operations_retain_separate_timings(tmp_path: Path
     assert not (tmp_path / "scratch").exists()
     assert not (tmp_path / "refused").exists()
     report = operation_reports[-1]
-    for operation in ("environment_state.atomic_write", "shutil.rmtree"):
+    for operation in (
+        "environment_state.atomic_write",
+        "shutil.rmtree",
+        "environment_runtime._request",
+    ):
         events = [line.split() for line in report.splitlines() if operation in line]
         assert [row[1] for row in events] == ["start", "return"]
     events = [line.split() for line in report.splitlines() if "fetch_artifact" in line]

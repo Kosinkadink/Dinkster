@@ -57,7 +57,7 @@ def _trace_operations(path: Path):
                 ),
             ),
             (environment_move, ("execute_move",)),
-            (environment_runtime, ("start_engine", "stop_engine")),
+            (environment_runtime, ("start_engine", "stop_engine", "_request")),
             (environment_state, ("atomic_write",)),
             (environment_transactions, ("activate",)),
         )
