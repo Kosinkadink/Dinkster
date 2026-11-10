@@ -10,7 +10,6 @@ import torch
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_STRING,
-    GLIGEN_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -44,22 +43,6 @@ def _gligen() -> Any:
 
 def _conditioning(model: object, pooled: torch.Tensor) -> list[object]:
     return [[pooled, {"gligen": ("position", model, [(pooled, 5, 7, 2, 1)]), "source": "kept"}]]
-
-
-def test_gligen_native_and_shared_registration_retain_first_spec() -> None:
-    from dinkster_memory.resident import default_pool
-    from dinkster_native.native import register_native_types
-
-    for registrations in (
-        (register_native_types, register_inference_types),
-        (register_inference_types, register_native_types),
-    ):
-        registry = TypeRegistry()
-        registrations[0](registry)
-        spec = registry.spec(GLIGEN_TYPE)
-        registrations[1](registry)
-        assert registry.spec(GLIGEN_TYPE) is spec
-        assert default_pool() in registry.resident_tables
 
 
 @pytest.mark.parametrize("release_target", ("owner", "reference"))

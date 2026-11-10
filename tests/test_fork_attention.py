@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
 import sys
@@ -8,28 +7,9 @@ from typing import Any, cast
 
 import pytest
 
-from tests.async_scenarios import run_scenario
-
 torch = cast("Any", pytest.importorskip("torch"))
 
 from dinkster_native import attention  # noqa: E402
-from dinkster_native.workgroup import SingleJobWorkGroupHandler  # noqa: E402
-from dinkster_protocol import (  # noqa: E402
-    BeginWorkGroup,
-    CommitWorkGroup,
-    DeviceResourceId,
-    PrepareReplica,
-    ReleaseWorkGroup,
-    ReplicaId,
-    ReplicaRecipeId,
-    RunWorkUnit,
-    SemanticSlot,
-    WorkerInstanceId,
-    WorkGroupAttempt,
-    WorkGroupId,
-    WorkUnitId,
-    WorkUnitResult,
-)
 
 
 def test_attention_runtime_starts_on_cpu_without_comfy_arguments() -> None:
@@ -258,54 +238,6 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
     torch.testing.assert_close(local_v, local_q + 200)
     torch.testing.assert_close(controls[0][1:], torch.tensor([8, 1, 9, 2]))
     assert exchanges == 4
-
-
-def test_workgroup_attempt_gates_one_invocation_and_releases_attention(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[tuple[object, ...]] = []
-    monkeypatch.setattr(
-        "dinkster_native.workgroup.activate_distributed_attention",
-        lambda group, attempt: events.append(("activate", group, attempt)),
-    )
-    monkeypatch.setattr(
-        "dinkster_native.workgroup.release_distributed_attention",
-        lambda group, attempt: events.append(("release", group, attempt)),
-    )
-
-    async def scenario() -> None:
-        handler = SingleJobWorkGroupHandler()
-        common = {
-            "worker": WorkerInstanceId("worker-0"),
-            "replica": ReplicaId("rank-0"),
-            "group": WorkGroupId("single-job"),
-            "attempt": WorkGroupAttempt(1),
-            "device": DeviceResourceId("cuda-0"),
-        }
-        await handler(
-            PrepareReplica(  # type: ignore[arg-type]
-                **common,
-                recipe=ReplicaRecipeId("sha256:" + "1" * 64),
-            )
-        )
-        await handler(BeginWorkGroup(**common))  # type: ignore[arg-type]
-        await handler(CommitWorkGroup(**common))  # type: ignore[arg-type]
-        running = asyncio.create_task(
-            handler(
-                RunWorkUnit(  # type: ignore[arg-type]
-                    **common,
-                    unit=WorkUnitId("sample-0"),
-                    slot=SemanticSlot.SINGLE,
-                )
-            )
-        )
-        await handler.before_invocation("invoke-0")
-        await handler.after_invocation("invoke-0", None)
-        assert isinstance((await running)[0], WorkUnitResult)
-        await handler(ReleaseWorkGroup(**common))  # type: ignore[arg-type]
-
-    run_scenario(scenario())
-    assert events == [("activate", "single-job", 1), ("release", "single-job", 1)]
 
 
 def test_sampling_clone_resolves_distributed_activation_at_consumption(
