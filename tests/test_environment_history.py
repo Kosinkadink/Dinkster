@@ -37,6 +37,184 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
 
 
+def test_fresh_install_engine_update_pack_install_and_exact_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from importlib.metadata import version
+
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_lock import PackLock
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+    from test_environment_generations import _workspace_tree
+    from test_installer import _serve_artifacts, _static_release
+
+    from dinkster.pack_archive import build_pack_archive
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+
+    def published_wheel(*args, **kwargs):
+        return original_wheel(*args, **kwargs, pack_tools=True)
+
+    def canonical_json(document: dict) -> bytes:
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "wheel", published_wheel)
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, mirror = Path(fixture["root"]), Path(fixture["mirror"])
+    initial = json.loads(Path(fixture["initialChannel"]).read_bytes())
+    updated = json.loads(Path(fixture["updatedChannel"]).read_bytes())
+    empty_catalog = tmp_path / "empty.lock"
+    empty_catalog.write_text(Lockfile.of([]).record_json())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    catalog_flags = ("--catalog-lock", str(empty_catalog), "--artifacts", str(artifacts))
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
+        .replace("healthy_nodes:", "healthy:")
+        .replace('requires = ["numpy>=1.26"]', "requires = []")
+        .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=1,<3"\n')
+    )
+    (pack / "healthy").mkdir()
+    (pack / "healthy/__init__.py").write_text(HEALTHY_NODES)
+    (pack / "pyproject.toml").write_text('[project]\nname="healthy"\nversion="1.0.0"\n')
+    archive = tmp_path / "healthy-1.0.0-py3-none-any.whl"
+    build_pack_archive(pack, archive)
+    payload = archive.read_bytes()
+    entry = LockedPack(
+        "healthy", "1.0.0", artifact_digest(payload), "dinkster", ("healthy",), "registry:official"
+    )
+    lock_path = tmp_path / "healthy.pack-lock.json"
+    PackLock("healthy", "fixture-cpu", ">=3.12", (), (), ()).write(lock_path)
+    lock = lock_path.read_bytes()
+    lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
+    release = {
+        **_static_release(entry, payload),
+        "engine": ">=1,<3",
+        "installLocks": {
+            "fixture-cpu": {
+                "baseId": initial["base"]["fixture-cpu"]["id"],
+                "artifactDigest": entry.artifact_digest,
+                "digest": artifact_digest(lock),
+                "size": len(lock),
+                "url": lock_url,
+            }
+        },
+    }
+    server = _serve_artifacts(
+        {
+            "/static/packs/index.json": json.dumps(
+                {"schemaVersion": 1, "items": [release]}
+            ).encode(),
+            "/static/" + lock_url: lock,
+            "/static/" + release["wheels"][0]["url"]: payload,
+        },
+        [],
+    )
+    try:
+        setup = fixture["commands"]["setup"]
+        code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
+        assert code == 0 and result["current"] == 1, result
+        assert _run(root, "stop", "--yes")[0] == 0
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        code, result = _run(root, "update", *catalog_flags, "--yes", timeout=120)
+        assert code == 0 and result["current"] == 2, result
+        assert _run(root, "stop", "--yes")[0] == 0
+        (root / "registries.toml").write_text(
+            "[registries.official]\n"
+            f'endpoint="http://127.0.0.1:{server.server_port}"\ndefault=true\n'
+        )
+        review = tmp_path / "review"
+        code, planned = _run(root, "packs-plan", "healthy@1.0.0", "--output", str(review))
+        assert code == 0, planned
+        assert len(history(root)) == 2
+        code, result = _run(
+            root,
+            "packs-apply",
+            "--input",
+            str(review),
+            "--approval",
+            planned["approval"],
+            timeout=120,
+        )
+        assert code == 0 and result["current"] == 3, result
+        code, listed = _run(root, "history")
+        assert code == 0, listed
+        records = listed["history"]
+        assert [row["id"] for row in records] == [1, 2, 3]
+        assert [row["generation"] for row in records] == [1, 2, 3]
+        assert [row["reason"] for row in records] == ["setup", "update", "update"]
+        snapshots = [row["snapshot"] for row in records]
+        assert [row["engine"]["release"] for row in snapshots] == [
+            initial["engine"]["release"],
+            updated["engine"]["release"],
+            updated["engine"]["release"],
+        ]
+        assert snapshots[0]["base"] == {
+            "id": initial["base"]["fixture-cpu"]["id"],
+            "variant": "fixture-cpu",
+        }
+        assert all(row["base"] == snapshots[0]["base"] for row in snapshots)
+        assert all(row["tools"] == {"version": version("dinkster-supervisor")} for row in snapshots)
+        assert all(row["inProcessPacks"] == [] for row in snapshots)
+        assert all(
+            json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
+        )
+        assert Lockfile.from_record_json(snapshots[2]["metadata"]["dinkster.lock"]) == Lockfile.of(
+            [entry]
+        )
+        assert (
+            snapshots[2]["metadata"]["packs/healthy/pack-lock.json"]
+            == (root / "generations/3/packs/healthy/pack-lock.json").read_text()
+        )
+        assert "packs/healthy/pack-lock.json" not in snapshots[0]["metadata"]
+        code, shown = _run(root, "history", "show", "2")
+        assert code == 0 and shown["entry"] == records[1], shown
+        assert {"field": "engine.version", "before": "1.0", "after": "2.0"} in records[1]["diff"]
+        assert {
+            "field": "metadata.dinkster.lock",
+            "before": snapshots[1]["metadata"]["dinkster.lock"],
+            "after": snapshots[2]["metadata"]["dinkster.lock"],
+        } in records[2]["diff"]
+        preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "restore", "1", "--yes", timeout=120)
+        assert code == 0 and result["current"] == 4 and result["exact"] is True, result
+        code, listed = _run(root, "history")
+        assert code == 0 and len(listed["history"]) == 4, listed
+        restored = listed["history"][-1]
+        assert listed["history"][:3] == records
+        assert restored["generation"] == 4 and restored["restoredFrom"] == 1
+        assert restored["reason"] == "restore" and restored["exact"] is True
+        assert restored["substitutions"] == []
+        assert restored["snapshot"] == snapshots[0]
+        assert restored["recordedTools"] == snapshots[0]["tools"]
+        assert (root / "current").read_text() == "4\n"
+        assert not (root / "generations/4/packs/healthy").exists()
+        materialized = Generation.read(root / "generations/4/generation.json")
+        assert materialized.in_process_packs == ()
+        assert materialized.engine_release == initial["engine"]["release"]
+        assert materialized.engine_version == "1.0"
+        assert materialized.base == initial["base"]["fixture-cpu"]["id"]
+        assert materialized.variant == "fixture-cpu"
+        assert materialized.constraints == snapshots[0]["constraints"]
+        for name, content in snapshots[0]["metadata"].items():
+            assert (root / "generations/4" / name).read_bytes() == content.encode("utf-8")
+        assert all(path.read_bytes() == payload for path, payload in preserved.items())
+    finally:
+        _run(root, "stop", "--yes")
+        server.shutdown()
+
+
 @pytest.mark.parametrize("existing_history", [False, True])
 def test_legacy_import_preserves_activation_selection_and_refuses_conflicting_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_history: bool
