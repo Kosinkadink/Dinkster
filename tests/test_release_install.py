@@ -200,7 +200,27 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "(github.event_name == 'push' && github.ref == 'refs/heads/main'))))"
     )
     assert workflow["jobs"]["finalize"]["needs"] == "build"
+    assert workflow["jobs"]["finalize"]["if"] == (
+        "${{ !cancelled() && needs.build.result == 'success' }}"
+    )
     assert workflow["jobs"]["install"]["needs"] == "finalize"
+    assert workflow["jobs"]["install"]["if"] == (
+        "${{ !cancelled() && needs.finalize.result == 'success' }}"
+    )
+    from types import SimpleNamespace
+
+    for job, parent in (("finalize", "build"), ("install", "finalize")):
+        condition = workflow["jobs"][job]["if"].removeprefix("${{").removesuffix("}}")
+        condition = condition.replace("&&", " and ").replace("!", "not ").strip()
+        for result in ("success", "failure", "skipped"):
+            for cancelled in (False, True):
+                assert eval(
+                    condition,
+                    {
+                        "needs": SimpleNamespace(**{parent: SimpleNamespace(result=result)}),
+                        "cancelled": lambda cancelled=cancelled: cancelled,
+                    },
+                ) is (result == "success" and not cancelled)
     commands = "\n".join(
         step.get("run", "") for job in workflow["jobs"].values() for step in job.get("steps", [])
     )
@@ -221,12 +241,16 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         ]
         assert downloads == ["engine-release"]
     assert workflow["jobs"]["release"]["needs"] == "install"
-    assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
+    assert workflow["jobs"]["release"]["if"] == (
+        "${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}"
+    )
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     channel = workflow["jobs"]["channel"]
     assert channel["needs"] == "release"
     assert channel["permissions"] == {"contents": "write"}
-    assert channel["if"] == "github.event_name == 'push'"
+    assert channel["if"] == (
+        "${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' }}"
+    )
     assert channel["concurrency"]["cancel-in-progress"] is False
     publication = next(
         step
@@ -370,10 +394,15 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     job: str, project: str, environment: str, tmp_path: Path
 ) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
+    assert workflow["jobs"]["release"]["if"] == (
+        "${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}"
+    )
     publish = workflow["jobs"][job]
     assert publish["needs"] == "release"
-    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert publish["if"] == (
+        "${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' "
+        "&& startsWith(github.ref, 'refs/tags/v') }}"
+    )
     assert "pypi.org/pypi/" not in json.dumps(workflow)
     assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
