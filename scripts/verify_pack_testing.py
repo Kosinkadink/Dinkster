@@ -43,6 +43,14 @@ def verify(wheels: Path) -> None:
             sum(path.stat().st_size for path in environment.rglob("*") if path.is_file()),
             flush=True,
         )
+        if os.name == "posix":
+            print(
+                "Lean install allocated disk bytes:",
+                sum(
+                    path.lstat().st_blocks * 512 for path in [environment, *environment.rglob("*")]
+                ),
+                flush=True,
+            )
         built = work / "example-wheel"
         subprocess.run(
             ["uv", "build", str(example), "--wheel", "--out-dir", str(built)],

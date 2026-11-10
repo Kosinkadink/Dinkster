@@ -873,7 +873,8 @@ def test_public_pack_testing_import_is_allowed(tmp_path: Path) -> None:
     tests = manifest.parent / "tests"
     tests.mkdir()
     (tests / "test_nodes.py").write_text("from dinkster_engine.testing import load_pack\n")
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
+    report = diagnose(manifest)
+    assert report.ok, render_text(report)
     assert not [finding for finding in report.findings if finding.code.startswith("imports.")]
 
 

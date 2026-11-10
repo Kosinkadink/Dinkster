@@ -58,6 +58,13 @@ engine; the parent also loads pack codecs to decode custom output types.
 The helper loads one pack, not a serving composition or HTTP application.
 It is synchronous and must not be called inside a running asyncio event loop.
 
+The [installable example pack](../../tests/fixtures/pack-testing) includes
+`example.py`, a complete pytest file testing a two-node graph, a pack-owned
+codec, caching, and shared worker startup. Release CI runs this same file
+against built API/engine wheels with
+`python scripts/verify_pack_testing.py dist`, in both execution modes, from
+outside the checkout. Its test environment contains no Torch.
+
 Pure Python packs need no Torch. Tensor packs can install CPU-only Torch:
 `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`.
 Keep accelerator-specific tests separately marked (for example
