@@ -1113,20 +1113,27 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
             if args.add:
                 selections: dict[str, str] = {}
-                installed_names = {entry.pack for entry in installed.packs}
+                installed_by_name = {entry.pack: entry for entry in installed.packs}
                 for raw in args.add:
                     parsed = parse_registry_spec(raw)
                     if parsed is None or raw != f"{parsed[0]}@{parsed[1]}":
                         raise InstallError("--add requires canonical PACK@VERSION selections")
                     pack, version = parsed
-                    if pack in installed_names or pack in selections:
-                        raise InstallError(f"{pack}: --add requires a distinct absent pack")
+                    if pack in selections:
+                        raise InstallError(f"{pack}: --add requires a distinct pack")
                     selections[pack] = version
-                registry = select_registry(config, args.registry)
-                fetch = routing_registry_fetcher(config, registry, index=index)
-                entries = list(installed.packs)
+                entries = [entry for entry in installed.packs if entry.pack not in selections]
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 for pack, version in selections.items():
+                    previous = installed_by_name.get(pack)
+                    registry = (
+                        config.registry_for(previous)
+                        if previous is not None
+                        and previous.source.startswith("registry:")
+                        and not args.registry
+                        else select_registry(config, args.registry)
+                    )
+                    fetch = routing_registry_fetcher(config, registry, index=index)
                     selected = resolve_release(
                         registry, pack, version, engine_version=dinkster_version, index=index
                     )
@@ -1139,8 +1146,6 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                         cached.parent.mkdir(parents=True, exist_ok=True)
                         cached.write_bytes(fetch(selected))
                     entry = registry_source_lock(selected, cached, engine_version=dinkster_version)
-                    if entry.publisher != "dinkster":
-                        raise InstallError(f"{pack}: --add requires a first-party pack")
                     entries.append(entry)
                 lock = Lockfile.of(entries)
             else:
@@ -1426,7 +1431,7 @@ def main() -> None:
         action="append",
         default=[],
         metavar="PACK@VERSION",
-        help="add an exact absent first-party pack without re-resolving installed sources",
+        help="add or replace an exact registry pack without re-resolving other installed sources",
     )
     sources.set_defaults(handler=_cmd_prepare_registry_sources)
 

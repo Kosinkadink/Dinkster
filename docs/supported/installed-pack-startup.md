@@ -194,10 +194,14 @@
   preparation uses these selections, retaining existing source identities and
   leaving old dependency locks to inheritance from the source generation.
 - `dinkster-env packs-plan PACK@VERSION --output PATH --json` retains an exact
-  additive software review in a new host-owned disposable directory outside the
+  software review in a new host-owned disposable directory outside the
   project and shared store. It reports source/dependency locks, retained engine,
   base and placement, wheel downloads and isolation size without a generation
-  journal or activation. Intact retained registry wheels can supply old archives
+  journal or activation. Exact selections can add or replace published packs
+  from any configured registry, not just first-party packs. Replacements use
+  recorded registry provenance unless an explicit registry is selected; unrelated
+  packs retain their source identities and dependency locks.
+  Intact retained registry wheels can supply old archives
   without contacting their release endpoints. Previously installed wheels retain
   their original archive bytes and digest when another pack is added; corrupt
   retained wheels refuse before a candidate source lock is written. Missing
@@ -206,7 +210,7 @@
 - `packs-apply --input PATH --approval DIGEST --json` applies that review once
   within 900 seconds. Changed project settings, current software or reviewed
   input files refuse before construction. Successful application seals and
-  activates an ordinary next generation and appends its software history; existing
+  activates an ordinary next generation and appends its software history; unselected
   source/dependency locks and placement are preserved. Workflows, models, outputs,
   user data and project settings remain unchanged. Hosts own review-directory
   cleanup and must authorize the caller before invoking these local commands.

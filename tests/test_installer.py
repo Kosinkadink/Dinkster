@@ -3967,6 +3967,8 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         "existing",
         "duplicate",
         "third-party",
+        "publisher-mismatch",
+        "replacement",
         "corrupt",
         "retained-corrupt",
         "retained-missing",
@@ -3991,7 +3993,8 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         (source / name / "__init__.py").write_text("raise RuntimeError('must not import')\n")
         manifest_publisher = (
             "third-party"
-            if name == "retained" and problem == "update-retained-missing"
+            if (name == "retained" and problem == "update-retained-missing")
+            or (name == "added" and problem == "third-party")
             else "dinkster"
         )
         (source / "dinkster-pack.toml").write_text(
@@ -4004,7 +4007,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         build_pack_archive(source, archive)
         publisher = (
             "third-party"
-            if (name == "added" and problem == "third-party")
+            if (name == "added" and problem in {"third-party", "publisher-mismatch"})
             or (name == "retained" and problem == "update-retained-missing")
             else "dinkster"
         )
@@ -4049,12 +4052,37 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     generation = tmp_path / "generation"
     generation.mkdir()
     installed_entries = [old, added] if problem == "update-retained-missing" else [old]
+    if problem == "replacement":
+        prior_source = tmp_path / "added-prior"
+        shutil.copytree(tmp_path / "added", prior_source)
+        for filename in ("dinkster-pack.toml", "pyproject.toml"):
+            path = prior_source / filename
+            path.write_text(path.read_text().replace('version="1.2"', 'version="1.1"'))
+        prior_archive = tmp_path / "added-1.1-py3-none-any.whl"
+        build_pack_archive(prior_source, prior_archive)
+        installed_entries.append(
+            replace(
+                added,
+                version="1.1",
+                artifact_digest=artifact_digest(prior_archive.read_bytes()),
+                source="registry:original",
+            )
+        )
+        (generation / "registries.toml").write_text(
+            f'[registries.original]\nendpoint="http://127.0.0.1:{server.server_port}"\n'
+            '[registries.unrelated]\nendpoint="http://127.0.0.1:1"\ndefault=true\n'
+        )
     stage_generation_packs(
         generation,
         Lockfile.of(installed_entries),
         {
             "retained": tmp_path / "retained-1.0-py3-none-any.whl",
-            "added": tmp_path / "added-1.2-py3-none-any.whl",
+            "added": tmp_path
+            / (
+                "added-1.1-py3-none-any.whl"
+                if problem == "replacement"
+                else "added-1.2-py3-none-any.whl"
+            ),
         },
     )
     installed = generation / "dinkster.lock"
@@ -4069,9 +4097,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     requested = "retained@2.0" if problem == "existing" else "added@1.2"
     args = [
         "--root",
-        "",
-        "--registry",
-        f"http://127.0.0.1:{server.server_port}",
+        str(generation) if problem == "replacement" else "",
+        *(
+            []
+            if problem == "replacement"
+            else ["--registry", f"http://127.0.0.1:{server.server_port}"]
+        ),
         "prepare-registry-sources",
         "--installed-lock",
         str(installed),
@@ -4086,14 +4117,19 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     if problem == "duplicate":
         args.extend(["--add", requested])
     try:
-        if problem is not None and problem not in {"retained-missing", "update-retained-missing"}:
+        if problem is not None and problem not in {
+            "retained-missing",
+            "update-retained-missing",
+            "third-party",
+            "replacement",
+        }:
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err
             expected = {
-                "existing": "distinct absent pack",
-                "duplicate": "distinct absent pack",
-                "third-party": "first-party",
+                "existing": "publishes no release retained@2.0",
+                "duplicate": "distinct pack",
+                "publisher-mismatch": "publisher differs from lock",
                 "corrupt": "sha256",
                 "retained-corrupt": "digest mismatch",
             }
@@ -4104,7 +4140,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             assert json.loads(capsys.readouterr().out)["packs"] == ["added", "retained"]
             result = Lockfile.from_record_json(output.read_text())
             assert result.packs == (
-                replace(added, source=f"registry:http://127.0.0.1:{server.server_port}"),
+                replace(
+                    added,
+                    source="registry:original"
+                    if problem == "replacement"
+                    else f"registry:http://127.0.0.1:{server.server_port}",
+                ),
                 old,
             )
             assert (
