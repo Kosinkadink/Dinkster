@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -835,7 +836,11 @@ def test_official_publication_selects_only_changed_committed_packs(
     ],
 )
 def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, problem: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    problem: str | None,
 ) -> None:
     from dataclasses import replace
 
@@ -974,6 +979,19 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                 for name in ("candidate", "unchanged")
             ],
         }
+    if problem in {"manifest", "security"}:
+        stage = "manifest-admission" if problem == "manifest" else "fast-security"
+        timings = [
+            json.loads(line)
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith('{"admissionTiming":')
+        ]
+        assert any(
+            record["pack"] == "candidate@7.2"
+            and record["stage"] == stage
+            and record.get("status") == "failed"
+            for record in timings
+        )
 
 
 @pytest.mark.parametrize(
@@ -2127,6 +2145,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         output = capfd.readouterr().out
         assert "3 passed" in output
         assert "2 skipped" in output
+        assert '"admissionTests": "collected"' in output
+        assert '"pack": "dinkster-image@1.2.3"' in output
+        assert '"nodeid": "tests/test_image_nodes.py::test_selected_value"' in output
+        assert '"outcome": "passed"' in output
+        assert '"outcome": "skipped"' in output
         assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
         assert (
             "Selected test skipped tests/test_image_nodes.py::TestUnpublished::test_node" in output
