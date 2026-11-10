@@ -486,6 +486,81 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
     assert not (root / "generations" / "1").exists()
 
 
+def test_checkout_pack_build_preserves_independent_manifest_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    import runpy
+    import tarfile
+
+    from dinkster_registry import Lockfile
+    from dinkster_supervisor import environment_generations, environment_local
+
+    source = tmp_path / "source"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "scripts", source / "scripts")
+    versions = {"dinkster-text": "0.0.2", "dinkster-remote": "0.0.4"}
+    for name, version in versions.items():
+        package = source / "packages" / name.replace("dinkster-", "dinkster-nodes-", 1)
+        module = name.replace("-", "_")
+        (package / "src" / module).mkdir(parents=True)
+        (package / "src" / module / "__init__.py").write_text("NODES = []\n")
+        (package / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\nversion = "{version}"\nrequires-python = ">=3.12"\n'
+        )
+        (package / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+            f'version = "{version}"\nengine = ">=0.0.2,<0.1"\n'
+            f'[pack.entry]\nnodes = "{module}:NODES"\n'
+        )
+    snapshot = io.BytesIO()
+    with tarfile.open(fileobj=snapshot, mode="w") as archive:
+        archive.add(source / "packages", arcname="packages")
+
+    def run_builder(command, *, cwd, input):
+        # Supply the committed-source snapshot without requiring a test Git identity.
+        with monkeypatch.context() as patch:
+            patch.setattr(sys, "argv", command[2:])
+            patch.setattr(sys, "stdin", io.StringIO(input))
+            patch.setattr(
+                subprocess,
+                "check_output",
+                lambda command, **kwargs: (
+                    "a" * 40 if "rev-parse" in command else snapshot.getvalue()
+                ),
+            )
+            runpy.run_path(command[2], run_name="__main__")
+
+    monkeypatch.setattr(environment_local, "run_local_command", run_builder)
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    (generation / "constraints.txt").write_text("")
+    store = tmp_path / "store"
+    release = "sha256:" + "a" * 64
+    monkeypatch.setattr(environment_local, "interpreter", lambda path: Path(sys.executable))
+
+    def built(*args, **kwargs):
+        raise RuntimeError("local artifacts built")
+
+    monkeypatch.setattr(environment_generations, "pack_operation", built)
+    with pytest.raises(RuntimeError, match="local artifacts built"):
+        environment_local.prepare_local_packs(
+            generation,
+            source=source,
+            store=store,
+            release=release,
+            selection={"version": "0.0.2", "variant": "linux-cpu", "workerProtocol": 1},
+        )
+    artifacts = object_path(store / "engines", release) / "artifacts"
+    lock = Lockfile.from_record_json((artifacts / "official-packs.lock").read_text())
+    assert {pack.pack: pack.version for pack in lock.packs} == versions
+    assert {path.name for path in artifacts.glob("*.whl")} == {
+        f"{name.replace('-', '_')}-{version}-py3-none-any.whl" for name, version in versions.items()
+    }
+    for pack in lock.packs:
+        wheel = artifacts / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        assert pack_archive_path(artifacts, pack.artifact_digest).read_bytes() == wheel.read_bytes()
+
+
 def test_checkout_pack_commands_do_not_expand_wheel_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
