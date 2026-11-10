@@ -212,13 +212,22 @@ def test_ordinary_remesh_hosts_twice(tmp_path: Path, in_process: bool) -> None:
             expected = materialize_mesh(
                 RemeshMesh.execute(mesh=source(), sign_mode="sdf", **options())["mesh"]
             )
+            from dinkster_inference.model_management import get_torch_device
+
+            cross_device = not in_process and get_torch_device().type != "cpu"
+            # The CPU child and CUDA parent differ by at most 2.98e-8 in vertices
+            # and 2.39e-7 in colors; same-device execution must remain exact.
+            vertex_atol = torch.finfo(torch.float32).eps if cross_device else 0
+            color_atol = 4 * torch.finfo(torch.float32).eps if cross_device else 0
             for _ in range(2):
                 result = await engine.run(graph, ["remesh"])
                 value = materialize_mesh(result.outputs["remesh"]["mesh"].resolve())
-                torch.testing.assert_close(value.vertices, expected.vertices, rtol=0, atol=0)
+                torch.testing.assert_close(
+                    value.vertices, expected.vertices, rtol=0, atol=vertex_atol
+                )
                 torch.testing.assert_close(value.faces, expected.faces, rtol=0, atol=0)
                 torch.testing.assert_close(
-                    value.vertex_colors, expected.vertex_colors, rtol=0, atol=0
+                    value.vertex_colors, expected.vertex_colors, rtol=0, atol=color_atol
                 )
         finally:
             await composer.close()

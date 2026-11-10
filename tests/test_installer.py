@@ -2766,6 +2766,134 @@ def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> Non
         http_registry_fetcher("http://127.0.0.1:1")(release)  # connection refused
 
 
+@pytest.mark.parametrize("target", ["index", "wheel"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "timeout",
+        "disconnect",
+        "exhausted",
+        "http",
+        "corrupt",
+        "retry-corrupt",
+        "handshake",
+        "certificate",
+    ],
+)
+def test_registry_download_retries_only_transport(
+    target: str,
+    outcome: str,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ssl
+    import urllib.error
+    from collections import Counter
+
+    from dinkster_registry import artifact_digest
+
+    data = b"verified registry wheel bytes"
+    release = LockedPack("demo", "1.0.0", artifact_digest(data), "acme", ())
+    record = _static_release(release, data)
+    index_path = "/static/packs/index.json"
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    wheel_path = f"/static/{wheel['url']}"
+    index = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+    target_path = index_path if target == "index" else wheel_path
+    counts: Counter[str] = Counter()
+    release_stalled = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            counts[self.path] += 1
+            attempt = counts[self.path]
+            if self.path == target_path:
+                if outcome == "exhausted" or attempt == 1 and outcome == "disconnect":
+                    self.close_connection = True
+                    return
+                if outcome == "http":
+                    self.send_error(503)
+                    return
+                if attempt == 1 and outcome in ("timeout", "retry-corrupt"):
+                    self.send_response(200)
+                    self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    self.wfile.flush()
+                    release_stalled.wait(30)
+                    self.close_connection = True
+                    return
+                release_stalled.set()
+            payload = index if self.path == index_path else data
+            if self.path == target_path and outcome in ("corrupt", "retry-corrupt"):
+                payload = b"not valid JSON" if target == "index" else b"x" * len(data)
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    if outcome in ("handshake", "certificate"):
+        original = installer_module.urllib.request.urlopen
+        interrupted = False
+
+        def handshake(request, *args, **kwargs):
+            nonlocal interrupted
+            if request.full_url.endswith(target_path) and not interrupted:
+                interrupted = True
+                error = (
+                    TimeoutError("TLS handshake timed out")
+                    if outcome == "handshake"
+                    else ssl.SSLCertVerificationError("certificate verify failed")
+                )
+                raise urllib.error.URLError(error)
+            return original(request, *args, **kwargs)
+
+        monkeypatch.setattr(installer_module.urllib.request, "urlopen", handshake)
+    try:
+        fetch = http_registry_fetcher(f"http://127.0.0.1:{server.server_port}", timeout=1)
+        if outcome in ("timeout", "disconnect", "handshake"):
+            assert fetch(release) == data
+        else:
+            reason = {
+                "exhausted": "failed",
+                "http": "HTTP Error 503" if target == "wheel" else "HTTP 503",
+                "corrupt": "invalid JSON" if target == "index" else "wheel.hash-mismatch",
+                "retry-corrupt": "invalid JSON" if target == "index" else "wheel.hash-mismatch",
+                "certificate": "certificate verify failed",
+            }[outcome]
+            with pytest.raises(InstallError, match=reason):
+                fetch(release)
+        attempts = (
+            3
+            if outcome == "exhausted"
+            else 1
+            if outcome in ("http", "corrupt", "certificate")
+            else 2
+        )
+        received = attempts - 1 if outcome in ("handshake", "certificate") else attempts
+        expected = (
+            {index_path: 1, wheel_path: received} if target == "wheel" else {index_path: received}
+        )
+        if received == 0:
+            del expected[target_path]
+        if target == "index" and outcome in ("timeout", "disconnect", "handshake"):
+            expected[wheel_path] = 1
+        assert counts == expected
+        if attempts > 1:
+            assert "attempt 1/3" in caplog.text
+            assert f"attempt {attempts}/3" in caplog.text
+    finally:
+        release_stalled.set()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 @pytest.mark.parametrize(
     ("size", "malformed"),
     [

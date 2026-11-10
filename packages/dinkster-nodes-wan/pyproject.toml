@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-wan"
-version = "0.0.2"
+version = "0.0.3"
 description = "Dinkster wan model nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,9 +10,9 @@ dependencies = [
     "numpy",
     "scipy",
     "einops",
-    "dinkster-conditioning>=0.0.1",
     "dinkster-models>=0.0.1",
     "dinkster-vision-sam3>=0.0.1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -29,6 +29,6 @@ packages = ["src/dinkster_wan"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-conditioning = { workspace = true }
 dinkster-models = { workspace = true }
 dinkster-vision-sam3 = { workspace = true }
+dinkster-pack-helpers = { workspace = true }

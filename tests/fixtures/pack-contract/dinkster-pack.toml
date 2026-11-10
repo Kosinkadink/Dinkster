@@ -1,6 +1,4 @@
-# Pack manifest (see docs/pack-authoring.md for the full reference).
-# Rename everything "my-pack"/"my_pack" to your pack's name; the
-# [pack] name is your pack id - it prefixes node types and keys attribution.
+# Test-only manifest for engine registration, presentation and doctor checks.
 
 [pack]
 name = "my-pack"
@@ -12,7 +10,7 @@ engine = ">=0.0.2.dev0,<0.1"
 # types below are my-pack.*:
 # namespaces = ["my-pack"]
 # Pin every requirement (dinkster doctor warns on unpinned entries). This
-# template needs nothing beyond the api door:
+# fixture needs nothing beyond the api door:
 requires = []
 
 [pack.docs]

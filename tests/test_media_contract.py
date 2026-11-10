@@ -424,7 +424,6 @@ def test_forged_layout_is_rejected_without_decoding() -> None:
         for registration in (
             "image",
             "inference",
-            "native",
             "3d",
             "3d_models",
             "minimax",
@@ -451,15 +450,12 @@ def test_inline_media_has_no_external_asset_dependencies(type_id, registration) 
     from dinkster_assets import AssetRef, digest_bytes
     from dinkster_assets.value import value_asset_references
     from dinkster_inference_wire.media_wire import register_media_types as register_wire
-    from dinkster_native.image import register_image_type
     from dinkster_nodes_dev.image import register_dev_types
     from dinkster_values import default_encode
     from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
     registry = TypeRegistry()
-    if registration == "native":
-        register_image_type(registry, type_id)
-    elif registration in ("inference", "dev"):
+    if registration in ("inference", "dev"):
         {
             "inference": register_wire,
             "dev": register_dev_types,

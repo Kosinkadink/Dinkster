@@ -22,7 +22,7 @@ from dinkster_api.v1 import (
     materialize_clip_vision_output,
     materialize_image,
 )
-from dinkster_conditioning.conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 _CLIP_VISION_OUTPUT = TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)
 

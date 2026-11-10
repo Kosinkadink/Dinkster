@@ -88,8 +88,15 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     return engine_lock(before) != engine_lock(after)
 
 
+def is_official_library(project: dict) -> bool:
+    """Read the independent publication opt-in without loading engine packages."""
+    return project.get("tool", {}).get("dinkster", {}).get("official-library") is True
+
+
 def uses_engine_version(root: Path, path: Path) -> bool:
     if project_metadata(path)[0] == "dinkster-supervisor":
+        return False
+    if is_official_library(tomllib.loads(path.read_text(encoding="utf-8"))):
         return False
     if (
         path.parent.parent != root / "packages"

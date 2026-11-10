@@ -65,20 +65,17 @@ from dinkster_api.v1 import (
     HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, SAM3_TRACK_DATA_TYPE, TIMESTEPS_RANGE_TYPE,
     TypeRegistry, register_inference_types,
 )
-from dinkster_native.native import register_native_types
 from dinkster_values import EncodedLatentTensor
 from dinkster_values.builtin_types import SAM3_TRACK_DATA_TYPE as canonical
 
-for first, second in ((register_native_types, register_inference_types),
-                      (register_inference_types, register_native_types)):
-    registry = TypeRegistry()
-    first(registry)
-    clip = registry.spec(CLIP_TYPE)
-    second(registry)
-    type_ids = (FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE)
-    assert all(type_id in registry for type_id in type_ids)
-    assert registry.spec(CLIP_TYPE) is clip
-    assert clip.coerce is not None
+registry = TypeRegistry()
+register_inference_types(registry)
+clip = registry.spec(CLIP_TYPE)
+register_inference_types(registry)
+type_ids = (FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE)
+assert all(type_id in registry for type_id in type_ids)
+assert registry.spec(CLIP_TYPE) is clip
+assert clip.coerce is not None
 
 registry = TypeRegistry()
 register_inference_types(registry)

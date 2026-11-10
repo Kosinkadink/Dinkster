@@ -55,6 +55,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_release_install.py \
   tests/test_environment_generations.py::test_generation_retains_verified_engine_manifest \
   tests/test_installer.py::test_http_registry_fetcher_uses_verified_static_wheel \
+  tests/test_installer.py::test_registry_download_retries_only_transport \
   tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_wheel_size \
   tests/test_installer.py::test_cli_restore_downloads_registry_sources \
   tests/test_installer.py::test_routing_fetcher_dispatches_on_recorded_provenance \

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import io
 import struct
-import sys
-import types
 from dataclasses import dataclass
 from functools import cache
 
@@ -161,7 +158,9 @@ def test_audio_wav_refuses_uint16_and_uint32_size_overflow_before_rendering() ->
         render_audio_wav({"waveform": too_many_frames, "sample_rate": 1})
 
 
-@pytest.mark.parametrize("container,data", [("mp4", mp4_bytes()), ("webm", webm_bytes())])
+@pytest.mark.parametrize(
+    "container,data", [("mp4", mp4_bytes()), ("webm", webm_bytes())], ids=["mp4", "webm"]
+)
 def test_video_round_trip_preserves_raw_container_bytes(container: str, data: bytes) -> None:
     value = {"container": container, "bytes": data}
     encoded = encode_video(value)
@@ -205,6 +204,7 @@ def test_video_refuses_unknown_mismatched_and_unrecognized_containers() -> None:
 @pytest.mark.parametrize(
     ("container", "data", "mime"),
     [("mp4", mp4_bytes(), "video/mp4"), ("webm", webm_bytes(), "video/webm")],
+    ids=["mp4", "webm"],
 )
 def test_video_original_rendition_preserves_validated_bytes_and_metadata_mime(
     container: str, data: bytes, mime: str
@@ -271,139 +271,7 @@ def test_video_cost_rejects_malformed_remote_accounting(cost: object) -> None:
         validate_video_encoded(encode_video(video), metadata)
 
 
-def test_audio_crosses_between_native_torch_and_torch_free_forms(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster_native.audio import register_audio_type
-
-    fake_torch = types.ModuleType("torch")
-    fake_torch.from_numpy = FakeTensor  # pyright: ignore[reportAttributeAccessIssue]
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-
-    host = TypeRegistry()
-    register_audio_value_type(host, AUDIO_TYPE)
-    worker = TypeRegistry()
-    register_audio_type(worker, AUDIO_TYPE)
-    waveform = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(1, 2, 4)
-    torch_form = {"waveform": FakeTensor(waveform), "sample_rate": 4}
-
-    worker_bytes = worker.spec(AUDIO_TYPE).encode(torch_form)
-    host_form = host.spec(AUDIO_TYPE).decode(worker_bytes)
-    assert isinstance(host_form, dict)
-    assert np.array_equal(host_form["waveform"], waveform)
-    assert host_form["sample_rate"] == 4
-
-    host_bytes = host.spec(AUDIO_TYPE).encode(host_form)
-    worker_form = worker.spec(AUDIO_TYPE).decode(host_bytes)
-    assert isinstance(worker_form, dict)
-    assert isinstance(worker_form["waveform"], FakeTensor)
-    assert np.array_equal(worker_form["waveform"].array, waveform)
-    assert (
-        worker.wrap(AUDIO_TYPE, torch_form).fingerprint
-        == host.wrap(AUDIO_TYPE, host_form).fingerprint
-    )
-
-
-class FakeVideoInput:
-    def __init__(self, source: io.BytesIO | bytes) -> None:
-        self.data = source.getvalue() if isinstance(source, io.BytesIO) else source
-
-    def save_to(self, destination: io.BytesIO) -> None:
-        raise AssertionError("the VIDEO boundary must never call upstream save_to")
-
-    def get_stream_source(self) -> io.BytesIO:
-        return io.BytesIO(self.data)
-
-    def get_active_trim_window(self) -> tuple[int, int]:
-        return 0, 0
-
-
-class FakeVideoFromComponents:
-    def __init__(self, components: object, bit_depth: int = 8) -> None:
-        self.components = components
-        self.bit_depth = bit_depth
-
-    def get_components(self) -> object:
-        return self.components
-
-    def get_bit_depth(self) -> int:
-        return self.bit_depth
-
-
-def test_pinned_component_video_defaults_to_srgb(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_native.video import register_video_type
-
-    input_impl = types.ModuleType("comfy_api.input_impl")
-    input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
-    input_impl.VideoFromComponents = (  # pyright: ignore[reportAttributeAccessIssue]
-        FakeVideoFromComponents
-    )
-    monkeypatch.setitem(sys.modules, "comfy_api.input_impl", input_impl)
-    components = types.SimpleNamespace(
-        images=FakeTensor(np.zeros((2, 4, 6, 3), dtype=np.float32)),
-        alpha=None,
-        audio=None,
-        frame_rate=12,
-    )
-    value = FakeVideoFromComponents(components)
-    worker = TypeRegistry()
-    register_video_type(worker, VIDEO_TYPE)
-
-    decoded = decode_video(worker.spec(VIDEO_TYPE).encode(value))
-    assert decoded["components"]["color_space"] == "sRGB"  # type: ignore[index]
-
-
-def test_video_crosses_between_upstream_family_and_torch_free_form(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster_native.video import register_video_type
-
-    comfy_api = types.ModuleType("comfy_api")
-    input_impl = types.ModuleType("comfy_api.input_impl")
-    input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
-    monkeypatch.setitem(sys.modules, "comfy_api", comfy_api)
-    monkeypatch.setitem(sys.modules, "comfy_api.input_impl", input_impl)
-
-    host = TypeRegistry()
-    register_video_value_type(host, VIDEO_TYPE)
-    worker = TypeRegistry()
-    register_video_type(worker, VIDEO_TYPE)
-    assert worker.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
-    upstream = FakeVideoInput(mp4_bytes())
-
-    worker_bytes = worker.spec(VIDEO_TYPE).encode(upstream)
-    host_form = host.spec(VIDEO_TYPE).decode(worker_bytes)
-    assert host_form == decode_video(mp4_bytes())
-
-    host_bytes = host.spec(VIDEO_TYPE).encode(host_form)
-    worker_form = worker.spec(VIDEO_TYPE).decode(host_bytes)
-    assert isinstance(worker_form, FakeVideoInput)
-    assert worker_form.get_stream_source().getvalue() == mp4_bytes()
-    assert (
-        worker.wrap(VIDEO_TYPE, upstream).fingerprint
-        == host.wrap(VIDEO_TYPE, host_form).fingerprint
-    )
-
-
-def test_native_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_native.video import register_video_type
-
-    input_impl = types.ModuleType("comfy_api.input_impl")
-    input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
-    monkeypatch.setitem(sys.modules, "comfy_api.input_impl", input_impl)
-
-    class UnknownVideo(FakeVideoInput):
-        pass
-
-    worker = TypeRegistry()
-    register_video_type(worker, VIDEO_TYPE)
-    with pytest.raises(TypeError, match="unsupported VideoInput subclass"):
-        worker.spec(VIDEO_TYPE).encode(UnknownVideo(mp4_bytes()))
-
-
-def test_av_registration_wiring_covers_host_and_native() -> None:
-    from dinkster_native.native import register_native_types
-
+def test_av_registration_wiring_covers_host() -> None:
     host = TypeRegistry()
     register_audio_value_type(host, AUDIO_TYPE)
     register_video_value_type(host, VIDEO_TYPE)
@@ -425,12 +293,6 @@ def test_av_registration_wiring_covers_host_and_native() -> None:
     assert video_spec.mime_for(video_value.meta.entries) == "video/mp4"
     assert host.render(audio_value).mime == "audio/wav"
     assert host.render(video_value).data == mp4_bytes()
-
-    native = TypeRegistry()
-    register_native_types(native)
-    assert native.spec(AUDIO_TYPE).declared_codec
-    assert native.spec(VIDEO_TYPE).declared_codec
-    assert native.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
 
 
 def test_av_preview_intent_is_explicit_on_test_owned_output_schemas() -> None:

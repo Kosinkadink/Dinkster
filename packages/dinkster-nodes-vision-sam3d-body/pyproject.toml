@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-vision-sam3d-body"
-version = "0.0.2"
+version = "0.0.3"
 description = "ComfyUI-origin vision-sam3d-body nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,8 +10,8 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "pillow>=10",
-    "dinkster-image>=0.0.1,<1",
     "dinkster-vision-sam3>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -28,5 +28,5 @@ packages = ["src/dinkster_vision_sam3d_body"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-image = { workspace = true }
 dinkster-vision-sam3 = { workspace = true }
+dinkster-pack-helpers = { workspace = true }

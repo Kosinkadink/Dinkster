@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_latent,
 )
-from dinkster_latent.sampling_boundary import to_public, to_runtime
+from dinkster_pack_helpers.sampling_boundary import to_public, to_runtime
 
 _INT = TypeExpr.concrete(CORE_INT)
 

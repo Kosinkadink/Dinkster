@@ -375,7 +375,8 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
     scripts = source / "scripts"
     scripts.mkdir()
     script = scripts / "build_official_packs.py"
-    shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / script.name, script)
+    for name in (script.name, "build_release.py", "download_frontend.py"):
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / name, scripts / name)
     cli_output = tmp_path / "cli-payloads"
     subprocess.run(
         [
