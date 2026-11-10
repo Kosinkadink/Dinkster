@@ -214,22 +214,14 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     gate = jobs["coverage-gate"]
     assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
     runtime = jobs["windows-runtime"]
-    runtime_rows = runtime["strategy"]["matrix"]["include"]
-    assert [(row["shard"], row["file-shard"]) for row in runtime_rows] == [
-        (1, 1),
-        (2, 2),
-        (3, 3),
-        (4, 3),
-    ]
-    from tools.pytest_file_shard import file_shard
-
-    assert file_shard("tests/test_environment_history.py", 3) == 3
+    runtime_shards = runtime["strategy"]["matrix"]["shard"]
+    assert runtime_shards == list(range(1, 9))
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
-    assert "--file-shard ${{ matrix.file-shard }}/3" in runtime_run["run"]
-    assert "@('--case-shard-file', 'tests/test_environment_generations.py')" in runtime_run["run"]
-    assert "(Split-Path $_ -Leaf) -ne 'test_environment_history.py'" in runtime_run["run"]
-    assert "$files = @('tests/test_environment_history.py')" in runtime_run["run"]
-    assert "$caseShardArgs = @()" in runtime_run["run"]
+    assert "--file-shard ${{ matrix.shard }}/8" in runtime_run["run"]
+    for name in ("artifacts", "cli", "generations", "history", "transactions"):
+        assert f"'--case-shard-file', 'tests/test_environment_{name}.py'" in runtime_run["run"]
+    assert "matrix.file-shard" not in runtime_run["run"]
+    assert "$files = @(" not in runtime_run["run"]
     runtime_upload = next(
         step for step in runtime["steps"] if step.get("uses") == "actions/upload-artifact@v4"
     )
@@ -245,10 +237,9 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert "for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do" in combine
     assert 'test -f "coverage-data/.coverage.$shard"' in combine
     assert "coverage report --fail-under=80" in combine
-    assert "for shard in 1 2 3 4; do" in combine
+    assert "for shard in 1 2 3 4 5 6 7 8; do" in combine
     assert 'test -f "coverage-data/.coverage.windows-runtime-$shard"' in combine
-    for row in runtime_rows:
-        shard = row["shard"]
+    for shard in runtime_shards:
         coverage_file = runtime_run["env"]["COVERAGE_FILE"].replace(
             "${{ matrix.shard }}", str(shard)
         )
