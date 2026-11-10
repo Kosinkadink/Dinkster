@@ -52,6 +52,33 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
+  torch-cpu:
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/v')
+    name: CPU comfy gate (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the CPU software shader renderer
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
+        timeout-minutes: 5
+      - uses: ./.github/actions/torch-cpu-suite
+        with:
+          suite: comfy
+          comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
+
   windows-runtime:
     needs: checks
     if: needs.checks.outputs.runtime == 'true'
@@ -137,7 +164,7 @@ jobs:
       - run: uv run --no-sync python -m pytest -q --durations=5 tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release
 
   tests:
-    needs: checks
+    needs: [checks, torch-cpu]
     if: always()
     name: tests
     runs-on: ubuntu-latest
@@ -150,7 +177,13 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Require successful path selection and checks
-        run: test '${{ needs.checks.result }}' = success
+        run: |
+          test '${{ needs.checks.result }}' = success
+          if [ '${{ startsWith(github.ref, 'refs/tags/v') }}' = true ]; then
+            test '${{ needs.torch-cpu.result }}' = success
+          else
+            test '${{ needs.torch-cpu.result }}' = skipped
+          fi
       - uses: actions/checkout@v4
         if: needs.checks.outputs.docs != 'true'
         with:
