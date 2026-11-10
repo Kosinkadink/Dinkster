@@ -1660,15 +1660,30 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
     names = [
         "dinkster-1.0-py3-none-any.whl",
         "dinkster_api-1.0-py3-none-any.whl",
+        "dinkster_engine-1.0-py3-none-any.whl",
         "dinkster_supervisor-1.0-py3-none-any.whl",
         "constraints.txt",
     ]
-    for size, name in enumerate(names, 1):
-        (tmp_path / name).write_bytes(b"x" * size)
-    workspace_wheels = names[:3]
+    for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
+        distribution = project.replace("-", "_")
+        companion = {"dinkster": "dinkster-engine", "dinkster-engine": "dinkster-api"}.get(project)
+        metadata = f"Metadata-Version: 2.1\nName: {project}\nVersion: 1.0\n"
+        if companion:
+            metadata += f"Requires-Dist: {companion}==1.0\n"
+        with zipfile.ZipFile(tmp_path / f"{distribution}-1.0-py3-none-any.whl", "w") as wheel:
+            wheel.writestr(f"{distribution}-1.0.dist-info/METADATA", metadata)
+            if project == "dinkster-engine":
+                for module in (
+                    "dinkster_engine/__init__.py",
+                    "dinkster_engine/testing.py",
+                    "dinkster_graph/__init__.py",
+                ):
+                    wheel.writestr(module, "")
+    (tmp_path / "constraints.txt").write_text("pins\n")
+    workspace_wheels = names[:4]
     manifest: dict[str, object] = {"workspaceWheels": workspace_wheels}
     write_manifest(tmp_path, manifest, [tmp_path / name for name in names])
-    expected = 1 + 2 + 3 + 4
+    expected = sum((tmp_path / name).stat().st_size for name in names)
     expected += len((tmp_path / "release-manifest.json").read_bytes())
     expected += len((tmp_path / "SHA256SUMS").read_bytes())
     assert check_release(tmp_path, expected) == expected
@@ -1689,11 +1704,11 @@ def test_finalized_release_rejects_external_wheels_and_enforces_exact_byte_budge
     external = "numpy-1.0-py3-none-any.whl"
     (tmp_path / external).write_bytes(b"external")
     write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
-    with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
+    with pytest.raises(ValueError, match="only the four Dinkster workspace wheels"):
         check_release(tmp_path, 100_000_000)
     workspace_wheels.append(external)
     write_manifest(tmp_path, manifest, [*(tmp_path / name for name in names), tmp_path / external])
-    with pytest.raises(ValueError, match="only the three Dinkster workspace wheels"):
+    with pytest.raises(ValueError, match="only the four Dinkster workspace wheels"):
         check_release(tmp_path, 100_000_000)
 
 
