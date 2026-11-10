@@ -65,6 +65,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
+from dinkster_image_document import validate_collaboration_snapshot
 from dinkster_inference import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
@@ -113,7 +114,8 @@ from dinkster_server import (
     resolve_scope,
     validate_comfy_args,
 )
-from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_values.video_document import TimelineError
+from dinkster_values.video_document import document as validate_video_document
 from dinkster_workers import (
     PackManifest,
     SandboxPolicy,
@@ -187,18 +189,27 @@ _PACK_HOST_WORKSPACE_PACKAGES = (
 )
 
 
+def _validate_video_collaboration_snapshot(_document_id: str, snapshot: object) -> str | None:
+    try:
+        validate_video_document(snapshot)
+    except TimelineError as error:
+        return f"snapshot is not a valid video document: {error}"
+    return None
+
+
+def _collaboration_snapshot_validators(collab: Any) -> Any:
+    validators = collab.SnapshotValidatorRegistry()
+    validators.register("workflow", lambda _document_id, _snapshot: None)
+    validators.register("image", validate_collaboration_snapshot)
+    validators.register("video", _validate_video_collaboration_snapshot)
+    return validators
+
+
 def _validate_collaboration_snapshot(
     document_kind: str, document_id: str, snapshot: object
 ) -> str | None:
-    if document_kind == "workflow":
-        return None
-    try:
-        validate_document(snapshot)
-    except InvalidDocument as error:
-        return f"snapshot is not a valid ImageDocument: {error}"
-    if not isinstance(snapshot, dict) or snapshot.get("lineage") != document_id:
-        return "ImageDocument lineage must match documentId"
-    return None
+    collab = importlib.import_module("dinkster_collab")
+    return _collaboration_snapshot_validators(collab)(document_kind, document_id, snapshot)
 
 
 def _add_collaboration_routes(app: web.Application, database: Path | None) -> bool:
@@ -213,7 +224,7 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
     collab.install_session_extension(
         app,
         database=database,
-        snapshot_validator=_validate_collaboration_snapshot,
+        snapshot_validator=_collaboration_snapshot_validators(collab),
         principal_for=principal_for,
         resolve_scope=resolve_scope,
     )

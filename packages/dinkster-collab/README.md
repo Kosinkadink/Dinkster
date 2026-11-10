@@ -58,7 +58,7 @@ scope, single-user mode is the reserved scope `"local"`.
 | `DELETE /api/sessions/{id}` | close; every registered subscriber gets `session_closed` before its socket closes (best-effort against transport failure only) |
 | `POST /api/sessions/{id}/ops` | append one op envelope |
 | `GET /api/sessions/{id}/ops?after=N` | catch-up; 410 `resync-required` past the retained log |
-| `GET /api/sessions/{id}/snapshot` | `{revision, document}` |
+| `GET /api/sessions/{id}/snapshot` | `{revision, document, documentKind}` |
 | `PUT /api/sessions/{id}/snapshot` | install checkpoint `{revision, document}`; prunes covered ops |
 | `GET /api/sessions/{id}/events` | WS: descriptor, then live `op` envelopes; inbound `presence` frames relayed to others |
 
@@ -102,12 +102,15 @@ server-ordered-optimistic contract later without a new surface.
 Ops mutate through HTTP POST only; the WS is delivery plus presence,
 never an ingestion path - ordering has exactly one door.
 
-`documentKind` is `workflow` or `image` and defaults to `workflow` for
-older clients and persisted sessions. Descriptors always include the kind.
-The host may inject a whole-snapshot validator into `SessionService`;
-`dinkster-serve` uses that seam to strictly validate ImageDocument snapshots
-and lineage at session creation and checkpoint installation. Patch ordering
-remains document-semantic-free.
+`documentKind` defaults to `workflow` for older clients and persisted sessions.
+The built-in wire spellings are `workflow`, `image`, and `video`; namespaced
+extension kinds pass through unchanged. Internally the built-ins normalize to
+`dinkster.workflow`, `dinkster.image`, and `dinkster.video`, so aliases cannot
+claim two validators. Descriptors and snapshot responses always include the
+wire kind. The host may inject a `SnapshotValidatorRegistry` into
+`SessionService`; `dinkster-serve` registers strict image and video validators
+at session creation and checkpoint installation. Unregistered namespaced kinds
+remain opaque finite JSON. Patch ordering remains document-semantic-free.
 
 ## Durability
 

@@ -202,6 +202,17 @@ def _ids(value: object, maximum: int) -> list[str]:
     return [_string(item, nonempty=True) for item in items]
 
 
+def validate_collaboration_snapshot(document_id: str, snapshot: object) -> str | None:
+    """Validate a complete image snapshot and its session lineage."""
+    try:
+        validate_document(snapshot)
+    except InvalidDocument as error:
+        return f"snapshot is not a valid ImageDocument: {error}"
+    if cast(dict[str, object], snapshot)["lineage"] != document_id:
+        return "ImageDocument lineage must match documentId"
+    return None
+
+
 def validate_document(value: object) -> list[dict[str, object]]:
     _check_json(value)
     doc = _object(

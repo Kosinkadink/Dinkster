@@ -109,7 +109,7 @@ def test_existing_database_adds_workflow_document_kind(tmp_path: Path) -> None:
     store = SessionStore(path)
     try:
         session = SessionService(store=store).get("legacy")
-        assert session.document_kind == "workflow"
+        assert session.document_kind == "dinkster.workflow"
         with sqlite3.connect(path) as connection:
             column = next(
                 row
