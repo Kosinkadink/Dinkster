@@ -113,6 +113,39 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert not root.exists()
 
 
+def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(tmp_path: Path):
+    from dinkster_supervisor.environment_artifacts import acquire
+
+    mirror, store, root = tmp_path / "mirror", tmp_path / "store", tmp_path / "project"
+    base, engine, _ = _mirror(mirror)
+    acquire(discover((str(mirror),), "main"), "fixture-cpu", store)
+    mirror.rename(tmp_path / "disconnected")
+    before = {
+        path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
+    }
+    code, result = _run(
+        root,
+        "setup",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--plan",
+    )
+    assert code == 0, result
+    assert result["status"] == "planned"
+    assert any("last acquired channel selection" in line for line in result["plan"])
+    assert any(base["id"] in line and engine["version"] in line for line in result["plan"])
+    assert not root.exists()
+    assert {
+        path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
+    } == before
+
+
 @pytest.mark.parametrize(
     ("host", "architecture", "override", "expected"),
     [
