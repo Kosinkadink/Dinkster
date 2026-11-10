@@ -32,6 +32,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
+  tests/test_environment_collection.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
@@ -54,12 +55,16 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_release_install.py \
   tests/test_environment_generations.py::test_generation_retains_verified_engine_manifest \
   tests/test_installer.py::test_http_registry_fetcher_uses_verified_static_wheel \
+  tests/test_installer.py::test_registry_download_retries_only_transport \
   tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_wheel_size \
   tests/test_installer.py::test_cli_restore_downloads_registry_sources \
+  tests/test_installer.py::test_routing_fetcher_dispatches_on_recorded_provenance \
   tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
   tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
-  tests/test_installer.py::test_registry_selection_rechecks_exact_release_before_install \
+  tests/test_installer.py::test_registry_selection_snapshot_refreshes_between_operations \
   tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
+  tests/test_installer.py::test_split_registry_reads_only_selected_packs_and_refuses_substitution \
+  tests/test_installer.py::test_registry_preparation_snapshot_isolates_endpoints_and_credentials \
   tests/test_installer.py::test_registry_compatible_selection_refuses_only_undeclared_releases \
   tests/test_installer.py::test_registry_source_identity_comes_from_verified_archive \
   tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \

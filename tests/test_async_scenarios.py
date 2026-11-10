@@ -26,12 +26,15 @@ def test_deadline_names_the_test_and_cleans_up_before_next_scenario(
     with pytest.raises(
         pytest.fail.Exception,
         match="test_deadline_names_the_test_and_cleans_up_before_next_scenario.*deadline",
-    ):
+    ) as caught:
         try:
             run_scenario(hang(), timeout=0.01)
         except Exception:
             pytest.fail("deadline was swallowed by an ordinary exception handler")
     assert cleaned_up
+    if not suppress_cancellation:
+        assert "in hang" in str(caught.value)
+        assert "CancelledError" in str(caught.value)
 
     async def result() -> int:
         return 37

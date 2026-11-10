@@ -39,6 +39,14 @@ MANIFEST = (
 WHEEL_FILENAME = "archive_test-1.0-py3-none-any.whl"
 
 
+@pytest.fixture(scope="module")
+def official_payloads(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, ...]:
+    # Consumers only read these wheels and unpack into their own test directories.
+    return build_official_packs(
+        Path(__file__).resolve().parents[1], tmp_path_factory.mktemp("official-payloads")
+    )
+
+
 def write_pack(root: Path) -> Path:
     root.mkdir()
     (root / "dinkster-pack.toml").write_bytes(MANIFEST.encode())
@@ -237,13 +245,13 @@ def test_cli_writes_archive_and_prints_written_digest(
 
 
 def test_official_artifacts_preserve_sources_and_existing_pack_identities(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, official_payloads: tuple[Path, ...]
 ) -> None:
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_workers import load_manifest
 
     root = Path(__file__).resolve().parents[1]
-    first = build_official_packs(root, tmp_path / "first")
+    first = official_payloads
     write_text = Path.write_text
 
     def windows_write_text(path, data, encoding=None, errors=None, newline=None):
@@ -1552,14 +1560,16 @@ def test_publication_client_preserves_archive_and_lock_bytes(
         thread.join()
 
 
-def test_official_publication_declarations_match_archive_admission(tmp_path: Path) -> None:
+def test_official_publication_declarations_match_archive_admission(
+    tmp_path: Path, official_payloads: tuple[Path, ...]
+) -> None:
     from dinkster_registry import Lockfile, unpack_artifact
     from dinkster_registry.archive_admission import run_ingest_integrity, run_manifest_admission
 
     from scripts.build_official_packs import library_metadata
 
     root = Path(__file__).resolve().parents[1]
-    first = build_official_packs(root, tmp_path / "first")
+    first = official_payloads
     second = build_official_packs(root, tmp_path / "second")
     assert {path.name: path.read_bytes() for path in first} == {
         path.name: path.read_bytes() for path in second
@@ -1573,8 +1583,14 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.1",
-                ("dinkster-api", "dinkster-inference==0.1.1", "numpy>=1.26", "pillow>=10", "torch"),
+                "0.0.2",
+                (
+                    "dinkster-api<0.1,>=0.0.2.dev0",
+                    "dinkster-inference==0.1.1",
+                    "numpy>=1.26",
+                    "pillow>=10",
+                    "torch",
+                ),
             )
             assert f"blake3:{blake3(data).hexdigest()}" == pack.artifact_digest
             continue
@@ -1584,7 +1600,7 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
             / package_name
         )
         accepted = run_manifest_admission(
-            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.3.dev123"
+            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.4.dev123"
         )
         assert not accepted.blocked, accepted.findings
         for engine in ("0.0.1", "0.1"):
@@ -1595,7 +1611,9 @@ def test_official_publication_declarations_match_archive_admission(tmp_path: Pat
             assert refused.findings[0].code == "manifest.invalid"
 
 
-def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
+def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(
+    tmp_path: Path, official_payloads: tuple[Path, ...]
+) -> None:
     import json
     from dataclasses import replace
 
@@ -1619,7 +1637,7 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_pat
         b'"inputs":{"image":{"$link":{"node":"image","output":"IMAGE"}}}}}}'
     )
     saved.write_bytes(original)
-    payloads = build_official_packs(Path(__file__).resolve().parents[1], tmp_path / "payloads")
+    payloads = official_payloads
     lock = Lockfile.from_record_json(payloads[-1].read_text())
     specs = []
     for entry in lock.packs:

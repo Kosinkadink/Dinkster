@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-sampling"
-version = "0.0.4"
+version = "0.0.5"
 description = "First-party Dinkster sampling nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "numpy",
     "tqdm",
     "dinkster-inference==0.1.1",
-    "dinkster-pack-helpers>=0.0.1,<1",
+    "dinkster-pack-helpers>=0.0.2,<1",
 ]
 
 [build-system]

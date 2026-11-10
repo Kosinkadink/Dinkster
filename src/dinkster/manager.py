@@ -97,6 +97,7 @@ from .registries import (
     DEFAULT_REGISTRIES_FILENAME,
     RegistryConfig,
     RegistryPublishError,
+    StaticPackIndex,
     browse_packs,
     browse_templates,
     default_pack_minimums,
@@ -110,7 +111,6 @@ from .registries import (
     resolve_release,
     routing_registry_fetcher,
     select_registry,
-    static_pack_releases,
 )
 
 GIT_PREFIX = "git+"
@@ -441,7 +441,9 @@ def _cmd_publish(args: argparse.Namespace) -> None:
     if not args.no_preflight:
         report = diagnose(
             manifest_path,
-            published_packs=[cast("str", row["name"]) for row in static_pack_releases(registry)],
+            published_packs=[
+                cast("str", row["name"]) for row in StaticPackIndex().catalog(registry)
+            ],
         )
         if not report.ok:
             print(render_text(report))
@@ -1106,6 +1108,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
             raise InstallError(f"duplicate minimum for {pack}")
         minimums[pack] = minimum
     try:
+        index = StaticPackIndex(args.index_snapshot)
         if args.installed_lock:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
             if args.add:
@@ -1120,12 +1123,12 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                         raise InstallError(f"{pack}: --add requires a distinct absent pack")
                     selections[pack] = version
                 registry = select_registry(config, args.registry)
-                fetch = routing_registry_fetcher(config, registry)
+                fetch = routing_registry_fetcher(config, registry, index=index)
                 entries = list(installed.packs)
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 for pack, version in selections.items():
                     selected = resolve_release(
-                        registry, pack, version, engine_version=dinkster_version
+                        registry, pack, version, engine_version=dinkster_version, index=index
                     )
                     cached = pack_archive_path(
                         args.artifacts,
@@ -1147,11 +1150,14 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     args.artifacts.resolve(),
                     engine_version=dinkster_version,
                     selected=select_registry(config, args.registry) if args.registry else None,
+                    index=index,
                 )
             if args.retain_sources:
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 fetch = routing_registry_fetcher(
-                    config, select_registry(config, args.registry) if args.registry else None
+                    config,
+                    select_registry(config, args.registry) if args.registry else None,
+                    index=index,
                 )
                 for entry in lock.packs:
                     cached = pack_archive_path(
@@ -1198,6 +1204,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 args.artifacts.resolve(),
                 engine_version=dinkster_version,
                 allow_missing=args.allow_missing,
+                index=index,
             )
         args.catalog_lock.parent.mkdir(parents=True, exist_ok=True)
         args.catalog_lock.write_text(lock.record_json() + "\n", encoding="utf-8", newline="\n")
@@ -1250,6 +1257,7 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
             variant=args.variant,
             base_id=args.base_id,
             selected=select_registry(config, args.registry) if args.registry else None,
+            index=StaticPackIndex(args.index_snapshot),
         )
     except OSError as exc:
         raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
@@ -1389,6 +1397,11 @@ def main() -> None:
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
+    sources.add_argument(
+        "--index-snapshot",
+        type=Path,
+        help="operation-owned scratch directory shared with dependency lock preparation",
+    )
     selection = sources.add_mutually_exclusive_group()
     selection.add_argument(
         "--minimum",
@@ -1425,6 +1438,11 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--index-snapshot",
+        type=Path,
+        help="reuse this operation's source-selection static index snapshot",
+    )
     locks.add_argument(
         "--pack",
         action="append",

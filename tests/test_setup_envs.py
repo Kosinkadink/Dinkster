@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import time
 from email.message import Message
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -406,6 +409,77 @@ def test_old_uv_refuses_before_setup_side_effects(tmp_path, monkeypatch, entry):
             setup_envs.main()
     assert calls == [["uv", "--version"]]
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("filename", ["windows_sqlite.py", "variants.toml"])
+@pytest.mark.parametrize("outcome", ["recover", "exhaust", "bad-hash", "http-404"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        HTTPError("https://example.org/input", 503, "unavailable", Message(), None),
+        URLError(ConnectionResetError("connection reset")),
+        TimeoutError("read timed out"),
+    ],
+    ids=["http-503", "connection-reset", "read-timeout"],
+)
+def test_windows_preparation_retries_transient_downloads_without_accepting_bad_inputs(
+    tmp_path, monkeypatch, filename, outcome, failure
+):
+    from scripts import prepare_windows_python
+
+    inputs = {"windows_sqlite.py": b"fixture downloader", "variants.toml": b"fixture config"}
+    monkeypatch.setattr(
+        prepare_windows_python,
+        "INPUTS",
+        {name: hashlib.sha256(data).hexdigest() for name, data in inputs.items()},
+    )
+    monkeypatch.setattr(prepare_windows_python, "require_uv_version", lambda uv: None)
+    monkeypatch.setattr(sys, "platform", "win32")
+    attempts = {name: 0 for name in inputs}
+    waits = []
+    if outcome == "http-404":
+        failure = HTTPError("https://example.org/input", 404, "not found", Message(), None)
+
+    class TimedOutResponse(io.BytesIO):
+        def read(self, *args, **kwargs):
+            raise failure
+
+    def open_url(url, *, timeout):
+        assert timeout == 60
+        name = url.rsplit("/", 1)[1]
+        attempts[name] += 1
+        if name == filename:
+            if attempts[name] == 1 or outcome in {"exhaust", "http-404"}:
+                if isinstance(failure, TimeoutError):
+                    return TimedOutResponse()
+                raise failure
+            if outcome == "bad-hash":
+                return io.BytesIO(b"corrupted input")
+        return io.BytesIO(inputs[name])
+
+    def run(command, **kwargs):
+        if "acquire" in command:
+            script = Path(command[command.index("acquire") - 1])
+            for name, data in inputs.items():
+                assert (script.parent / name).read_bytes() == data
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(prepare_windows_python.urllib.request, "urlopen", open_url)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(time, "sleep", waits.append)
+    if outcome == "recover":
+        assert prepare_windows_python.prepare(tmp_path / "runtime", "uv") == (
+            tmp_path / "runtime/python/python.exe"
+        )
+    elif outcome == "bad-hash":
+        with pytest.raises(ValueError, match=f"Windows runtime input hash mismatch: {filename}"):
+            prepare_windows_python.prepare(tmp_path / "runtime", "uv")
+    else:
+        with pytest.raises(type(failure)) as caught:
+            prepare_windows_python.prepare(tmp_path / "runtime", "uv")
+        assert caught.value is failure
+    assert attempts[filename] == {"recover": 2, "exhaust": 3, "bad-hash": 2, "http-404": 1}[outcome]
+    assert waits == {"recover": [1], "exhaust": [1, 2], "bad-hash": [1], "http-404": []}[outcome]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows runtime admission")

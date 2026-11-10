@@ -10,14 +10,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 # This source pin moves with the Windows base's SQLite override, not with uv's catalog.
-ENVIRONMENTS_COMMIT = "e80a7240f6a6e835ffa724f43c36552f58e73b5e"
+ENVIRONMENTS_COMMIT = "f0d10799dff79d92fab2d6b45da9c91e2f35b4e9"
 INPUTS = {
-    "windows_sqlite.py": "9f681989e1928d979868f2acbbb5be88d587c1e6f7c97216b3e777a963208b95",
-    "variants.toml": "6c13daa5b35c65c787c859d85bae44a2d463678269c54fcf4ac4141c3ba64db8",
+    "windows_sqlite.py": "8b8b02d2a86f22f06bbb10424076ad06aac5c3f27f7caf3916a42cfc55f5aa6d",
+    "variants.toml": "884515be492964f2a1c5bcde70fc0e7e6ee95ad77c205ea8917ed6f9a121e02e",
 }
 MINIMUM_UV_VERSION = (0, 13, 6)
 PINNED_PYTHON_VERSION = "3.14.10"
@@ -46,8 +48,21 @@ def prepare(output: Path, uv: str) -> Path:
                 "https://raw.githubusercontent.com/Kosinkadink/Dinkster-Environments/"
                 f"{ENVIRONMENTS_COMMIT}/{filename}"
             )
-            with urllib.request.urlopen(url, timeout=60) as response:
-                payload = response.read()
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(url, timeout=60) as response:
+                        payload = response.read()
+                    break
+                except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+                    if isinstance(error, urllib.error.HTTPError):
+                        transient = 500 <= error.code < 600
+                    elif isinstance(error, urllib.error.URLError):
+                        transient = isinstance(error.reason, (ConnectionError, TimeoutError))
+                    else:
+                        transient = True
+                    if not transient or attempt == 2:
+                        raise
+                    time.sleep(attempt + 1)
             if hashlib.sha256(payload).hexdigest() != digest:
                 raise ValueError(f"Windows runtime input hash mismatch: {filename}")
             (work / filename).write_bytes(payload)

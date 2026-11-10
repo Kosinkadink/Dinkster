@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import marshal
 import os
@@ -83,6 +84,8 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     result = (
         run_with_diagnostics(command, timeout=timeout)
         if "setup" in arguments
+        or "update" in arguments
+        or "restore" in arguments
         or "move" in arguments
         or ("doctor" in arguments and "--repair" in arguments)
         else subprocess.run(command, capture_output=True, text=True, timeout=timeout)
@@ -949,6 +952,62 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
         _run(root, "stop", "--yes")
 
 
+@pytest.mark.parametrize(
+    ("flags", "terminal", "answer", "code", "status", "prompted"),
+    [
+        ((), False, "", 1, "error", False),
+        ((), True, "n\n", 0, "planned", True),
+        ((), True, "yes\n", 0, "applied", True),
+        (("--yes",), False, "", 0, "applied", False),
+        (("--plan",), True, "yes\n", 0, "planned", False),
+        (("--json",), True, "yes\n", 0, "planned", False),
+    ],
+)
+def test_runtime_consent_through_environment_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    flags: tuple[str, ...],
+    terminal: bool,
+    answer: str,
+    code: int,
+    status: str,
+    prompted: bool,
+) -> None:
+    from dinkster_supervisor import environment
+
+    _runtime_project(tmp_path)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    stream = io.StringIO(answer)
+    monkeypatch.setattr(stream, "isatty", lambda: terminal)
+    monkeypatch.setattr(sys, "stdin", stream)
+    monkeypatch.setattr(sys, "argv", ["caller", "unrelated-argument"])
+    with pytest.raises(SystemExit) as exited:
+        environment.main(["--root", str(tmp_path), "stop", *flags])
+    captured = capsys.readouterr()
+    assert exited.value.code == code
+    assert sys.argv == ["caller", "unrelated-argument"]
+    if "--json" in flags:
+        assert json.loads(captured.out)["status"] == status
+    else:
+        assert f"stop: {status}" in captured.out
+    assert ("Apply this plan? [y/N]" in captured.out) is prompted
+    if code:
+        assert "--yes" in captured.err and "--plan" in captured.err
+    if status != "applied":
+        after = {
+            path.relative_to(tmp_path): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+        assert not (tmp_path / ".lock").exists()
+
+
 def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Path):
     port = _runtime_project(tmp_path)
     arguments = ("start", "--gpu", "0", "--gpu", "GPU-aB12")
@@ -1265,10 +1324,18 @@ environment.main()
         )
         retained = python.stat()
         retained_digest = content_digest(python)
+        retained_history = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
-        assert rolled_back["current"] == 3 and first.exists() and second.exists()
+        assert rolled_back["current"] == 3 and second.exists()
+        if sys.platform == "linux" or os.name == "nt":
+            assert not first.exists()
+        else:
+            assert first.exists()
+        assert retained_history and all(
+            path.read_bytes() == data for path, data in retained_history.items()
+        )
         after = python.stat()
         assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (
             retained.st_dev,
@@ -1279,6 +1346,18 @@ environment.main()
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
         current = root / "generations/3"
+        restored_python = current / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
+        assert (
+            subprocess.check_output(
+                [
+                    str(restored_python),
+                    "-B",
+                    "-c",
+                    "import fixture_engine; print(fixture_engine.VALUE)",
+                ]
+            ).strip()
+            == b"41"
+        )
         source_release, payloads = _release_sources(mirror)
         supplied = acquire_sources(discover((str(mirror),), "main"), store)
         assert supplied is not None
@@ -1591,7 +1670,14 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert run("rollback")["current"] == 3
         check(3, fixture["expected"]["initial"], "rollback")
         assert (root / "generations/2/generation.json").is_file()
-        assert len(list((root / "journal").glob("*.json"))) == 3
+        journals = [Journal.read(path) for path in (root / "journal").glob("*.json")]
+        assert sorted((row.operation, row.target) for row in journals if row.operation != "gc") == [
+            ("rollback", 3),
+            ("setup", 1),
+            ("update", 2),
+        ]
+        assert all(row.stage == "complete" and row.error is None for row in journals)
+        assert len(list((root / "history").glob("*.json"))) == 3
     finally:
         if (root / "current").exists():
             run("stop")

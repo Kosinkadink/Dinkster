@@ -52,6 +52,8 @@ counts as the right bytes.
 
 from __future__ import annotations
 
+import hashlib
+import http.client
 import json
 import os
 import re
@@ -90,7 +92,7 @@ from packaging.tags import sys_tags
 from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
-from dinkster.installer import RegistryFetcher, http_registry_fetcher
+from dinkster.installer import RegistryFetcher, http_registry_fetcher, read_registry_response
 
 DEFAULT_REGISTRIES_FILENAME = "registries.toml"
 DEFAULT_PACKS_PATH = Path(__file__).with_name("default-packs.toml")
@@ -403,17 +405,18 @@ def select_registry(config: RegistryConfig, selector: str) -> NamedRegistry:
 
 
 def routing_registry_fetcher(
-    config: RegistryConfig, selected: NamedRegistry | None
+    config: RegistryConfig, selected: NamedRegistry | None, *, index: StaticPackIndex | None = None
 ) -> RegistryFetcher:
     """One fetcher for every registry-sourced entry, dispatching on the
     entry's recorded provenance. ``selected`` is the --registry choice
     (already resolved through :func:`select_registry`); bare
     ``"registry"`` sources go there, falling back to the configured
     default."""
+    index = index or StaticPackIndex()
 
     def fetch(entry: LockedPack) -> bytes:
         registry = config.registry_for(entry, selected)
-        return http_registry_fetcher(registry.endpoint, token=registry.token())(entry)
+        return http_registry_fetcher(registry.endpoint, token=registry.token(), index=index)(entry)
 
     return fetch
 
@@ -428,7 +431,7 @@ def _index_get(
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     token: str | None = None,
 ) -> dict[str, object]:
-    """One GET against a registry index path, answered as a JSON object
+    """Read a registry index path as a JSON object, with bounded transport retries,
     or refused as an :class:`InstallError` that names the registry and
     what was being asked. ``missing`` is the message a 404 earns when the
     caller knows what absence means; without it a 404 is just another
@@ -440,14 +443,12 @@ def _index_get(
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)  # noqa: S310 - scheme checked at construction
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            payload = response.read()
-            warning = response.headers.get("Warning", "")
+        payload, warning = read_registry_response(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
         if exc.code == 404 and missing:
             raise InstallError(missing) from exc
         raise InstallError(f"{action} against {registry.label} failed: HTTP {exc.code}") from exc
-    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+    except (OSError, urllib.error.URLError, http.client.IncompleteRead) as exc:
         raise InstallError(f"{action} against {registry.label} failed: {exc}") from exc
 
     try:
@@ -465,21 +466,128 @@ def _index_get(
     return cast("dict[str, object]", document)
 
 
-def static_pack_releases(
-    registry: NamedRegistry, *, timeout: float = DEFAULT_RESOLVE_TIMEOUT, token: str | None = None
+class StaticPackIndex:
+    """Cache one operation's documents, isolated by endpoint and credential.
+
+    A caller-owned scratch directory shares the snapshot across preparation
+    subprocesses. The caller removes it with the rest of the operation's inputs.
+    Credentials are hashed into filenames, never written to the snapshot.
+    """
+
+    def __init__(self, directory: Path | None = None) -> None:
+        self._documents: dict[tuple[str, str, str], dict[str, object]] = {}
+        self._directory = directory
+
+    def _read(
+        self, registry: NamedRegistry, path: str, timeout: float, token: str | None
+    ) -> dict[str, object]:
+        credential = registry.token() if token is None else token
+        key = (registry.endpoint, credential, path)
+        if key not in self._documents:
+            cached = (
+                self._directory / (hashlib.sha256(json.dumps(key).encode()).hexdigest() + ".json")
+                if self._directory is not None
+                else None
+            )
+            if cached is not None and cached.exists():
+                try:
+                    raw: object = json.loads(cached.read_bytes())
+                except ValueError as exc:
+                    raise InstallError("operation static index snapshot is invalid") from exc
+                if not isinstance(raw, dict):
+                    raise InstallError("operation static index snapshot is not an object")
+                document = cast("dict[str, object]", raw)
+            else:
+                document = _index_get(
+                    registry,
+                    path,
+                    action="reading static pack index",
+                    subject="static pack index",
+                    timeout=timeout,
+                    token=credential,
+                )
+            schema = document.get("schemaVersion")
+            if type(schema) is not int or schema not in (1, 2):
+                raise InstallError(
+                    f"registry static index has unsupported schema {schema!r}; update Dinkster"
+                )
+            if not isinstance(document.get("items"), list):
+                raise InstallError(
+                    "registry static index has an unsupported schema or missing items"
+                )
+            if cached is not None and not cached.exists():
+                cached.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                cached.write_text(json.dumps(document), encoding="utf-8")
+            self._documents[key] = document
+        return self._documents[key]
+
+    def catalog(
+        self,
+        registry: NamedRegistry,
+        *,
+        timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+        token: str | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        document = self._read(registry, "/static/packs/index.json", timeout, token)
+        if document["schemaVersion"] == 1:
+            return _static_releases(registry, document)
+        entries: list[dict[str, object]] = []
+        names: set[str] = set()
+        for value in cast("list[object]", document["items"]):
+            if not isinstance(value, dict):
+                raise InstallError("registry static catalog contains a non-object pack")
+            row = cast("dict[str, object]", value)
+            name, version = row.get("name"), row.get("latestVersion")
+            if (
+                not isinstance(name, str)
+                or validate_name(name) is not None
+                or canonical_name(name) != name
+                or not isinstance(version, str)
+                or validate_version(version) is not None
+                or row.get("url") != f"packs/{name}/index.json"
+                or type(row.get("library")) is not bool
+                or "publisher" not in row
+                or row["publisher"] is not None
+                and not isinstance(row["publisher"], str)
+            ):
+                raise InstallError("registry static catalog has invalid pack fields")
+            if name in names:
+                raise InstallError(f"registry static catalog repeats {name}")
+            names.add(name)
+            if row["library"] is not True:
+                entries.append(row)
+        return tuple(entries)
+
+    def releases(
+        self,
+        registry: NamedRegistry,
+        pack: str,
+        *,
+        timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+        token: str | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        catalog = self.catalog(registry, timeout=timeout, token=token)
+        document = self._read(registry, "/static/packs/index.json", timeout, token)
+        if document["schemaVersion"] == 1:
+            return tuple(row for row in catalog if row["name"] == pack)
+        entry = next((row for row in catalog if row["name"] == pack), None)
+        if entry is None:
+            return ()
+        document = self._read(registry, "/static/" + str(entry["url"]), timeout, token)
+        if document["schemaVersion"] != 2 or document.get("name") != pack:
+            raise InstallError(f"registry static per-pack index identity differs for {pack}")
+        releases = _static_releases(registry, document)
+        if any(row["name"] != pack for row in releases):
+            raise InstallError(
+                f"registry static per-pack index substitutes another pack for {pack}"
+            )
+        return releases
+
+
+def _static_releases(
+    registry: NamedRegistry, document: Mapping[str, object]
 ) -> tuple[dict[str, object], ...]:
-    """Read the registry's static release catalog, excluding library wheels."""
-    document = _index_get(
-        registry,
-        "/static/packs/index.json",
-        action="reading static pack index",
-        subject="static pack index",
-        timeout=timeout,
-        token=token,
-    )
     rows = document.get("items")
-    if document.get("schemaVersion") != 1 or not isinstance(rows, list):
-        raise InstallError("registry static index has an unsupported schema or missing items")
     releases: list[dict[str, object]] = []
     identities: set[tuple[str, str]] = set()
     for value in cast("list[object]", rows):
@@ -491,6 +599,12 @@ def static_pack_releases(
         name, version = row.get("name"), row.get("version")
         if not isinstance(name, str) or not isinstance(version, str):
             raise InstallError("registry static release needs name and version strings")
+        if (
+            validate_name(name) is not None
+            or canonical_name(name) != name
+            or validate_version(version) is not None
+        ):
+            raise InstallError("registry static release has invalid name or version")
         identity = (name, version)
         if identity in identities:
             raise InstallError(f"registry static index repeats {name}@{version}")
@@ -555,8 +669,9 @@ def static_pack_release(
     *,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     token: str | None = None,
+    index: StaticPackIndex | None = None,
 ) -> dict[str, object]:
-    for row in static_pack_releases(registry, timeout=timeout, token=token):
+    for row in (index or StaticPackIndex()).releases(registry, pack, timeout=timeout, token=token):
         if row["name"] == pack and row["version"] == version:
             return row
     raise InstallError(f"registry {registry.label} publishes no release {pack}@{version}")
@@ -569,6 +684,7 @@ def resolve_release(
     *,
     engine_version: str | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+    index: StaticPackIndex | None = None,
 ) -> LockedPack:
     """Turn ``pack@version`` into a digest-pinned :class:`LockedPack`
     by asking ONE registry's index for the exact release - never a
@@ -577,7 +693,7 @@ def resolve_release(
     not redirect) and only NAMES the digest; acquisition separately
     verifies the actual bytes against it."""
     wanted_pack = canonical_name(pack)
-    fields = static_pack_release(registry, wanted_pack, version, timeout=timeout)
+    fields = static_pack_release(registry, wanted_pack, version, timeout=timeout, index=index)
     answered_pack = fields.get("name")
     answered_version = fields.get("version")
     _, digest = static_release_wheel(registry, fields)
@@ -635,6 +751,7 @@ def resolve_compatible_release(
     engine_version: str,
     *,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+    index: StaticPackIndex | None = None,
 ) -> LockedPack:
     """Select the newest active compatible version from ONE registry, then pin its bytes.
 
@@ -646,7 +763,8 @@ def resolve_compatible_release(
     selected: Version | None = None
     minimum_engine: str | None = None
     subject = f"versions of {wanted_pack}"
-    for entry in static_pack_releases(registry, timeout=timeout):
+    index = index or StaticPackIndex()
+    for entry in index.releases(registry, wanted_pack, timeout=timeout):
         if entry["name"] != wanted_pack:
             continue
         version, engine = entry.get("version"), entry.get("engine")
@@ -676,7 +794,12 @@ def resolve_compatible_release(
             f"compatible with engine {engine_version}{declaration}"
         )
     return resolve_release(
-        registry, wanted_pack, str(selected), engine_version=engine_version, timeout=timeout
+        registry,
+        wanted_pack,
+        str(selected),
+        engine_version=engine_version,
+        timeout=timeout,
+        index=index,
     )
 
 
@@ -736,6 +859,7 @@ def prepare_registry_sources(
     *,
     engine_version: str,
     allow_missing: bool = False,
+    index: StaticPackIndex | None = None,
 ) -> tuple[Lockfile, dict[str, str]]:
     """Resolve target-compatible sources without mutating any generation.
 
@@ -743,12 +867,15 @@ def prepare_registry_sources(
     Update requires the complete requested set before returning a source lock.
     """
     artifacts.mkdir(parents=True, exist_ok=True)
-    fetch = http_registry_fetcher(registry.endpoint, token=registry.token())
+    index = index or StaticPackIndex()
+    fetch = http_registry_fetcher(registry.endpoint, token=registry.token(), index=index)
     entries: list[LockedPack] = []
     unavailable: dict[str, str] = {}
     for pack, minimum in minimums.items():
         try:
-            selected = resolve_compatible_release(registry, pack, minimum, engine_version)
+            selected = resolve_compatible_release(
+                registry, pack, minimum, engine_version, index=index
+            )
             cached = pack_archive_path(artifacts, selected.artifact_digest)
             if cached.exists():
                 entry = registry_source_lock(selected, cached, engine_version=engine_version)
@@ -779,12 +906,14 @@ def prepare_registry_update_sources(
     *,
     engine_version: str,
     selected: NamedRegistry | None = None,
+    index: StaticPackIndex | None = None,
 ) -> Lockfile:
     """Re-resolve installed official registry packs without adding or dropping packs.
 
     Other selections remain unchanged for generation admission. Official registry
     selections cannot downgrade or switch their recorded source on engine update.
     """
+    index = index or StaticPackIndex()
     entries: list[LockedPack] = []
     for entry in installed.packs:
         if entry.publisher != "dinkster" or (
@@ -795,7 +924,11 @@ def prepare_registry_update_sources(
         try:
             registry = config.registry_for(entry, selected)
             lock, _ = prepare_registry_sources(
-                registry, {entry.pack: entry.version}, artifacts, engine_version=engine_version
+                registry,
+                {entry.pack: entry.version},
+                artifacts,
+                engine_version=engine_version,
+                index=index,
             )
             entries.extend(
                 replace(updated, source=entry.source) if entry.source != "registry" else updated
@@ -818,12 +951,14 @@ def prepare_registry_pack_locks(
     base_id: str,
     selected: NamedRegistry | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+    index: StaticPackIndex | None = None,
 ) -> tuple[Path, ...]:
     """Acquire published dependency locks for exact selected sources and base.
 
     Refuse the whole set before exposing output if any binding or bytes differ.
     No dependency resolution or generation mutation occurs here.
     """
+    index = index or StaticPackIndex()
     if output.exists():
         raise InstallError("published lock output directory already exists")
     if (
@@ -841,7 +976,9 @@ def prepare_registry_pack_locks(
                     raise InstallError(f"{entry.pack}: published lock requires registry provenance")
                 registry = config.registry_for(entry, selected)
                 subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
-                fields = static_pack_release(registry, entry.pack, entry.version, timeout=timeout)
+                fields = static_pack_release(
+                    registry, entry.pack, entry.version, timeout=timeout, index=index
+                )
                 wheel, wheel_digest = static_release_wheel(registry, fields)
                 bindings = fields.get("installLocks")
                 binding = (
