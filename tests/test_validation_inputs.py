@@ -185,9 +185,9 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert all(row["timeout-minutes"] == 30 for row in linux)
     windows = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "windows"]
     assert [(row["shard"], row["pytest_args"]) for row in windows] == [
-        (index, f"-p tools.pytest_file_shard --file-shard {index}/6") for index in range(1, 7)
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/10") for index in range(1, 11)
     ]
-    assert [row["run_checks"] for row in windows] == [False, False, True, False, False, False]
+    assert [row["run_checks"] for row in windows] == [True] + [False] * 9
     windows_run = next(step for step in root["steps"] if step.get("if") == "runner.os == 'Windows'")
     assert "--durations=0 --durations-min=0" in windows_run["run"]
     assert "--junitxml=test-results/windows-${{ matrix.shard }}.xml" in windows_run["run"]

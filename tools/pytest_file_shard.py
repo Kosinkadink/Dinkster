@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-_SHARD_COUNTS = frozenset({2, 3, 4, 6, 8, 12})
+_SHARD_COUNTS = frozenset({2, 3, 4, 6, 8, 10, 12})
 # The namespace balances whole files by the root suite's measured phase times.
 _HASH_PREFIX = b"dinkster-windows-pytest-v1:22340:"
 ALL_FILE_SHARDS_MARKER = "all_file_shards"
@@ -15,9 +15,12 @@ _EMPTY_SHARD = pytest.StashKey[bool]()
 
 def file_shard(path: str, count: int = 2) -> int:
     if count not in _SHARD_COUNTS:
-        raise ValueError("file shard count must be 2, 3, 4, 6, 8, or 12")
+        raise ValueError("file shard count must be 2, 3, 4, 6, 8, 10, or 12")
     # Three-way runtime placement balances native Windows durations independently of root shards.
     prefix = b"dinkster-windows-runtime-v1:4003:" if count == 3 else _HASH_PREFIX
+    if count == 10:
+        # Keep module fixtures together while balancing native Windows root durations.
+        prefix = b"dinkster-windows-root-v2:7970:"
     if count == 12:
         # Balance whole files against case-split Linux histories and generations.
         prefix = b"dinkster-root-pytest-v2:764:"
@@ -32,9 +35,11 @@ def parse_file_shard(value: str) -> tuple[int, int]:
     try:
         index, count = (int(part) for part in value.split("/", 1))
     except ValueError as exc:
-        raise ValueError("file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, 8, or 12") from exc
+        raise ValueError(
+            "file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, 8, 10, or 12"
+        ) from exc
     if count not in _SHARD_COUNTS or not 1 <= index <= count:
-        raise ValueError("file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, 8, or 12")
+        raise ValueError("file shard must be INDEX/COUNT, with COUNT 2, 3, 4, 6, 8, 10, or 12")
     return index, count
 
 
@@ -42,7 +47,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--file-shard",
         metavar="INDEX/COUNT",
-        help="run one of 2, 3, 4, 6, 8, or 12 shards (whole-file unless opted into case splitting)",
+        help=(
+            "run one of 2, 3, 4, 6, 8, 10, or 12 shards "
+            "(whole-file unless opted into case splitting)"
+        ),
     )
     parser.addoption(
         "--case-shard-file",
