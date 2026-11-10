@@ -165,3 +165,77 @@ def captured_development_sources(
                 raise EnvironmentError(f"development source changed during capture: {source}")
             roots[row["kind"]].append(target)
         yield roots["engine"][0], tuple(roots["pack"]), tuple(roots["library"])
+
+
+def prepare_development_packs(
+    generation: Path,
+    *,
+    packs: tuple[Path, ...],
+    libraries: tuple[Path, ...],
+    store: Path,
+    release: str,
+    selection: dict[str, Any],
+    in_process: tuple[str, ...] = (),
+) -> None:
+    """Use the ordinary pack provisioner with captured, generation-built inputs."""
+    from dinkster_store import object_path
+
+    from .environment_generations import pack_operation, prepare_pack_catalogs, stage_pack_sources
+    from .environment_local import run_local_command
+    from .environment_state import interpreter, write_document
+
+    artifacts = object_path(store / "engines", release) / "artifacts"
+    result = json.loads(
+        run_local_command(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster_workers.development_sources",
+            ],
+            cwd=generation,
+            input=json.dumps(
+                {
+                    "packs": [str(path) for path in packs],
+                    "packPaths": [
+                        row["path"]
+                        for row in selection["development"]["sources"]
+                        if row["kind"] == "pack"
+                    ],
+                    "libraries": [str(path) for path in libraries],
+                    "store": str(store),
+                    "artifacts": str(artifacts),
+                    "generation": str(generation),
+                    "variant": selection["variant"],
+                    "accelerator": "cpu"
+                    if selection["variant"].endswith("cpu")
+                    else "mps"
+                    if selection["platform"]["os"] == "macos"
+                    else "cuda",
+                    "index": "https://pypi.org/simple",
+                }
+            ),
+        )
+    )
+    locks = tuple(Path(path) for path in result["locks"])
+    for operation in ("preflight", "acquire", "rebuild", "doctor"):
+        pack_operation(
+            operation,
+            generation=generation,
+            store=store,
+            variant=selection["variant"],
+            worker_protocol=selection["workerProtocol"],
+            own_environment_size=0,
+            locks=locks if operation != "doctor" else (),
+            in_process_packs=in_process,
+            offline=operation != "acquire",
+        )
+    stage_pack_sources(
+        generation, catalog_lock=artifacts / "development-packs.lock", artifacts=artifacts
+    )
+    prepare_pack_catalogs(generation, in_process)
+    write_document(
+        generation / "development-sources.json",
+        {**selection["development"], "builtWheels": result["builtWheels"]},
+    )

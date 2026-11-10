@@ -408,6 +408,8 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
             "lock": selection["lockDigest"],
             "wheels": wheels,
         }
+        if "development" in selection:
+            release["development"] = selection["development"]
         release_id = (
             "sha256:" + hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
         )
