@@ -106,7 +106,8 @@ def test_hunyuan_720p_dispatch_derives_the_reference_config(monkeypatch, tmp_pat
         "dinkster_models.latent_upscale_loader._asset_path", lambda _: str(tmp_path / "model")
     )
     monkeypatch.setattr(
-        "dinkster_models.latent_upscale_loader.importlib.import_module", modules.__getitem__
+        "dinkster_models.latent_upscale_loader.importlib",
+        SimpleNamespace(import_module=modules.__getitem__),
     )
     result = LatentUpscaleModelLoader.execute(model_name=_Asset(tmp_path / "model"))
     assert isinstance(result["LATENT_UPSCALE_MODEL"], Model)
