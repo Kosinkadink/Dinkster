@@ -162,7 +162,9 @@ def main() -> int:
 
     return int(
         pytest.main(
-            ["-q", "--import-mode=importlib", *config["tests"]], plugins=[RequireExecutedTests()]
+            # The inline plugin owns per-test unavailable-export state in this process.
+            ["-q", "-n", "0", "--import-mode=importlib", *config["tests"]],
+            plugins=[RequireExecutedTests()],
         )
     )
 

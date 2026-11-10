@@ -69,6 +69,9 @@ unchanged by parallel execution.
 Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
 Do not use retries to hide a parallel-only failure. Package suites launched
 from their own project directory retain that project's pytest settings.
+Selected-archive admission is an explicit serial group: its inline plugin
+tracks unavailable exports and executed tests in the launcher's process.
+The selected tests and minimum-executed-test guard remain unchanged.
 
 ## Platform golden evidence
 
