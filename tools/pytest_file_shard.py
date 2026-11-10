@@ -95,9 +95,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     config.stash[_EMPTY_SHARD] = bool(deselected) and not selected
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error) -> None:
+    empty = error is None and node.workeroutput.get("empty_file_shard", False)
+    node.config.stash[_EMPTY_SHARD] = node.config.stash.get(_EMPTY_SHARD, True) and empty
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     # A populated package can legitimately assign all its files to other shards.
-    if exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED and session.config.stash.get(
-        _EMPTY_SHARD, False
-    ):
+    empty = session.config.stash.get(_EMPTY_SHARD, False)
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:
+        workeroutput["empty_file_shard"] = empty
+    if exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED and empty:
         session.exitstatus = pytest.ExitCode.OK
