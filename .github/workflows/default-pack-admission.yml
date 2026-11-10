@@ -186,9 +186,9 @@ jobs:
           TEST_PACKS: ${{ matrix.packs }}
         run: |
           arguments=()
-          while IFS= read -r name; do
+          while IFS= read -r -d '' name; do
             arguments+=(--pack "$name")
-          done < <(jq -r '.[]' <<< "$TEST_PACKS")
-          version=$(jq -r '.engineVersion' admission-sources/engine.json)
+          done < <(jq -j '.[] + "\u0000"' <<< "$TEST_PACKS")
+          version=$(jq -j '.engineVersion' admission-sources/engine.json)
           uv run --no-sync python -m scripts.check_default_pack_admission \
             --engine-version "$version" --prepared-sources admission-sources "${arguments[@]}"
