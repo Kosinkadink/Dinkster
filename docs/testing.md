@@ -148,7 +148,7 @@ The selections and setup commands in
 | Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, generations, history and transactions split by sorted test ID, other files stay whole |
 | CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
-| Probe jail | Live jail and jailed-doctor contracts in the configured Linux isolation environment |
+| Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |
 | Coverage gate | All twelve Linux and eight Windows runtime coverage files combined; `coverage report --fail-under=80` |
 
 Build the CPU runtime with
