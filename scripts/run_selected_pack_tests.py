@@ -82,6 +82,7 @@ _SUITES = {
         "tests/test_save_text.py",
         "tests/test_text_comfy_goldens.py",
     ),
+    "dinkster-nodes-dev": ("tests/test_gallery.py",),
 }
 
 

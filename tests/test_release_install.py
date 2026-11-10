@@ -31,6 +31,7 @@ from scripts.build_release import (
     release_version,
     select_dependency_wheels,
     versioned_sources,
+    wheel_metadata,
     workspace_projects,
     write_constraints,
 )
@@ -3148,6 +3149,11 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
     if problem == "candidate":
         monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.4.dev456")
+        monkeypatch.setattr(
+            preparation,
+            "versioned_sources",
+            lambda root, version: versioned_sources(ROOT, version),
+        )
 
         def candidate_wheels(root, uv, bases):
             assert root == tmp_path and uv == "uv" and len(bases) == 2
@@ -3190,7 +3196,15 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert manifest["dependencies"] == candidate_dependencies
                 assert manifest["version"] == "0.0.4.dev456"
                 assert manifest["commit"] == "c" * 40
-                assert manifest["artifacts"] == []
+                api = work / "engine/dinkster_api-0.0.4.dev456-py3-none-any.whl"
+                assert wheel_metadata(api) == ("dinkster-api", "0.0.4.dev456")
+                assert manifest["artifacts"] == [
+                    {
+                        "name": api.name,
+                        "size": api.stat().st_size,
+                        "sha256": hashlib.sha256(api.read_bytes()).hexdigest(),
+                    }
+                ]
             else:
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
