@@ -15,7 +15,7 @@ from graphlib import TopologicalSorter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from dinkster_registry import Lockfile, unpack_artifact
+from dinkster_registry import LockedPack, Lockfile, unpack_artifact
 from dinkster_registry.archive_admission import (
     ProbeSettings,
     StageResult,
@@ -122,19 +122,35 @@ def prepare_library_sources(
     }
     index = StaticPackIndex()
     library_names: set[str] | None = None
-    requirements: dict[str, list[Requirement]] = {}
-    pending = list(catalog.packs)
+    root_requirements: list[str] = []
+    metadata: dict[str, tuple[str, ...]] = {}
     with tempfile.TemporaryDirectory(prefix="admission-library-sources-") as directory:
-        for pack in pending:
+        for pack in catalog.packs:
             archive = pack_archive_path(artifacts, pack.artifact_digest)
             if pack.pack in libraries:
-                _, _, requires = library_metadata(archive)
+                metadata[pack.artifact_digest] = library_metadata(archive)[2]
             else:
                 source = unpack_artifact(archive, Path(directory) / pack.pack, pack.artifact_digest)
-                requires = load_manifest(pack_manifest_path(source)).requires_for("cpu")
-            for value in requires:
+                root_requirements.extend(
+                    load_manifest(pack_manifest_path(source)).requires_for("cpu")
+                )
+
+    failure = ""
+
+    def resolve(selected: dict[str, LockedPack]) -> dict[str, LockedPack] | None:
+        nonlocal library_names, failure
+        requirements: dict[str, set[str]] = {}
+        extras = {name: set() for name in libraries}
+        pending = list(libraries)
+        examined: dict[str, frozenset[str]] = {}
+
+        def require(values: tuple[str, ...] | list[str], active_extras: set[str]) -> None:
+            nonlocal library_names
+            for value in values:
                 requirement = Requirement(value)
-                if requirement.marker and not requirement.marker.evaluate():
+                if requirement.marker and not any(
+                    requirement.marker.evaluate({"extra": extra}) for extra in {"", *active_extras}
+                ):
                     continue
                 name = canonicalize_name(requirement.name)
                 if name in entries and name not in libraries:
@@ -148,42 +164,66 @@ def prepare_library_sources(
                         }
                     if name not in library_names:
                         continue
-                requirements.setdefault(name, []).append(requirement)
-                ranges = ",".join(str(item.specifier) for item in requirements[name])
                 if requirement.url is not None:
                     raise ValueError(f"registry library {name} must use a version range")
-                if name in entries:
-                    if not SpecifierSet(ranges).contains(entries[name].version, prereleases=True):
-                        raise ValueError(
-                            f"registry library {name}@{entries[name].version} "
-                            f"does not satisfy {ranges}"
-                        )
-                    continue
-                versions = [
-                    str(row["version"])
-                    for row in index.releases(registry, name)
-                    if row.get("library") is True
-                    and SpecifierSet(ranges).contains(str(row["version"]), prereleases=True)
-                ]
-                if not versions:
-                    raise ValueError(
-                        f"registry library {name} has no compatible release for {ranges}"
-                    )
-                selected = resolve_release(registry, name, max(versions, key=Version), index=index)
-                archive = pack_archive_path(artifacts, selected.artifact_digest)
+                requirements.setdefault(name, set()).add(str(requirement.specifier))
+                extras.setdefault(name, set()).update(requirement.extras)
+                if name in selected and examined.get(name) != frozenset(extras[name]):
+                    pending.append(name)
+
+        require(root_requirements, set())
+        for name in pending:
+            if examined.get(name) == frozenset(extras[name]):
+                continue
+            examined[name] = frozenset(extras[name])
+            require(metadata[selected[name].artifact_digest], extras[name])
+
+        for name, specifiers in sorted(requirements.items()):
+            ranges = ",".join(sorted(specifiers))
+            if name in selected and not SpecifierSet(ranges).contains(
+                selected[name].version, prereleases=True
+            ):
+                failure = f"registry library {name} has no compatible release for {ranges}"
+                return None
+        unresolved = sorted(requirements.keys() - selected.keys())
+        if not unresolved:
+            return selected
+        name = unresolved[0]
+        ranges = ",".join(sorted(requirements[name]))
+        versions = sorted(
+            (
+                str(row["version"])
+                for row in index.releases(registry, name, include_libraries=True)
+                if row.get("library") is True
+                and SpecifierSet(ranges).contains(str(row["version"]), prereleases=True)
+            ),
+            key=Version,
+            reverse=True,
+        )
+        if not versions:
+            failure = f"registry library {name} has no compatible release for {ranges}"
+        for version in versions:
+            entry = resolve_release(registry, name, version, index=index)
+            if entry.artifact_digest not in metadata:
+                archive = pack_archive_path(artifacts, entry.artifact_digest)
                 archive.parent.mkdir(parents=True, exist_ok=True)
                 archive.write_bytes(
                     http_registry_fetcher(registry.endpoint, token=registry.token(), index=index)(
-                        selected
+                        entry
                     )
                 )
-                verified = selected_library_wheels(Lockfile.of([selected]), artifacts)
+                verified = selected_library_wheels(Lockfile.of([entry]), artifacts)
                 if name not in verified:
                     raise ValueError(f"registry library {name} contains a node manifest")
-                libraries.update(verified)
-                entries[name] = selected
-                pending.append(selected)
-    return Lockfile.of(entries.values())
+                metadata[entry.artifact_digest] = library_metadata(archive)[2]
+            if resolved := resolve({**selected, name: entry}):
+                return resolved
+        return None
+
+    resolved = resolve(entries)
+    if resolved is None:
+        raise ValueError(failure)
+    return Lockfile.of(resolved.values())
 
 
 def check_defaults(
