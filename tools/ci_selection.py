@@ -50,7 +50,7 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     changed = {
         path
         for path in projects
-        if any(name.startswith(f"{path.relative_to(root)}/") for name in code)
+        if any(name.startswith(f"{path.relative_to(root).as_posix()}/") for name in code)
     }
     library_paths = {
         path
@@ -90,7 +90,9 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
         shared
         or bool(changed & library_paths)
         or any(
-            not any(path.startswith(f"{package.relative_to(root)}/") for package in owned)
+            not any(
+                path.startswith(f"{package.relative_to(root).as_posix()}/") for package in owned
+            )
             for path in code
         )
     )
@@ -101,7 +103,7 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
         "runtime": shared
         or "tests/test_remote.py" in code
         or any(runtime_path(path) for path in code),
-        "packs": sorted(str(path.relative_to(root)) for path in selected & tested),
+        "packs": sorted(path.relative_to(root).as_posix() for path in selected & tested),
     }
 
 
