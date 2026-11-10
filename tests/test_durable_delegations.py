@@ -1,11 +1,15 @@
 import asyncio
+import cProfile
 import hashlib
+import io
 import os
+import pstats
 import socket
 import sqlite3
 import subprocess
 import sys
 import time
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -366,7 +370,22 @@ def test_fresher_user_jwt_replaces_original_expiry_and_role_ceiling(tmp_path: Pa
     run_scenario(scenario())
 
 
-def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
+def test_persisted_unrevoked_delegation_caps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    latencies: list[float] = []
+    original_mint = mint
+
+    async def measured_mint(
+        client: TestClient, human: dict[str, str], **options: object
+    ) -> dict[str, object]:
+        started = time.perf_counter()
+        result = await original_mint(client, human, **options)
+        latencies.append(time.perf_counter() - started)
+        return result
+
+    monkeypatch.setitem(globals(), "mint", measured_mint)
+
     async def scenario() -> None:
         async with identity() as (key, url):
             first = human_headers(key)
@@ -411,7 +430,23 @@ def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
                         == 4096
                     )
 
-    run_scenario(scenario())
+    started = time.perf_counter()
+    profile = cProfile.Profile()
+    try:
+        with profile:
+            run_scenario(scenario())
+    finally:
+        output = io.StringIO()
+        pstats.Stats(profile, stream=output).sort_stats("cumulative").print_stats(
+            "sqlite3|auth.py.*mint|test_durable_delegations.py.*scenario", 15
+        )
+        warnings.warn(
+            f"delegation cap profile: elapsed={time.perf_counter() - started:.6f}s "
+            f"completed_mints={len(latencies)} total_mint_seconds={sum(latencies):.6f} "
+            f"mean_mint_seconds={sum(latencies) / len(latencies) if latencies else 0:.6f}\n"
+            + output.getvalue(),
+            stacklevel=1,
+        )
 
 
 def test_auth_off_agents_do_not_need_a_fresh_jwt(
