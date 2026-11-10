@@ -852,6 +852,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
 
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_registry.archive_admission import StageResult
+    from dinkster_store import pack_archive_path, pack_label
     from dinkster_workers import load_manifest
     from dinkster_workers.pack_wheel import wheel_filename
 
@@ -900,9 +901,11 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         # The candidate has no registry release: requesting it would fail here.
         assert minimums == {"unchanged": "1.0"}
         entry = entries["unchanged"]
-        (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
-            archives["unchanged"]
+        archive = pack_archive_path(
+            artifacts, entry.artifact_digest, label=pack_label(entry.pack, entry.version)
         )
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(archives["unchanged"])
         return Lockfile.of([entry]), {}
 
     observed = []
@@ -936,6 +939,28 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             "unchanged",
         ]
         assert not observed
+        import yaml
+
+        workflow = yaml.safe_load(
+            (
+                Path(admission.__file__).resolve().parents[1]
+                / ".github/workflows/default-pack-admission.yml"
+            ).read_text()
+        )
+        upload = next(
+            step["with"]
+            for step in workflow["jobs"]["prepare"]["steps"]
+            if step.get("uses") == "actions/upload-artifact@v4"
+        )
+        transferred = tmp_path / "transferred"
+        shutil.copytree(
+            prepared,
+            transferred,
+            ignore=None
+            if upload.get("include-hidden-files", False)
+            else shutil.ignore_patterns(".*"),
+        )
+        prepared = transferred
         if problem == "engine-version":
             metadata = json.loads((prepared / "engine.json").read_text())
             metadata["engineVersion"] = "0.3"

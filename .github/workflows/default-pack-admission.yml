@@ -143,6 +143,7 @@ jobs:
         with:
           name: default-admission-sources
           path: admission-sources
+          include-hidden-files: true
           retention-days: 1
 
   admission:
