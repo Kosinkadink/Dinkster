@@ -531,6 +531,11 @@ def test_transitive_api_constraints_and_legacy_exact_locks_remain_binding(tmp_pa
         "value = 13\n",
         requires=("dinkster-api==0.0.3.dev235",),
     )
+    with zipfile.ZipFile(tmp_path / "fixture_extra-1.2-py3-none-any.whl", "a") as archive:
+        archive.writestr(
+            "fixture_extra/_vendor/other-1.0.dist-info/METADATA",
+            "Name: other\nVersion: 1.0\nRequires-Dist: dinkster-api==99\n",
+        )
     parent = _generation(tmp_path / "generation", [api])
     constraints = tmp_path / "constraints.txt"
     constraints.write_text("dinkster-api==0.0.3.dev235\n")

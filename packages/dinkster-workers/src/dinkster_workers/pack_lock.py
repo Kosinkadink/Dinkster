@@ -97,7 +97,9 @@ def _wheel_requirements(wheel: LockedWheel) -> tuple[str, ...]:
             source.seek(0)
             with zipfile.ZipFile(source) as archive:
                 names = [
-                    name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+                    name
+                    for name in archive.namelist()
+                    if name.endswith(".dist-info/METADATA") and len(name.split("/")) == 2
                 ]
                 if len(names) != 1:
                     raise ProvisionError(
