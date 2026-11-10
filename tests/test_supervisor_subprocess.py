@@ -220,9 +220,7 @@ def test_nested_child_state_and_stack_at_timeout(
     )
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     # Killing a Windows venv launcher can leave its interpreter holding the output pipes.
-    parent_python = (
-        str(vars(sys)["_base_executable"]) if sys.platform == "win32" else sys.executable
-    )
+    parent_python = str(vars(sys)["_base_executable"])
 
     def ready(process: subprocess.Popen[str]) -> None:
         directory = Path(cast(list[str], process.args)[4])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import faulthandler
+import importlib.util
 import json
 import os
 import runpy
@@ -22,6 +23,10 @@ operation_reports: list[str] = []
 
 @contextmanager
 def _trace_operations(path: Path):
+    # Diagnostic parents can use a base interpreter without supervisor packages.
+    if importlib.util.find_spec("dinkster_supervisor") is None:
+        yield
+        return
     from dinkster_supervisor import (
         environment_archives,
         environment_artifacts,
