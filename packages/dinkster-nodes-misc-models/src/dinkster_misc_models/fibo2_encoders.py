@@ -27,7 +27,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_image,
 )
-from dinkster_conditioning.conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 TEXT_IMAGES_START = math.exp(1.15) / (9 + math.exp(1.15))
 

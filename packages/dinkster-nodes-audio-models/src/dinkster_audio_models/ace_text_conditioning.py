@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
     first_party_schema,
     initialize_inference_process,
 )
-from dinkster_conditioning.conditioning import conditioning_set_values
+from dinkster_pack_helpers.conditioning import conditioning_set_values
 
 _CATEGORY = "model/conditioning/ace"
 

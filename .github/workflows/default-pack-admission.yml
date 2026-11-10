@@ -6,13 +6,28 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
+    paths:
+      - .github/workflows/default-pack-admission.yml
+      - scripts/check_default_pack_admission.py
+      - scripts/run_selected_pack_tests.py
+      - scripts/_selected_pack_test_child.py
+      - scripts/setup_probe_jail.sh
+      - packages/dinkster-registry/src/dinkster_registry/*admission.py
+      - packages/dinkster-workers/src/dinkster_workers/pack_wheel.py
+      - packages/dinkster-workers/src/dinkster_workers/sandbox*
+      - packages/dinkster-workers/src/dinkster_workers/doctor*
+      - tests/test_archive_admission.py
+      - tests/test_pack_archive.py
+      - tests/test_pack_wheel.py
+      - tests/test_sandbox.py
+      - tests/test_doctor.py
 
 permissions:
   contents: read
 
 concurrency:
   group: default-pack-admission-${{ github.event.workflow_run.id || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   select:

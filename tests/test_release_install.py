@@ -189,12 +189,38 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
     assert workflow["jobs"]["validation"] == {
         "needs": "changes",
-        "if": "needs.changes.outputs.engine == 'true'",
+        "if": "needs.changes.outputs.engine == 'true' && startsWith(github.ref, 'refs/tags/v')",
         "uses": "./.github/workflows/ci.yml",
     }
-    assert workflow["jobs"]["build"]["needs"] == "validation"
+    assert workflow["jobs"]["build"]["needs"] == ["changes", "validation"]
+    assert workflow["jobs"]["build"]["if"] == (
+        "always() && !cancelled() && needs.changes.outputs.engine == 'true' && "
+        "(needs.validation.result == 'success' || (needs.validation.result == 'skipped' && "
+        "(github.event_name == 'pull_request' || "
+        "(github.event_name == 'push' && github.ref == 'refs/heads/main'))))"
+    )
     assert workflow["jobs"]["finalize"]["needs"] == "build"
+    assert workflow["jobs"]["finalize"]["if"] == (
+        "${{ !cancelled() && needs.build.result == 'success' }}"
+    )
     assert workflow["jobs"]["install"]["needs"] == "finalize"
+    assert workflow["jobs"]["install"]["if"] == (
+        "${{ !cancelled() && needs.finalize.result == 'success' }}"
+    )
+    from types import SimpleNamespace
+
+    for job, parent in (("finalize", "build"), ("install", "finalize")):
+        condition = workflow["jobs"][job]["if"].removeprefix("${{").removesuffix("}}")
+        condition = condition.replace("&&", " and ").replace("!", "not ").strip()
+        for result in ("success", "failure", "skipped"):
+            for cancelled in (False, True):
+                assert eval(
+                    condition,
+                    {
+                        "needs": SimpleNamespace(**{parent: SimpleNamespace(result=result)}),
+                        "cancelled": lambda cancelled=cancelled: cancelled,
+                    },
+                ) is (result == "success" and not cancelled)
     commands = "\n".join(
         step.get("run", "") for job in workflow["jobs"].values() for step in job.get("steps", [])
     )
@@ -215,12 +241,16 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         ]
         assert downloads == ["engine-release"]
     assert workflow["jobs"]["release"]["needs"] == "install"
-    assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
+    assert workflow["jobs"]["release"]["if"] == (
+        "${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}"
+    )
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     channel = workflow["jobs"]["channel"]
     assert channel["needs"] == "release"
     assert channel["permissions"] == {"contents": "write"}
-    assert channel["if"] == "github.event_name == 'push'"
+    assert channel["if"] == (
+        "${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' }}"
+    )
     assert channel["concurrency"]["cancel-in-progress"] is False
     publication = next(
         step
@@ -364,10 +394,15 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     job: str, project: str, environment: str, tmp_path: Path
 ) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
+    assert workflow["jobs"]["release"]["if"] == (
+        "${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}"
+    )
     publish = workflow["jobs"][job]
     assert publish["needs"] == "release"
-    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert publish["if"] == (
+        "${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' "
+        "&& startsWith(github.ref, 'refs/tags/v') }}"
+    )
     assert "pypi.org/pypi/" not in json.dumps(workflow)
     assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
@@ -732,7 +767,9 @@ def test_probe_jail_is_configured_before_live_tests_and_required_by_main() -> No
     assert 'test "$PROBE_JAIL_RESULT" = success' in gate["run"]
     fast = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     assert all(
-        "setup_probe_jail.sh" not in step.get("run", "") for step in fast["jobs"]["fast"]["steps"]
+        "setup_probe_jail.sh" not in step.get("run", "")
+        for job in fast["jobs"].values()
+        for step in job["steps"]
     )
 
 
@@ -816,6 +853,12 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
     package.write_text('[project]\nname = "one"\nversion = "1.2.4"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="one=1.2.4"):
         release_version(tmp_path, "v1.2.3")
+    metadata = package.read_text()
+    package.write_text(metadata + "\n[tool.dinkster]\nofficial-library = true\n")
+    assert release_version(tmp_path, "v1.2.3") == "1.2.3"
+    package.write_text(metadata + "\n[tool.dinkster]\nofficial-library = false\n")
+    with pytest.raises(ValueError, match="one=1.2.4"):
+        release_version(tmp_path, "v1.2.3")
 
 
 @pytest.mark.parametrize(
@@ -868,6 +911,18 @@ def test_engine_publication_ignores_only_supervisor_changes(
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.2") == "0.0.2"
+    subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            "from pathlib import Path; from scripts.build_release import release_version; "
+            "assert release_version(Path.cwd(), 'v0.0.2') == '0.0.2'",
+        ],
+        cwd=ROOT,
+        check=True,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+    )
     with pytest.raises(ValueError, match="does not match workspace metadata"):
         release_version(ROOT, "v0.0.1")
     projects = workspace_projects(ROOT)
@@ -935,6 +990,14 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             )["project"]["version"]
             actual = tomllib.loads((staged / relative).read_text())["project"]["version"]
             assert actual == (committed if member in {"remote", "image"} else version)
+        helper = tomllib.loads(
+            (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
+        )["project"]
+        assert helper["version"] == "0.0.1"
+        models = tomllib.loads(
+            (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
+        )["project"]
+        assert "dinkster-pack-helpers==0.0.1" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -2764,7 +2827,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.3")
+                ("dinkster-image", "0.0.4")
             ]
     finally:
         server.shutdown()

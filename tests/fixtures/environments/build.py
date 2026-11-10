@@ -56,7 +56,12 @@ def wheel(
                 for module in sorted(source.rglob("*.py")):
                     relative = module.relative_to(source)
                     if relative != Path("serve.py"):
-                        archive.writestr(f"dinkster/{relative.as_posix()}", module.read_bytes())
+                        archive.writestr(
+                            f"dinkster/{relative.as_posix()}",
+                            f"__version__ = {version!r}\n".encode("ascii")
+                            if relative == Path("__init__.py")
+                            else module.read_bytes(),
+                        )
                 return path
             archive.writestr("dinkster/__init__.py", "")
             archive.writestr(

@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-models"
-version = "0.0.2"
+version = "0.0.3"
 description = "First-party Dinkster models nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -8,6 +8,7 @@ dependencies = [
     "torch",
     "comfy-kitchen",
     "dinkster-inference==0.1.1",
+    "dinkster-pack-helpers>=0.0.1,<1",
 ]
 
 [build-system]
@@ -24,3 +25,4 @@ packages = ["src/dinkster_models"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
+dinkster-pack-helpers = { workspace = true }
