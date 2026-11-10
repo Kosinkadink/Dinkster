@@ -51,6 +51,7 @@ def select_packs(
     before: str | None = None,
     tag: str | None = None,
     version_changes_only: bool = False,
+    exclude_tests: bool = False,
 ) -> tuple[str, ...]:
     """Read committed manifests only; an engine-only push selects no pack."""
     if (before is None) == (tag is None):
@@ -132,6 +133,13 @@ def select_packs(
     selected = set()
     for name in filter(None, changed):
         path = PurePosixPath(name)
+        # Official node wheels remove tests; library payloads come from their backend.
+        if (
+            exclude_tests
+            and "tests" in path.parts[2:]
+            and not any(path.is_relative_to(packs[library][0]) for library in libraries)
+        ):
+            continue
         matching = {
             pack
             for pack, (directory, source, _) in packs.items()
