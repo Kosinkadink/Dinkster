@@ -70,7 +70,7 @@ def verify(wheels: Path) -> None:
             cwd=work,
             check=True,
         )
-        shutil.copyfile(example / "example.py", work / "test_pack.py")
+        shutil.copyfile(example / "tests/example.py", work / "test_pack.py")
         env = dict(os.environ)
         env.pop("PYTHONPATH", None)
         env.pop("PACK_TEST_IN_PROCESS", None)

@@ -1049,6 +1049,8 @@ Gate CI on `uv run --no-sync dinkster-doctor .` as its own step (see the
 Don't import the doctor from your tests: tests live in the pack
 directory, so they hold to the same one-door rule as the rest of your code,
 with `dinkster_engine.testing` the explicit testing exception;
+only `from dinkster_engine.testing import load_pack` is permitted, in `tests/`
+and not in runtime node modules.
 `dinkster_workers` remains host machinery. Doctor and the registry never run
 node bodies. For golden-file testing of schema
 wire output, encode with `schema_to_wire` (exported through

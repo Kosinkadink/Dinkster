@@ -868,14 +868,43 @@ def test_environment_checks_are_advisory_and_gpu_free(
     assert any(f.severity == "error" for f in report.findings)
 
 
-def test_public_pack_testing_import_is_allowed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("test_path", ["tests/test_nodes.py", "tests/fixtures.py"])
+def test_public_pack_testing_import_is_allowed(tmp_path: Path, test_path: str) -> None:
     manifest = write_pack(tmp_path / "tested", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
-    tests = manifest.parent / "tests"
-    tests.mkdir()
-    (tests / "test_nodes.py").write_text("from dinkster_engine.testing import load_pack\n")
+    test_source = manifest.parent / test_path
+    test_source.parent.mkdir(parents=True, exist_ok=True)
+    test_source.write_text("from dinkster_engine.testing import load_pack as tested_pack\n")
     report = diagnose(manifest)
     assert report.ok, render_text(report)
     assert not [finding for finding in report.findings if finding.code.startswith("imports.")]
+
+
+@pytest.mark.parametrize(
+    ("source_path", "import_statement"),
+    [
+        ("healthy_nodes/__init__.py", "from dinkster_engine.testing import load_pack"),
+        ("healthy_nodes/__init__.py", "import dinkster_engine.testing"),
+        ("tests/test_nodes.py", "from dinkster_engine.testing import Engine"),
+        ("tests/test_nodes.py", "from dinkster_engine.testing import IsolatedWorker"),
+        ("tests/test_nodes.py", "from dinkster_engine.testing import load_pack, Engine"),
+        ("tests/test_nodes.py", "from dinkster_engine.testing import *"),
+        ("tests/test_nodes.py", "import dinkster_engine.testing"),
+    ],
+)
+def test_pack_testing_exception_preserves_host_import_boundary(
+    tmp_path: Path, source_path: str, import_statement: str
+) -> None:
+    manifest = write_pack(tmp_path / "tested", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
+    source = manifest.parent / source_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(import_statement + "\n" + HEALTHY_NODES)
+    report = diagnose_static(manifest.parent, load_manifest(manifest))
+    assert any(
+        finding.code == "imports.host-machinery"
+        and finding.severity == "error"
+        and finding.location == str(Path(source_path)) + ":1"
+        for finding in report.findings
+    )
 
 
 def test_private_and_host_imports_are_errors(tmp_path: Path) -> None:

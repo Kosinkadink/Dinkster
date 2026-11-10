@@ -1,4 +1,4 @@
-"""Run unchanged tests with a shared worker or the explicit in-process opt-out."""
+"""Test the installed pack with a shared worker or the explicit in-process opt-out."""
 
 import importlib.util
 import os
