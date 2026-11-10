@@ -20,6 +20,10 @@
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
+- Dependency locks declaring engine API compatibility can layer unchanged on
+  later engines inside that range. The target must supply the API, and all
+  ordinary shared dependency versions must still agree exactly. Older exact
+  locks retain their exact-version requirements.
 - Published software history can rebuild a pruned generation without restoring
   workflows, models or outputs. Missing engine inputs expose read-only alternatives
   and all substitutions before a proposal-specific approval; `--yes` alone cannot

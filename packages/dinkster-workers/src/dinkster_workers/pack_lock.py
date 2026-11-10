@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import email
 import hashlib
+import io
 import json
 import re
 import subprocess
 import tempfile
 import tomllib
 import urllib.request
+import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -85,21 +88,38 @@ class PackLock:
     requirements: tuple[str, ...]
     indexes: tuple[str, ...]
     packages: tuple[LockedDistribution, ...]
+    engine: str | None = None
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", self.pack):
             raise ProvisionError("invalid pack identity")
         SpecifierSet(self.requires_python)
+        if self.engine is not None:
+            if not self.engine:
+                raise ProvisionError("engine API requires a nonempty compatibility range")
+            SpecifierSet(self.engine)
+            if any(package.name == "dinkster-api" for package in self.packages):
+                raise ProvisionError("engine API must not also be an exact lock package")
         names = [package.name for package in self.packages]
         if len(names) != len(set(names)):
             raise ProvisionError("duplicate package in dependency lock")
         for requirement in self.requirements:
             if normalize_requirement(requirement) != requirement:
                 raise ProvisionError(f"unnormalized lock requirement: {requirement}")
+            parsed = Requirement(requirement)
+            if self.engine is not None and canonicalize_name(parsed.name) == "dinkster-api":
+                if parsed.url or parsed.extras or parsed.marker:
+                    raise ProvisionError(
+                        "engine API requirements must be unconditional version ranges"
+                    )
 
     def write(self, path: Path) -> None:
         data = asdict(self)
-        data["format"] = "dinkster.pack-lock/1"
+        data["format"] = (
+            "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
+        )
+        if self.engine is None:
+            data.pop("engine")
         data["requiresPython"] = data.pop("requires_python")
         path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="ascii")
 
@@ -110,8 +130,12 @@ class PackLock:
             if not isinstance(raw, dict):
                 raise ValueError("dependency lock must be an object")
             data = cast("dict[str, Any]", raw)
-            if data.pop("format") != "dinkster.pack-lock/1":
+            format = data.pop("format")
+            if format not in {"dinkster.pack-lock/1", "dinkster.pack-lock/2"}:
                 raise ValueError("unsupported dependency lock format")
+            engine = data["engine"] if format == "dinkster.pack-lock/2" else None
+            if format == "dinkster.pack-lock/2" and not isinstance(engine, str):
+                raise ValueError("engine compatibility range must be a string")
             return cls(
                 pack=data["pack"],
                 variant=data["variant"],
@@ -126,6 +150,7 @@ class PackLock:
                     )
                     for item in data["packages"]
                 ),
+                engine=engine,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ProvisionError(f"invalid dependency lock {path}: {exc}") from exc
@@ -194,7 +219,7 @@ def plan_pack(
     variant: str,
     own_environment_size: int,
 ) -> PackPlan:
-    """Subtract shared distributions only after checking exact version agreement."""
+    """Check engine compatibility and exact agreement for shared dependencies."""
     conflicts: list[str] = []
     wheels: list[LockedWheel] = []
     if lock.variant != variant:
@@ -204,13 +229,27 @@ def plan_pack(
             f"Python {generation.python_version} does not satisfy {lock.requires_python}"
         )
     versions = {package.name: package.version for package in lock.packages}
+    if lock.engine is not None:
+        api_version = generation.versions.get("dinkster-api")
+        if api_version is None or not SpecifierSet(lock.engine).contains(
+            api_version, prereleases=True
+        ):
+            conflicts.append(
+                f"dinkster-api: generation has {api_version or 'absent'}, "
+                f"engine needs {lock.engine}"
+            )
+        if api_version is not None:
+            versions["dinkster-api"] = api_version
     for text in lock.requirements:
         requirement = Requirement(text)
         if requirement.marker and not requirement.marker.evaluate(dict(generation.markers)):
             continue
         name = canonicalize_name(requirement.name)
         version = versions.get(name)
-        if version is None or not requirement.specifier.contains(version):
+        if version is None or not requirement.specifier.contains(
+            version,
+            prereleases=True if lock.engine is not None and name == "dinkster-api" else None,
+        ):
             conflicts.append(f"{text} is not satisfied by the pack lock")
     for package in lock.packages:
         base_version = generation.versions.get(package.name)
@@ -244,6 +283,7 @@ def resolve_pack_lock(
     indexes: Sequence[str] = (),
     find_links: Sequence[Path] = (),
     requires_python: str = ">=3.12",
+    engine: str | None = None,
     uv: str = "uv",
 ) -> PackLock:
     """Publisher/local-only resolution; published installation never calls this."""
@@ -321,7 +361,46 @@ def resolve_pack_lock(
                     tuple(candidates),
                 )
             )
-    return PackLock(pack, variant, requires_python, normalized, tuple(indexes), tuple(packages))
+    if engine is not None and any(package.name == "dinkster-api" for package in packages):
+        # Preserve transitive API constraints when replacing the resolved build
+        # with the generation's API. Other dependencies stay exactly locked.
+        api_requirements = set()
+        for package in packages:
+            if package.name == "dinkster-api":
+                continue
+            for wheel in package.wheels:
+                parsed = urlparse(wheel.url)
+                archive_source: Path | io.BytesIO
+                if parsed.scheme == "file":
+                    archive_source = Path(urllib.request.url2pathname(parsed.path))
+                else:
+                    with urllib.request.urlopen(wheel.url) as stream:
+                        content = stream.read()
+                    if (
+                        len(content) != wheel.size
+                        or hashlib.sha256(content).hexdigest() != wheel.sha256
+                    ):
+                        raise ProvisionError(f"resolved wheel hash mismatch: {wheel.url}")
+                    archive_source = io.BytesIO(content)
+                with zipfile.ZipFile(archive_source) as archive:
+                    metadata_names = [
+                        name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+                    ]
+                    if len(metadata_names) != 1:
+                        raise ProvisionError(
+                            f"wheel requires one distribution metadata: {wheel.filename}"
+                        )
+                    metadata = email.message_from_bytes(archive.read(metadata_names[0]))
+                for text in metadata.get_all("Requires-Dist", []):
+                    if canonicalize_name(Requirement(text).name) == "dinkster-api":
+                        api_requirements.add(normalize_requirement(text))
+        normalized = tuple(dict.fromkeys((*normalized, *sorted(api_requirements))))
+        packages = [package for package in packages if package.name != "dinkster-api"]
+    else:
+        engine = None
+    return PackLock(
+        pack, variant, requires_python, normalized, tuple(indexes), tuple(packages), engine
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -350,6 +429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         indexes=args.index,
         find_links=args.find_links,
         requires_python=args.requires_python,
+        engine=manifest.compatibility.engine if manifest.compatibility else None,
         uv=args.uv,
     )
     lock.write(args.output)
