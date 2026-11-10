@@ -144,11 +144,11 @@ The selections and setup commands in
 | --- | --- |
 | Linux CPython 3.12 root | All six `test` file shards, with the workflow's branch-coverage sources and exclusions |
 | Windows CPython 3.14.10 root | All six `test` file shards in a native Windows checkout, excluding the separate runtime selection and using the patched SQLite runtime |
-| Windows CPython 3.14.10 runtime | All four `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; history is in job 4 |
+| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, generations, history and transactions split by sorted test ID, other files stay whole |
 | CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Probe jail | Live jail and jailed-doctor contracts in the configured Linux isolation environment |
-| Coverage gate | All six Linux and four Windows runtime coverage files combined; `coverage report --fail-under=80` |
+| Coverage gate | All six Linux and eight Windows runtime coverage files combined; `coverage report --fail-under=80` |
 
 Build the CPU runtime with
 `uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
@@ -251,7 +251,7 @@ supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 
 The counted root command above uses the same branch-coverage source list as
 the hosted Linux root and Windows runtime jobs. Hosted coverage combines all
-six Linux and four Windows runtime artifacts before running
+Linux root and Windows runtime artifacts in the matrix above before running
 `coverage report --fail-under=80`; a missing artifact or failed shard fails
 the gate. A local root report alone is not the combined hosted result.
 
