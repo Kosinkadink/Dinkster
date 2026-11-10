@@ -14,13 +14,27 @@ import pytest
 
 
 def _pack_registry(source: str, schema: dict[str, Any]) -> dict[str, Any]:
-    from tools.compare_nodes import ID_TABLE
+    from dinkster_schema import schema_to_wire
+    from dinkster_workers import load_manifest
+    from dinkster_workers.manifest import resolve_entry
 
-    entries = json.loads(ID_TABLE.read_text())["nodes"]
-    entry = next((row for row in entries if row["from"] == source), None)
-    if entry is not None:
-        schema.update(nodeType=entry["nodeType"], pack=entry["pack"])
-        schema["displayName"] = schema.get("displayName") or source
+    from dinkster.compose import default_pack_specs
+
+    for spec in default_pack_specs():
+        manifest = load_manifest(spec.manifest)
+        nodes = resolve_entry(manifest.nodes_entry)
+        assert isinstance(nodes, (list, tuple))
+        for node in nodes:
+            authored = node.schema()
+            if any(rule.from_type == source for rule in authored.replacements):
+                declared = schema_to_wire(authored)
+                schema.update(
+                    nodeType=declared["nodeType"],
+                    pack=manifest.name,
+                    replacements=declared["replacements"],
+                )
+                schema["displayName"] = schema.get("displayName") or source
+                return {"nodes": {schema["nodeType"]: schema}}
     return {"nodes": {schema["nodeType"]: schema}}
 
 
@@ -1406,7 +1420,7 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
         assert "invalid conditional option declaration" in result["rows"][0]["differences"]
 
 
-def test_moved_pack_census_requires_frozen_ids_and_preserves_interface_drift() -> None:
+def test_moved_pack_census_uses_declared_rules_and_preserves_interface_drift() -> None:
     from tools.compare_nodes import SCOPE_RULES, compare_registry
 
     scope = json.loads(SCOPE_RULES.read_text())
@@ -1421,6 +1435,9 @@ def test_moved_pack_census_requires_frozen_ids_and_preserves_interface_drift() -
         "nodeType": "dinkster.text.string_concatenate",
         "pack": "dinkster-text",
         "displayName": "StringConcatenate",
+        "replacements": [
+            {"from": "StringConcatenate", "cases": [{"to": "dinkster.text.string_concatenate"}]}
+        ],
         "interface": [
             {"role": "output", "id": "result", "type": {"kind": "concrete", "types": ["STRING"]}}
         ],
@@ -1460,19 +1477,21 @@ def test_moved_pack_census_requires_frozen_ids_and_preserves_interface_drift() -
     assert not result["passed"]
     assert "retired class id remains registered: StringConcatenate" in result["registry_errors"]
     del served["dinkster.text.string_concatenate"]
+    assert not compare_registry(reference, {"nodes": served}, scope=scope)["passed"]
+    del served["StringConcatenate"]
     result = compare_registry(reference, {"nodes": served}, scope=scope)
     assert result["rows"][0]["status"] == "absent"
 
 
 def test_census_support_nodes_require_declared_identity_owner_and_selected_pack() -> None:
-    from tools.compare_nodes import ID_TABLE, SCOPE_RULES, compare_registry
+    from dinkster_utilities.loop_lists import MakeList
 
-    table = json.loads(ID_TABLE.read_text())
+    from tools.compare_nodes import SCOPE_RULES, compare_registry
+
     scope = json.loads(SCOPE_RULES.read_text())
     reference = {"nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}]}
-    support = table["supportNodes"][0]
-    node_type = support["nodeType"]
-    schema = {"nodeType": node_type, "pack": support["pack"], "interface": []}
+    node_type = MakeList.schema().node_type
+    schema = {"nodeType": node_type, "pack": "dinkster-utilities", "interface": []}
     registry = {"nodes": {"Example": {"nodeType": "Example", "interface": []}, node_type: schema}}
     result = compare_registry(reference, registry)
     assert result["passed"]
@@ -1483,32 +1502,114 @@ def test_census_support_nodes_require_declared_identity_owner_and_selected_pack(
         assert compare_registry(reference, registry)["registry_errors"] == [
             f"core class id {node_type!r} is claimed by pack {owner!r}"
         ]
-    schema["pack"] = support["pack"]
-    scope["migratedPacks"].remove(support["pack"])
+    schema["pack"] = "dinkster-utilities"
+    scope["migratedPacks"].remove("dinkster-utilities")
     assert compare_registry(reference, registry, scope=scope)["registry_errors"] == [
         f"prefixed node id: {node_type}"
     ]
-    table["supportNodes"].append(support)
-    with pytest.raises(ValueError, match="support node id collides"):
-        compare_registry(reference, registry, id_table=table)
 
 
-def test_census_rejects_ambiguous_table_and_unknown_pack_selection() -> None:
-    from tools.compare_nodes import ID_TABLE, SCOPE_RULES, compare_registry
+def test_census_rejects_ambiguous_sources_but_allows_two_sources_for_one_target() -> None:
+    from tools.compare_nodes import compare_registry
 
-    table = json.loads(ID_TABLE.read_text())
-    scope = json.loads(SCOPE_RULES.read_text())
-    reference = {"nodes": [{"class_name": "StringConcatenate", "input_types": {}}]}
-    scope["migratedPacks"] = ["dinkster-typo"]
-    with pytest.raises(ValueError, match="scope selects unknown packs"):
-        compare_registry(reference, {"nodes": {}}, scope=scope)
-    table["nodes"].append(table["nodes"][0])
-    with pytest.raises(ValueError, match="duplicate source class"):
-        compare_registry(reference, {"nodes": {}}, id_table=table)
-    table["nodes"].pop()
-    table["nodes"][1]["nodeType"] = table["nodes"][0]["nodeType"]
-    with pytest.raises(ValueError, match="duplicate target id"):
-        compare_registry(reference, {"nodes": {}}, id_table=table)
+    reference = {
+        "nodes": [
+            {"class_name": source, "input_types": {}, "return_types": []}
+            for source in ("Original", "Alternate")
+        ]
+    }
+    target = "dinkster.image.example"
+    schema = {
+        "nodeType": target,
+        "pack": "dinkster-image",
+        "displayName": "Example",
+        "interface": [],
+        "replacements": [
+            {"from": source, "cases": [{"to": target}]} for source in ("Original", "Alternate")
+        ],
+    }
+    for row in reference["nodes"]:
+        row["display_name"] = "Example"
+    registry = {"nodes": {target: schema}}
+    assert compare_registry(reference, registry)["counts"] == {"identical": 2}
+    other = "dinkster.image.other"
+    registry["nodes"][other] = {
+        **schema,
+        "nodeType": other,
+        "replacements": [{"from": "Original", "cases": [{"to": other}]}],
+    }
+    with pytest.raises(ValueError, match="duplicate replacement source class"):
+        compare_registry(reference, registry)
+    del registry["nodes"][other]
+    schema["replacements"][0]["cases"][0]["to"] = other
+    assert compare_registry(reference, registry)["registry_errors"] == [
+        f"{target}: replacement must target its declaring node"
+    ]
+
+
+def test_training_import_rule_may_share_an_eligible_target_but_not_register_its_source() -> None:
+    from tools.compare_nodes import compare_registry
+
+    target = "dinkster.image.example"
+    reference = {
+        "nodes": [
+            {"class_name": "Example", "input_types": {}, "return_types": []},
+            {
+                "class_name": "TrainingExample",
+                "file": "comfy_extras/nodes_train.py",
+                "input_types": {},
+                "return_types": [],
+            },
+        ]
+    }
+    schema = {
+        "nodeType": target,
+        "pack": "dinkster-image",
+        "displayName": "Example",
+        "interface": [],
+        "replacements": [
+            {"from": source, "cases": [{"to": target}]} for source in ("Example", "TrainingExample")
+        ],
+    }
+    registry = {"nodes": {target: schema}}
+    result = compare_registry(reference, registry)
+    assert result["passed"]
+    assert result["counts"] == {"identical": 1, "excluded": 1}
+    registry["nodes"]["TrainingExample"] = {"nodeType": "TrainingExample", "interface": []}
+    assert (
+        "excluded training-origin node remains registered: TrainingExample"
+        in compare_registry(reference, registry)["registry_errors"]
+    )
+    del registry["nodes"]["TrainingExample"]
+    schema["replacements"].pop(0)
+    assert (
+        "excluded training-origin node remains registered: TrainingExample"
+        in compare_registry(reference, registry)["registry_errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    "selected", [["dinkster-3d", "dinkster-3d-models"], ["dinkster-3d-models", "dinkster-3d"]]
+)
+def test_census_nested_namespace_uses_specific_pack(selected: list[str]) -> None:
+    from tools.compare_nodes import SCOPE_RULES, compare_registry
+
+    scope = {**json.loads(SCOPE_RULES.read_text()), "migratedPacks": selected}
+    target = "dinkster.3d.models.example"
+    schema = {
+        "nodeType": target,
+        "pack": "dinkster-3d-models",
+        "displayName": "Example",
+        "interface": [],
+        "replacements": [{"from": "Example", "cases": [{"to": target}]}],
+    }
+    reference = {"nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}]}
+    registry = {"nodes": {target: schema}}
+    assert compare_registry(reference, registry, scope=scope)["passed"]
+    schema["pack"] = "dinkster-3d"
+    assert compare_registry(reference, registry, scope=scope)["registry_errors"] == [
+        f"core class id {target!r} is claimed by pack 'dinkster-3d'"
+    ]
 
 
 def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
@@ -1543,18 +1644,16 @@ def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
 
 @pytest.mark.parametrize("name", ["ImageCompare", "GLSLShader"])
 def test_image_core_classes_keep_their_native_pack_ownership(name: str) -> None:
-    from tools.compare_nodes import ID_TABLE, compare_registry
+    from tools.compare_nodes import compare_registry
 
     reference = {"nodes": [{"class_name": name, "input_types": {}, "return_types": []}]}
-    entries = json.loads(ID_TABLE.read_text())["nodes"]
-    node_type = next(entry["nodeType"] for entry in entries if entry["from"] == name)
     schema = {
-        "nodeType": node_type,
-        "pack": "dinkster-image",
+        "nodeType": name,
         "displayName": name,
         "interface": [],
     }
-    registry = {"nodes": {node_type: schema}}
+    registry = _pack_registry(name, schema)
+    node_type = schema["nodeType"]
     assert compare_registry(reference, registry)["passed"]
     schema["pack"] = "custom-pack"
     result = compare_registry(reference, registry)
