@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -25,7 +26,7 @@ from packaging.utils import parse_wheel_filename
 
 from .environment_artifacts import base_label, engine_label
 from .environment_constraints import effective_constraints, requirement_hashes
-from .environment_downloads import fetch_artifact
+from .environment_downloads import DownloadError, fetch_artifact
 from .environment_state import (
     EnvironmentError,
     content_digest,
@@ -468,10 +469,18 @@ def prepare_local_packs(
         cwd=source,
         input=json.dumps(links),
     )
-    locks = tuple(sorted(artifacts.glob("*.pack-lock.json")))
+    catalog_lock = artifacts / "official-packs.lock"
+    catalog = json.loads(catalog_lock.read_text(encoding="utf-8"))
+    libraries: set[str] = set()
+    library_wheels: dict[str, tuple[str, int]] = {}
     for archive in artifacts.glob("*.whl"):
-        digest = blake3(archive.read_bytes()).hexdigest()
+        data = archive.read_bytes()
+        digest = blake3(data).hexdigest()
         pack, version, _, _ = parse_wheel_filename(archive.name)
+        with zipfile.ZipFile(archive) as wheel_file:
+            if not any(Path(name).name == "dinkster-pack.toml" for name in wheel_file.namelist()):
+                libraries.add(pack)
+                library_wheels[archive.name] = (hashlib.sha256(data).hexdigest(), len(data))
         cached = pack_archive_path(
             artifacts,
             "blake3:" + digest,
@@ -480,6 +489,29 @@ def prepare_local_packs(
         if archive != cached:
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(archive, cached)
+    locks: list[Path] = []
+    for path in sorted(artifacts.glob("*.pack-lock.json")):
+        dependency_lock = json.loads(path.read_text(encoding="utf-8"))
+        if dependency_lock["pack"] in libraries:
+            continue
+        locks.append(path)
+        for distribution in dependency_lock["packages"]:
+            for wheel in distribution["wheels"]:
+                if wheel["filename"] in library_wheels:
+                    if library_wheels[wheel["filename"]] != (wheel["sha256"], wheel["size"]):
+                        raise DownloadError(f"corrupt locally built library: {wheel['filename']}")
+                    cached = object_path(store / "wheels", "sha256:" + wheel["sha256"])
+                    fetch_artifact(
+                        (str(artifacts),),
+                        wheel["filename"],
+                        cached / wheel["filename"],
+                        wheel["sha256"],
+                        wheel["size"],
+                    )
+    catalog["packs"] = [entry for entry in catalog["packs"] if entry["pack"] not in libraries]
+    for entry in catalog["packs"]:
+        entry["source"] = "local-build:" + entry["source"]
+    write_document(catalog_lock, catalog)
     for operation in ("preflight", "rebuild", "doctor"):
         pack_operation(
             operation,
@@ -488,10 +520,8 @@ def prepare_local_packs(
             variant=selection["variant"],
             worker_protocol=selection["workerProtocol"],
             own_environment_size=0,
-            locks=locks if operation != "doctor" else (),
+            locks=tuple(locks) if operation != "doctor" else (),
             in_process_packs=in_process,
         )
-    stage_pack_sources(
-        generation, catalog_lock=artifacts / "official-packs.lock", artifacts=artifacts
-    )
+    stage_pack_sources(generation, catalog_lock=catalog_lock, artifacts=artifacts)
     prepare_pack_catalogs(generation, in_process)

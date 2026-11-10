@@ -163,6 +163,75 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
 
 
 @pytest.mark.parametrize(
+    ("source", "publisher", "generation_source", "trusted"),
+    [
+        ("local-build:git:Kosinkadink/Dinkster@" + "a" * 40, "dinkster", "local", True),
+        ("local-build:git:Kosinkadink/Dinkster@" + "a" * 40, "dinkster", "published", False),
+        ("local-build:git:Kosinkadink/Dinkster@invalid", "dinkster", "local", False),
+        ("git:Kosinkadink/Dinkster@" + "a" * 40, "dinkster", "local", False),
+        ("local:fixture", "dinkster", "local", False),
+        ("pip:fixture", "dinkster", "local", False),
+        ("registry:official", "dinkster", "published", True),
+    ],
+)
+def test_generation_reserved_composition_requires_local_build_or_registry(
+    tmp_path: Path, source: str, publisher: str, generation_source: str, trusted: bool
+) -> None:
+    import asyncio
+
+    from dinkster_workers.doctor import prepare_catalog
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+
+    from dinkster.compose import CompositionError, compose_serving
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
+
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace('["healthy"]', '["dinkster.fixture"]').replace(
+            'publisher = "dinkster"', f'publisher = "{publisher}"'
+        )
+    )
+    (root / "healthy_nodes.py").write_text(HEALTHY_NODES.replace("healthy.", "dinkster.fixture."))
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(root, archive)
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    entry = LockedPack("healthy-nodes", "1.0.0", digest, publisher, ("dinkster-fixture",), source)
+    stage_generation_packs(generation, Lockfile.of([entry]), {entry.pack: archive})
+    manifest = generation / "pack-sources" / entry.pack / "dinkster-pack.toml"
+    report = prepare_catalog(manifest, interpreter=sys.executable)
+    assert report.ok, report.findings
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "source": generation_source,
+                "inProcessPacks": [entry.pack],
+            }
+        )
+    )
+    _, specs = load_generation_packs(generation)
+
+    async def compose() -> None:
+        composition = await compose_serving(specs, include_default_packs=False)
+        try:
+            assert set(composition.schemas) == {
+                "dinkster.fixture.doubler",
+                "dinkster.fixture.tagger",
+            }
+        finally:
+            await composition.close()
+
+    if trusted:
+        asyncio.run(compose())
+    else:
+        with pytest.raises(CompositionError, match="reserved"):
+            asyncio.run(compose())
+
+
+@pytest.mark.parametrize(
     ("problem", "message"),
     [
         (None, ""),
@@ -484,6 +553,7 @@ def test_packs_for_serving_reads_the_immutable_store(tmp_path: Path) -> None:
         ("registry:official", "other", False),
         ("local:fixture", "dinkster", False),
         ("git:fixture", "dinkster", False),
+        ("local-build:git:Kosinkadink/Dinkster@" + "a" * 40, "dinkster", False),
     ],
 )
 def test_reserved_trust_requires_registry_publisher(

@@ -553,12 +553,181 @@ def test_checkout_pack_build_preserves_independent_manifest_versions(
     artifacts = object_path(store / "engines", release) / "artifacts"
     lock = Lockfile.from_record_json((artifacts / "official-packs.lock").read_text())
     assert {pack.pack: pack.version for pack in lock.packs} == versions
+    assert {pack.source for pack in lock.packs} == {
+        "local-build:git:Kosinkadink/Dinkster@" + "a" * 40
+    }
     assert {path.name for path in artifacts.glob("*.whl")} == {
         f"{name.replace('-', '_')}-{version}-py3-none-any.whl" for name, version in versions.items()
     }
     for pack in lock.packs:
         wheel = artifacts / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
         assert pack_archive_path(artifacts, pack.artifact_digest).read_bytes() == wheel.read_bytes()
+
+
+@pytest.mark.parametrize("case", ["clean", "corrupt", "corrupt-cached"])
+def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, case: str
+) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_supervisor import environment_local
+    from dinkster_supervisor.environment_downloads import DownloadError
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.catalog import read_catalog
+    from dinkster_workers.manifest import load_manifest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from dinkster_workers.pack_wheel import build_pack_archive, pack_manifest_path
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+
+    from tests.fixtures.environments.build import standalone_tree
+
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_error(404)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def close_server() -> None:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    request.addfinalizer(close_server)
+    store = tmp_path / "store"
+    release = "sha256:" + "a" * 64
+    artifacts = object_path(store / "engines", release) / "artifacts"
+    artifacts.mkdir(parents=True)
+    helper, sha = _wheel(artifacts, "fixture_helper", "1.0", 73)
+    dependency = LockedWheel(
+        helper.name,
+        helper.stat().st_size,
+        sha,
+        f"http://127.0.0.1:{server.server_port}/" + helper.name,
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace(
+            "[pack]\n", '[pack]\nversion = "1.0"\nengine = ">=0.0.2"\n'
+        ).replace('"numpy>=1.26"', '"fixture-helper==1.0"')
+    )
+    (source / "pyproject.toml").write_text('[project]\nname = "healthy-nodes"\nversion = "1.0"\n')
+    (source / "healthy_nodes").mkdir()
+    (source / "healthy_nodes/__init__.py").write_text(
+        "from fixture_helper import VALUE\nassert VALUE == 73\n" + HEALTHY_NODES
+    )
+    pack_wheel = artifacts / "healthy_nodes-1.0-py3-none-any.whl"
+    build_pack_archive(source, pack_wheel)
+    provenance = "git:Kosinkadink/Dinkster@" + "a" * 40
+    lock = Lockfile.of(
+        [
+            LockedPack(
+                "fixture-helper",
+                "1.0",
+                artifact_digest(helper.read_bytes()),
+                "dinkster",
+                (),
+                provenance,
+            ),
+            LockedPack(
+                "healthy-nodes",
+                "1.0",
+                artifact_digest(pack_wheel.read_bytes()),
+                "dinkster",
+                ("healthy",),
+                provenance,
+            ),
+        ]
+    )
+    (artifacts / "official-packs.lock").write_text(lock.record_json())
+    PackLock(
+        "healthy-nodes",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-helper==1.0",),
+        (),
+        (LockedDistribution("fixture-helper", "1.0", (dependency,)),),
+    ).write(artifacts / "healthy-nodes.pack-lock.json")
+    PackLock("fixture-helper", "linux-cpu", ">=3.12", (), (), ()).write(
+        artifacts / "fixture-helper.pack-lock.json"
+    )
+    if case == "corrupt-cached":
+        cached = object_path(store / "wheels", "sha256:" + sha) / helper.name
+        cached.parent.mkdir(parents=True)
+        shutil.copyfile(helper, cached)
+    if case != "clean":
+        helper.write_bytes(helper.read_bytes().replace(b"VALUE = 73", b"VALUE = 74"))
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    (generation / "constraints.txt").write_text("")
+    monkeypatch.setattr(environment_local, "run_local_command", lambda *args, **kwargs: None)
+    standalone_tree(generation / "python")
+    site = Path(
+        subprocess.check_output(
+            [
+                str(interpreter(generation)),
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+    )
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "fixture.pth").write_text(
+        "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+    )
+
+    def prepare() -> None:
+        environment_local.prepare_local_packs(
+            generation,
+            source=source,
+            store=store,
+            release=release,
+            selection={
+                "version": "0.0.2",
+                "variant": "linux-cpu",
+                "workerProtocol": PROTOCOL_VERSION,
+            },
+        )
+
+    if case != "clean":
+        with pytest.raises(DownloadError, match="corrupt"):
+            prepare()
+        assert not (generation / "pack-sources").exists()
+        assert requests == []
+        return
+    prepare()
+    assert requests == []
+    assert {path.name for path in (generation / "packs").iterdir()} == {"healthy-nodes"}
+    assert {path.name for path in (generation / "pack-sources").iterdir()} == {
+        "healthy-nodes",
+        "healthy-nodes.whl",
+    }
+    admitted = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
+    assert [entry.pack for entry in admitted.packs] == ["healthy-nodes"]
+    manifest = pack_manifest_path(generation / "pack-sources/healthy-nodes")
+    assert read_catalog(load_manifest(manifest)) is not None
+    python = (
+        generation
+        / "packs/healthy-nodes"
+        / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    )
+    assert (
+        subprocess.check_output(
+            [str(python), "-c", "import fixture_helper; print(fixture_helper.VALUE)"], text=True
+        ).strip()
+        == "73"
+    )
 
 
 def test_checkout_pack_commands_do_not_expand_wheel_sources(
