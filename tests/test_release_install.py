@@ -2409,14 +2409,15 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         }
 
 
-def test_disposable_registry_acquisition_keeps_private_source_out_of_fork_jobs(
+def test_disposable_registry_acquisition_uses_public_source_for_all_pull_requests(
     tmp_path: Path,
 ) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
     assert "pull_request_target" not in workflow[True]
     assert "packages/**/pyproject.toml" in workflow[True]["pull_request"]["paths"]
     job = workflow["jobs"]["registry-service-image"]
-    exclusion = workflow["jobs"]["registry-service-unavailable"]
+    assert "registry-service-unavailable" not in workflow["jobs"]
+    assert "secrets." not in yaml.safe_dump(job)
     for event in ("pull_request", "workflow_run", "workflow_dispatch", "push"):
         for fork in (False, True):
             for actor in ("contributor", "dependabot[bot]"):
@@ -2428,30 +2429,17 @@ def test_disposable_registry_acquisition_keeps_private_source_out_of_fork_jobs(
                     "github.repository": "Kosinkadink/Dinkster",
                     "github.actor": actor,
                 }
-                for selected, expected in (
-                    (job, event == "pull_request" and not fork and actor != "dependabot[bot]"),
-                    (exclusion, event == "pull_request" and (fork or actor == "dependabot[bot]")),
-                ):
-                    condition = selected["if"]
-                    for name, value in values.items():
-                        condition = condition.replace(name, repr(value))
-                    condition = condition.replace("&&", " and ").replace("||", " or ")
-                    assert eval(condition, {"__builtins__": {}}) is expected
+                condition = job["if"]
+                for name, value in values.items():
+                    condition = condition.replace(name, repr(value))
+                condition = condition.replace("&&", " and ").replace("||", " or ")
+                assert eval(condition, {"__builtins__": {}}) is (event == "pull_request")
     checkout = next(step for step in job["steps"] if step.get("uses") == "actions/checkout@v4")
     assert checkout["with"]["repository"] == "Kosinkadink/dinkster-registry-service"
     pin = checkout["with"]["ref"]
     assert len(pin) == 40 and all(char in "0123456789abcdef" for char in pin)
     assert checkout["with"]["persist-credentials"] is False
-    assert checkout["with"]["ssh-key"] == "${{ secrets.DINKSTER_REGISTRY_SERVICE_DEPLOY_KEY }}"
-    guard = job["steps"][0]
-    result = subprocess.run(
-        ["bash", "-c", guard["run"]],
-        env={"SERVICE_DEPLOY_KEY": ""},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0
-    assert "DINKSTER_REGISTRY_SERVICE_DEPLOY_KEY is unavailable" in result.stderr
+    assert "ssh-key" not in checkout["with"]
     docker = tmp_path / "docker"
     docker.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="ascii")
     docker.chmod(0o755)

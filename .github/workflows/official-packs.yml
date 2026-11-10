@@ -42,37 +42,19 @@ concurrency:
 jobs:
   registry-service-image:
     name: Build disposable registry image
-    # Forks and Dependabot cannot receive the private repository's deploy key.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Require the read-only service checkout key
-        env:
-          SERVICE_DEPLOY_KEY: ${{ secrets.DINKSTER_REGISTRY_SERVICE_DEPLOY_KEY }}
-        run: |
-          if [ -z "$SERVICE_DEPLOY_KEY" ]; then
-            echo 'Disposable registry build refused: DINKSTER_REGISTRY_SERVICE_DEPLOY_KEY is unavailable' >&2
-            exit 1
-          fi
       - name: Check out the pinned registry service
         uses: actions/checkout@v4
         with:
           repository: Kosinkadink/dinkster-registry-service
           ref: 0a76d70fe80d13b2c50a7bddaae31bbd3193bb14
-          ssh-key: ${{ secrets.DINKSTER_REGISTRY_SERVICE_DEPLOY_KEY }}
           persist-credentials: false
           path: .disposable-registry-source
       - name: Build the unchanged service Dockerfile without publishing
         run: docker build --tag dinkster-disposable-registry:local .disposable-registry-source
-
-  registry-service-unavailable:
-    name: Explain private registry build exclusion
-    if: github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]')
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: echo 'Private registry image build is unavailable to fork and Dependabot pull requests; credential-free publication validation still runs.' >> "$GITHUB_STEP_SUMMARY"
 
   select:
     if: (github.event_name != 'workflow_dispatch' || (github.repository == 'Kosinkadink/Dinkster' && github.ref == 'refs/heads/main')) && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'))
