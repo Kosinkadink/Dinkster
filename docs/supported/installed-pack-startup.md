@@ -328,6 +328,9 @@
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
   refuse repair; failures keep the prior generation selected and serving.
+- Connected event clients do not need to close their browser before an installed
+  generation can stop or be replaced. Authenticated supervisor shutdown closes
+  their event connections so clients can reconnect to the active generation.
 - `dinkster-env move` plans before confirmation, preserves project assets and
   named engine assignments, and checks destination health before committing.
   Same-volume relocation keeps shared packages; cross-volume relocation rebuilds
