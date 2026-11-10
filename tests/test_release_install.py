@@ -1,5 +1,6 @@
 """The release builder produces one complete, version-bound artifact set."""
 
+# Release contract tests are not part of the engine wheel payload.
 from __future__ import annotations
 
 import hashlib
