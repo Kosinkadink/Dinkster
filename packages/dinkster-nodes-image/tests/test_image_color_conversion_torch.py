@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_image.ported import image_color_conversion as color_math
 from dinkster_image.ported.image_color_conversion import ImageColorSpace, ImageSDRToHDR
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -87,6 +89,28 @@ def test_color_conversion_returns_intermediate_float32_for_identity_and_hdr() ->
         assert result.dtype == torch.float32
         assert result.device == torch.device("cpu")
     assert torch.equal(identity, image.float())
+    rgb = image[..., :3].float()
+    decoded = color_math._srgb_to_linear(rgb, torch)
+    primaries = color_math._convert_primaries(decoded, color_math._REC709_TO_REC2020, torch)
+    scaled = primaries * color_math._SDR_WHITE_NITS
+    unscaled = scaled / color_math._SDR_WHITE_NITS
+    diagnostic = {
+        "machine": platform.machine(),
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "capability": torch.backends.cpu.get_cpu_capability(),
+        "input": rgb.tolist(),
+        "high_base": ((rgb.clamp(min=0.0) + 0.055) / 1.055).tolist(),
+        "decoded": decoded.tolist(),
+        "primaries": primaries.tolist(),
+        "scaled": scaled.tolist(),
+        "unscaled": unscaled.tolist(),
+        "linear": linear.tolist(),
+        "scalar_decoded": [
+            value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+            for value in rgb.flatten().tolist()
+        ],
+    }
     torch.testing.assert_close(
         linear[:, 0, 0],
         torch.tensor(
@@ -102,6 +126,7 @@ def test_color_conversion_returns_intermediate_float32_for_identity_and_hdr() ->
         ),
         rtol=0,
         atol=0,
+        msg=lambda message: f"{message}\nColor conversion intermediates: {diagnostic!r}",
     )
     _assert_hdr(hdr)
     assert torch.equal(image, before)
