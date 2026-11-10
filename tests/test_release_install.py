@@ -732,7 +732,9 @@ def test_probe_jail_is_configured_before_live_tests_and_required_by_main() -> No
     assert 'test "$PROBE_JAIL_RESULT" = success' in gate["run"]
     fast = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     assert all(
-        "setup_probe_jail.sh" not in step.get("run", "") for step in fast["jobs"]["fast"]["steps"]
+        "setup_probe_jail.sh" not in step.get("run", "")
+        for job in fast["jobs"].values()
+        for step in job["steps"]
     )
 
 

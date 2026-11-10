@@ -30,7 +30,7 @@ permissions:
 
 concurrency:
   group: wheel-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -62,11 +62,12 @@ jobs:
 
   validation:
     needs: changes
-    if: needs.changes.outputs.engine == 'true'
+    if: needs.changes.outputs.engine == 'true' && github.ref != 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
 
   build:
-    needs: validation
+    needs: [changes, validation]
+    if: always() && !cancelled() && needs.changes.outputs.engine == 'true' && (needs.validation.result == 'success' || (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.validation.result == 'skipped'))
     permissions:
       actions: read
       contents: read

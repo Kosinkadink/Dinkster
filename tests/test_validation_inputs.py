@@ -17,17 +17,21 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
 
     text = (evidence_paths.DINKSTER_ROOT / ".github/workflows/ci.yml").read_text()
     workflow = yaml.safe_load(text)
-    fast = workflow["jobs"]["fast"]
+    checks = workflow["jobs"]["checks"]
+    fast = workflow["jobs"]["tests"]
     assert fast["runs-on"] == "ubuntu-latest"
     assert "secrets." not in text and "vars." not in text
-    assert all("if" not in step for step in fast["steps"])
-    assert any(step.get("run") == "bash scripts/ci-fast.sh" for step in fast["steps"])
+    assert checks["name"] == "format, lint, types"
+    assert fast["name"] == "tests"
+    assert "if" not in checks and fast["if"] == "always()"
+    assert any(step.get("run") == "bash scripts/ci-fast.sh checks" for step in checks["steps"])
+    assert any(step.get("run") == "bash scripts/ci-fast.sh tests" for step in fast["steps"])
     gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
     assert "export UV_OFFLINE=1" in gate
     assert "-m 'not network'" in gate
     commands = [step.get("run", "") for step in fast["steps"]]
     backend = next(command for command in commands if "uv build --package" in command)
-    assert commands.index(backend) < commands.index("bash scripts/ci-fast.sh")
+    assert commands.index(backend) < commands.index("bash scripts/ci-fast.sh tests")
     export = next(
         step for step in fast["steps"] if "DINKSTER_CATALOG_WIRE_OUTPUT" in step.get("env", {})
     )
@@ -37,6 +41,65 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "node --test ../tools/validate_default_catalog.test.mjs" in decode["run"]
     assert decode["env"]["CATALOG"] == export["env"]["DINKSTER_CATALOG_WIRE_OUTPUT"]
     assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
+
+
+@pytest.mark.parametrize(
+    ("path", "engine", "runtime", "packs"),
+    [
+        ("README.md", False, False, []),
+        ("docs/testing.md", False, False, []),
+        ("src/dinkster/serve.py", True, False, []),
+        (
+            "packages/dinkster-nodes-text/src/dinkster_text/nodes.py",
+            False,
+            False,
+            ["packages/dinkster-nodes-text"],
+        ),
+        ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
+        ("tests/test_environment_history.py", True, True, []),
+        ("uv.lock", True, True, []),
+        ("new-unknown-input", True, False, []),
+    ],
+)
+def test_ci_selects_only_the_changed_behavior(
+    path: str, engine: bool, runtime: bool, packs: list[str]
+) -> None:
+    from tools.ci_selection import select
+
+    plan = select(evidence_paths.DINKSTER_ROOT, [path])
+    assert plan == {
+        "docs": path.endswith(".md"),
+        "engine": engine,
+        "runtime": runtime,
+        "packs": packs,
+    }
+
+
+def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> None:
+    from tools.ci_selection import select
+
+    for name, dependencies, library in [
+        ("shared", [], True),
+        ("dependent", ["shared>=1"], False),
+        ("transitive", ["dependent"], False),
+        ("unrelated", [], False),
+    ]:
+        package = tmp_path / "packages" / name
+        package.mkdir(parents=True)
+        (package / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\ndependencies = {dependencies!r}\n'
+            + ("[tool.dinkster]\nofficial-library = true\n" if library else "")
+        )
+        if not library:
+            (package / "dinkster-pack.toml").write_text(f'[pack]\nname = "{name}"\n')
+    assert select(tmp_path, ["packages/shared/src/shared.py"])["packs"] == [
+        "packages/dependent",
+        "packages/shared",
+        "packages/transitive",
+    ]
+    assert select(tmp_path, ["packages/dependent/src/nodes.py"])["packs"] == [
+        "packages/dependent",
+    ]
 
 
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
