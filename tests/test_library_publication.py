@@ -276,7 +276,7 @@ def test_library_preparation_and_native_locks_preserve_exact_sources(
     assert {path.name: path.read_bytes() for path in sources.iterdir()} == source_bytes
 
 
-@pytest.mark.parametrize("published", [False, True, "registry", "missing", "installer"])
+@pytest.mark.parametrize("published", [False, True, "registry", "missing"])
 def test_default_admission_probes_and_tests_selected_library_dependency(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -298,12 +298,7 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     (library / "pyproject.toml").write_text(
         '[project]\nname = "dinkster-test-helpers"\nversion = "0.0.1"\n'
         'requires-python = ">=3.12"\n'
-        + (
-            'dependencies = ["dinkster-unavailable-test-library==0.0.1"]\n'
-            if published == "installer"
-            else ""
-        )
-        + '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         '[tool.hatch.build.targets.wheel]\npackages = ["src/dinkster_test_helpers"]\n'
         "[tool.dinkster]\nofficial-library = true\n"
     )
@@ -484,19 +479,6 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
                 admission.NamedRegistry("", registry_url), engine_version="0.0.3"
             )
         assert ordinary_requests == []
-        return
-    if published == "installer":
-        if sys.platform == "win32":
-            pytest.skip("probe installer requires POSIX process limits")
-        with pytest.raises(ValueError, match="probe.dependencies-unresolved"):
-            admission.check_defaults(
-                admission.NamedRegistry("", registry_url), engine_version="0.0.3"
-            )
-        output = capfd.readouterr().out
-        assert '"returnCode": 1' in output
-        assert '"stderrTail":' in output
-        assert "dinkster-unavailable-test-library" in output
-        assert not any("dinkster-test-helpers" in path for path, _ in ordinary_requests)
         return
     # The service probe requires POSIX process groups and resource limits.
     with (

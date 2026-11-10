@@ -100,11 +100,6 @@ def library_probe_index(libraries: dict[str, Path]):
 
 def _require_accepted(result: StageResult, identity: str) -> None:
     if result.blocked or result.review:
-        if result.operator_details:
-            print(
-                json.dumps({"pack": identity, "operatorDetails": result.operator_details}),
-                flush=True,
-            )
         findings = "; ".join(f"{finding.code}: {finding.message}" for finding in result.findings)
         raise ValueError(f"default {identity} admission refused: {findings}")
 
