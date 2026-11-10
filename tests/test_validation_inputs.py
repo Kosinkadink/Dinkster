@@ -23,7 +23,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "secrets." not in text and "vars." not in text
     assert checks["name"] == "format, lint, types"
     assert fast["name"] == "tests"
-    assert "if" not in checks and fast["if"] == "always()"
+    assert "if" not in checks and fast["if"] == "${{ !cancelled() }}"
     assert any(step.get("run") == "bash scripts/ci-fast.sh checks" for step in checks["steps"])
     assert any(step.get("run") == "bash scripts/ci-fast.sh tests" for step in fast["steps"])
     gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
@@ -57,6 +57,11 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
         ),
         ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
         ("tests/test_environment_history.py", True, True, []),
+        ("src/dinkster/setup.py", True, True, []),
+        ("src/dinkster/manager.py", True, True, []),
+        ("src/dinkster/cli.py", True, True, []),
+        ("src/dinkster/launch.py", True, True, []),
+        ("packages/dinkster-registry/src/dinkster_registry/install.py", True, True, []),
         ("uv.lock", True, True, []),
         ("new-unknown-input", True, False, []),
     ],
@@ -92,6 +97,19 @@ def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> N
         )
         if not library:
             (package / "dinkster-pack.toml").write_text(f'[pack]\nname = "{name}"\n')
+    plan = select(tmp_path, ["packages/shared/src/shared.py"])
+    assert plan["engine"] is True
+    assert plan["packs"] == [
+        "packages/dependent",
+        "packages/transitive",
+    ]
+    assert select(tmp_path, ["packages/shared/README.md"]) == {
+        "docs": True,
+        "engine": False,
+        "runtime": False,
+        "packs": [],
+    }
+    (tmp_path / "packages/shared/tests").mkdir()
     assert select(tmp_path, ["packages/shared/src/shared.py"])["packs"] == [
         "packages/dependent",
         "packages/shared",
