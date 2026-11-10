@@ -1,4 +1,4 @@
-"""dinkster-serve: serve a composed node-pack set.
+"""dinkster-serve: serve the composed node-pack set.
 
 The umbrella package owns this wiring (server + workers + caches + pack
 composition); dinkster-server itself stays policy/protocol-only and never picks
