@@ -7,6 +7,7 @@ import platform
 import subprocess
 import sys
 import tarfile
+from contextlib import nullcontext
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -275,22 +276,36 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
                 ).read_bytes()
             ),
         )
-    result = admission.check_defaults(
-        admission.NamedRegistry("", "https://registry.invalid"),
-        engine_version="0.0.3",
-        candidate_base=None if published else "b" * 40,
-        published_sources=publication,
-    )
-    assert result == {
-        "engineVersion": "0.0.3",
-        "packs": [
-            {"pack": entry.pack, "version": entry.version, "artifactDigest": entry.artifact_digest}
-            for entry in (entries[1], entries[0])
-        ],
-    }
+    # The service probe requires POSIX process groups and resource limits.
+    with (
+        pytest.raises(
+            ValueError,
+            match=r"default dinkster-text@0\.0\.1 admission refused: "
+            r"probe\.dependencies-unavailable: Dependency provisioning failed\.",
+        )
+        if sys.platform == "win32"
+        else nullcontext()
+    ):
+        result = admission.check_defaults(
+            admission.NamedRegistry("", "https://registry.invalid"),
+            engine_version="0.0.3",
+            candidate_base=None if published else "b" * 40,
+            published_sources=publication,
+        )
+        assert result == {
+            "engineVersion": "0.0.3",
+            "packs": [
+                {
+                    "pack": entry.pack,
+                    "version": entry.version,
+                    "artifactDigest": entry.artifact_digest,
+                }
+                for entry in (entries[1], entries[0])
+            ],
+        }
     output = capfd.readouterr().out
     assert "selected dinkster-test-helpers@0.0.1" in output
-    assert "Testing dinkster-text@0.0.1" in output
+    assert ("Testing dinkster-text@0.0.1" in output) is (sys.platform != "win32")
     assert "Testing dinkster-test-helpers" not in output
     with ZipFile(wheels / "dinkster_test_helpers-0.0.1-py3-none-any.whl", "a") as wheel:
         wheel.writestr("changed.txt", "library drift")
