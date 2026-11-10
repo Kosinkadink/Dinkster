@@ -1,4 +1,4 @@
-"""Install the machine's published base and locked editable contributor workspace."""
+"""Install the published base and the locked editable contributor workspace."""
 
 from __future__ import annotations
 
