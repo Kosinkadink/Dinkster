@@ -132,6 +132,7 @@ def test_nested_child_state_and_stack_at_timeout(
         "release.settimeout(None)\n"
         "release.sendall(b'ready')\n"
         "def blocked_nested_child():\n"
+        "    (root / 'blocked-ready').touch()\n"
         "    assert release.recv(1) == b'x'\n"
         f"if {blocked!r}:\n"
         "    blocked_nested_child()\n"
@@ -172,10 +173,13 @@ def test_nested_child_state_and_stack_at_timeout(
             wait_until((tmp_path / "awaiting-snapshot").exists)
             assert _request_snapshot(directory) == "Timeout snapshot acknowledged"
             (directory / "snapshot.request").unlink()
-            (directory / "child.snapshot").unlink()
-        wait_until((tmp_path / "runtime-pid").exists)
-        if not blocked:
+        if blocked:
+            wait_until((tmp_path / "blocked-ready").exists)
+        else:
             wait_until(lambda: bool(list(directory.glob("nested-*.exit"))))
+        if late:
+            for acknowledgment in directory.glob("*.snapshot"):
+                acknowledgment.unlink()
 
     expire_after_ready(ready)
     result = None
