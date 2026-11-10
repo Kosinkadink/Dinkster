@@ -24,6 +24,14 @@ blocks rather than falling back. `require_isolation=False` is for controlled tes
 only. Public findings do not expose arbitrary probe diagnostics; bounded tails
 remain separate operator data.
 
+`run_executable_probe(..., dependency_wheels=(...))` accepts local library wheels
+selected and verified by the service caller. The installer resolves these exact
+wheels together with the declared CPU requirements and their transitive
+dependencies from the configured operator index. Conflicting version ranges
+refuse rather than substituting an index copy. Wheel paths are trusted caller
+inputs, never paths supplied by a submitted manifest; manifest direct URLs
+remain forbidden. Omitting the argument preserves index-only provisioning.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.

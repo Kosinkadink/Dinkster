@@ -512,7 +512,9 @@ def run_executable_probe(
     *,
     settings: ProbeSettings | None = None,
     require_isolation: bool = True,
+    dependency_wheels: tuple[Path, ...] = (),
 ) -> StageResult:
+    """Probe with optional caller-verified library wheels, never submission paths."""
     configured = settings or ProbeSettings()
     try:
         manifest = load_manifest(root / MANIFEST_FILENAME)
@@ -529,7 +531,7 @@ def run_executable_probe(
                 ),
             )
         )
-    if not requirements:
+    if not requirements and not dependency_wheels:
         return _run_executable_probe(root, configured, require_isolation)
     installer = shutil.which("uv")
     if installer is None:
@@ -559,6 +561,7 @@ def run_executable_probe(
             "--torch-backend",
             "cpu",
             *[str(requirement) for requirement in requirements],
+            *[str(wheel.resolve()) for wheel in dependency_wheels],
         ]
         try:
             completed = _run_probe_process(

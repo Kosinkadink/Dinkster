@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -191,3 +192,79 @@ def test_probe_dependency_url_refuses(tmp_path: Path) -> None:
     )
     result = run_executable_probe(tmp_path, settings=ProbeSettings())
     assert result.blocked and result.findings[0].code == "probe.dependencies-invalid"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("library_range", [None, ">=1,<10", ">=2"])
+def test_probe_installs_trusted_library_and_operator_dependencies(
+    tmp_path: Path, library_range: str | None
+) -> None:
+    def wheel(name: str, version: str, code: str, requires: tuple[str, ...] = ()) -> Path:
+        path = tmp_path / f"{name}-{version}-py3-none-any.whl"
+        dist_info = f"{name}-{version}.dist-info"
+        files = {
+            f"{name}/__init__.py": code,
+            f"{dist_info}/METADATA": (
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+                + "".join(f"Requires-Dist: {value}\n" for value in requires)
+            ),
+            f"{dist_info}/WHEEL": (
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+            ),
+        }
+        files[f"{dist_info}/RECORD"] = "".join(f"{entry},,\n" for entry in files) + (
+            f"{dist_info}/RECORD,,\n"
+        )
+        with zipfile.ZipFile(path, "w") as archive:
+            for entry, data in files.items():
+                archive.writestr(entry, data)
+        return path
+
+    operator = wheel("probe_operator_only", "1.0", "VALUE = 'operator'\n")
+    trusted = wheel(
+        "probe_registry_library",
+        "1.0",
+        "from probe_operator_only import VALUE\nVALUE = 'registry-' + VALUE\n",
+        ("probe-operator-only==1.0",),
+    )
+    competitor = wheel("probe_registry_library", "9.0", "VALUE = 'wrong-index'\n")
+    index = tmp_path / "simple"
+    for name, artifact in (
+        ("probe-operator-only", operator),
+        ("probe-registry-library", competitor),
+    ):
+        project = index / name
+        project.mkdir(parents=True)
+        (project / "index.html").write_text(f'<a href="{artifact.as_uri()}">{artifact.name}</a>\n')
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    manifest = root / "dinkster-pack.toml"
+    requirement = (
+        f"probe-registry-library{library_range}"
+        if library_range is not None
+        else "probe-operator-only==1.0"
+    )
+    manifest.write_text(
+        manifest.read_text().replace("[pack]\n", f'[pack]\nrequires = ["{requirement}"]\n')
+    )
+    module = root / "color_tools" / "__init__.py"
+    imported = "probe_registry_library" if library_range else "probe_operator_only"
+    expected = "registry-operator" if library_range else "operator"
+    module.write_text(
+        f"from {imported} import VALUE\nassert VALUE == {expected!r}\n" + module.read_text()
+    )
+    original = manifest.read_bytes()
+    result = run_executable_probe(
+        root,
+        settings=ProbeSettings(probe_package_index_url=index.as_uri()),
+        require_isolation=False,
+        dependency_wheels=(trusted,) if library_range else (),
+    )
+    assert manifest.read_bytes() == original
+    if library_range == ">=2":
+        assert result.blocked
+        assert result.findings[0].code == "probe.dependencies-unresolved"
+    else:
+        assert not result.blocked, result.operator_details
+        assert result.data is not None
+        assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
