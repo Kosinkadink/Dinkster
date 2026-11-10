@@ -163,7 +163,10 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     runtime = jobs["windows-runtime"]
     runtime_rows = runtime["strategy"]["matrix"]["include"]
     assert [(row["shard"], row["file-shard"]) for row in runtime_rows] == [
-        (1, 1), (2, 2), (3, 3), (4, 3)
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 3),
     ]
     from tools.pytest_file_shard import file_shard
 
