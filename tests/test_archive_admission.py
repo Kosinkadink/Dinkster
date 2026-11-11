@@ -154,10 +154,24 @@ def test_service_fixture_archive_contract(
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("name", ["example-pack", "color-tools"])
-def test_service_fixture_probe_contract(name: str) -> None:
+@pytest.mark.parametrize("broken_entry", [False, True])
+def test_service_fixture_probe_contract(tmp_path: Path, name: str, broken_entry: bool) -> None:
+    root = tmp_path / name
+    shutil.copytree(FIXTURES / name, root)
+    if broken_entry:
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(manifest.read_text().replace(":PACK_NODES", ":MISSING_NODES"))
     result = run_executable_probe(
-        FIXTURES / name, require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
+        root, require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
     )
+    if broken_entry:
+        assert result.blocked and not result.review
+        assert [(finding.code, finding.effect) for finding in result.findings] == [
+            ("entry.unresolvable", "block"),
+            ("probe.declared-observed-needs", "signal"),
+        ]
+        assert result.data == {"schemas": []}
+        return
     assert [(finding.code, finding.effect) for finding in result.findings] == [
         ("probe.declared-observed-needs", "signal")
     ]

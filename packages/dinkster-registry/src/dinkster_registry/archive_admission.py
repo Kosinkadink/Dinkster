@@ -780,6 +780,9 @@ def _run_executable_probe(
         if jail is None:
             doctor_report = cast("dict[str, Any]", payload["doctorReport"])
             schemas = cast("list[dict[str, Any]]", payload["schemas"])
+        elif payload["entry_error"] is not None:
+            doctor_report = payload
+            schemas = []
         else:
             doctor_report = payload
             catalog = cast("dict[str, Any]", doctor_report["catalog"])
