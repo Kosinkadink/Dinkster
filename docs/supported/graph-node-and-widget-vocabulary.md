@@ -36,6 +36,8 @@
   application requires a frontend that supports positional family migrations.
 - Math Expression's named numeric inputs are connection-only sockets; the
   expression remains an editable text field.
+- Convert Number's value and both bounding-box initialization inputs are
+  connection-only sockets, retaining their accepted value types.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
