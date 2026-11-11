@@ -156,6 +156,15 @@ def generation_pack_specs(
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
     if set(in_process_packs) - {entry.pack for entry in lock.packs}:
         raise CompositionError("generation hosting names packs absent from dinkster.lock")
+    development = generation / "development-sources.json"
+    selected_sources: set[str] = set()
+    if development.is_file():
+        capture = json.loads(development.read_text(encoding="utf-8"))
+        if capture.get("format") != "dinkster.development-sources/1":
+            raise CompositionError("unsupported development source capture")
+        selected_sources = {
+            "local-build:" + row["path"] for row in capture["sources"] if row["kind"] == "pack"
+        }
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
@@ -223,6 +232,7 @@ def generation_pack_specs(
                 and (
                     entry.source == "registry"
                     or entry.source.startswith("registry:")
+                    or entry.source in selected_sources
                     or (
                         local_build
                         and re.fullmatch(

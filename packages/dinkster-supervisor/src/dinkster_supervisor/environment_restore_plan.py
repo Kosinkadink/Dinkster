@@ -47,7 +47,7 @@ from .environment_state import (
 
 
 def _pack_source_missing(
-    snapshot: dict[str, object], store: Path, root: Path
+    snapshot: dict[str, object], store: Path, root: Path | None
 ) -> list[dict[str, object]]:
     text = _metadata(snapshot).get("dinkster.lock")
     if text is None:
@@ -95,8 +95,8 @@ for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
 print(json.dumps(missing))
 """
     unavailable = {cast("str", row["artifactDigest"]) for row in needed}
-    current = read_current(root)
-    if current is not None:
+    current = read_current(root) if root is not None else None
+    if current is not None and root is not None:
         try:
             with tempfile.TemporaryDirectory(prefix="dinkster-source-probe-") as directory:
                 with subprocess.Popen(
@@ -185,10 +185,16 @@ def _sources(provenance: dict[str, object], key: str) -> tuple[str, ...]:
     return tuple(cast("list[str]", value))
 
 
-def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
+def missing_inputs(
+    snapshot: dict[str, object], store: Path, *, offline: bool = False
+) -> list[dict[str, object]]:
     """Prefer verified retained payloads; remote probes never populate the store."""
     if snapshot.get("source") == "local":
-        return [*_local_missing_inputs(snapshot, store), *_pack_missing_inputs(snapshot, store)]
+        return [
+            *_local_missing_inputs(snapshot, store, offline=offline),
+            *_pack_missing_inputs(snapshot, store, offline=offline),
+            *(_pack_source_missing(snapshot, store, None) if offline else []),
+        ]
     if snapshot.get("source") != "published":
         raise EnvironmentError("restore planning requires published software inputs")
     metadata = _metadata(snapshot)
@@ -328,7 +334,9 @@ def missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, o
     return [*missing, *_pack_missing_inputs(snapshot, store)]
 
 
-def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
+def _pack_missing_inputs(
+    snapshot: dict[str, object], store: Path, *, offline: bool = False
+) -> list[dict[str, object]]:
     metadata = _metadata(snapshot)
     locks = [
         parse_metadata(text.encode("utf-8"))
@@ -369,8 +377,17 @@ def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[
     in_process = cast("list[str]", snapshot["inProcessPacks"])
     for lock in sorted(locks, key=lambda lock: lock["pack"] not in in_process):
         pack = lock.get("pack")
-        if not isinstance(pack, str) or lock.get("format") != "dinkster.pack-lock/1":
+        formats = {"dinkster.pack-lock/1"}
+        if snapshot.get("source") == "local":
+            formats.add("dinkster.pack-lock/2")
+        if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
+        if lock.get("format") == "dinkster.pack-lock/2":
+            engine_range = lock.get("engine")
+            if not isinstance(engine_range, str) or not SpecifierSet(engine_range).contains(
+                versions.get("dinkster-api", "0"), prereleases=True
+            ):
+                raise EnvironmentError("local pack engine requirement differs from its snapshot")
         if lock.get("variant") != base["variant"] or not SpecifierSet(
             cast("str", lock["requiresPython"])
         ).contains(cast("str", base["python"])):
@@ -433,7 +450,7 @@ def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[
                 raise EnvironmentError("restore refuses linked pack wheel directories")
             if not any(
                 artifact_available(
-                    roots,
+                    (str(cached.parent),) if offline else roots,
                     filename,
                     cached,
                     sha,
@@ -461,7 +478,9 @@ def _pack_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[
     return missing
 
 
-def _local_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict[str, object]]:
+def _local_missing_inputs(
+    snapshot: dict[str, object], store: Path, *, offline: bool = False
+) -> list[dict[str, object]]:
     metadata = _metadata(snapshot)
     if not {"engine-manifest.json", "base-manifest.json", "constraints.txt"} <= metadata.keys():
         raise EnvironmentError("local snapshot is missing recorded software metadata")
@@ -542,7 +561,11 @@ def _local_missing_inputs(snapshot: dict[str, object], store: Path) -> list[dict
                 else (str(wheel_root),)
             )
             if not artifact_available(
-                roots, filename, wheel_root / filename, sha, cast("int", row["size"])
+                (str(wheel_root),) if offline else roots,
+                filename,
+                wheel_root / filename,
+                sha,
+                cast("int", row["size"]),
             ):
                 missing.append(
                     {

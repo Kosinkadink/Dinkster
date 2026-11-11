@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -38,6 +39,7 @@ from .environment_custom import (
     prepare_custom_pack_locks,
     variant_file,
 )
+from .environment_development import DEVELOPMENT_DESCRIPTION
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -119,6 +121,10 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     result["current"] = current
     if args.operation == "history":
         entries = history(root)
+        for entry in entries:
+            snapshot = cast("dict[str, object]", entry["snapshot"])
+            if "development-sources.json" in cast("dict[str, str]", snapshot["metadata"]):
+                entry["sourceDescription"] = DEVELOPMENT_DESCRIPTION
         if args.history_action == "show":
             selected = next((entry for entry in entries if entry["id"] == args.entry), None)
             if selected is None:
@@ -132,6 +138,8 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     if current is not None and args.operation in {"status", "doctor"}:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
+        if "development-sources.json" in dict(generation.files):
+            result["sourceDescription"] = DEVELOPMENT_DESCRIPTION
         manifest = generation_root / "base-manifest.json"
         if generation.source != "local" and manifest.is_file():
             base = read_document(manifest)
@@ -193,6 +201,27 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 "locally resolved, no base manifest; checking recorded local inventory"
             ]
         changes = list(generation.drift(generation_root))
+        if "development-sources.json" in dict(generation.files):
+            from .environment_restore_plan import missing_inputs
+
+            snapshots = [
+                cast("dict[str, object]", entry["snapshot"])
+                for entry in history(root)
+                if entry["generation"] == current
+            ]
+            if not snapshots:
+                raise EnvironmentError("development generation has no captured history")
+            store = Path((root / "store").read_text(encoding="utf-8").strip())
+            if not store.is_absolute():
+                raise EnvironmentError("project store must be absolute")
+            missing = missing_inputs(snapshots[-1], store, offline=True)
+            result["exactRecovery"] = {"available": not missing, "missing": missing}
+            result["plan"] = [
+                DEVELOPMENT_DESCRIPTION,
+                "exact recovery artifacts retained"
+                if not missing
+                else "exact recovery artifacts missing; restore will refuse",
+            ]
         if (generation_root / "packs").exists() and not changes:
             store_file = root / "store"
             try:
@@ -287,6 +316,7 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
+    developing = args.operation == "develop"
     adopting = getattr(args, "adopt_from", None)
     if adopting is not None and (root.exists() or args.root.is_symlink()):
         raise EnvironmentError("adoption requires a new, nonexistent --root")
@@ -412,12 +442,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 "adoption requires one explicit --pack-lock for each recorded pack"
             )
     local = None
+    development = None
     catalog = None
     custom = None
     selection = None
     template = None
     dependency_variant = variant
-    if args.operation == "setup" and args.from_scratch:
+    if developing or (args.operation == "setup" and args.from_scratch):
         if args.pack_lock or args.catalog_lock is not None or args.artifacts is not None:
             raise EnvironmentError(
                 "--from-scratch resolves checkout packs; "
@@ -428,6 +459,28 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         local = local_selection(
             args.source.resolve(), variant, args.variants or DEFAULT_VARIANTS, args.python
         )
+        if developing:
+            from .environment_development import development_selection
+
+            development = development_selection(
+                args.source, tuple(args.pack_source), tuple(args.library_source)
+            )
+            for row in development["sources"]:
+                source = Path(row["path"])
+                if store.is_relative_to(source) or root.is_relative_to(source):
+                    raise EnvironmentError(
+                        "development project and store must be outside selected source folders"
+                    )
+            local["development"] = development
+            result["development"] = development
+            approval = (
+                "sha256:" + hashlib.sha256(json.dumps(local, sort_keys=True).encode()).hexdigest()
+            )
+            result["sourceApproval"] = approval
+            if args.approve is not None and args.approve != approval:
+                raise EnvironmentError(
+                    "development inputs changed from the approved plan; request a new plan"
+                )
         size = 0
         plan = [
             f"resolve {args.source.resolve() / 'uv.lock'} locally for {variant}",
@@ -435,6 +488,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             "from-scratch is opt-in: download size is unknown until dependency resolution",
             "build a local generation, check health, then activate; no published bundle is used",
         ]
+        if development is not None:
+            plan.extend(
+                [
+                    DEVELOPMENT_DESCRIPTION,
+                    *[
+                        f"capture {row['kind']} {row['path']} ({row['contentDigest']})"
+                        for row in development["sources"]
+                    ],
+                    "restore recovers the captured runtime only; author folders stay untouched",
+                ]
+            )
     else:
         catalog = discover(mirrors, channel, store=store)
         if adoption is not None and (
@@ -610,6 +674,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
+        if development is not None:
+            from .environment_development import verify_development_sources
+
+            verify_development_sources(development)
         if adoption is not None and (
             standalone_inputs(cast("Path", adopting), root, store) != adoption
             or any(content_digest(Path(path)) != value for path, value in adoption_locks.items())
@@ -794,21 +862,45 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     from .environment_local import prepare_local, prepare_local_packs
 
                     print("\n".join(plan), file=sys.stderr, flush=True)
-                    inputs = prepare_local(args.source.resolve(), local, store)
+                    local_source = args.source.resolve()
+                    local_packs: tuple[Path, ...] = ()
+                    local_libraries: tuple[Path, ...] = ()
+                    if development is not None:
+                        from .environment_development import captured_development_sources
+
+                        local_source, local_packs, local_libraries = preparation.enter_context(
+                            captured_development_sources(development, store)
+                        )
+                    inputs = prepare_local(
+                        local_source, local, store, library_wheels=local_libraries
+                    )
                     base_id = inputs["base"]
                     constraints = inputs["constraints"]
                     engine_version = inputs["engine_version"]
                     engine_release = inputs["engine_release"]
                     worker_protocol = inputs["worker_protocol"]
                     pack_locks = tuple(args.pack_lock)
-                    prepare_packs = partial(
-                        prepare_local_packs,
-                        source=args.source.resolve(),
-                        store=store,
-                        release=engine_release,
-                        selection=local,
-                        in_process=in_process,
-                    )
+                    if development is not None:
+                        from .environment_development import prepare_development_packs
+
+                        prepare_packs = partial(
+                            prepare_development_packs,
+                            packs=local_packs,
+                            libraries=local_libraries,
+                            store=store,
+                            release=engine_release,
+                            selection=local,
+                            in_process=in_process,
+                        )
+                    else:
+                        prepare_packs = partial(
+                            prepare_local_packs,
+                            source=local_source,
+                            store=store,
+                            release=engine_release,
+                            selection=local,
+                            in_process=in_process,
+                        )
                 else:
                     assert catalog is not None
                     assert published_constraints is not None
@@ -835,7 +927,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     worker_protocol=worker_protocol,
                     source_generation=(
                         previous_root
-                        if previous_root is not None
+                        if development is None
+                        and previous_root is not None
                         and ((previous_root / "packs").exists() or pack_locks or in_process)
                         else None
                     ),
@@ -1290,8 +1383,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     setup.add_argument("--engine-release", help="explicit published engine digest for adoption")
     setup.add_argument("--base-id", help="explicit published base digest for adoption")
+    develop = commands.add_parser("develop", help="capture and build explicit local sources")
+    develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
+    develop.add_argument("--pack-source", type=Path, action="append", required=True)
+    develop.add_argument("--library-source", type=Path, action="append", default=[])
+    develop.add_argument("--approve", help="require the source digest from a previous plan")
+    develop.add_argument("--python", type=Path, help="explicit host interpreter override")
+    develop.set_defaults(from_scratch=True)
     update = commands.add_parser("update", help="build and activate a channel's next generation")
-    for command in (setup, update):
+    for command in (setup, update, develop):
         command.add_argument("--mirror", action="append", default=[])
         command.add_argument(
             "--package-index", help="simple package index for exact locked third-party wheels"
@@ -1338,6 +1438,7 @@ def main(argv: list[str] | None = None) -> None:
         doctor,
         setup,
         update,
+        develop,
         start,
         stop,
         rollback,
@@ -1359,6 +1460,7 @@ def main(argv: list[str] | None = None) -> None:
         doctor,
         setup,
         update,
+        develop,
         start,
         stop,
         rollback,
@@ -1410,7 +1512,7 @@ def main(argv: list[str] | None = None) -> None:
             code = 0
         elif args.operation == "doctor" and args.repair:
             code = _repair(args, result)
-        elif args.operation in {"setup", "update"}:
+        elif args.operation in {"setup", "update", "develop"}:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
@@ -1438,6 +1540,7 @@ def main(argv: list[str] | None = None) -> None:
         in {
             "setup",
             "update",
+            "develop",
             "doctor",
             "rollback",
             "restore",
@@ -1450,6 +1553,10 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
         print(f"{result['operation']}: {result['status']}")
+        if "sourceDescription" in result:
+            print(result["sourceDescription"])
+        if "sourceApproval" in result:
+            print(f"Source approval: {result['sourceApproval']}")
         if "base" in result:
             base = cast("dict[str, object]", result["base"])
             print(f"Variant: {base['variant']} ({base['origin']})")
