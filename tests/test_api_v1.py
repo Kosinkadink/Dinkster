@@ -31,6 +31,14 @@ from dinkster_workers import InProcessWorker
 from tests.async_scenarios import run_scenario
 
 GOLDEN_V1_SURFACE = (
+    "MAX_COMPOSITOR_DIMENSION",
+    "MAX_COMPOSITOR_LAYERS",
+    "CompositorLayer",
+    "CompositorRecipe",
+    "CompositorTransform",
+    "coerce_compositor_recipe",
+    "coerce_delta",
+    "register_compositor_type",
     "TriangleMeshBatch",
     "materialize_mesh",
     "register_load3d_camera_type",
@@ -539,6 +547,14 @@ from dinkster_api.v1 import initialize_inference_process, materialize_audio
 assert callable(initialize_inference_process)
 assert callable(materialize_audio)
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+from dinkster_api.v1 import register_compositor_type
+registry = TypeRegistry()
+register_compositor_type(registry)
+assert registry.wrap('COMPOSITOR', {}).resolve() == {
+    'version': 2, 'documentDigest': None, 'commands': [],
+}
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference', 'dinkster_image'}
+               for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
@@ -951,6 +967,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_assets
     import dinkster_image_document.blend as document_blend
     import dinkster_image_document.compat as document_compat
+    import dinkster_image_document.compositor as compositor
     import dinkster_image_document.document as document
     import dinkster_image_document.format as document_format
     import dinkster_image_document.interchange as document_interchange
@@ -973,6 +990,14 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_workers.execution as worker_execution
 
     document_sources = {
+        "MAX_COMPOSITOR_DIMENSION": compositor,
+        "MAX_COMPOSITOR_LAYERS": compositor,
+        "CompositorLayer": compositor,
+        "CompositorRecipe": compositor,
+        "CompositorTransform": compositor,
+        "coerce_compositor_recipe": compositor,
+        "coerce_delta": compositor,
+        "register_compositor_type": compositor,
         "register_load3d_camera_type": camera_wire,
         "register_load3d_model_info_type": camera_wire,
         "register_mesh_type": geometry_wire,
