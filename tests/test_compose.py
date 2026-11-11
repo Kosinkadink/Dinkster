@@ -407,6 +407,53 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     return pool
 
 
+def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta() -> None:
+    import numpy as np
+
+    async def scenario() -> None:
+        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
+        assert not image.in_process
+        assert prepare_catalog(image.manifest, environment=os.environ).ok
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(image)
+            assert composer._records["dinkster-image"].worker.cold
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "image": GraphNode(
+                            "dinkster.image.empty_image",
+                            {"width": 7, "height": 3, "batch_size": 1, "color": 0x123456},
+                        ),
+                        "layer": GraphNode(
+                            "dinkster.image.add_layer", {"image": Link("image", "IMAGE")}
+                        ),
+                        "compose": GraphNode(
+                            "dinkster.image.image_compositor",
+                            {
+                                "layers": Link("layer", "LAYERS"),
+                                "compositor": {
+                                    "version": 2,
+                                    "documentDigest": None,
+                                    "commands": [],
+                                },
+                            },
+                        ),
+                    }
+                ),
+                ["compose"],
+            )
+            pixels = np.asarray(image_input(result.outputs["compose"]["IMAGE"].resolve()))
+            assert pixels.shape == (1, 3, 7, 3)
+            expected = np.broadcast_to(np.asarray([0x12, 0x34, 0x56]), pixels.shape)
+            np.testing.assert_array_equal(np.rint(pixels * 255).astype(np.uint8), expected)
+            assert result.diagnostics == ()
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 def test_lazy_image_pack_resolves_assets_after_host_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
