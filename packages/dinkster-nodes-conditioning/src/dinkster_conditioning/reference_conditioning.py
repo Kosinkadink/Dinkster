@@ -22,10 +22,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -55,9 +55,9 @@ def _combo_values(
 class ReferenceLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ReferenceLatent",
+                node_type="dinkster.conditioning.reference_latent",
                 display_name="Set Reference Latent",
                 category="model/conditioning",
                 description=(
@@ -69,7 +69,8 @@ class ReferenceLatent(Node):
                     InputSpec("latent", _LATENT, required=False),
                 ),
                 outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
-            )
+            ),
+            "ReferenceLatent",
         )
 
     @classmethod
@@ -90,9 +91,9 @@ class ReferenceLatent(Node):
 class ReferenceMultiLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ReferenceMultiLatent",
+                node_type="dinkster.conditioning.reference_multi_latent",
                 display_name="Set Reference Multi Latent",
                 category="model/conditioning",
                 description=(
@@ -151,7 +152,8 @@ class ReferenceMultiLatent(Node):
                     OutputSpec("empty_latent", _LATENT),
                 ),
                 input_order=("positive", "negative", "vae", "resolution", "images"),
-            )
+            ),
+            "ReferenceMultiLatent",
         )
 
     @classmethod

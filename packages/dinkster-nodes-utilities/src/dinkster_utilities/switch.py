@@ -13,7 +13,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     SelectorSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -22,7 +22,7 @@ class ComfySwitchNode(Node):
     def define_schema(cls) -> NodeSchema:
         value_type = TypeExpr.variable("switch")
         schema = NodeSchema(
-            node_type="ComfySwitchNode",
+            node_type="dinkster.utilities.comfy_switch_node",
             display_name="If/Else Switch",
             category="utilities/logic",
             inputs=(
@@ -33,7 +33,7 @@ class ComfySwitchNode(Node):
             outputs=(OutputSpec("output", value_type, optional=True),),
             selector=SelectorSpec("switch", {"false": "on_false", "true": "on_true"}),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ComfySwitchNode")
 
     @classmethod
     def check_lazy_status(

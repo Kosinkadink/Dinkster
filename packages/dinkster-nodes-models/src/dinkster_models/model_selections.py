@@ -22,19 +22,19 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     mount_roots_for_kind,
     resolve_asset_selection,
+    with_identity_replacement,
 )
 
 
 class VAELoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VAELoader",
+                node_type="dinkster.models.vae_loader",
                 display_name="Load VAE",
                 category="model/loaders",
                 inputs=(
@@ -47,7 +47,8 @@ class VAELoader(Node):
                 outputs=(OutputSpec("VAE", TypeExpr.concrete(VAE_TYPE)),),
                 # Source strings name live grants, not immutable file revisions.
                 idempotent=False,
-            )
+            ),
+            "VAELoader",
         )
 
     @classmethod
@@ -111,9 +112,9 @@ class VAELoader(Node):
 class DiffusersLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="DiffusersLoader",
+                node_type="dinkster.models.diffusers_loader",
                 display_name="Load Diffusers Model (DEPRECATED)",
                 category="model/loaders",
                 inputs=(
@@ -132,7 +133,8 @@ class DiffusersLoader(Node):
                 deprecation=Deprecation("Deprecated in ComfyUI."),
                 search_visibility="deprecated",
                 search_terms=("load diffusers model",),
-            )
+            ),
+            "DiffusersLoader",
         )
 
     @classmethod

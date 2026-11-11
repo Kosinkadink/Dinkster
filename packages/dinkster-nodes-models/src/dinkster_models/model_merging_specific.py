@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dinkster_api.v1 import NodeSchema, first_party_schema
+from dinkster_api.v1 import NodeSchema, with_identity_replacement
 
 from .model_merging import ModelMergeBlocks, block_merge_schema
 
@@ -26,33 +26,35 @@ _SD1_BLOCK_NAMES = (
 class ModelMergeSD1(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeSD1",
+                "dinkster.models.model_merge_sd1",
                 _SD1_BLOCK_NAMES,
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeSD1",
         )
 
 
 class ModelMergeSD2(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeSD2",
+                "dinkster.models.model_merge_sd2",
                 _SD1_BLOCK_NAMES,
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeSD2",
         )
 
 
 class ModelMergeSDXL(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeSDXL",
+                "dinkster.models.model_merge_sdxl",
                 (
                     "time_embed.",
                     "label_emb.",
@@ -62,16 +64,17 @@ class ModelMergeSDXL(ModelMergeBlocks):
                     "out.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeSDXL",
         )
 
 
 class ModelMergeSD3_2B(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeSD3_2B",
+                "dinkster.models.model_merge_sd3_2_b",
                 (
                     "pos_embed.",
                     "x_embedder.",
@@ -82,16 +85,17 @@ class ModelMergeSD3_2B(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeSD3_2B",
         )
 
 
 class ModelMergeAuraflow(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeAuraflow",
+                "dinkster.models.model_merge_auraflow",
                 (
                     "init_x_linear.",
                     "positional_encoding",
@@ -104,16 +108,17 @@ class ModelMergeAuraflow(ModelMergeBlocks):
                     "final_linear.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeAuraflow",
         )
 
 
 class ModelMergeFlux1(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeFlux1",
+                "dinkster.models.model_merge_flux1",
                 (
                     "img_in.",
                     "time_in.",
@@ -125,16 +130,17 @@ class ModelMergeFlux1(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeFlux1",
         )
 
 
 class ModelMergeSD35_Large(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeSD35_Large",
+                "dinkster.models.model_merge_sd35_large",
                 (
                     "pos_embed.",
                     "x_embedder.",
@@ -145,16 +151,17 @@ class ModelMergeSD35_Large(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeSD35_Large",
         )
 
 
 class ModelMergeMochiPreview(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeMochiPreview",
+                "dinkster.models.model_merge_mochi_preview",
                 (
                     "pos_frequencies.",
                     "t_embedder.",
@@ -164,16 +171,17 @@ class ModelMergeMochiPreview(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeMochiPreview",
         )
 
 
 class ModelMergeLTXV(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeLTXV",
+                "dinkster.models.model_merge_ltxv",
                 (
                     "patchify_proj.",
                     "adaln_single.",
@@ -183,16 +191,17 @@ class ModelMergeLTXV(ModelMergeBlocks):
                     "proj_out.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeLTXV",
         )
 
 
 class ModelMergeCosmos7B(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeCosmos7B",
+                "dinkster.models.model_merge_cosmos7_b",
                 (
                     "pos_embedder.",
                     "extra_pos_embedder.",
@@ -203,16 +212,17 @@ class ModelMergeCosmos7B(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeCosmos7B",
         )
 
 
 class ModelMergeCosmos14B(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeCosmos14B",
+                "dinkster.models.model_merge_cosmos14_b",
                 (
                     "pos_embedder.",
                     "extra_pos_embedder.",
@@ -223,16 +233,17 @@ class ModelMergeCosmos14B(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeCosmos14B",
         )
 
 
 class ModelMergeWAN2_1(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeWAN2_1",
+                "dinkster.models.model_merge_wan2_1",
                 (
                     "patch_embedding.",
                     "time_embedding.",
@@ -247,16 +258,17 @@ class ModelMergeWAN2_1(ModelMergeBlocks):
                     "1.3B model has 30 blocks, 14B model has 40 blocks. "
                     "Image to video model has the extra img_emb."
                 ),
-            )
+            ),
+            "ModelMergeWAN2_1",
         )
 
 
 class ModelMergeCosmosPredict2_2B(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeCosmosPredict2_2B",
+                "dinkster.models.model_merge_cosmos_predict2_2_b",
                 (
                     "pos_embedder.",
                     "x_embedder.",
@@ -266,16 +278,17 @@ class ModelMergeCosmosPredict2_2B(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeCosmosPredict2_2B",
         )
 
 
 class ModelMergeCosmosPredict2_14B(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeCosmosPredict2_14B",
+                "dinkster.models.model_merge_cosmos_predict2_14_b",
                 (
                     "pos_embedder.",
                     "x_embedder.",
@@ -285,16 +298,17 @@ class ModelMergeCosmosPredict2_14B(ModelMergeBlocks):
                     "final_layer.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeCosmosPredict2_14B",
         )
 
 
 class ModelMergeQwenImage(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeQwenImage",
+                "dinkster.models.model_merge_qwen_image",
                 (
                     "pos_embeds.",
                     "img_in.",
@@ -305,16 +319,17 @@ class ModelMergeQwenImage(ModelMergeBlocks):
                     "proj_out.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeQwenImage",
         )
 
 
 class ModelMergeKrea2(ModelMergeBlocks):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             block_merge_schema(
-                "ModelMergeKrea2",
+                "dinkster.models.model_merge_krea2",
                 (
                     "first.",
                     "tmlp.",
@@ -327,5 +342,6 @@ class ModelMergeKrea2(ModelMergeBlocks):
                     "last.",
                 ),
                 category=_CATEGORY,
-            )
+            ),
+            "ModelMergeKrea2",
         )

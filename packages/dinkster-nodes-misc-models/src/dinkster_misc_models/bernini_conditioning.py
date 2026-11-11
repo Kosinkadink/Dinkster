@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -61,7 +61,7 @@ class BerniniConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BerniniConditioning",
+            node_type="dinkster.misc.models.bernini_conditioning",
             display_name="Bernini Conditioning",
             category="model/conditioning/bernini",
             description=(
@@ -116,7 +116,7 @@ class BerniniConditioning(Node):
                 "ref_max_size",
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BerniniConditioning")
 
     @classmethod
     def execute(

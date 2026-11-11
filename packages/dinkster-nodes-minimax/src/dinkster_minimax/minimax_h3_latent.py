@@ -23,11 +23,11 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -53,7 +53,7 @@ class EmptyMiniMaxH3LatentAV(Node):
     def define_schema(cls) -> NodeSchema:
         integer = TypeExpr.concrete(CORE_INT)
         schema = NodeSchema(
-            node_type="EmptyMiniMaxH3LatentAV",
+            node_type="dinkster.minimax.empty_mini_max_h3_latent_av",
             display_name="Empty MiniMax H3 AV Latent",
             category="model/latent/minimax",
             description=(
@@ -86,7 +86,7 @@ class EmptyMiniMaxH3LatentAV(Node):
             ),
             outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyMiniMaxH3LatentAV")
 
     @classmethod
     def execute(cls, *, width: int, height: int, length: int) -> Mapping[str, object]:
@@ -98,7 +98,7 @@ class MiniMaxH3ImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MiniMaxH3ImageToVideo",
+            node_type="dinkster.minimax.mini_max_h3_image_to_video",
             display_name="MiniMax H3 Image to Video",
             category="model/conditioning/minimax",
             inputs=(
@@ -118,7 +118,7 @@ class MiniMaxH3ImageToVideo(Node):
                 OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MiniMaxH3ImageToVideo")
 
     @classmethod
     def execute(
@@ -162,7 +162,7 @@ class MiniMaxH3AddGuide(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MiniMaxH3AddGuide",
+            node_type="dinkster.minimax.mini_max_h3_add_guide",
             display_name="Add Guide for MiniMax H3",
             category="model/conditioning/minimax",
             description=(
@@ -216,7 +216,7 @@ class MiniMaxH3AddGuide(Node):
             ),
             outputs=(OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MiniMaxH3AddGuide")
 
     @classmethod
     def execute(

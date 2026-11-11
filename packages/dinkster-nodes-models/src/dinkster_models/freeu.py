@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -64,14 +64,16 @@ def _filter_skip(skip: Any, scale: float, cpu_devices: set[Any]) -> Any:
 
 
 class _FreeU(Node):
+    node_type: str
+    source_type: str
     defaults: tuple[float, float, float, float]
     normalized = False
 
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type=cls.__name__,
+                node_type=cls.node_type,
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -83,7 +85,8 @@ class _FreeU(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            cls.source_type,
         )
 
     @classmethod
@@ -118,9 +121,13 @@ class _FreeU(Node):
 
 
 class FreeU(_FreeU):
+    node_type = "dinkster.models.free_u"
+    source_type = "FreeU"
     defaults = (1.1, 1.2, 0.9, 0.2)
 
 
 class FreeU_V2(_FreeU):
+    node_type = "dinkster.models.free_u_v2"
+    source_type = "FreeU_V2"
     defaults = (1.3, 1.4, 0.9, 0.2)
     normalized = True

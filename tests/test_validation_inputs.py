@@ -132,6 +132,14 @@ def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> N
     ]
 
 
+def test_development_pack_selects_gallery_behavior() -> None:
+    from tools.ci_selection import test_paths
+
+    assert test_paths(evidence_paths.DINKSTER_ROOT, ["packages/dinkster-nodes-dev"]) == [
+        "tests/test_gallery.py"
+    ]
+
+
 @pytest.mark.parametrize("fail_root", [False, True])
 def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     tmp_path: Path, fail_root: bool

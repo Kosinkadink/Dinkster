@@ -363,7 +363,15 @@ def resolve_pack_lock(
         packages: list[LockedDistribution] = []
         for item in cast("list[dict[str, Any]]", data.get("packages", [])):
             candidates: list[LockedWheel] = []
-            for wheel in item.get("wheels", []):
+            archives: list[dict[str, Any]] = []
+            if "archive" in item:
+                archive = cast("dict[str, Any]", item["archive"])
+                location = cast("str", archive.get("url", archive.get("path", "")))
+                if ("path" in archive and Path(archive["path"]).suffix == ".whl") or (
+                    urlparse(location).scheme == "file" and urlparse(location).path.endswith(".whl")
+                ):
+                    archives.append(archive)
+            for wheel in [*item.get("wheels", []), *archives]:
                 url = wheel.get("url")
                 if url is None:
                     path = Path(wheel["path"])
@@ -372,13 +380,15 @@ def resolve_pack_lock(
                     url = path.resolve().as_uri()
                 size = wheel.get("size")
                 digest = wheel.get("hashes", {}).get("sha256")
-                if size is None or digest is None:
+                if size is None or digest is None or wheel in archives:
                     # uv omits integrity metadata for local find-links artifacts.
                     with urllib.request.urlopen(url) as stream:
                         content = stream.read()
                     measured = hashlib.sha256(content).hexdigest()
                     if digest is not None and digest != measured:
                         raise ProvisionError(f"resolved wheel hash mismatch: {url}")
+                    if size is not None and size != len(content):
+                        raise ProvisionError(f"resolved wheel size mismatch: {url}")
                     size, digest = len(content), measured
                 candidates.append(
                     LockedWheel(

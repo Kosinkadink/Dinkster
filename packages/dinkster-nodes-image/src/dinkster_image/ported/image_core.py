@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -70,9 +70,9 @@ def _schema(
 class ImageScale(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageScale",
+                "dinkster.image.image_scale",
                 "Upscale Image",
                 "image/upscaling",
                 (
@@ -82,7 +82,8 @@ class ImageScale(Node):
                     _integer("height", 512, 0, 16384, 1),
                     _combo("crop", ("disabled", "center")),
                 ),
-            )
+            ),
+            "ImageScale",
         )
 
     @classmethod
@@ -104,9 +105,9 @@ class ImageScale(Node):
 class ImageScaleBy(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageScaleBy",
+                "dinkster.image.image_scale_by",
                 "Upscale Image By",
                 "image/upscaling",
                 (
@@ -119,7 +120,8 @@ class ImageScaleBy(Node):
                         widget=NumberWidget(min=0.01, max=8.0, step=0.01),
                     ),
                 ),
-            )
+            ),
+            "ImageScaleBy",
         )
 
     @classmethod
@@ -136,10 +138,14 @@ class ImageScaleBy(Node):
 class ImageInvert(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageInvert", "Invert Image Colors", "image/color", (InputSpec("image", _IMAGE),)
-            )
+                "dinkster.image.image_invert",
+                "Invert Image Colors",
+                "image/color",
+                (InputSpec("image", _IMAGE),),
+            ),
+            "ImageInvert",
         )
 
     @classmethod
@@ -153,13 +159,14 @@ class ImageInvert(Node):
 class ImageBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageBatch",
+                "dinkster.image.image_batch",
                 "Batch Images (DEPRECATED)",
                 "image/batch",
                 (InputSpec("image1", _IMAGE), InputSpec("image2", _IMAGE)),
-            )
+            ),
+            "ImageBatch",
         )
 
     @classmethod
@@ -182,9 +189,9 @@ class ImageBatch(Node):
 class EmptyImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "EmptyImage",
+                "dinkster.image.empty_image",
                 "Empty Image",
                 "image",
                 (
@@ -198,7 +205,8 @@ class EmptyImage(Node):
                         widget=NumberWidget(min=0, max=0xFFFFFF, step=1, display="color"),
                     ),
                 ),
-            )
+            ),
+            "EmptyImage",
         )
 
     @classmethod
@@ -225,7 +233,7 @@ class ImagePadForOutpaint(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImagePadForOutpaint",
+            node_type="dinkster.image.image_pad_for_outpaint",
             display_name="Pad Image for Outpainting",
             category="image/transform",
             inputs=(
@@ -238,7 +246,7 @@ class ImagePadForOutpaint(Node):
                 OutputSpec("MASK", TypeExpr.concrete(MASK_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImagePadForOutpaint")
 
     @classmethod
     def execute(

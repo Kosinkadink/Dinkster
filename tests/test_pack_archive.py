@@ -841,6 +841,48 @@ def test_official_publication_selects_only_changed_committed_packs(
         select_packs(tmp_path, tag="pack/first/v2.0")
 
 
+def test_default_admission_separates_expensive_children_without_changing_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, official_payloads: tuple[Path, ...]
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from scripts import check_default_pack_admission as admission
+
+    catalog = Lockfile.from_record_json(official_payloads[-1].read_text())
+
+    def registry_defaults(registry, minimums, artifacts, *, engine_version):
+        for entry in catalog.packs:
+            wheel = next(
+                path
+                for path in official_payloads
+                if path.name == f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl"
+            )
+            shutil.copyfile(
+                wheel, artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            )
+        return catalog, {}
+
+    monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
+    monkeypatch.setattr(admission.StaticPackIndex, "catalog", lambda *args, **kwargs: [])
+    prepared = tmp_path / "prepared"
+    result = admission.check_defaults(
+        admission.NamedRegistry("", "https://registry.invalid"),
+        engine_version="0.0.4",
+        prepare_output=prepared,
+    )
+    groups = result["groups"]
+    assert isinstance(groups, list)
+    assert len(groups) == 10
+    assert all(groups)
+    assert sorted(name for group in groups for name in group) == sorted(
+        entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
+    )
+    assert ["dinkster-3d"] in groups
+    assert ["dinkster-image", "dinkster-latent"] in groups
+    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
+
+
 @pytest.mark.parametrize(
     ("mode", "problem"),
     [
@@ -1690,7 +1732,7 @@ def test_official_publication_declarations_match_archive_admission(
             / package_name
         )
         accepted = run_manifest_admission(
-            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.3.dev123"
+            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.4.dev123"
         )
         assert not accepted.blocked, accepted.findings
         for engine in ("0.0.1", "0.1"):

@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 
 _AUDIO_ENCODER = TypeExpr.concrete(AUDIO_ENCODER_TYPE)
@@ -33,9 +33,9 @@ _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 class AudioEncoderLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="AudioEncoderLoader",
+                node_type="dinkster.conditioning.audio_encoder_loader",
                 display_name="Load Audio Encoder",
                 category="model/loaders",
                 inputs=(
@@ -48,7 +48,8 @@ class AudioEncoderLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("AUDIO_ENCODER", _AUDIO_ENCODER),),
-            )
+            ),
+            "AudioEncoderLoader",
         )
 
     @classmethod
@@ -72,9 +73,9 @@ class AudioEncoderLoader(Node):
 class AudioEncoderEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="AudioEncoderEncode",
+                node_type="dinkster.conditioning.audio_encoder_encode",
                 category="model/conditioning",
                 inputs=(InputSpec("audio_encoder", _AUDIO_ENCODER), InputSpec("audio", _AUDIO)),
                 outputs=(
@@ -82,7 +83,8 @@ class AudioEncoderEncode(Node):
                         "AUDIO_ENCODER_OUTPUT", TypeExpr.concrete(AUDIO_ENCODER_OUTPUT_TYPE)
                     ),
                 ),
-            )
+            ),
+            "AudioEncoderEncode",
         )
 
     @classmethod

@@ -18,10 +18,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_splat,
     report_progress,
+    with_identity_replacement,
 )
 
 from .camera_info import matrix_quaternion
@@ -64,7 +64,7 @@ class TransformSplat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TransformSplat",
+            node_type="dinkster.3d.transform_splat",
             display_name="Transform Splat",
             category="3d/splat",
             description=(
@@ -89,7 +89,7 @@ class TransformSplat(Node):
             ),
             outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TransformSplat")
 
     @classmethod
     def execute(
@@ -162,7 +162,7 @@ class GetSplatCount(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GetSplatCount",
+            node_type="dinkster.3d.get_splat_count",
             display_name="Get Splat Count",
             category="3d/splat",
             description="Returns the number of splats summed across the batch.",
@@ -173,7 +173,7 @@ class GetSplatCount(Node):
                 OutputSpec("count", TypeExpr.concrete(CORE_INT)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GetSplatCount")
 
     @classmethod
     def execute(cls, *, splat: object) -> Mapping[str, object]:
@@ -192,7 +192,7 @@ class MergeSplat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MergeSplat",
+            node_type="dinkster.3d.merge_splat",
             display_name="Merge Splats",
             category="3d/splat",
             description=(
@@ -213,7 +213,7 @@ class MergeSplat(Node):
             ),
             outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MergeSplat")
 
     @classmethod
     def execute(cls, *, splats: Mapping[str, object]) -> Mapping[str, object]:

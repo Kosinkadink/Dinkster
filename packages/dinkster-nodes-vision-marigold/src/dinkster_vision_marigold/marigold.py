@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -24,7 +24,7 @@ class MarigoldV2PostProcess(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MarigoldV2PostProcess",
+            node_type="dinkster.vision.marigold.marigold_v2_post_process",
             display_name="Marigold V2 Post-Process",
             category="image/geometry estimation",
             description=(
@@ -43,7 +43,7 @@ class MarigoldV2PostProcess(Node):
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MarigoldV2PostProcess")
 
     @classmethod
     def execute(cls, *, image: object, prediction: str) -> Mapping[str, object]:

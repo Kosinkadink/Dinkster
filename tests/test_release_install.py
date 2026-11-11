@@ -32,6 +32,7 @@ from scripts.build_release import (
     select_dependency_wheels,
     validate_engine_wheels,
     versioned_sources,
+    wheel_metadata,
     workspace_projects,
     write_constraints,
 )
@@ -962,7 +963,7 @@ def test_engine_publication_ignores_only_supervisor_changes(
     assert inputs_changed(tmp_path, before, snapshot()) is expected
 
 
-def test_repository_versions_match_next_release_tag() -> None:
+def test_repository_versions_match_engine_release_tag() -> None:
     assert release_version(ROOT, "v0.0.3") == "0.0.3"
     subprocess.run(
         [
@@ -3181,7 +3182,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     engine = {
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
-        "version": "0.1" if problem == "range" else "0.0.3.dev123",
+        "version": "0.1" if problem == "range" else "0.0.4.dev123",
         "tag": "wrong" if problem == "tag" else tag,
         "commit": ("d" if problem == "commit" else "c") * 40,
         "workerProtocol": 11,
@@ -3191,19 +3192,19 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     }
     if labelled:
         del engine["tag"]
-        engine.update(label="2026-11-03-0.0.3.dev123+build", builtAt="2026-11-03T10:41:18Z")
+        engine.update(label="2026-11-03-0.0.4.dev123+build", builtAt="2026-11-03T10:41:18Z")
     engine_bytes = json.dumps(engine).encode()
     identity = hashlib.sha256(engine_bytes).hexdigest()
     indexed_digest = "f" * 64 if problem == "index-digest" else identity
     if labelled:
-        tag = f"main-2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}"
+        tag = f"main-2026-11-03-0.0.4.dev123+build-{indexed_digest[:8]}"
     entry = {
         "commit": ("e" if problem == "index-commit" else "c") * 40,
         "sha256": indexed_digest,
         "label": engine.get("label"),
         "version": engine["version"],
         "path": "engine/"
-        + (f"2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}" if labelled else indexed_digest),
+        + (f"2026-11-03-0.0.4.dev123+build-{indexed_digest[:8]}" if labelled else indexed_digest),
     }
     if problem == "index-path":
         entry["path"] = "engine/" + "a" * 64
@@ -3259,7 +3260,12 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setattr(preparation, "fetch_artifact", fetch)
     candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
     if problem == "candidate":
-        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.3.dev456")
+        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.4.dev456")
+        monkeypatch.setattr(
+            preparation,
+            "versioned_sources",
+            lambda root, version: versioned_sources(ROOT, version),
+        )
 
         def candidate_wheels(root, uv, bases):
             assert root == tmp_path and uv == "uv" and len(bases) == 2
@@ -3300,14 +3306,22 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
             if problem == "candidate":
                 manifest = json.loads((work / "engine/release-manifest.json").read_bytes())
                 assert manifest["dependencies"] == candidate_dependencies
-                assert manifest["version"] == "0.0.3.dev456"
+                assert manifest["version"] == "0.0.4.dev456"
                 assert manifest["commit"] == "c" * 40
-                assert manifest["artifacts"] == []
+                api = work / "engine/dinkster_api-0.0.4.dev456-py3-none-any.whl"
+                assert wheel_metadata(api) == ("dinkster-api", "0.0.4.dev456")
+                assert manifest["artifacts"] == [
+                    {
+                        "name": api.name,
+                        "size": api.stat().st_size,
+                        "sha256": hashlib.sha256(api.read_bytes()).hexdigest(),
+                    }
+                ]
             else:
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.4")
+                ("dinkster-image", "0.0.5")
             ]
     finally:
         server.shutdown()

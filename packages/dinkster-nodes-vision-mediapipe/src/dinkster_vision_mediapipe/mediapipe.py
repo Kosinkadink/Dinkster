@@ -22,10 +22,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_vision_packet,
+    with_identity_replacement,
 )
 
 _CONTOURS = ("face_oval", "lips", "left_eye", "right_eye", "left_eyebrow", "right_eyebrow")
@@ -74,7 +74,7 @@ class MediaPipeFaceMeshVisualize(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MediaPipeFaceMeshVisualize",
+            node_type="dinkster.vision.mediapipe.media_pipe_face_mesh_visualize",
             display_name="Visualize Face Landmarks (MediaPipe)",
             category="image/detection",
             description="Draws face landmarks mesh on the input image.",
@@ -148,7 +148,7 @@ class MediaPipeFaceMeshVisualize(Node):
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MediaPipeFaceMeshVisualize")
 
     @classmethod
     def execute(
@@ -256,7 +256,7 @@ class MediaPipeFaceMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MediaPipeFaceMask",
+            node_type="dinkster.vision.mediapipe.media_pipe_face_mask",
             display_name="Draw Face Mask (MediaPipe)",
             category="image/detection",
             description="Draws a mask from face landmarks.",
@@ -296,7 +296,7 @@ class MediaPipeFaceMask(Node):
             input_order=("face_landmarks", "regions"),
             outputs=(OutputSpec("MASK", TypeExpr.concrete(MASK_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MediaPipeFaceMask")
 
     @classmethod
     def execute(

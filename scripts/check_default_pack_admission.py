@@ -359,6 +359,15 @@ def check_defaults(
             groups = [[name] for name in heavy if name in names]
             remaining = [name for name in names if name not in heavy]
             groups.extend(remaining[index::7] for index in range(7) if remaining[index::7])
+            # These two children dominated one round-robin group in hosted measurements.
+            for pack, companion in (
+                ("dinkster-audio", "dinkster-video"),
+                ("dinkster-latent", "dinkster-image"),
+            ):
+                if pack in names and companion in names:
+                    next(group for group in groups if pack in group).remove(pack)
+                    next(group for group in groups if companion in group).append(pack)
+            groups = [group for group in groups if group]
             return {"engineVersion": engine_version, "groups": groups}
         if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
             raise ValueError(f"requested admission packs are not in the catalog: {sorted(missing)}")

@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -50,12 +50,12 @@ class EmptyTrellis2LatentStructure(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyTrellis2LatentStructure",
+            "dinkster.3d.models.empty_trellis2_latent_structure",
             "model/latent/trellis",
             (_integer("batch_size", 1, 4096),),
             "Empty Trellis2 Latent Structure",
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyTrellis2LatentStructure")
 
     @classmethod
     def execute(cls, *, batch_size: int) -> Mapping[str, object]:

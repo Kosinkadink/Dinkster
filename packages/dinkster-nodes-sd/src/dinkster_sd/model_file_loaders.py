@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     mount_roots_for_kind,
+    with_identity_replacement,
 )
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -61,7 +61,7 @@ class unCLIPCheckpointLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="unCLIPCheckpointLoader",
+            node_type="dinkster.sd.un_clip_checkpoint_loader",
             display_name="Load unCLIP Checkpoint",
             category="model/loaders",
             inputs=(_asset("ckpt_name", "model/checkpoint"),),
@@ -72,7 +72,7 @@ class unCLIPCheckpointLoader(Node):
                 OutputSpec("CLIP_VISION", _CLIP_VISION),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "unCLIPCheckpointLoader")
 
     @classmethod
     def execute(cls, *, ckpt_name: object) -> Mapping[str, object]:
@@ -93,13 +93,13 @@ class GLIGENLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GLIGENLoader",
+            node_type="dinkster.sd.gligen_loader",
             display_name="Load GLIGEN Model",
             category="model/loaders",
             inputs=(_asset("gligen_name", "model/gligen"),),
             outputs=(OutputSpec("GLIGEN", _GLIGEN),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GLIGENLoader")
 
     @classmethod
     def execute(cls, *, gligen_name: object) -> Mapping[str, object]:
@@ -113,7 +113,7 @@ class ImageOnlyCheckpointLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageOnlyCheckpointLoader",
+            node_type="dinkster.sd.image_only_checkpoint_loader",
             display_name="Load Checkpoint Image Only (img2vid model)",
             category="model/loaders",
             inputs=(_asset("ckpt_name", "model/checkpoint"),),
@@ -123,7 +123,7 @@ class ImageOnlyCheckpointLoader(Node):
                 OutputSpec("VAE", _VAE),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageOnlyCheckpointLoader")
 
     @classmethod
     def execute(cls, *, ckpt_name: object) -> Mapping[str, object]:

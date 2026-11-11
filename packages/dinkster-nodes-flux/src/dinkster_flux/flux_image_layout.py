@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _ARRAY = TypeExpr.concrete(ARRAY_TYPE)
@@ -53,13 +53,13 @@ class FluxKontextImageScale(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FluxKontextImageScale",
+            node_type="dinkster.flux.flux_kontext_image_scale",
             category="model/conditioning/flux",
             description="This node resizes the image to one that is more optimal for flux kontext.",
             inputs=(InputSpec("image", _IMAGE),),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FluxKontextImageScale")
 
     @classmethod
     def execute(cls, *, image: object) -> Mapping[str, object]:
@@ -82,7 +82,7 @@ class Flux3LayoutPrompt(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Flux3LayoutPrompt",
+            node_type="dinkster.flux.flux3_layout_prompt",
             display_name="FLUX 3 Image Layout Prompt",
             category="model/conditioning/flux",
             description=(
@@ -107,7 +107,7 @@ class Flux3LayoutPrompt(Node):
             ),
             outputs=(OutputSpec("prompt", _STRING, display_name="prompt"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Flux3LayoutPrompt")
 
     @classmethod
     def execute(cls, *, prompt: str, element: object) -> Mapping[str, object]:

@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     mount_roots_for_kind,
+    with_identity_replacement,
 )
 
 
@@ -58,8 +58,14 @@ def _load_clip(names: tuple[object, ...]) -> Any:
 class TripleCLIPLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _schema("TripleCLIPLoader", "Load CLIP (Triple)", "sd3: clip-l, clip-g, t5", 3)
+        return with_identity_replacement(
+            _schema(
+                "dinkster.models.triple_clip_loader",
+                "Load CLIP (Triple)",
+                "sd3: clip-l, clip-g, t5",
+                3,
+            ),
+            "TripleCLIPLoader",
         )
 
     @classmethod
@@ -72,13 +78,14 @@ class TripleCLIPLoader(Node):
 class QuadrupleCLIPLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "QuadrupleCLIPLoader",
+                "dinkster.models.quadruple_clip_loader",
                 "Load CLIP (Quadruple)",
                 "hidream: long clip-l, long clip-g, t5xxl, llama_8b_3.1_instruct",
                 4,
-            )
+            ),
+            "QuadrupleCLIPLoader",
         )
 
     @classmethod

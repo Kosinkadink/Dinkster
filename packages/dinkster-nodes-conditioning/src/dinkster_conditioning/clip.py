@@ -22,17 +22,17 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 
 class CLIPTextEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPTextEncode",
+                node_type="dinkster.conditioning.clip_text_encode",
                 display_name="CLIP Text Encode (Prompt)",
                 category="model/conditioning",
                 search_terms=(
@@ -72,7 +72,8 @@ class CLIPTextEncode(Node):
                         ),
                     ),
                 ),
-            )
+            ),
+            "CLIPTextEncode",
         )
 
     @classmethod
@@ -90,9 +91,9 @@ class CLIPTextEncode(Node):
 class CLIPSetLastLayer(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPSetLastLayer",
+                node_type="dinkster.conditioning.clip_set_last_layer",
                 display_name="CLIP Set Last Layer",
                 category="model/conditioning",
                 inputs=(
@@ -106,7 +107,8 @@ class CLIPSetLastLayer(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CLIP", TypeExpr.concrete(CLIP_TYPE)),),
-            )
+            ),
+            "CLIPSetLastLayer",
         )
 
     @classmethod
@@ -119,9 +121,9 @@ class CLIPSetLastLayer(Node):
 class CLIPVisionEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPVisionEncode",
+                node_type="dinkster.conditioning.clip_vision_encode",
                 display_name="CLIP Vision Encode",
                 category="model/conditioning",
                 inputs=(
@@ -137,7 +139,8 @@ class CLIPVisionEncode(Node):
                 outputs=(
                     OutputSpec("CLIP_VISION_OUTPUT", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)),
                 ),
-            )
+            ),
+            "CLIPVisionEncode",
         )
 
     @classmethod

@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -29,7 +29,7 @@ class MoGePointMapToMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MoGePointMapToMesh",
+            node_type="dinkster.vision.moge.mo_ge_point_map_to_mesh",
             display_name="Convert MoGe Point Map to Mesh",
             description="Convert a MoGe point map into a 3D mesh.",
             category="image/geometry estimation",
@@ -69,7 +69,7 @@ class MoGePointMapToMesh(Node):
             ),
             outputs=(OutputSpec("MESH", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MoGePointMapToMesh")
 
     @classmethod
     def execute(

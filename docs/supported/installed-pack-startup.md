@@ -602,3 +602,59 @@
   proposal-approval contract, appends a source-linked entry with reason `rollback`,
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
+
+### Development generations from local folders
+
+Select local software explicitly; nothing needs publishing first:
+
+```sh
+dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster-env --root /absolute/project status
+dinkster-env --root /absolute/project doctor
+dinkster-env --root /absolute/project start --yes
+```
+
+Repeat `--pack-source` for more packs and `--library-source` for more helper
+folders or wheels. Omit library inputs when none are needed. Choose a base variant
+matching the host; `--python /absolute/python` explicitly selects an existing
+interpreter instead of the configured standalone interpreter. Use `--port PORT`
+when the default listener is occupied. Project and store directories must be
+outside selected source folders. Building uses verified copies, never editable
+installs into author folders. Selected helper wheels participate in engine
+resolution before packs are built, including replacements for engine dependencies
+whose real versions still satisfy the declared constraints. Explicitly selected
+first-party packs may use their reserved namespaces only in this development
+capture; this does not grant registry admission. Missing sources, changed plan inputs, incompatible
+API ranges and dependency conflicts refuse rather than inventing versions or
+dropping constraints.
+
+Development generations are built from local folders, not reviewed by the
+registry; dependency ranges resolve at build time. After editing a pack, stop the
+engine with `dinkster-env --root /absolute/project stop --yes`, then repeat the
+plan and approved `develop` commands to build a new generation. An ordinary
+channel update refuses a local generation instead of changing its source.
+
+```sh
+dinkster-env --root /absolute/project history
+dinkster-env --root /absolute/project history show 1
+dinkster-env --root /absolute/project restore 1 --plan
+dinkster-env --root /absolute/project restore 1 --yes
+```
+
+Restore rebuilds the captured runtime from retained interpreter files, built
+wheels, exact dependency artifacts and pack archives. It needs no source checkout
+or network when those artifacts remain intact. Doctor reports separately whether
+all exact-recovery inputs are retained; a clean running generation can still have
+missing recovery artifacts. Current and previous generations use the existing
+retention protection. Older history alone is not an artifact backup: collection
+of its last inputs can make exact recovery unavailable.
+
+Source paths, package roots, content digests and available Git commit/dirty state
+describe the captured working bytes, including selected untracked edits. Recovery
+does not reset, clean, overwrite or back up author folders. Workflows, models,
+outputs and other project data are not recovered by software restore. No bundled
+Git, Git-URL fetching or contributor-environment synchronization is provided by
+this operation. When invoking tools through `uv run`, `--no-sync` prevents uv from
+silently changing that tool environment to match a checkout lock; it does not
+capture an environment or make arbitrary unrecorded edits recoverable.

@@ -20,10 +20,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_mesh,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -212,7 +212,7 @@ class UnwrapMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="UnwrapMesh",
+            node_type="dinkster.3d.unwrap_mesh",
             display_name="Unwrap Mesh UVs",
             category="3d/texturing",
             description=(
@@ -256,7 +256,7 @@ class UnwrapMesh(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "UnwrapMesh")
 
     @classmethod
     def execute(

@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -81,7 +81,10 @@ def _images(images: Any) -> Any:
 class VAEDecode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema("VAEDecode", "VAE Decode", encode=False, tiled=False))
+        return with_identity_replacement(
+            _schema("dinkster.latent.vae_decode", "VAE Decode", encode=False, tiled=False),
+            "VAEDecode",
+        )
 
     @classmethod
     def execute(cls, *, vae: Any, samples: object) -> Mapping[str, object]:
@@ -91,7 +94,10 @@ class VAEDecode(Node):
 class VAEEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema("VAEEncode", "VAE Encode", encode=True, tiled=False))
+        return with_identity_replacement(
+            _schema("dinkster.latent.vae_encode", "VAE Encode", encode=True, tiled=False),
+            "VAEEncode",
+        )
 
     @classmethod
     def execute(cls, *, vae: Any, pixels: object) -> Mapping[str, object]:
@@ -101,8 +107,11 @@ class VAEEncode(Node):
 class VAEDecodeTiled(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _schema("VAEDecodeTiled", "VAE Decode (Tiled)", encode=False, tiled=True)
+        return with_identity_replacement(
+            _schema(
+                "dinkster.latent.vae_decode_tiled", "VAE Decode (Tiled)", encode=False, tiled=True
+            ),
+            "VAEDecodeTiled",
         )
 
     @classmethod
@@ -142,8 +151,11 @@ class VAEDecodeTiled(Node):
 class VAEEncodeTiled(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _schema("VAEEncodeTiled", "VAE Encode (Tiled)", encode=True, tiled=True)
+        return with_identity_replacement(
+            _schema(
+                "dinkster.latent.vae_encode_tiled", "VAE Encode (Tiled)", encode=True, tiled=True
+            ),
+            "VAEEncodeTiled",
         )
 
     @classmethod

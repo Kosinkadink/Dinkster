@@ -17,10 +17,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -47,16 +47,17 @@ def _duration_inputs(
 class EmptyLatentAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="EmptyLatentAudio",
+                node_type="dinkster.latent.empty_latent_audio",
                 display_name="Empty Latent Audio",
                 category="model/latent",
                 inputs=_duration_inputs(
                     47.6, 0.1, batch_doc="The number of latent images in the batch."
                 ),
                 outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
-            )
+            ),
+            "EmptyLatentAudio",
         )
 
     @classmethod
@@ -74,9 +75,9 @@ class EmptyLatentAudio(Node):
 class GetAudioLatentSize(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="GetAudioLatentSize",
+                node_type="dinkster.latent.get_audio_latent_size",
                 display_name="Get Audio Latent Size",
                 search_terms=("dimensions", "audio latent info", "audio latent length"),
                 description=(
@@ -107,7 +108,8 @@ class GetAudioLatentSize(Node):
                         doc="The number of latents in the batch.",
                     ),
                 ),
-            )
+            ),
+            "GetAudioLatentSize",
         )
 
     @classmethod

@@ -14,9 +14,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     report_progress,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -28,7 +28,7 @@ class GetImageSize(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GetImageSize",
+            node_type="dinkster.image.get_image_size",
             display_name="Get Image Size",
             description="Returns the width, height, and batch size of the image.",
             category="image",
@@ -40,7 +40,7 @@ class GetImageSize(Node):
             ),
             search_terms=("dimensions", "resolution", "image info"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GetImageSize")
 
     @classmethod
     def execute(cls, *, image: Any) -> Mapping[str, object]:

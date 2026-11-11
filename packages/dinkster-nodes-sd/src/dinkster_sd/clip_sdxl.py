@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class CLIPTextEncodeSDXLRefiner(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeSDXLRefiner",
+            node_type="dinkster.sd.clip_text_encode_sdxl_refiner",
             display_name="CLIP Text Encode (SDXL Refiner)",
             category="model/conditioning/stable diffusion",
             inputs=(
@@ -57,7 +57,7 @@ class CLIPTextEncodeSDXLRefiner(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeSDXLRefiner")
 
     @classmethod
     def execute(
@@ -75,7 +75,7 @@ class CLIPTextEncodeSDXL(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeSDXL",
+            node_type="dinkster.sd.clip_text_encode_sdxl",
             display_name="CLIP Text Encode (SDXL)",
             category="model/conditioning/stable diffusion",
             inputs=(
@@ -131,7 +131,7 @@ class CLIPTextEncodeSDXL(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeSDXL")
 
     @classmethod
     def execute(

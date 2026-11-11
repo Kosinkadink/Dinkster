@@ -28,9 +28,9 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     attach_saved_artifact,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -157,7 +157,7 @@ class SaveAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveAudio",
+            node_type="dinkster.audio.save_audio",
             display_name="Save Audio (FLAC) (DEPRECATED)",
             category="audio",
             deprecation=Deprecation("Deprecated in ComfyUI."),
@@ -177,7 +177,7 @@ class SaveAudio(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveAudio")
 
     @classmethod
     def execute(
@@ -195,7 +195,7 @@ class SaveAudioMP3(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveAudioMP3",
+            node_type="dinkster.audio.save_audio_mp3",
             display_name="Save Audio (MP3) (DEPRECATED)",
             category="audio",
             deprecation=Deprecation("Deprecated in ComfyUI."),
@@ -218,7 +218,7 @@ class SaveAudioMP3(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveAudioMP3")
 
     @classmethod
     def execute(
@@ -243,7 +243,7 @@ class SaveAudioOpus(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveAudioOpus",
+            node_type="dinkster.audio.save_audio_opus",
             display_name="Save Audio (Opus) (DEPRECATED)",
             category="audio",
             deprecation=Deprecation("Deprecated in ComfyUI."),
@@ -266,7 +266,7 @@ class SaveAudioOpus(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveAudioOpus")
 
     @classmethod
     def execute(
@@ -291,7 +291,7 @@ class SaveAudioAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveAudioAdvanced",
+            node_type="dinkster.audio.save_audio_advanced",
             display_name="Save Audio (Advanced)",
             description="Saves the input audio to your ComfyUI output directory.",
             category="audio",
@@ -354,7 +354,7 @@ class SaveAudioAdvanced(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveAudioAdvanced")
 
     @classmethod
     def execute(

@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -55,9 +55,9 @@ def _batch_latents(latents: list[dict[str, Any]]) -> dict[str, Any] | None:
 class BatchLatentsNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="BatchLatentsNode",
+                node_type="dinkster.latent.batch_latents_node",
                 display_name="Batch Latents",
                 category="model/latent/batch",
                 input_families=(
@@ -71,7 +71,8 @@ class BatchLatentsNode(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "BatchLatentsNode",
         )
 
     @classmethod

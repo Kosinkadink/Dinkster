@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class WanDancerEncodeAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanDancerEncodeAudio",
+            node_type="dinkster.wan.wan_dancer_encode_audio",
             category="model/conditioning/wan/dancer",
             inputs=(
                 InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),
@@ -59,7 +59,7 @@ class WanDancerEncodeAudio(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanDancerEncodeAudio")
 
     @classmethod
     def execute(

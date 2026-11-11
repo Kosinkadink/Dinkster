@@ -30,8 +30,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     attach_saved_artifact,
     current_export_snapshot,
-    first_party_schema,
     image_input,
+    with_identity_replacement,
 )
 
 
@@ -53,7 +53,7 @@ class SaveWEBM(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveWEBM",
+            node_type="dinkster.video.save_webm",
             display_name="Save WEBM",
             category="video",
             search_terms=("export webm",),
@@ -107,7 +107,7 @@ class SaveWEBM(Node):
             output_node=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveWEBM")
 
     @classmethod
     def execute(

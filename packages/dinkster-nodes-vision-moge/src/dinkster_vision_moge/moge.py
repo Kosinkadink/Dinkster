@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -25,7 +25,7 @@ class MoGeGeometryToFOV(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MoGeGeometryToFOV",
+            node_type="dinkster.vision.moge.mo_ge_geometry_to_fov",
             display_name="Get FoV from MoGe Geometry",
             description="Derive the field of view and focal length from MoGe intrinsics.",
             category="image/geometry estimation",
@@ -51,7 +51,7 @@ class MoGeGeometryToFOV(Node):
                 OutputSpec("focal_pixels", TypeExpr.concrete(CORE_FLOAT)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MoGeGeometryToFOV")
 
     @classmethod
     def execute(cls, *, moge_geometry: object, axis: str, unit: str) -> Mapping[str, object]:

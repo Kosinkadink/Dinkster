@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -24,7 +24,7 @@ class SenseNovaSamplingOptions(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SenseNovaSamplingOptions",
+            node_type="dinkster.misc.models.sense_nova_sampling_options",
             display_name="SenseNova Sampling Options",
             category="model/patch/sensenova",
             description="Set the SenseNova flow shift.",
@@ -39,7 +39,7 @@ class SenseNovaSamplingOptions(Node):
             ),
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SenseNovaSamplingOptions")
 
     @classmethod
     def execute(cls, *, model: Any, shift: float) -> Mapping[str, object]:

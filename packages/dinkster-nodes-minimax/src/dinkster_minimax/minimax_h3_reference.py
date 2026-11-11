@@ -24,10 +24,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -58,7 +58,7 @@ class MiniMaxH3ReferenceToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MiniMaxH3ReferenceToVideo",
+            node_type="dinkster.minimax.mini_max_h3_reference_to_video",
             display_name="MiniMax H3 Reference to Video",
             description=(
                 "<Picture i> / <Video k> / <Audio j> reference conditioning for MiniMax H3. "
@@ -134,7 +134,7 @@ class MiniMaxH3ReferenceToVideo(Node):
                 OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MiniMaxH3ReferenceToVideo")
 
     @classmethod
     def execute(

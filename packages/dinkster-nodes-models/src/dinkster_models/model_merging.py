@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -62,7 +62,10 @@ def _merge(
 class ModelMergeSimple(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_merge_schema("ModelMergeSimple", coefficient="ratio"))
+        return with_identity_replacement(
+            _merge_schema("dinkster.models.model_merge_simple", coefficient="ratio"),
+            "ModelMergeSimple",
+        )
 
     @classmethod
     def execute(cls, *, model1: Any, model2: Any, ratio: float) -> Mapping[str, object]:
@@ -72,7 +75,10 @@ class ModelMergeSimple(Node):
 class ModelMergeSubtract(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_merge_schema("ModelMergeSubtract", coefficient="multiplier"))
+        return with_identity_replacement(
+            _merge_schema("dinkster.models.model_merge_subtract", coefficient="multiplier"),
+            "ModelMergeSubtract",
+        )
 
     @classmethod
     def execute(cls, *, model1: Any, model2: Any, multiplier: float) -> Mapping[str, object]:
@@ -82,7 +88,9 @@ class ModelMergeSubtract(Node):
 class ModelMergeAdd(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_merge_schema("ModelMergeAdd"))
+        return with_identity_replacement(
+            _merge_schema("dinkster.models.model_merge_add"), "ModelMergeAdd"
+        )
 
     @classmethod
     def execute(cls, *, model1: Any, model2: Any) -> Mapping[str, object]:
@@ -92,7 +100,10 @@ class ModelMergeAdd(Node):
 class CLIPMergeSimple(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_merge_schema("CLIPMergeSimple", clip=True, coefficient="ratio"))
+        return with_identity_replacement(
+            _merge_schema("dinkster.models.clip_merge_simple", clip=True, coefficient="ratio"),
+            "CLIPMergeSimple",
+        )
 
     @classmethod
     def execute(cls, *, clip1: Any, clip2: Any, ratio: float) -> Mapping[str, object]:
@@ -102,8 +113,11 @@ class CLIPMergeSimple(Node):
 class CLIPMergeSubtract(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _merge_schema("CLIPMergeSubtract", clip=True, coefficient="multiplier")
+        return with_identity_replacement(
+            _merge_schema(
+                "dinkster.models.clip_merge_subtract", clip=True, coefficient="multiplier"
+            ),
+            "CLIPMergeSubtract",
         )
 
     @classmethod
@@ -114,7 +128,9 @@ class CLIPMergeSubtract(Node):
 class CLIPMergeAdd(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_merge_schema("CLIPMergeAdd", clip=True))
+        return with_identity_replacement(
+            _merge_schema("dinkster.models.clip_merge_add", clip=True), "CLIPMergeAdd"
+        )
 
     @classmethod
     def execute(cls, *, clip1: Any, clip2: Any) -> Mapping[str, object]:
@@ -144,8 +160,9 @@ def block_merge_schema(
 class ModelMergeBlocks(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            block_merge_schema("ModelMergeBlocks", ("input", "middle", "out"))
+        return with_identity_replacement(
+            block_merge_schema("dinkster.models.model_merge_blocks", ("input", "middle", "out")),
+            "ModelMergeBlocks",
         )
 
     @classmethod

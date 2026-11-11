@@ -1378,7 +1378,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         if report.ok:
             print(f"Prepared runtime catalog: {report.pack_name} ({len(report.node_types)} nodes)")
         else:
-            print(render_text(report))
+            print(render_text(report), file=sys.stderr)
             failed = True
     if failed:
         raise InstallError("runtime catalog preparation failed; repair findings and retry")

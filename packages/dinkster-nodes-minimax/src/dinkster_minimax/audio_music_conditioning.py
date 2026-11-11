@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -30,7 +30,7 @@ class MiniMaxMusic3TextEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MiniMaxMusic3TextEncode",
+            node_type="dinkster.minimax.mini_max_music3_text_encode",
             display_name="MiniMax Music3 Text Encode",
             category="model/conditioning/minimax music",
             description=(
@@ -83,7 +83,7 @@ class MiniMaxMusic3TextEncode(Node):
                 OutputSpec("seconds", TypeExpr.concrete(CORE_FLOAT), display_name="seconds"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MiniMaxMusic3TextEncode")
 
     @classmethod
     def execute(
@@ -124,7 +124,7 @@ class ReferenceTimbreAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ReferenceTimbreAudio",
+            node_type="dinkster.minimax.reference_timbre_audio",
             display_name="Set Reference Audio",
             category="model/conditioning",
             description="This node sets the reference audio for ace step 1.5",
@@ -134,7 +134,7 @@ class ReferenceTimbreAudio(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ReferenceTimbreAudio")
 
     @classmethod
     def execute(

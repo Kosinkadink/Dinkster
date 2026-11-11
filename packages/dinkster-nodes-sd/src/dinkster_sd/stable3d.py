@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _CLIP_VISION = TypeExpr.concrete(CLIP_VISION_TYPE)
@@ -101,7 +101,7 @@ class StableZero123_Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="StableZero123_Conditioning",
+            node_type="dinkster.sd.stable_zero123_conditioning",
             category=_ZERO123_CATEGORY,
             inputs=(
                 InputSpec("clip_vision", _CLIP_VISION),
@@ -115,7 +115,7 @@ class StableZero123_Conditioning(Node):
             ),
             outputs=_conditioning_outputs(),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StableZero123_Conditioning")
 
     @classmethod
     def execute(
@@ -149,7 +149,7 @@ class StableZero123_Conditioning_Batched(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="StableZero123_Conditioning_Batched",
+            node_type="dinkster.sd.stable_zero123_conditioning_batched",
             category=_ZERO123_CATEGORY,
             inputs=(
                 InputSpec("clip_vision", _CLIP_VISION),
@@ -165,7 +165,7 @@ class StableZero123_Conditioning_Batched(Node):
             ),
             outputs=_conditioning_outputs(),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StableZero123_Conditioning_Batched")
 
     @classmethod
     def execute(
@@ -209,7 +209,7 @@ class SV3D_Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SV3D_Conditioning",
+            node_type="dinkster.sd.sv3_d_conditioning",
             category="model/conditioning/stable video 3d",
             inputs=(
                 InputSpec("clip_vision", _CLIP_VISION),
@@ -222,7 +222,7 @@ class SV3D_Conditioning(Node):
             ),
             outputs=_conditioning_outputs(),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SV3D_Conditioning")
 
     @classmethod
     def execute(
