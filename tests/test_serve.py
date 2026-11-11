@@ -2539,10 +2539,11 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
 
 
 @pytest.mark.parametrize(
-    ("failed_pack", "development"), [(False, False), (True, False), (False, True)]
+    ("failed_pack", "development"),
+    [(False, "published"), (True, "published"), (False, "captured"), (False, "watched")],
 )
 def test_serve_empty_generation_health_distinguishes_failed_selection(
-    tmp_path: Path, failed_pack: bool, development: bool
+    tmp_path: Path, failed_pack: bool, development: str
 ) -> None:
     from dinkster_registry import Lockfile
 
@@ -2554,7 +2555,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
     (generation / "generation.json").write_text(
         json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
     )
-    if development:
+    if development == "captured":
         (generation / "development-sources.json").write_text(
             json.dumps({"format": "dinkster.development-sources/1", "sources": []})
         )
@@ -2563,6 +2564,8 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
         if failed_pack
         else ("--generation", str(generation))
     )
+    if development == "watched":
+        extra = ("--no-default-packs", "--watch-packs")
     port = free_port()
     log = tmp_path / "empty-generation.log"
     with log.open("wb") as output:
@@ -2590,7 +2593,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                         assert response.status == 200
                         catalog = await response.json()
                         assert catalog["nodes"] == {}
-                        if development:
+                        if development != "published":
                             label = catalog["dinkster"]["development"]
                             assert label["mode"] == "development"
                             assert label["reproducible"] is False
@@ -2599,6 +2602,9 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                             assert "development" not in catalog["dinkster"]
 
             run_scenario(check())
+            assert ("development: not reviewed by the registry" in log.read_text()) is (
+                development != "published"
+            )
         except Exception as exc:
             exc.add_note(log.read_text())
             raise

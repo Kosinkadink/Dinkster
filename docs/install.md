@@ -149,11 +149,15 @@ cd ../Dinkster-Frontend
 pnpm install --frozen-lockfile
 pnpm --filter @dinkster/app build
 cd ../Dinkster
-uv run --no-sync dinkster setup
-uv run --no-sync dinkster
+uv run --no-sync python -m dinkster.serve --watch-packs --library-root .run/library --allow-mount-changes --prepare-stale-catalogs --frontend-root ../Dinkster-Frontend/packages/app/dist
 ```
 
-The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
+Open `http://127.0.0.1:3639` in the browser. This explicitly selects live checkout
+development, not published setup: the terminal and served catalog label it as
+unreviewed and not reproducible from dependency ranges. Changes reload from the
+selected source folders. For a captured development generation instead, use
+[`dinkster develop`](#development-packs-from-local-folders).
+Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
 access.
 

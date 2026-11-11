@@ -1314,6 +1314,8 @@ def main(argv: list[str] | None = None) -> None:
         if development
         else None
     )
+    if development_description is not None:
+        print(development_description, flush=True)
     if args.allow_pack_install and args.generation is None:
         parser.error("--allow-pack-install requires --generation")
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:

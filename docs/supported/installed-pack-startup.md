@@ -481,6 +481,10 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
+- Source run scripts explicitly select watched checkout development without
+  invoking published setup or loading a standalone installed-pack root. The
+  terminal and node catalog label the source session as unreviewed and not
+  reproducible from dependency ranges; the browser opens after health succeeds.
 - A pip-installed engine has no implicit official pack selection. Managed
   generations serve their admitted registry sources. Checkout development
   selects verified local sources with each pack's declared version, without

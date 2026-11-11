@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -53,16 +55,61 @@ def test_rerun_skips_frontend_build_and_selects_native_execution(checkout, monke
     relative = "Scripts/python.exe" if system == "Windows" else "bin/python"
     assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv" / relative)
     assert launcher.os.environ["UV_PYTHON_PREFERENCE"] == "only-managed"
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert calls[0] == (sys.executable, str(root / "scripts/setup_envs.py"))
-    assert calls[1] == (str(root / ".venv" / relative), "-m", "dinkster.cli", "setup")
-    assert calls[2][-5:] == (
+    assert calls[1][:4] == (
+        str(root / ".venv" / relative),
+        "-m",
+        "dinkster.serve",
+        "--watch-packs",
+    )
+    assert calls[1][6:8] == (
         "--port",
         "4640",
+    )
+    assert calls[1][-2:] == (
         "--frontend-root",
         str(root / ".run/frontend/packages/app/dist"),
-        "--no-browser",
     )
+    assert calls[1][calls[1].index("--install-root") + 1] == ""
+
+
+def test_source_browser_waits_for_healthy_engine(checkout, monkeypatch):
+    requests = []
+    opened = threading.Event()
+
+    class Health(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            body = json.dumps({"ok": len(requests) > 1}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Health)
+    url = f"http://127.0.0.1:{server.server_port}"
+
+    def browser(value):
+        assert value == url
+        assert len(requests) > 1
+        opened.set()
+
+    monkeypatch.setattr(launcher.webbrowser, "open", browser)
+    monkeypatch.setattr(launcher.sys, "argv", ["run.py", "--port", str(server.server_port)])
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    try:
+        assert launcher.main() == 0
+        assert opened.wait(5)
+        assert requests == ["/api/health", "/api/health"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        serving.join()
 
 
 def test_changed_pin_fetches_checks_out_and_rebuilds(checkout):
