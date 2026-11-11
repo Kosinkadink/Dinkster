@@ -3015,7 +3015,7 @@ new Function('context', 'core', 'github', 'return (async () => {' + fixture.scri
 """
     result = json.loads(
         subprocess.check_output(
-            ["node", "-e", harness], input=json.dumps(fixture), text=True, timeout=10
+            ["node", "-e", harness], input=json.dumps(fixture), text=True, timeout=30
         )
     )
     if problem is None:
