@@ -136,7 +136,7 @@ def test_development_pack_selects_gallery_behavior() -> None:
     from tools.ci_selection import test_paths
 
     assert test_paths(evidence_paths.DINKSTER_ROOT, ["packages/dinkster-nodes-dev"]) == [
-        "tests/test_gallery.py"
+        str(Path("tests/test_gallery.py"))
     ]
 
 
