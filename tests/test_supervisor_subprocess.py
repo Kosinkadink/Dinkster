@@ -321,14 +321,19 @@ def test_unwrapped_child_lifecycle_preserves_command_and_output(
             )
         parent = (
             "import subprocess, threading\n"
-            f"result = subprocess.run({command!r}, capture_output=True, text=True, timeout=60)\n"
-            "assert (result.returncode, result.stdout, result.stderr) == "
-            "(7, 'probe stdout\\n', 'probe stderr\\n'), result\n"
+            "from pathlib import Path\n"
+            f"child = subprocess.Popen({command!r}, stdout=subprocess.PIPE, "
+            "stderr=subprocess.PIPE, text=True)\n"
+            f"Path({str(tmp_path / 'launched-pid')!r}).write_text(str(child.pid))\n"
+            "stdout, stderr = child.communicate(timeout=60)\n"
+            "assert (child.returncode, stdout, stderr) == "
+            "(7, 'probe stdout\\n', 'probe stderr\\n'), (child.returncode, stdout, stderr)\n"
             f"__import__('pathlib').Path({str(tmp_path / 'checked')!r}).touch()\n"
             "threading.Event().wait(90)\n"
         )
 
         def ready(process: subprocess.Popen[str]) -> None:
+            wait_until((tmp_path / "launched-pid").exists)
             wait_until((tmp_path / ("ready" if blocked else "checked")).exists)
 
         expire_after_ready(ready)
@@ -337,7 +342,9 @@ def test_unwrapped_child_lifecycle_preserves_command_and_output(
                 run([str(vars(sys)["_base_executable"]), "-c", parent])
             notes = "\n".join(raised.value.__notes__)
             assert "unchanged argument" not in notes
-            assert f"Unwrapped {category} pid={(tmp_path / 'pid').read_text()}," in notes
+            # A Windows venv launcher can differ from the executing interpreter.
+            assert f"Unwrapped {category} pid={(tmp_path / 'launched-pid').read_text()}," in notes
+            assert int((tmp_path / "pid").read_text()) > 0
             assert (
                 "state before cleanup=alive, returncode before cleanup=None"
                 if blocked
