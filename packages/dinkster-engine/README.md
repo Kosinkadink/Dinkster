@@ -9,14 +9,70 @@ uses the engine to execute graphs.
 
 ## Setup
 
-This package is a uv workspace member and is not published separately yet.
-From the repository root, install the complete workspace:
+Install the engine and its exact-version API companion without Torch:
 
 ```sh
-uv sync --all-packages
+python -m pip install dinkster-engine pytest
 ```
 
-It does not install a console script.
+The wheel includes `dinkster_engine` and `dinkster_graph`. It does not install
+a console script or the server. Install a pack and its dependencies separately.
+
+## Tests from pytest
+
+Use ordinary synchronous tests and a module- or session-scoped fixture in
+`tests/`. Doctor permits the exact `load_pack` import there, but not in pack
+runtime modules. Other names from the testing module remain host machinery.
+
+```python
+from pathlib import Path
+
+import pytest
+from dinkster_engine.testing import load_pack
+
+
+@pytest.fixture(scope="module")
+def pack():
+    with load_pack(Path(__file__).parents[1] / "dinkster-pack.toml") as loaded:
+        yield loaded
+
+
+def test_graph(pack):
+    graph = {
+        "shout": ("my-pack.shout", {"text": "hello"}),
+        "tally": ("my-pack.tally", {"text": pack.link("shout", "text")}),
+    }
+    result = pack.run(graph, targets=["tally"])
+    assert result.value("tally", "count") == 5
+    assert result.executed == {"shout", "tally"}
+    again = pack.run(graph, targets=["tally"])
+    assert again.cached == {"shout", "tally"}
+```
+
+`pack.run_node(type_name, inputs)` returns the same result shape under node
+id `"node"`. `outputs` contains decoded Python values keyed by node and output;
+`executed` and `cached` are sets of node ids reported by the engine.
+
+The fixture shares one real worker process, engine and cache across its tests.
+Closing the context closes the worker. `load_pack(path, in_process=True)` opts
+out of process isolation without changing test calls. Both modes use the real
+engine; the parent also loads pack codecs to decode custom output types.
+The helper loads one pack, not a serving composition or HTTP application.
+It is synchronous and must not be called inside a running asyncio event loop.
+
+The [installable example pack](../../tests/fixtures/pack-testing) includes
+`tests/example.py`, a complete pytest file testing a two-node graph, a pack-owned
+codec, caching, and shared worker startup. Release CI runs this same file
+against built API/engine wheels with
+`python scripts/verify_pack_testing.py dist`, in both execution modes, from
+outside the checkout. Its test environment contains no Torch.
+
+Pure Python packs need no Torch. Tensor packs can install CPU-only Torch:
+`python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+Keep accelerator-specific tests separately marked (for example
+`@pytest.mark.accelerator`) and run the ordinary suite with
+`pytest -m 'not accelerator'` on CPU CI. Doctor and registry checks validate
+pack declarations; neither is a replacement for these execution tests.
 
 ## Use
 

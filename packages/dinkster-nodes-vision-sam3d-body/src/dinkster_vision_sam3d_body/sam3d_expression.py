@@ -18,11 +18,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_vision_packet,
     report_progress,
+    with_identity_replacement,
 )
 
 # Multiple routes take their maximum, not their sum, to avoid doubling a driver.
@@ -78,7 +78,7 @@ class SAM3DBody_FaceExpression(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3DBody_FaceExpression",
+            node_type="dinkster.vision.sam3d.body.sam3_d_body_face_expression",
             display_name="Face Expression to SAM3D Body",
             description="Drive MHR face blendshapes from the core MediaPipe Face Landmarker.",
             category="image/detection",
@@ -139,7 +139,7 @@ class SAM3DBody_FaceExpression(Node):
             ),
             outputs=(OutputSpec("mhr_pose_data", TypeExpr.concrete(MHR_POSE_DATA_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3DBody_FaceExpression")
 
     @classmethod
     def execute(

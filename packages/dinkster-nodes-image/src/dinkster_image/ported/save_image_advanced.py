@@ -30,10 +30,10 @@ from dinkster_api.v1 import (
     TypeExpr,
     attach_saved_artifact,
     current_export_snapshot,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     publish_saved_file_preview,
+    with_identity_replacement,
 )
 
 from . import advanced_image_encoding as encoding
@@ -50,7 +50,7 @@ class SaveImageAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "SaveImageAdvanced",
+            "dinkster.image.save_image_advanced",
             display_name="Save Image (Advanced)",
             description="Saves the input images to your ComfyUI output directory.",
             category="image",
@@ -210,7 +210,7 @@ class SaveImageAdvanced(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveImageAdvanced")
 
     @classmethod
     def execute(

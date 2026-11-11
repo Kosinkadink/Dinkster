@@ -25,13 +25,13 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
     pack_logger,
     report_preview,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -74,7 +74,7 @@ class TripoSplatPreprocessImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TripoSplatPreprocessImage",
+            node_type="dinkster.3d.models.tripo_splat_preprocess_image",
             display_name="TripoSplat Preprocess Image",
             category="model/conditioning/triposplat",
             description=(
@@ -106,7 +106,7 @@ class TripoSplatPreprocessImage(Node):
             ),
             outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TripoSplatPreprocessImage")
 
     @classmethod
     def execute(
@@ -138,7 +138,7 @@ class TripoSplatConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TripoSplatConditioning",
+            node_type="dinkster.3d.models.tripo_splat_conditioning",
             display_name="TripoSplat Conditioning",
             category="model/conditioning/triposplat",
             description=(
@@ -165,7 +165,7 @@ class TripoSplatConditioning(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TripoSplatConditioning")
 
     @classmethod
     def execute(cls, *, clip_vision: Any, vae: Any, image: object) -> Mapping[str, object]:
@@ -204,7 +204,7 @@ class VAEDecodeTripoSplat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VAEDecodeTripoSplat",
+            node_type="dinkster.3d.models.vae_decode_tripo_splat",
             display_name="TripoSplat Decode",
             category="model/latent/triposplat",
             description=(
@@ -236,7 +236,7 @@ class VAEDecodeTripoSplat(Node):
             ),
             outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VAEDecodeTripoSplat")
 
     @classmethod
     def execute(
@@ -282,7 +282,7 @@ class TripoSplatSamplingPreview(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TripoSplatSamplingPreview",
+            node_type="dinkster.3d.models.tripo_splat_sampling_preview",
             display_name="TripoSplat Sampling Preview",
             category="model/latent/triposplat",
             description=(
@@ -339,7 +339,7 @@ class TripoSplatSamplingPreview(Node):
             ),
             outputs=(OutputSpec("model", TypeExpr.concrete(MODEL_TYPE), display_name="MODEL"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TripoSplatSamplingPreview")
 
     @classmethod
     def execute(

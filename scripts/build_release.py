@@ -22,7 +22,7 @@ from urllib.parse import unquote, urlsplit
 from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
-PUBLISHED_PROJECTS = ("dinkster", "dinkster-api", "dinkster-supervisor")
+PUBLISHED_PROJECTS = ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor")
 LINUX_PLATFORMS = [f"manylinux_2_{n}_x86_64" for n in range(28, 4, -1)] + [
     "manylinux2014_x86_64",
     "manylinux2010_x86_64",
@@ -212,6 +212,49 @@ def wheel_metadata(path: Path) -> tuple[str, str]:
         return fields["Name"].lower(), fields["Version"]
 
 
+def validate_engine_wheels(wheels: list[Path]) -> None:
+    """Engine and graph source have one owner and lockstep companion pins."""
+    from email.parser import Parser
+
+    from packaging.requirements import Requirement
+
+    for path in wheels:
+        name, version = wheel_metadata(path)
+        with zipfile.ZipFile(path) as wheel:
+            files = set(wheel.namelist())
+            engine_files = {
+                entry
+                for entry in files
+                if entry.startswith(("dinkster_engine/", "dinkster_graph/"))
+            }
+            if name != "dinkster-engine" and engine_files:
+                raise ValueError(
+                    f"engine/graph modules must ship only in dinkster-engine: {path.name}"
+                )
+            if (
+                name == "dinkster-engine"
+                and not {
+                    "dinkster_engine/__init__.py",
+                    "dinkster_engine/testing.py",
+                    "dinkster_graph/__init__.py",
+                }
+                <= files
+            ):
+                raise ValueError(
+                    f"engine wheel is missing graph, engine or testing exports: {path.name}"
+                )
+            companion = {"dinkster": "dinkster-engine", "dinkster-engine": "dinkster-api"}.get(name)
+            if companion is not None:
+                [metadata] = [entry for entry in files if entry.endswith(".dist-info/METADATA")]
+                fields = Parser().parsestr(wheel.read(metadata).decode("utf-8"))
+                requirements = [Requirement(value) for value in fields.get_all("Requires-Dist", [])]
+                pins = [
+                    requirement for requirement in requirements if requirement.name == companion
+                ]
+                if len(pins) != 1 or str(pins[0].specifier) != f"=={version}" or pins[0].marker:
+                    raise ValueError(f"{name} must require {companion}=={version}")
+
+
 def build_source_archive(root: Path, version: str, output: Path) -> Path:
     archive = output / f"dinkster-source-{version}.zip"
     with tempfile.TemporaryDirectory(prefix="dinkster-source-") as directory:
@@ -251,6 +294,8 @@ def write_constraints(
                 "export",
                 "--locked",
                 "--all-packages",
+                "--extra",
+                "inference",
                 "--no-dev",
                 "--group",
                 "engine-base",
@@ -487,6 +532,9 @@ def build(
     base_manifests: list[Path] | None = None,
     payload_artifacts: list[Path] | None = None,
 ) -> dict[str, object]:
+    from tools.verify_pinned_inference import pinned_requirement
+
+    pinned_requirement(root)
     version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
     if output.exists() and any(output.iterdir()):
@@ -509,6 +557,7 @@ def build(
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         raise ValueError(f"wheel set mismatch: missing={missing}, extra={extra}")
+    validate_engine_wheels(wheels)
     dependencies = select_dependency_wheels(root, uv, base_manifests) if base_manifests else {}
     constraints = write_constraints(root, output, wheels, uv)
     source = build_source_archive(root, version, output)
@@ -529,6 +578,9 @@ def build(
         "workerProtocol": int(protocol[1]),
         "workspaceWheels": [wheel.name for wheel in wheels],
         "dependencies": dependencies,
+        "defaultPacks": tomllib.loads(
+            (root / "src/dinkster/default-packs.toml").read_text(encoding="utf-8")
+        )["packs"],
     }
     write_manifest(output, manifest, artifacts)
     return manifest
@@ -609,7 +661,8 @@ def check_release(output: Path, maximum_bytes: int) -> int:
         or len(wheels) != len(PUBLISHED_PROJECTS)
         or {parse_wheel_filename(name)[0] for name in wheels} != set(PUBLISHED_PROJECTS)
     ):
-        raise ValueError("release must contain only the three Dinkster workspace wheels")
+        raise ValueError("release must contain only the four Dinkster workspace wheels")
+    validate_engine_wheels([output / name for name in sorted(wheels)])
     if {path.name for path in output.iterdir()} != names | {"release-manifest.json", "SHA256SUMS"}:
         raise ValueError("release contains unlisted artifacts")
     allowed = wheels | {"constraints.txt"}

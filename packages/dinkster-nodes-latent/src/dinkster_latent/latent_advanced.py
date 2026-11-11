@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -91,13 +91,14 @@ def _reshape_latent_to(
 class LatentAdd(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentAdd",
+                "dinkster.latent.latent_add",
                 "LatentAdd",
                 (InputSpec("samples1", _LATENT), InputSpec("samples2", _LATENT)),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentAdd",
         )
 
     @classmethod
@@ -113,13 +114,14 @@ class LatentAdd(Node):
 class LatentSubtract(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentSubtract",
+                "dinkster.latent.latent_subtract",
                 "LatentSubtract",
                 (InputSpec("samples1", _LATENT), InputSpec("samples2", _LATENT)),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentSubtract",
         )
 
     @classmethod
@@ -135,9 +137,9 @@ class LatentSubtract(Node):
 class LatentMultiply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentMultiply",
+                "dinkster.latent.latent_multiply",
                 "LatentMultiply",
                 (
                     InputSpec("samples", _LATENT),
@@ -149,7 +151,8 @@ class LatentMultiply(Node):
                     ),
                 ),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentMultiply",
         )
 
     @classmethod
@@ -163,9 +166,9 @@ class LatentMultiply(Node):
 class LatentInterpolate(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentInterpolate",
+                "dinkster.latent.latent_interpolate",
                 "LatentInterpolate",
                 (
                     InputSpec("samples1", _LATENT),
@@ -178,7 +181,8 @@ class LatentInterpolate(Node):
                     ),
                 ),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentInterpolate",
         )
 
     @classmethod
@@ -205,9 +209,9 @@ class LatentInterpolate(Node):
 class LatentConcat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentConcat",
+                "dinkster.latent.latent_concat",
                 "LatentConcat",
                 (
                     InputSpec("samples1", _LATENT),
@@ -215,7 +219,8 @@ class LatentConcat(Node):
                     _combo("dim", ("x", "-x", "y", "-y", "t", "-t")),
                 ),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentConcat",
         )
 
     @classmethod
@@ -239,9 +244,9 @@ class LatentConcat(Node):
 class LatentCut(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentCut",
+                "dinkster.latent.latent_cut",
                 "LatentCut",
                 (
                     InputSpec("samples", _LATENT),
@@ -250,7 +255,8 @@ class LatentCut(Node):
                     _integer("amount", 1, 1, _MAX_RESOLUTION),
                 ),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentCut",
         )
 
     @classmethod
@@ -275,9 +281,9 @@ class LatentCut(Node):
 class LatentCutToBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentCutToBatch",
+                "dinkster.latent.latent_cut_to_batch",
                 "LatentCutToBatch",
                 (
                     InputSpec("samples", _LATENT),
@@ -285,7 +291,8 @@ class LatentCutToBatch(Node):
                     _integer("slice_size", 1, 1, _MAX_RESOLUTION),
                 ),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentCutToBatch",
         )
 
     @classmethod
@@ -308,14 +315,15 @@ class LatentCutToBatch(Node):
 class LatentBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentBatch",
+                "dinkster.latent.latent_batch",
                 "Batch Latents (DEPRECATED)",
                 (InputSpec("samples1", _LATENT), InputSpec("samples2", _LATENT)),
                 "model/latent/batch",
                 deprecated=True,
-            )
+            ),
+            "LatentBatch",
         )
 
     @classmethod
@@ -335,16 +343,17 @@ class LatentBatch(Node):
 class LatentBatchSeedBehavior(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentBatchSeedBehavior",
+                "dinkster.latent.latent_batch_seed_behavior",
                 "LatentBatchSeedBehavior",
                 (
                     InputSpec("samples", _LATENT),
                     _combo("seed_behavior", ("random", "fixed"), "fixed"),
                 ),
                 "model/latent/advanced",
-            )
+            ),
+            "LatentBatchSeedBehavior",
         )
 
     @classmethod

@@ -20,10 +20,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -251,7 +251,7 @@ class GetICLoRAParameters(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GetICLoRAParameters",
+            node_type="dinkster.ltx.get_ic_lo_ra_parameters",
             display_name="Get IC-LoRA Parameters",
             description=(
                 "Extracts IC-LoRA parameters from the safetensors metadata of a LoRA-loaded "
@@ -268,7 +268,7 @@ class GetICLoRAParameters(Node):
             inputs=(InputSpec("iclora_model", TypeExpr.concrete(MODEL_TYPE)),),
             outputs=(OutputSpec("iclora_parameters", TypeExpr.concrete(IC_LORA_PARAMETERS_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GetICLoRAParameters")
 
     @classmethod
     def execute(cls, *, iclora_model: Any) -> Mapping[str, object]:
@@ -299,7 +299,7 @@ class LTXVAddGuide(Node):
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         latent = TypeExpr.concrete(LATENT_TYPE)
         schema = NodeSchema(
-            node_type="LTXVAddGuide",
+            node_type="dinkster.ltx.ltxv_add_guide",
             category="model/conditioning/ltxv",
             inputs=(
                 InputSpec("positive", conditioning),
@@ -332,7 +332,7 @@ class LTXVAddGuide(Node):
                 OutputSpec("latent", latent, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVAddGuide")
 
     @classmethod
     def execute(
@@ -368,7 +368,7 @@ class LTXVAddLatentGuide(Node):
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         latent = TypeExpr.concrete(LATENT_TYPE)
         schema = NodeSchema(
-            node_type="LTXVAddLatentGuide",
+            node_type="dinkster.ltx.ltxv_add_latent_guide",
             display_name="LTXV Add Latent Guide",
             category="model/conditioning/ltxv",
             search_terms=("latent guide", "add latent guide", "guide latent"),
@@ -398,7 +398,7 @@ class LTXVAddLatentGuide(Node):
                 OutputSpec("latent", latent),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVAddLatentGuide")
 
     @classmethod
     def execute(

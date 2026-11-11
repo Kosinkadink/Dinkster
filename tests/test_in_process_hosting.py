@@ -369,8 +369,13 @@ def test_in_process_pack_refuses_non_torch_runtime_pin_drift_and_contradictory_s
     async def scenario() -> None:
         manifest = _manifest(tmp_path / "pack")
         non_torch = ServingComposer(torch_capable=lambda: False)
-        with pytest.raises(CompositionError, match="torch-capable"):
+        with pytest.raises(CompositionError, match=r"torch-capable.*dinkster\[inference\]"):
             await non_torch.add_pack(PackSpec(manifest, in_process=True, runtime_pins=PINS))
+        manifest.write_text(
+            manifest.read_text().replace("[pack]", '[pack]\nrequires = ["torch>=2"]')
+        )
+        with pytest.raises(CompositionError, match=r"dinkster\[inference\]"):
+            await non_torch.add_pack(PackSpec(manifest, in_process=True))
         drift = ServingComposer(
             torch_capable=lambda: True,
             runtime_versions=lambda: {**PINS, "torch": "2.14.0"},

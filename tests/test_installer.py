@@ -244,14 +244,14 @@ def test_generation_reserved_composition_requires_local_build_or_registry(
         ("relative", "absolute paths"),
         (
             "engine-below",
-            "pack example@1.2.3 declares engine >=0.0.3; engine 0.0.2 is incompatible",
+            "pack example@1.2.3 declares engine >=0.0.4; engine 0.0.3 is incompatible",
         ),
-        ("engine-above", "pack example@1.2.3 declares engine <0.0.2; engine 0.0.2 is incompatible"),
+        ("engine-above", "pack example@1.2.3 declares engine <0.0.3; engine 0.0.3 is incompatible"),
     ],
 )
 def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
     pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
-    engine = {"engine-below": ">=0.0.3", "engine-above": "<0.0.2"}.get(
+    engine = {"engine-below": ">=0.0.4", "engine-above": "<0.0.3"}.get(
         problem or "", ">=0.0.2.dev0,<0.1"
     )
     manifest = pack / "dinkster-pack.toml"
@@ -2794,6 +2794,68 @@ def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
         server.shutdown()
 
 
+@pytest.mark.parametrize("schema", [1, 2])
+def test_exact_library_release_resolves_and_downloads_without_node_discovery(
+    tmp_path: Path, schema: int
+) -> None:
+    from dinkster.registries import (
+        NamedRegistry,
+        StaticPackIndex,
+        resolve_compatible_release,
+        resolve_release,
+    )
+
+    installer = make_installer(tmp_path)
+    demo = write_pack(tmp_path / "demo", "demo")
+    entry, archive = lock_local_pack(demo, installer.artifacts_dir)
+    data = archive.read_bytes()
+    entry = replace(entry, source="registry", version="1.0.0")
+    record = {**_static_release(entry, data), "library": True}
+    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
+    files = {
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+        f"/static/{wheel['url']}": data,
+    }
+    if schema == 2:
+        files["/static/packs/index.json"] = json.dumps(
+            {
+                "schemaVersion": 2,
+                "items": [
+                    {
+                        "name": "demo",
+                        "latestVersion": "1.0.0",
+                        "publisher": entry.publisher,
+                        "library": True,
+                        "url": "packs/demo/index.json",
+                    }
+                ],
+            }
+        ).encode()
+        files["/static/packs/demo/index.json"] = json.dumps(
+            {"schemaVersion": 2, "name": "demo", "items": [record]}
+        ).encode()
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
+    try:
+        registry = NamedRegistry("", f"http://127.0.0.1:{server.server_port}")
+        index = StaticPackIndex()
+        selected = resolve_release(registry, "demo", "1.0.0", engine_version="0.5", index=index)
+        assert selected.artifact_digest == entry.artifact_digest
+        assert selected.version == "1.0.0"
+        assert selected.pack == "demo"
+        assert http_registry_fetcher(registry.endpoint, index=index)(selected) == data
+        with pytest.raises(InstallError, match="no release demo@2.0.0"):
+            resolve_release(registry, "demo", "2.0.0", index=index)
+        with pytest.raises(InstallError, match="engine"):
+            resolve_release(registry, "demo", "1.0.0", engine_version="2.0", index=index)
+        assert index.catalog(registry) == ()
+        assert index.releases(registry, "demo") == ()
+        with pytest.raises(InstallError, match="demo"):
+            resolve_compatible_release(registry, "demo", "1.0.0", "0.5", index=index)
+    finally:
+        server.shutdown()
+
+
 def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> None:
     """Index and wheel requests stay under the static prefix with exact hash checks."""
     installer = make_installer(tmp_path)
@@ -3383,6 +3445,56 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("engine", "current"),
+    [
+        ("0.0.2", False),
+        ("0.0.3.dev217+ga990932e", False),
+        ("0.0.3.dev999999", False),
+        ("0.0.3rc1", False),
+        ("0.0.3", True),
+        ("0.0.4.dev1+g1234567", True),
+    ],
+)
+def test_registry_keeps_older_engines_on_compatible_pack_versions(
+    engine: str, current: bool
+) -> None:
+    from dinkster_workers import load_manifest
+
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    manifest = load_manifest(Path("packages/dinkster-nodes-flux/dinkster-pack.toml"))
+    assert manifest.compatibility is not None
+    versions = (
+        ("0.0.2", ">=0.0.2.dev0,<0.1"),
+        (manifest.compatibility.version, manifest.compatibility.engine),
+    )
+    rows = [
+        {
+            **_static_release(
+                LockedPack(manifest.name, version, "blake3:" + f"{index:064x}", "dinkster", ()),
+                b"wheel",
+            ),
+            "engine": bounds,
+        }
+        for index, (version, bounds) in enumerate(versions, start=1)
+    ]
+    server = _serve_artifacts(
+        {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}, []
+    )
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        selected = resolve_compatible_release(registry, manifest.name, "0.0.2", engine)
+        assert selected.version == (manifest.compatibility.version if current else "0.0.2")
+        if not current:
+            with pytest.raises(InstallError, match=manifest.name):
+                resolve_compatible_release(
+                    registry, manifest.name, manifest.compatibility.version, engine
+                )
+    finally:
+        server.shutdown()
+
+
 @pytest.mark.parametrize("removed", [True, False])
 def test_registry_selection_snapshot_refreshes_between_operations(
     removed: bool,
@@ -3742,6 +3854,7 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         "pack",
         "variant",
         "missing",
+        "multiple",
         "local",
         "selected",
         "absent-selection",
@@ -3750,7 +3863,10 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
     ],
 )
 def test_cli_acquires_published_locks_for_exact_sources_and_base(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], problem: str | None
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    problem: str | None,
 ) -> None:
     from dinkster_registry import artifact_digest
     from dinkster_workers.pack_lock import PackLock
@@ -3761,7 +3877,13 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
     expected = {}
     releases = []
     for pack in ("demo", "z-other"):
-        fault = problem if pack == "z-other" else None
+        fault = (
+            ("missing" if pack == "demo" else "base")
+            if problem == "multiple"
+            else problem
+            if pack == "z-other"
+            else None
+        )
         entry = LockedPack(
             pack, "1.2.3", "blake3:" + ("a" if pack == "demo" else "b") * 64, "acme", ()
         )
@@ -3792,6 +3914,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 "version": "1.2.3",
                 "library": False,
                 "publisher": "acme",
+                "engine": ">=0.4,<0.5",
                 "requires": [],
                 "wheels": [
                     {
@@ -3827,7 +3950,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         entries.append(replace(entries[0], pack="local-only", source="local:/retained"))
     source.write_text(Lockfile.of(entries).record_json())
     original = source.read_bytes()
-    output = tmp_path / "published-locks"
+    output = tmp_path / "new-inputs" / "published-locks"
+    snapshot = tmp_path / "index"
     args = (
         "--root",
         str(root),
@@ -3842,6 +3966,8 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         "linux-cpu",
         "--base-id",
         base,
+        "--index-snapshot",
+        str(snapshot),
     )
     if problem == "local":
         args += ("--registry-only",)
@@ -3853,7 +3979,67 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
         args += ("--pack", "demo", "--pack", "demo")
     elif problem == "local-selection":
         args += ("--pack", "local-only", "--registry-only")
+    planned: dict | None = None
+    plan_args: tuple[str, ...] = ()
     try:
+        if problem in {None, "multiple"}:
+            engine = {
+                "format": "dinkster.engine/1",
+                "version": "0.4.0",
+                "commit": "d" * 40,
+                "workerProtocol": 1,
+                "artifacts": [{"name": "constraints.txt", "size": 0, "sha256": "a" * 64}],
+                "defaultPacks": {"demo": "1.2.0", "z-other": "1.2.3"},
+            }
+            if problem == "multiple":
+                engine["defaultPacks"]["absent-pack"] = "2.0.0"
+            engine_file = tmp_path / "engine.json"
+            payload = json.dumps(engine).encode()
+            engine_file.write_bytes(payload)
+            release = "sha256:" + hashlib.sha256(payload).hexdigest()
+            plan_args = (
+                *args[:4],
+                "plan-registry-sources",
+                "--engine-manifest",
+                str(engine_file),
+                "--engine-release",
+                release,
+                "--variant",
+                "linux-cpu",
+                "--base-id",
+                base,
+                "--index-snapshot",
+                str(snapshot),
+            )
+            if problem == "multiple":
+                with pytest.raises(SystemExit):
+                    run_cli(*plan_args)
+                error = capsys.readouterr().err
+                assert "demo@1.2.3" in error and "z-other@1.2.3" in error
+                assert "absent-pack" in error
+            else:
+                run_cli(*plan_args)
+                planned = json.loads(capsys.readouterr().out)
+                assert planned is not None
+                assert planned["engineVersion"] == "0.4.0"
+                assert planned["engineRelease"] == release
+                assert planned["sources"] == json.loads(
+                    Lockfile.of(
+                        [replace(entry, source="registry:" + args[3]) for entry in entries]
+                    ).record_json()
+                )
+                assert set(planned["dependencyLocks"]) == {"demo", "z-other"}
+                assert planned["maximumPackPayloadBytes"] == 24
+                assert len(planned["plan"]) == 2
+                engine_file.write_bytes(payload + b" ")
+                with pytest.raises(SystemExit):
+                    run_cli(*plan_args)
+                assert "manifest digest mismatch" in capsys.readouterr().err
+                engine_file.write_bytes(payload)
+            assert not snapshot.exists()
+            assert not output.parent.exists()
+            assert all(not path.endswith(".whl") for path, _ in requests)
+            requests.clear()
         if problem and problem not in {"local", "selected"}:
             with pytest.raises(SystemExit):
                 run_cli(*args)
@@ -3867,7 +4053,12 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 assert requests == []
             else:
                 assert "z-other" in error
+                if problem == "multiple":
+                    assert "demo@1.2.3" in error
+                    assert "published binding differs" in error
+                    assert "invalid archive/base/lock binding" in error
             assert not output.exists()
+            assert not output.parent.exists()
         else:
             run_cli(*args)
             report = json.loads(capsys.readouterr().out)
@@ -3895,11 +4086,51 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                     ],
                 }
                 assert PackLock.read(path).pack == pack
+            if problem is None:
+                assert planned is not None
+                assert planned["dependencyLocks"] == {
+                    pack: json.loads((output / f"{pack}.pack-lock.json").read_bytes())
+                    for pack in expected
+                }
             if problem == "selected":
                 assert requests and all(
                     path in {"/static/packs/index.json", "/static/" + lock_path}
                     for path, _ in requests
                 )
+            if problem is None:
+
+                def forbidden(*args: object, **kwargs: object) -> None:
+                    raise AssertionError("offline lock preparation must not fetch or resolve")
+
+                monkeypatch.setattr("urllib.request.urlopen", forbidden)
+                monkeypatch.setattr(subprocess, "run", forbidden)
+                offline = tmp_path / "offline" / "locks"
+                offline_args = list(args)
+                offline_args[offline_args.index("--output") + 1] = str(offline)
+                before = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+                run_cli(*plan_args, "--offline")
+                assert json.loads(capsys.readouterr().out) == planned
+                run_cli(*offline_args, "--offline")
+                capsys.readouterr()
+                assert {path.name: path.read_bytes() for path in offline.iterdir()} == {
+                    path.name: path.read_bytes() for path in output.iterdir()
+                }
+                assert {path.name: path.read_bytes() for path in snapshot.iterdir()} == before
+                cached_locks = sorted(snapshot.glob("*.lock"))
+                assert len(cached_locks) == 2
+                cached_locks[0].write_bytes(b"corrupt")
+                cached_locks[1].unlink()
+                before = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+                refused = tmp_path / "refused" / "locks"
+                offline_args[offline_args.index("--output") + 1] = str(refused)
+                with pytest.raises(SystemExit):
+                    run_cli(*offline_args, "--offline")
+                error = capsys.readouterr().err
+                assert "demo@1.2.3" in error and "z-other@1.2.3" in error
+                assert "published lock bytes differ" in error
+                assert "offline dependency lock missing" in error
+                assert not refused.parent.exists()
+                assert {path.name: path.read_bytes() for path in snapshot.iterdir()} == before
         assert source.read_bytes() == original
         assert (root / "current").read_text() == "7\n"
         assert sorted(path.name for path in root.iterdir()) == ["current"]
@@ -3967,6 +4198,8 @@ def test_cli_retains_nonregistry_generation_sources_before_writing_candidate(
         "existing",
         "duplicate",
         "third-party",
+        "publisher-mismatch",
+        "replacement",
         "corrupt",
         "retained-corrupt",
         "retained-missing",
@@ -3991,7 +4224,8 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         (source / name / "__init__.py").write_text("raise RuntimeError('must not import')\n")
         manifest_publisher = (
             "third-party"
-            if name == "retained" and problem == "update-retained-missing"
+            if (name == "retained" and problem == "update-retained-missing")
+            or (name == "added" and problem == "third-party")
             else "dinkster"
         )
         (source / "dinkster-pack.toml").write_text(
@@ -4004,7 +4238,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
         build_pack_archive(source, archive)
         publisher = (
             "third-party"
-            if (name == "added" and problem == "third-party")
+            if (name == "added" and problem in {"third-party", "publisher-mismatch"})
             or (name == "retained" and problem == "update-retained-missing")
             else "dinkster"
         )
@@ -4049,12 +4283,37 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     generation = tmp_path / "generation"
     generation.mkdir()
     installed_entries = [old, added] if problem == "update-retained-missing" else [old]
+    if problem == "replacement":
+        prior_source = tmp_path / "added-prior"
+        shutil.copytree(tmp_path / "added", prior_source)
+        for filename in ("dinkster-pack.toml", "pyproject.toml"):
+            path = prior_source / filename
+            path.write_text(path.read_text().replace('version="1.2"', 'version="1.1"'))
+        prior_archive = tmp_path / "added-1.1-py3-none-any.whl"
+        build_pack_archive(prior_source, prior_archive)
+        installed_entries.append(
+            replace(
+                added,
+                version="1.1",
+                artifact_digest=artifact_digest(prior_archive.read_bytes()),
+                source="registry:original",
+            )
+        )
+        (generation / "registries.toml").write_text(
+            f'[registries.original]\nendpoint="http://127.0.0.1:{server.server_port}"\n'
+            '[registries.unrelated]\nendpoint="http://127.0.0.1:1"\ndefault=true\n'
+        )
     stage_generation_packs(
         generation,
         Lockfile.of(installed_entries),
         {
             "retained": tmp_path / "retained-1.0-py3-none-any.whl",
-            "added": tmp_path / "added-1.2-py3-none-any.whl",
+            "added": tmp_path
+            / (
+                "added-1.1-py3-none-any.whl"
+                if problem == "replacement"
+                else "added-1.2-py3-none-any.whl"
+            ),
         },
     )
     installed = generation / "dinkster.lock"
@@ -4069,9 +4328,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     requested = "retained@2.0" if problem == "existing" else "added@1.2"
     args = [
         "--root",
-        "",
-        "--registry",
-        f"http://127.0.0.1:{server.server_port}",
+        str(generation) if problem == "replacement" else "",
+        *(
+            []
+            if problem == "replacement"
+            else ["--registry", f"http://127.0.0.1:{server.server_port}"]
+        ),
         "prepare-registry-sources",
         "--installed-lock",
         str(installed),
@@ -4086,14 +4348,19 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     if problem == "duplicate":
         args.extend(["--add", requested])
     try:
-        if problem is not None and problem not in {"retained-missing", "update-retained-missing"}:
+        if problem is not None and problem not in {
+            "retained-missing",
+            "update-retained-missing",
+            "third-party",
+            "replacement",
+        }:
             with pytest.raises(SystemExit):
                 run_cli(*args)
             error = capsys.readouterr().err
             expected = {
-                "existing": "distinct absent pack",
-                "duplicate": "distinct absent pack",
-                "third-party": "first-party",
+                "existing": "publishes no release retained@2.0",
+                "duplicate": "distinct pack",
+                "publisher-mismatch": "publisher differs from lock",
                 "corrupt": "sha256",
                 "retained-corrupt": "digest mismatch",
             }
@@ -4104,7 +4371,12 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             assert json.loads(capsys.readouterr().out)["packs"] == ["added", "retained"]
             result = Lockfile.from_record_json(output.read_text())
             assert result.packs == (
-                replace(added, source=f"registry:http://127.0.0.1:{server.server_port}"),
+                replace(
+                    added,
+                    source="registry:original"
+                    if problem == "replacement"
+                    else f"registry:http://127.0.0.1:{server.server_port}",
+                ),
                 old,
             )
             assert (

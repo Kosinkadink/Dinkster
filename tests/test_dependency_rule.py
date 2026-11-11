@@ -18,7 +18,6 @@ from packaging.version import Version
 
 from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
 
-validate_evidence_revision()
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PINNED_COMFYUI_COMMIT = "b5cc8830279eae909a59de030af1e50761c36751"
 PINNED_COMFYUI_AV_REQUIREMENTS = {
@@ -83,6 +82,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_memory",
         "dinkster_assets",
         "dinkster_caches",
+        "dinkster_inference_wire",
     },
     "dinkster_memory": {"dinkster_values"},
     # dinkster_assets is allowed so DiskCAS reuses the canonical blake3 digest
@@ -94,18 +94,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_assets",
     },
     "dinkster_assets": {"dinkster_values"},
-    "dinkster_native": {
-        "dinkster_image_document",
-        "dinkster_schema",
-        "dinkster_values",
-        "dinkster_video_runtime",
-        "dinkster_assets",
-        "dinkster_memory",
-        "dinkster_graph",
-        "dinkster_inference_wire",
-        "dinkster_protocol",
-        "dinkster_workers",
-    },
     # Shared materialization consumes portable values, never packs or the scheduler.
     "dinkster_video_runtime": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},
@@ -250,6 +238,7 @@ def workspace_package_names(packages: Path) -> set[str]:
 def test_every_package_is_governed() -> None:
     """A package absent from ALLOWED escapes the layering rule entirely -
     every workspace package must have an explicit allowed set."""
+    validate_evidence_revision()
     on_disk = workspace_package_names(REPO_ROOT / "packages")
     assert (EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml").is_file()
     on_disk.add("dinkster_acceptance")
@@ -295,6 +284,7 @@ def test_dependency_scan_includes_ungoverned_imports(tmp_path: Path) -> None:
     reason="Known dependency edges: https://github.com/Kosinkadink/comfy-vibe-station/issues/664",
 )
 def test_one_way_dependencies() -> None:
+    validate_evidence_revision()
     violations: list[str] = []
     checked = 0
     for package, allowed in ALLOWED.items():
@@ -397,6 +387,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
         (REPO_ROOT / "packages/dinkster-inference-wire/pyproject.toml").read_text()
     )["project"]
     assert root_project["optional-dependencies"] == {
+        "inference": ["dinkster-inference==0.1.1"],
         "default": [
             "dinkster-supervisor",
         ],
@@ -404,7 +395,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
         "supervisor": ["dinkster-supervisor"],
     }
     assert {"dinkster-api", "dinkster-supervisor"} <= {
-        dependency for dependency in root_project["dependencies"]
+        Requirement(dependency).name for dependency in root_project["dependencies"]
     }
     assert "dinkster-collab" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
@@ -419,6 +410,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
     inference_locked = packages["dinkster-inference-wire"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
+        "inference": [{"name": "dinkster-inference"}],
         "default": [
             {"name": "dinkster-supervisor"},
         ],

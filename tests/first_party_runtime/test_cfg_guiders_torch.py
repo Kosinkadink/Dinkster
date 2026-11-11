@@ -421,7 +421,7 @@ def test_basic_cfg_and_dual_model_build_pinned_guiders_and_default_negative() ->
 
 
 def test_basic_guider_prepares_invocation_attention_without_mutating_source() -> None:
-    from dinkster_native.attention import create_attention_runtime
+    from dinkster_workers.attention import create_attention_runtime
     from dinkster_workers.execution import ExecutionContext, use_execution_context
 
     model = _patcher()

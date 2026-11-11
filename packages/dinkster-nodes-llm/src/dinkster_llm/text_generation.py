@@ -24,9 +24,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     materialize_audio,
     materialize_image,
+    with_identity_replacement,
 )
 
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -36,7 +36,7 @@ class TextGenerate(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextGenerate",
+            node_type="dinkster.llm.text_generate",
             display_name="Generate Text",
             category="text",
             search_terms=("LLM", "gemma"),
@@ -194,7 +194,7 @@ class TextGenerate(Node):
                 OutputSpec("thinking", _STRING, display_name="thinking"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextGenerate")
 
     @classmethod
     def execute(

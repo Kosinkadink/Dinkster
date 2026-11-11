@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
@@ -124,9 +124,9 @@ def _skip(args: Any, extra_args: Any) -> Any:
 class SelfAttentionGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SelfAttentionGuidance",
+                node_type="dinkster.sampling.self_attention_guidance",
                 display_name="Self-Attention Guidance",
                 category="experimental",
                 inputs=(
@@ -146,7 +146,8 @@ class SelfAttentionGuidance(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "SelfAttentionGuidance",
         )
 
     @classmethod
@@ -194,9 +195,9 @@ class SelfAttentionGuidance(Node):
 class PerturbedAttentionGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PerturbedAttentionGuidance",
+                node_type="dinkster.sampling.perturbed_attention_guidance",
                 category="model/patch/unet",
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -208,7 +209,8 @@ class PerturbedAttentionGuidance(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "PerturbedAttentionGuidance",
         )
 
     @classmethod
@@ -239,9 +241,9 @@ class PerturbedAttentionGuidance(Node):
 class SkipLayerGuidanceDiT(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SkipLayerGuidanceDiT",
+                node_type="dinkster.sampling.skip_layer_guidance_di_t",
                 category="advanced/guidance",
                 description=(
                     "Generic version of SkipLayerGuidance node that can be used on every DiT model."
@@ -290,7 +292,8 @@ class SkipLayerGuidanceDiT(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "SkipLayerGuidanceDiT",
         )
 
     @classmethod
@@ -345,9 +348,9 @@ class SkipLayerGuidanceDiT(Node):
 class SkipLayerGuidanceDiTSimple(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SkipLayerGuidanceDiTSimple",
+                node_type="dinkster.sampling.skip_layer_guidance_di_t_simple",
                 category="advanced/guidance",
                 description=(
                     "Simple version of the SkipLayerGuidanceDiT node that only modifies the uncond "
@@ -385,7 +388,8 @@ class SkipLayerGuidanceDiTSimple(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "SkipLayerGuidanceDiTSimple",
         )
 
     @classmethod

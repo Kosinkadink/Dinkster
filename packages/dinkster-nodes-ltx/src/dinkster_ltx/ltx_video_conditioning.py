@@ -18,10 +18,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -69,7 +69,7 @@ class LTXVImgToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVImgToVideo",
+            node_type="dinkster.ltx.ltxv_img_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -88,7 +88,7 @@ class LTXVImgToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVImgToVideo")
 
     @classmethod
     def execute(
@@ -131,7 +131,7 @@ class LTXVImgToVideoInplace(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVImgToVideoInplace",
+            node_type="dinkster.ltx.ltxv_img_to_video_inplace",
             category=_CATEGORY,
             inputs=(
                 InputSpec("vae", _VAE),
@@ -142,7 +142,7 @@ class LTXVImgToVideoInplace(Node):
             ),
             outputs=(OutputSpec("latent", _LATENT, display_name="latent"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVImgToVideoInplace")
 
     @classmethod
     def execute(
@@ -172,7 +172,7 @@ class LTXVConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVConditioning",
+            node_type="dinkster.ltx.ltxv_conditioning",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -189,7 +189,7 @@ class LTXVConditioning(Node):
                 OutputSpec("negative", _CONDITIONING, display_name="negative"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVConditioning")
 
     @classmethod
     def execute(
@@ -209,7 +209,7 @@ class LTXVCropGuides(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVCropGuides",
+            node_type="dinkster.ltx.ltxv_crop_guides",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -222,7 +222,7 @@ class LTXVCropGuides(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVCropGuides")
 
     @classmethod
     def execute(

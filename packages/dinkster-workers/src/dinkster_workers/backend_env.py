@@ -70,7 +70,6 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-image-document",
     "packages/dinkster-video-runtime",
     "packages/dinkster-api",
-    "packages/dinkster-native",
 )
 
 

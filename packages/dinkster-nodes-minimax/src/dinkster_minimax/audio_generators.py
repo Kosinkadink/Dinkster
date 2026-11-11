@@ -13,8 +13,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -22,7 +22,7 @@ class EmptyMiniMaxMusic3LatentAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyMiniMaxMusic3LatentAudio",
+            node_type="dinkster.minimax.empty_mini_max_music3_latent_audio",
             display_name="Empty MiniMax Music3 Latent Audio",
             category="model/latent/minimax music",
             description="Creates an empty MiniMax Music3 audio latent for the requested duration.",
@@ -42,7 +42,7 @@ class EmptyMiniMaxMusic3LatentAudio(Node):
             ),
             outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyMiniMaxMusic3LatentAudio")
 
     @classmethod
     def execute(cls, *, seconds: float, batch_size: int) -> Mapping[str, object]:

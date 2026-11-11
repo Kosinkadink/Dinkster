@@ -16,10 +16,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -95,7 +95,7 @@ class WanDancerPadKeyframes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanDancerPadKeyframes",
+            node_type="dinkster.wan.wan_dancer_pad_keyframes",
             category="image/video",
             inputs=(
                 InputSpec("images", _IMAGE),
@@ -125,7 +125,7 @@ class WanDancerPadKeyframes(Node):
                 OutputSpec("audio_segment", _AUDIO, doc="Audio segment for this video segment"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanDancerPadKeyframes")
 
     @classmethod
     def execute(
@@ -142,7 +142,7 @@ class WanDancerPadKeyframesList(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanDancerPadKeyframesList",
+            node_type="dinkster.wan.wan_dancer_pad_keyframes_list",
             category="image/video",
             inputs=(
                 InputSpec("images", _IMAGE),
@@ -176,7 +176,7 @@ class WanDancerPadKeyframesList(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanDancerPadKeyframesList")
 
     @classmethod
     def execute(

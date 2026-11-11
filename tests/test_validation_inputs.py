@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +24,26 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "secrets." not in text and "vars." not in text
     assert checks["name"] == "format, lint, types"
     assert fast["name"] == "tests"
-    assert "if" not in checks and fast["if"] == "${{ !cancelled() }}"
+    assert "if" not in checks
+    condition = fast["if"].removeprefix("${{").removesuffix("}}")
+    condition = re.sub(r"!(?!=)", "not ", condition.replace("&&", " and ").replace("||", " or "))
+    for event, draft, workflow_name, cancelled, allowed in [
+        ("pull_request", True, "ci", False, False),
+        ("pull_request", False, "ci", False, True),
+        ("pull_request", True, "Versioned wheel release", False, True),
+        ("merge_group", False, "ci", False, True),
+        ("workflow_dispatch", False, "ci", False, True),
+        ("pull_request", False, "ci", True, False),
+    ]:
+        github = SimpleNamespace(
+            event_name=event,
+            workflow=workflow_name,
+            event=SimpleNamespace(pull_request=SimpleNamespace(draft=draft)),
+        )
+        assert (
+            bool(eval(condition, {"github": github, "cancelled": lambda value=cancelled: value}))
+            is allowed
+        )
     assert any(step.get("run") == "bash scripts/ci-fast.sh checks" for step in checks["steps"])
     assert any(step.get("run") == "bash scripts/ci-fast.sh tests" for step in fast["steps"])
     gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
@@ -56,9 +76,17 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
             False,
             ["packages/dinkster-nodes-text"],
         ),
+        (
+            "packages/dinkster-nodes-dev/pyproject.toml",
+            False,
+            False,
+            ["packages/dinkster-nodes-dev"],
+        ),
         ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
         ("tests/test_environment_history.py", True, True, []),
         ("tests/test_remote.py", True, True, []),
+        ("tests/test_durable_delegations.py", True, True, []),
+        ("tests/test_produced_video_assets.py", True, True, []),
         ("src/dinkster/setup.py", True, True, []),
         ("src/dinkster/manager.py", True, True, []),
         ("src/dinkster/cli.py", True, True, []),
@@ -71,7 +99,7 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
 def test_ci_selects_only_the_changed_behavior(
     path: str, engine: bool, runtime: bool, packs: list[str]
 ) -> None:
-    from tools.ci_selection import select
+    from tools.ci_selection import select, test_paths
 
     plan = select(evidence_paths.DINKSTER_ROOT, [path])
     assert plan == {
@@ -80,6 +108,8 @@ def test_ci_selects_only_the_changed_behavior(
         "runtime": runtime,
         "packs": packs,
     }
+    for pack in packs:
+        assert test_paths(evidence_paths.DINKSTER_ROOT, [pack])
 
 
 def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> None:
@@ -122,6 +152,14 @@ def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> N
     ]
 
 
+def test_development_pack_selects_gallery_behavior() -> None:
+    from tools.ci_selection import test_paths
+
+    assert test_paths(evidence_paths.DINKSTER_ROOT, ["packages/dinkster-nodes-dev"]) == [
+        str(Path("tests/test_gallery.py"))
+    ]
+
+
 @pytest.mark.parametrize("fail_root", [False, True])
 def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     tmp_path: Path, fail_root: bool
@@ -160,6 +198,23 @@ def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     )
     assert result.returncode == (1 if fail_root else 0), result.stdout + result.stderr
     assert executed.read_text().splitlines() == ["image", "video", "root"]
+
+
+def test_full_validation_preserves_started_main_runs() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(
+        (evidence_paths.DINKSTER_ROOT / ".github/workflows/full-validation.yml").read_text()
+    )
+    assert workflow["concurrency"] == {
+        "group": (
+            "${{ github.workflow }}-${{ github.ref }}-"
+            "${{ github.event_name == 'push' && 'push' || 'durable' }}"
+        ),
+        "cancel-in-progress": (
+            "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
+        ),
+    }
 
 
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
@@ -231,7 +286,7 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert runtime_shards == list(range(1, 9))
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
     assert "--file-shard ${{ matrix.shard }}/8" in runtime_run["run"]
-    for name in ("artifacts", "cli", "generations", "history", "transactions"):
+    for name in ("artifacts", "cli", "collection", "generations", "history", "transactions"):
         assert f"'--case-shard-file', 'tests/test_environment_{name}.py'" in runtime_run["run"]
     assert "matrix.file-shard" not in runtime_run["run"]
     assert "$files = @(" not in runtime_run["run"]

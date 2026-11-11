@@ -10,9 +10,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -21,7 +21,7 @@ class SeedVR2Preprocess(Node):
     def define_schema(cls) -> NodeSchema:
         image = TypeExpr.concrete(IMAGE_TYPE)
         schema = NodeSchema(
-            node_type="SeedVR2Preprocess",
+            node_type="dinkster.seedvr.seed_vr2_preprocess",
             display_name="Pre-Process SeedVR2 Input",
             category="image/pre-processors",
             description=(
@@ -33,7 +33,7 @@ class SeedVR2Preprocess(Node):
             inputs=(InputSpec("resized_images", image, doc="The resized image to process."),),
             outputs=(OutputSpec("images", image, doc="The padded image for VAE encoding."),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SeedVR2Preprocess")
 
     @classmethod
     def execute(cls, *, resized_images: object) -> Mapping[str, object]:

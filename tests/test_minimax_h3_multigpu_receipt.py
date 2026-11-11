@@ -194,25 +194,23 @@ def test_worker_aggregates_three_item_sample_results_without_fork_loader_attribu
     fake_torch = types.SimpleNamespace(
         cuda=Cuda(), __version__="test", version=types.SimpleNamespace(cuda="test")
     )
-    native = types.ModuleType("dinkster_native")
-    attention = cast("Any", types.ModuleType("dinkster_native.attention"))
+    attention = cast("Any", types.ModuleType("dinkster_workers.attention"))
     attention.activate_distributed_attention = lambda *_args: None
     attention.release_distributed_attention = lambda *_args: None
-    fork_nodes = cast("Any", types.ModuleType("dinkster_native.fork_nodes"))
-    fork_nodes.GenerationLoadDiffusionModel = types.SimpleNamespace(
-        execute=lambda **_kwargs: {"model": Model()}
-    )
-    fork_nodes.NativeEmptyMiniMaxH3AV = types.SimpleNamespace(
-        execute=lambda **_kwargs: {"latent": {}}
-    )
-    fork_nodes.NativeLoadVae = types.SimpleNamespace()
+    loaders = cast("Any", types.ModuleType("dinkster_models.model_file_loaders"))
+    loaders.UNETLoader = types.SimpleNamespace(execute=lambda **_kwargs: {"MODEL": Model()})
+    minimax = cast("Any", types.ModuleType("dinkster_minimax.minimax_h3_latent"))
+    minimax.EmptyMiniMaxH3LatentAV = types.SimpleNamespace(execute=lambda **_kwargs: {"LATENT": {}})
+    selections = cast("Any", types.ModuleType("dinkster_models.model_selections"))
+    selections.VAELoader = types.SimpleNamespace()
     workers = cast("Any", types.ModuleType("dinkster_workers"))
     workers.ExecutionContext = lambda **_kwargs: object()
     workers.use_execution_context = lambda _context: contextlib.nullcontext()
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.setitem(sys.modules, "dinkster_native", native)
-    monkeypatch.setitem(sys.modules, "dinkster_native.attention", attention)
-    monkeypatch.setitem(sys.modules, "dinkster_native.fork_nodes", fork_nodes)
+    monkeypatch.setitem(sys.modules, "dinkster_workers.attention", attention)
+    monkeypatch.setitem(sys.modules, "dinkster_models.model_file_loaders", loaders)
+    monkeypatch.setitem(sys.modules, "dinkster_models.model_selections", selections)
+    monkeypatch.setitem(sys.modules, "dinkster_minimax.minimax_h3_latent", minimax)
     monkeypatch.setitem(sys.modules, "dinkster_workers", workers)
     monkeypatch.setattr(receipt, "_inventory", lambda: {})
     monkeypatch.setattr(
@@ -258,7 +256,7 @@ def test_worker_aggregates_three_item_sample_results_without_fork_loader_attribu
 
     worker_result = json.loads(result.read_text())
     assert worker_result["loading_route"] == {
-        "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
+        "loader": "dinkster_models.model_file_loaders.UNETLoader",
         "mmap_backed_state_dict": True,
         "dynamic_weight_loading": True,
     }

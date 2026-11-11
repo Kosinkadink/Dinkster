@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -49,7 +49,7 @@ class SDPoseFaceBBoxes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SDPoseFaceBBoxes",
+            node_type="dinkster.vision.sdpose.sd_pose_face_b_boxes",
             display_name="SDPose Face Bounding Boxes",
             category="image/detection",
             search_terms=("face bbox", "face bounding box", "pose", "keypoints"),
@@ -78,7 +78,7 @@ class SDPoseFaceBBoxes(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SDPoseFaceBBoxes")
 
     @classmethod
     def execute(
@@ -118,7 +118,7 @@ class SDPoseDrawKeypoints(Node):
         boolean = TypeExpr.concrete(CORE_BOOLEAN)
         integer = TypeExpr.concrete(CORE_INT)
         schema = NodeSchema(
-            node_type="SDPoseDrawKeypoints",
+            node_type="dinkster.vision.sdpose.sd_pose_draw_keypoints",
             display_name="SDPose Draw Keypoints",
             category="image/detection",
             search_terms=("openpose", "pose detection", "preprocessor", "keypoints", "pose"),
@@ -147,7 +147,7 @@ class SDPoseDrawKeypoints(Node):
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SDPoseDrawKeypoints")
 
     @classmethod
     def execute(

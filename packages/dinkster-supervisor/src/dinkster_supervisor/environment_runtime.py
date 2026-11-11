@@ -10,6 +10,8 @@ import secrets
 import subprocess
 import sys
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -24,11 +26,21 @@ from urllib.request import (
 )
 
 from .environment_process import cancel_pending_process, prepare_process, process_state
-from .environment_state import EnvironmentError, Generation, atomic_write, interpreter, read_current
+from .environment_state import (
+    EnvironmentError,
+    Generation,
+    atomic_write,
+    interpreter,
+    read_current,
+    read_document,
+    writer_lock,
+)
 
 __all__ = [
     "engine_assignments",
     "engine_status",
+    "generation_runtime_lock",
+    "generation_runtime_reason",
     "preserve_stopped_engine",
     "require_idle",
     "start_engine",
@@ -43,6 +55,17 @@ _STARTUP_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.05
 
 
+@contextmanager
+def generation_runtime_lock(root: Path) -> Generator[None]:
+    """Serialize interpreter acquisition with collection, including direct runtime callers."""
+    runtime = root / "runtime"
+    if runtime.is_symlink() or runtime.is_junction():
+        raise EnvironmentError("runtime must not be linked")
+    runtime.mkdir(exist_ok=True)
+    with writer_lock(runtime):
+        yield
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -52,6 +75,13 @@ def start_engine(
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
+    with generation_runtime_lock(root):
+        return _start_engine(root, generation, name, port, gpus)
+
+
+def _start_engine(
+    root: Path, generation: int, name: str, port: int, gpus: tuple[str, ...]
+) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
     Generation.read(target / "generation.json")
@@ -99,6 +129,8 @@ def start_engine(
         f"--shutdown-token={token}",
         "--process-state",
         str(lifecycle),
+        "--environment-root",
+        str(root),
         "--host",
         "127.0.0.1",
         "--port",
@@ -118,11 +150,13 @@ def start_engine(
     ]
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
+        log_offset = log.tell()
         if os.name != "nt":
             log_path.chmod(0o600)
         try:
             process = subprocess.Popen(command, cwd=root, env=environment, stdout=log, stderr=log)
         except OSError:
+            cancel_pending_process(lifecycle, instance)
             record["state"] = "stopped"
             _write_record(root, name, record)
             raise
@@ -136,15 +170,47 @@ def start_engine(
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
         if inspected["state"] == "failed" and _identity_matches(inspected):
+            failure = _startup_failure(
+                f"engine {name} failed before becoming ready",
+                inspected.get("_engineExitCode"),
+                log_path,
+                log_offset,
+            )
             stop_engine(root, name, generation=generation)
-            raise EnvironmentError(f"engine {name} failed before becoming ready")
-        if process.poll() is not None:
+            raise failure
+        exit_code = process.poll()
+        if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
-            raise EnvironmentError(f"engine {name} exited before becoming ready")
+            raise _startup_failure(
+                f"engine {name} exited before becoming ready (supervisor launcher)",
+                exit_code,
+                log_path,
+                log_offset,
+            )
         time.sleep(_POLL_INTERVAL)
     stop_engine(root, name, generation=generation)
     raise EnvironmentError(f"engine {name} did not become ready")
+
+
+def _startup_failure(
+    message: str, exit_code: object, log_path: Path, log_offset: int
+) -> EnvironmentError:
+    code = str(exit_code) if type(exit_code) is int else "unavailable"
+    try:
+        with log_path.open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            # Bound the error payload and exclude output from previous launches.
+            start = max(log_offset, log.tell() - 64 * 1024)
+            log.seek(start)
+            output = log.read(64 * 1024).decode("utf-8", errors="replace")
+        if start > log_offset:
+            output = "[earlier output truncated]\n" + output
+    except OSError as exc:
+        output = f"[cannot read captured output: {exc}]"
+    return EnvironmentError(
+        f"{message}; exit code {code}\nCaptured output ({log_path}):\n" + (output or "[no output]")
+    )
 
 
 def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None:
@@ -197,6 +263,9 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
             inspected["state"] = "stopped"
             inspected["pid"] = 0
             _write_record(root, name, inspected)
+            from .environment_collection import automatic_generation_collection
+
+            automatic_generation_collection(root)
             return
         time.sleep(_POLL_INTERVAL)
     raise EnvironmentError("authenticated supervisor did not stop")
@@ -233,26 +302,76 @@ def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
     return rows
 
 
+def generation_runtime_reason(root: Path, generation: int) -> str | None:
+    """A supervisor may restart its child even while its HTTP engine status is stopped."""
+    directory = root / "runtime" / str(generation)
+    for path in (directory.parent, directory):
+        if path.is_symlink() or path.is_junction():
+            raise EnvironmentError("collection refuses linked runtime records")
+    for path in sorted(directory.glob("*.json")):
+        if path.is_symlink() or path.is_junction():
+            raise EnvironmentError("collection refuses linked runtime records")
+        record = _parse_record(path)
+        lifecycle = cast("Path", record["_processState"])
+        if not lifecycle.is_dir():
+            return "managed engine has no child-cleanup receipt"
+    for processes in sorted(directory.glob("*.process")):
+        if processes.is_symlink() or processes.is_junction() or not processes.is_dir():
+            raise EnvironmentError("collection refuses linked lifecycle records")
+        for lifecycle in sorted(processes.iterdir()):
+            if lifecycle.is_symlink() or lifecycle.is_junction() or not lifecycle.is_dir():
+                raise EnvironmentError("collection refuses linked lifecycle records")
+            state_path = lifecycle / "state.json"
+            if state_path.is_symlink():
+                raise EnvironmentError("collection refuses linked lifecycle state")
+            instance = read_document(state_path).get("instance")
+            if (
+                not isinstance(instance, str)
+                or not instance
+                or (lifecycle.name != hashlib.sha256(instance.encode()).hexdigest())
+            ):
+                raise EnvironmentError("lifecycle directory and instance disagree")
+            state = process_state(lifecycle, instance)
+            if state not in {"stopped", "cancelled"}:
+                return "managed supervisor is live or its child cleanup is unproven"
+            if (
+                state == "stopped"
+                and read_document(state_path).get("descendantsStopped") is not True
+            ):
+                return "managed worker descendant cleanup is unproven"
+    if any(binding["running"] for binding in engine_assignments(root, generation)):
+        return "live managed engine"
+    return None
+
+
 def preserve_stopped_engine(root: Path, name: str, previous: int, target: int, port: int) -> None:
     """Carry a stopped binding forward without launching it during activation."""
-    record = _load_record(root, name, previous)
-    existing = _load_record(root, name, target)
-    if record is None or _inspect(record)["state"] != "stopped":
-        raise EnvironmentError("previous binding is not safely stopped")
-    if existing is not None and _inspect(existing)["state"] != "stopped":
-        raise EnvironmentError("target binding is not safely stopped")
-    _write_record(
-        root,
-        name,
-        record
-        | {
-            "generation": target,
-            "port": port,
-            "url": f"http://127.0.0.1:{port}",
-            "pid": 0,
-            "state": "stopped",
-        },
-    )
+    with generation_runtime_lock(root):
+        record = _load_record(root, name, previous)
+        existing = _load_record(root, name, target)
+        if record is None or _inspect(record)["state"] != "stopped":
+            raise EnvironmentError("previous binding is not safely stopped")
+        if existing is not None and _inspect(existing)["state"] != "stopped":
+            raise EnvironmentError("target binding is not safely stopped")
+        instance = secrets.token_urlsafe(24)
+        lifecycle = _process_directory(_runtime_path(root, name, target), instance)
+        prepare_process(lifecycle, instance)
+        # This target binding never launched; cancellation must not impersonate child shutdown.
+        cancel_pending_process(lifecycle, instance)
+        _write_record(
+            root,
+            name,
+            record
+            | {
+                "generation": target,
+                "port": port,
+                "url": f"http://127.0.0.1:{port}",
+                "instance": instance,
+                "shutdownToken": secrets.token_urlsafe(32),
+                "pid": 0,
+                "state": "stopped",
+            },
+        )
 
 
 def require_idle(root: Path) -> None:
@@ -368,6 +487,7 @@ def _write_record(root: Path, name: str, record: dict[str, object]) -> None:
 def _inspect(record: dict[str, object]) -> dict[str, object]:
     inspected = dict(record)
     inspected["_verifiedIdentity"] = False
+    inspected["_engineExitCode"] = None
     lifecycle = cast("Path", record["_processState"])
     if lifecycle.is_dir():
         state = process_state(
@@ -415,6 +535,9 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
         return inspected
     inspected["state"] = state
     inspected["_verifiedIdentity"] = True
+    engine = status_document.get("engine")
+    if isinstance(engine, dict):
+        inspected["_engineExitCode"] = cast("dict[str, object]", engine).get("exitCode")
     return inspected
 
 

@@ -16,10 +16,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -27,7 +27,7 @@ class FrameInterpolate(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FrameInterpolate",
+            node_type="dinkster.video.frame_interpolate",
             display_name="Run Frame Interpolation Model",
             category="video",
             search_terms=(
@@ -50,7 +50,7 @@ class FrameInterpolate(Node):
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FrameInterpolate")
 
     @classmethod
     def execute(cls, *, interp_model: Any, images: Any, multiplier: int) -> Mapping[str, object]:

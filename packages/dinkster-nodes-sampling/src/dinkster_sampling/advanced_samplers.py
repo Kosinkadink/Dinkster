@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _COMBO = TypeExpr.concrete(CORE_COMBO)
@@ -158,7 +158,7 @@ def _sampler_schema(
 ) -> NodeSchema:
     return NodeSchema(
         node_type=node_type,
-        display_name=display_name or node_type,
+        display_name=display_name,
         category=category,
         description=description,
         inputs=inputs,
@@ -169,9 +169,9 @@ def _sampler_schema(
 class SamplerLCMUpscale(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampler_schema(
-                "SamplerLCMUpscale",
+                "dinkster.sampling.sampler_lcm_upscale",
                 (
                     InputSpec(
                         "scale_ratio",
@@ -194,7 +194,8 @@ class SamplerLCMUpscale(Node):
                         widget=ComboWidget(options=_UPSCALE_METHODS),
                     ),
                 ),
-            )
+            ),
+            "SamplerLCMUpscale",
         )
 
     @classmethod
@@ -216,9 +217,9 @@ class SamplerLCMUpscale(Node):
 class SamplerLCM(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampler_schema(
-                "SamplerLCM",
+                "dinkster.sampling.sampler_lcm",
                 (
                     InputSpec(
                         "s_noise",
@@ -250,7 +251,8 @@ class SamplerLCM(Node):
                     "LCM sampler with tunable per-step noise. s_noise is a multiplier on the "
                     "model's training noise scale"
                 ),
-            )
+            ),
+            "SamplerLCM",
         )
 
     @classmethod
@@ -272,9 +274,9 @@ class SamplerLCM(Node):
 class SamplerEulerCFGpp(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampler_schema(
-                "SamplerEulerCFGpp",
+                "dinkster.sampling.sampler_euler_cf_gpp",
                 (
                     InputSpec(
                         "version",
@@ -286,7 +288,8 @@ class SamplerEulerCFGpp(Node):
                 ),
                 category="experimental",
                 display_name="SamplerEulerCFG++",
-            )
+            ),
+            "SamplerEulerCFGpp",
         )
 
     @classmethod

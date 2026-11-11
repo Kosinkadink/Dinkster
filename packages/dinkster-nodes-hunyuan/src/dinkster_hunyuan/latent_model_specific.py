@@ -13,8 +13,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -57,12 +57,12 @@ class EmptyLatentHunyuan3Dv2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyLatentHunyuan3Dv2",
+            "dinkster.hunyuan.empty_latent_hunyuan3_dv2",
             "model/latent/hunyuan 3d",
             (_integer("resolution", 3072, 8192), _integer("batch_size", 1, 4096)),
             "Empty Hunyuan 3D v2 Latent",
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyLatentHunyuan3Dv2")
 
     @classmethod
     def execute(cls, *, resolution: int, batch_size: int) -> Mapping[str, object]:

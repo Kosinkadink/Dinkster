@@ -107,6 +107,19 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
         rows = artifact_rows(document.get("artifacts"), "name")
         if not any(row["name"] == "constraints.txt" for row in rows):
             raise EnvironmentError("engine release has no constraints.txt artifact")
+        if "defaultPacks" in document:
+            defaults = document["defaultPacks"]
+            if not isinstance(defaults, dict) or not defaults:
+                raise EnvironmentError("engine defaultPacks must be a nonempty object")
+            for pack, minimum in cast("dict[str, object]", defaults).items():
+                if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", pack) is None:
+                    raise EnvironmentError("engine default pack names must be canonical")
+                try:
+                    if not isinstance(minimum, str):
+                        raise ValueError("minimum version must be a string")
+                    Version(minimum)
+                except ValueError as exc:
+                    raise EnvironmentError(f"invalid engine default pack minimum: {pack}") from exc
         if "dependencies" in document:
             dependencies = document["dependencies"]
             if not isinstance(dependencies, dict) or not dependencies:
@@ -218,9 +231,22 @@ def discover_manifest(
     mirrors: tuple[str, ...],
     expected: str,
     variant: str | None = None,
+    *,
+    store: Path | None = None,
+    offline: bool = False,
 ) -> tuple[dict[str, object], tuple[str, ...], bytes]:
     sources = _sources(locations, mirrors)
-    for root, filename in sources:
+    if offline and store is None:
+        raise EnvironmentError("offline discovery requires a local store")
+    candidates = (
+        (
+            (str(store / "metadata"), f"{expected[7:]}.json"),
+            *(() if offline else sources),
+        )
+        if store is not None
+        else sources
+    )
+    for root, filename in candidates:
         try:
             data = read_metadata(root, filename)
             document = validate_manifest(data, expected, variant)
@@ -240,6 +266,8 @@ class EnvironmentCatalog:
     bases: dict[str, dict[str, object]]
     base_sources: dict[str, tuple[str, ...]]
     engine_bytes: bytes
+    mirrors: tuple[str, ...] | None = None
+    cached_channel: bool = False
 
     def variants(self) -> list[dict[str, object]]:
         return [
@@ -258,13 +286,25 @@ class EnvironmentCatalog:
         ]
 
 
-def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
+def _channel_cache(store: Path, mirrors: tuple[str, ...], channel_name: str) -> Path:
+    identity = hashlib.sha256(json.dumps(mirrors, ensure_ascii=True).encode("ascii")).hexdigest()
+    return store / "metadata" / "channels" / identity / f"{channel_name}.json"
+
+
+def discover(
+    mirrors: tuple[str, ...],
+    channel_name: str,
+    *,
+    store: Path | None = None,
+    offline: bool = False,
+) -> EnvironmentCatalog:
     """Read channel and exact manifests without creating project or store files."""
     if channel_name not in {"stable", "main"}:
         raise EnvironmentError("channel must be stable or main")
     document: dict[str, object] | None = None
     channel: Channel | None = None
-    for mirror in mirrors:
+    cached_channel = False
+    for mirror in () if offline else mirrors:
         try:
             trusted_metadata(mirror)
             document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
@@ -272,22 +312,63 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
             break
         except (OSError, ValueError, HTTPException):
             continue
+    if channel is None and store is not None:
+        cached = _channel_cache(store, mirrors, channel_name)
+        try:
+            document = parse_metadata(read_metadata(str(cached.parent), cached.name))
+            channel = Channel.parse(document)
+            cached_channel = True
+        except (OSError, ValueError, HTTPException):
+            pass
     if channel is None or document is None:
-        raise EnvironmentError("no mirror supplied a valid trusted channel")
-    engine, engine_sources, engine_bytes = discover_manifest(
-        channel.engine_locations, mirrors, channel.engine_release
-    )
-    if engine["version"] != channel.engine_version:
+        raise EnvironmentError(
+            "offline channel metadata missing or invalid"
+            if offline
+            else "no mirror supplied a valid trusted channel"
+        )
+    errors: list[str] = []
+    engine = None
+    engine_sources: tuple[str, ...] = ()
+    engine_bytes = b""
+    try:
+        engine, engine_sources, engine_bytes = discover_manifest(
+            channel.engine_locations, mirrors, channel.engine_release, store=store, offline=offline
+        )
+    except EnvironmentError as exc:
+        if not offline:
+            raise
+        errors.append(f"engine {channel.engine_release}: {exc}")
+    if engine is not None and engine["version"] != channel.engine_version:
         raise EnvironmentError("engine manifest version disagrees with channel")
     bases: dict[str, dict[str, object]] = {}
     sources: dict[str, tuple[str, ...]] = {}
     for variant, locations in channel.base_locations:
-        base, roots, _ = discover_manifest(locations, mirrors, channel.base_for(variant), variant)
-        if base["workerProtocol"] != engine["workerProtocol"]:
+        try:
+            base, roots, _ = discover_manifest(
+                locations, mirrors, channel.base_for(variant), variant, store=store, offline=offline
+            )
+        except EnvironmentError as exc:
+            if not offline:
+                raise
+            errors.append(f"base {variant} {channel.base_for(variant)}: {exc}")
+            continue
+        if engine is not None and base["workerProtocol"] != engine["workerProtocol"]:
             raise EnvironmentError("base and engine workerProtocol mismatch")
         bases[variant], sources[variant] = base, roots
+    if errors:
+        raise EnvironmentError("offline metadata inputs missing or invalid:\n" + "\n".join(errors))
+    assert engine is not None
     return EnvironmentCatalog(
-        channel_name, document, channel, engine, engine_sources, bases, sources, engine_bytes
+        channel_name,
+        document,
+        channel,
+        engine,
+        engine_sources,
+        bases,
+        sources,
+        engine_bytes,
+        mirrors,
+        cached_channel,
     )
 
 
@@ -322,7 +403,9 @@ def engine_label(engine: dict[str, object]) -> str:
     return readable_label(f"{acquisition_date(engine)}-{version}")
 
 
-def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path) -> Path:
+def acquire_base(
+    base: dict[str, object], sources: tuple[str, ...], store: Path, *, offline: bool = False
+) -> Path:
     """Acquire a validated base under a held store writer lock, without an engine release."""
     base_id = cast("str", base["id"])
     platform = cast("dict[str, object]", base["platform"])
@@ -344,7 +427,7 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
             )
         downloaded = tuple(
             fetch_artifact(
-                sources,
+                (str(object_path(store / "downloads", base_id)),) if offline else sources,
                 cast("str", row["filename"]),
                 object_path(store / "downloads", base_id, label=label)
                 / cast("str", row["filename"]),
@@ -495,6 +578,63 @@ def dependency_source(row: dict[str, object], package_index: str | None) -> str:
     return matches.pop()
 
 
+def runtime_inputs(
+    catalog: EnvironmentCatalog, variant: str, store: Path
+) -> tuple[dict[str, object], ...]:
+    """Inspect exact runtime payloads without probing remote sources or writing cache files."""
+    if (
+        validate_manifest(catalog.engine_bytes, catalog.channel.engine_release, None)
+        != catalog.engine
+    ):
+        raise EnvironmentError("engine manifest differs from its verified bytes")
+    base = catalog.bases[variant]
+    base_id = cast("str", base["id"])
+    base_root = object_path(store / "bases", base_id)
+    release = object_path(store / "engines", catalog.channel.engine_release)
+    owned = set(cast("list[str]", base["replaces"]))
+    inputs: dict[Path, dict[str, object]] = {}
+
+    def record(path: Path, row: dict[str, object]) -> None:
+        sha, size = cast("str", row["sha256"]), cast("int", row["size"])
+        inputs[path] = {
+            "path": str(path),
+            "sha256": sha,
+            "size": size,
+            "cached": (
+                path.is_file()
+                and not path.is_symlink()
+                and path.stat().st_size == size
+                and content_digest(path) == "sha256:" + sha
+            ),
+        }
+
+    if base_root.exists():
+        for row in artifact_rows(base["wheels"], "filename"):
+            record(base_root / "wheels" / cast("str", row["filename"]), row)
+    else:
+        for row in artifact_rows(cast("dict[str, object]", base["archive"])["parts"], "filename"):
+            record(object_path(store / "downloads", base_id) / cast("str", row["filename"]), row)
+    for row in artifact_rows(catalog.engine["artifacts"], "name"):
+        name = cast("str", row["name"])
+        if name == "constraints.txt":
+            record(release / name, row)
+        elif name.endswith(".whl") and parse_wheel_filename(name)[0] not in owned:
+            record(
+                object_path(store / "wheels", "sha256:" + cast("str", row["sha256"])) / name, row
+            )
+    if catalog.engine.get("dependencies") is not None:
+        selection = cast("dict[str, object]", catalog.engine["dependencies"]).get(variant)
+        validate_dependency_base(selection, base)
+        for row in dependency_wheels(selection):
+            if row["name"] not in owned:
+                record(
+                    object_path(store / "wheels", "sha256:" + cast("str", row["sha256"]))
+                    / cast("str", row["filename"]),
+                    row,
+                )
+    return tuple(inputs.values())
+
+
 def acquire(
     catalog: EnvironmentCatalog,
     variant: str,
@@ -503,6 +643,7 @@ def acquire(
     package_index: str | None = None,
     base: dict[str, object] | None = None,
     base_sources: tuple[str, ...] | None = None,
+    offline: bool = False,
 ) -> Path:
     """Populate verified artifacts and merged requirements under a held store writer lock."""
     if (
@@ -510,6 +651,16 @@ def acquire(
         != catalog.engine
     ):
         raise EnvironmentError("engine manifest differs from its verified bytes")
+    if offline:
+        if base is not None or base_sources is not None:
+            raise EnvironmentError("offline runtime acquisition requires a published base")
+        missing = [
+            str(row["path"]) for row in runtime_inputs(catalog, variant, store) if not row["cached"]
+        ]
+        if missing:
+            raise EnvironmentError(
+                "offline runtime inputs missing or corrupt:\n" + "\n".join(missing)
+            )
     published_base = catalog.bases[variant]
     custom = base is not None
     if custom != (base_sources is not None):
@@ -535,7 +686,7 @@ def acquire(
         validate_dependency_base(selection, published_base)
         selected = dependency_wheels(selection)
     assert base_sources is not None
-    acquire_base(base, base_sources, store)
+    acquire_base(base, base_sources, store, offline=offline)
     release_root = object_path(
         store / "engines", catalog.channel.engine_release, label=engine_label(catalog.engine)
     )
@@ -563,7 +714,13 @@ def acquire(
             destination = release_root / name
         else:
             continue
-        fetch_artifact(catalog.engine_sources, name, destination, sha, cast("int", row["size"]))
+        fetch_artifact(
+            (str(destination.parent),) if offline else catalog.engine_sources,
+            name,
+            destination,
+            sha,
+            cast("int", row["size"]),
+        )
     requirements = (release_root / "constraints.txt").read_text(encoding="utf-8")
     if selected is not None:
         for row in selected:
@@ -582,7 +739,11 @@ def acquire(
                     or destination.stat().st_size != row["size"]
                     or content_digest(destination) != "sha256:" + sha
                 ):
-                    source = dependency_source(row, package_index)
+                    source = (
+                        str(destination.parent)
+                        if offline
+                        else dependency_source(row, package_index)
+                    )
                     fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
         requirements = engine_constraints(catalog.engine, variant)
     context = published_base if custom else None
@@ -599,6 +760,19 @@ def acquire(
     constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
     atomic_write(release_root / "release-manifest.json", catalog.engine_bytes)
+    atomic_write(
+        store / "metadata" / f"{catalog.channel.engine_release[7:]}.json", catalog.engine_bytes
+    )
+    for retained_base in catalog.bases.values():
+        atomic_write(
+            store / "metadata" / f"{cast('str', retained_base['id'])[7:]}.json",
+            json.dumps(retained_base, sort_keys=True, ensure_ascii=True) + "\n",
+        )
+    if catalog.mirrors is not None:
+        atomic_write(
+            _channel_cache(store, catalog.mirrors, catalog.channel_name),
+            json.dumps(catalog.document, sort_keys=True, ensure_ascii=True) + "\n",
+        )
     return constraints
 
 

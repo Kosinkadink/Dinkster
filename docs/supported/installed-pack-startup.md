@@ -1,5 +1,10 @@
 ## Installed pack startup
 
+- Plain `pip install dinkster` supports CLI, catalog serving and torch-free
+  packs without installing torch or the inference runtime. Install
+  `dinkster[inference]` for in-process inference packs; missing inference
+  dependencies report that extra rather than installing them implicitly.
+  Managed generations and contributor setup retain inference support.
 - Static-only registry installs support both the release catalog and the split
   catalog with per-pack version files. Selection and acquisition share a snapshot
   within each operation; the next operation reads current publication state.
@@ -112,6 +117,24 @@
 - Pack publication can submit publisher-produced per-base locks together with
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
+- Published lock preparation inspects the whole selected set before creating
+  lock output, reporting all missing or invalid bindings together. Its
+  `--offline --index-snapshot PATH` form uses retained index and lock metadata
+  without network access or dependency resolution; missing or corrupt inputs
+  refuse without creating the output or repairing the snapshot.
+- Registry source planning can inspect an exact engine release's default pack
+  declaration and published locks without acquiring archives or writing a cache.
+  Its plan includes selected versions, provenance, archive identities and an
+  upper bound for pack wheel bytes. Unavailable releases and invalid locks are
+  reported together. Offline metadata discovery reads only retained channel,
+  engine and base records and reports missing engine/base records together.
+- Managed setup and update can require a reviewed published engine and base
+  using paired `--engine-release` and `--base-id` arguments. A changed channel
+  selection refuses before creating project or store state rather than applying
+  different software. These selections cannot use a locally resolved base.
+  Explicit source catalogs and dependency locks are displayed with content
+  digests and rechecked after confirmation and before activation. Changing an
+  input during confirmation refuses before creating project or store state.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.
@@ -154,6 +177,10 @@
   from files requiring review. These checks need no private checkout, registry
   database or publication credentials. Missing or degraded probe isolation
   refuses rather than skipping executable checks.
+- Probe dependency provisioning can use a complete operator-staged CPU wheel
+  index for all requirements, including torch and torchvision, without a public
+  package-index fallback. Missing or incompatible wheels refuse admission.
+  The default CPU dependency source and all probe limits remain unchanged.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified
@@ -194,10 +221,14 @@
   preparation uses these selections, retaining existing source identities and
   leaving old dependency locks to inheritance from the source generation.
 - `dinkster-env packs-plan PACK@VERSION --output PATH --json` retains an exact
-  additive software review in a new host-owned disposable directory outside the
+  software review in a new host-owned disposable directory outside the
   project and shared store. It reports source/dependency locks, retained engine,
   base and placement, wheel downloads and isolation size without a generation
-  journal or activation. Intact retained registry wheels can supply old archives
+  journal or activation. Exact selections can add or replace published packs
+  from any configured registry, not just first-party packs. Replacements use
+  recorded registry provenance unless an explicit registry is selected; unrelated
+  packs retain their source identities and dependency locks.
+  Intact retained registry wheels can supply old archives
   without contacting their release endpoints. Previously installed wheels retain
   their original archive bytes and digest when another pack is added; corrupt
   retained wheels refuse before a candidate source lock is written. Missing
@@ -206,7 +237,7 @@
 - `packs-apply --input PATH --approval DIGEST --json` applies that review once
   within 900 seconds. Changed project settings, current software or reviewed
   input files refuse before construction. Successful application seals and
-  activates an ordinary next generation and appends its software history; existing
+  activates an ordinary next generation and appends its software history; unselected
   source/dependency locks and placement are preserved. Workflows, models, outputs,
   user data and project settings remain unchanged. Hosts own review-directory
   cleanup and must authorize the caller before invoking these local commands.
@@ -244,6 +275,9 @@
   to start; an explicit engine variant must still match the generation.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
+- A managed engine or supervisor launcher that exits before readiness reports
+  its exit code and up to the last 64 KiB of captured output from that launch.
+  Older launches are excluded; truncation and unavailable output are explicit.
 - Stopped engine bindings retain their assigned ports across update and rollback;
   restarting an existing named binding defaults to its saved port.
 - Generation construction admits verified pack archives before sealing sources.
@@ -267,6 +301,36 @@
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
   the interpreter. Setup never upgrades uv automatically.
+- Environment commands that ask for confirmation refuse non-terminal text-mode
+  requests without `--yes`, naming `--yes` to apply and `--plan` to inspect.
+  Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
+  does not apply it. Explicit `--plan` and the Desktop client's `--json` preview
+  remain read-only without prompting; `--json --yes` applies without prompting.
+- Confirmed release acquisition retains channel and verified engine/base metadata.
+  Setup and update can inspect those cached manifests when mirrors are unavailable;
+  the plan labels use of the last acquired channel selection. Cached channels are
+  specific to the configured mirrors, and cached manifests must still match their
+  recorded identities. Planning does not create or repair cache files.
+- Published runtime plans list exact engine/base payload paths, sizes and hashes,
+  verified cache reuse and missing runtime bytes before confirmation. Pack payloads
+  are separate from that runtime subtotal. Runtime acquisition also supports
+  cache-only operation: missing or corrupt runtime inputs are reported together
+  before cache mutation, without contacting mirrors or a package index.
+- `dinkster setup --plan --variant VARIANT` inspects the selected release's
+  declared default packs and exact-base registry dependency locks alongside its
+  runtime inputs. It shows project/store paths, engine binding, exact source
+  identities, lock hashes, wheel hashes/sizes and verified cache reuse without
+  acquiring payloads or creating installation state. `--json` retains the source
+  catalog and dependency-lock documents in its output. Pack bytes are labelled
+  as an upper bound across all locked wheel alternatives, not a target-selected
+  download promise. `--offline --plan` reads retained release and registry metadata
+  only; it does not fetch or repair missing metadata or wheel payloads.
+- `dinkster setup --root PATH --variant VARIANT` prints the published input plan
+  and asks `Apply this plan? [y/N]`. Declining changes nothing; non-terminal use
+  requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
+  acquires their verified pack archives, and builds and activates a managed
+  generation. `--yes` skips the prompt, not the plan or identity checks.
+  Offline application is refused; `--offline --plan` remains read-only.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -348,6 +412,49 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env cleanup --plan` reports retained, candidate and deferred
+  generation numbers with reasons without recovering or modifying the project.
+  Status includes the same preview and visible pending quarantine warnings.
+  Candidate status requires matching sealed software in published history and
+  unique completed activation provenance. Missing, damaged, unpublished or
+  ambiguous coverage defers the tree. Host and tools observations do not change
+  software identity. Explicit legacy imports provide coverage only after their
+  completed journal provenance and sealed software are revalidated. Preview
+  never launches an interpreter, publishes or repairs history; candidate status
+  is advisory rather than deletion authorization.
+  Materialized pack payloads are disposable once their software identity is
+  recorded; history does not promise to preserve local edits to runtime files.
+  Managed interpreter acquisition is serialized against generation collection;
+  pending launches and unproven child cleanup retain the generation.
+  Stopped assignments carried across updates remain stopped and do not by
+  themselves prevent collection after leaving the retained rollback set.
+  `cleanup --automatic off --yes` persists an opt-out without collecting;
+  `--automatic on` restores the default preference. Preview and status expose
+  the same policy. `cleanup --keep-previous N --yes` persists how many previous
+  successful generations to keep besides current, from 1 to 100 (default 1).
+  Desktop offers the same count beside on/off. Selection follows successful
+  activation ancestry, not directory numbering; imports and failed attempts do
+  not consume retention slots. Older policy files default to one. Raising the
+  count does not rebuild collected trees; lowering it takes effect at the next
+  eligible collection. Policy commands do not collect synchronously.
+  `cleanup --yes` retries generation-only collection for history-covered unused
+  trees when the policy is enabled. Busy projects defer, overlapping retries
+  coalesce, and status preserves the last attempt and retryable failures.
+  Before selecting trees, retries publish completed activation receipts and
+  capture eligible legacy software as marked imports under the project and
+  runtime locks. Existing receipts are never replaced. Live, uncertain or
+  invalid legacy trees retain their software and expose capture warnings;
+  stopped trees can be captured on a later retry. Imports do not change the
+  activation chronology, and capture never runs a retained interpreter.
+  Interrupted quarantine recovers and committed deletion retries without
+  collecting shared caches, rewriting history or stopping processes.
+  Successful CLI activation, repair, restore, start and stop attempt collection
+  after releasing transaction locks. Managed supervisors attempt startup,
+  hourly collection, retrying busy locks sooner. Acknowledged stops attempt
+  collection after durably recording the stopped engine assignment.
+  Cleanup failures remain warnings rather than invalidating a successful
+  update. Legacy trees without provable coverage still defer; Desktop controls
+  are separate.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
@@ -380,6 +487,8 @@
 - Engine release assembly records variant-specific dependency wheel identities
   without uploading third-party wheels. Finalization rejects unexpected payloads
   and enforces a 100 MB budget excluding native tools ZIPs.
+  Release metadata also records that engine's default pack IDs and minimum
+  versions, independently of the command interpreter's installed defaults.
 - Native tools builds retry transient HTTPS input failures up to three times,
   preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
   corrupt payloads fail without retry; exhausted failures retain attempt details.
@@ -485,6 +594,10 @@
   the actual successful predecessor. Interrupted quarantine is restored; only
   committed trash is deleted. Generation collection leaves shared-store and
   project-library contents unchanged and refuses live obsolete engines.
+  Linux and Windows managed shutdown drains worker descendants before proving
+  exit, including isolated and grouped workers blocked during pack import.
+  Collection retains legacy or unsupported-platform stopped generations when
+  descendant exit is unproven; it never stops processes to make them collectible.
 - `dinkster-env history` lists successful software activations in order, and
   `history show ID` displays the recorded software and changes. History survives
   generation-directory collection. Snapshots exclude workflows, models, outputs,
@@ -504,8 +617,11 @@
 - Software snapshots describe canonical reconstruction inputs, not the integrity
   of every materialized pack runtime file. A successful import or exact restore
   does not establish that an existing same-lock runtime has no local edits.
-  Unrecorded or linked pack payloads must remain retained when that proof is
-  unavailable; capture alone does not authorize their collection.
+  Recorded software identity in history permits collection of unused generations,
+  including their materialized pack runtimes, without a per-file runtime inventory.
+  Current and previous generations, live processes and intact sealed metadata
+  remain protected. Links inside disposable runtime trees are removed without
+  deleting their targets; linked sealed metadata still refuses collection.
 - `dinkster-env restore ID` rebuilds a published software snapshot in a new
   generation after confirmation. Recorded identities are preserved; unavailable
   inputs refuse activation. Tools versions are displayed but tools are never
@@ -516,3 +632,59 @@
   proposal-approval contract, appends a source-linked entry with reason `rollback`,
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
+
+### Development generations from local folders
+
+Select local software explicitly; nothing needs publishing first:
+
+```sh
+dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster-env --root /absolute/project status
+dinkster-env --root /absolute/project doctor
+dinkster-env --root /absolute/project start --yes
+```
+
+Repeat `--pack-source` for more packs and `--library-source` for more helper
+folders or wheels. Omit library inputs when none are needed. Choose a base variant
+matching the host; `--python /absolute/python` explicitly selects an existing
+interpreter instead of the configured standalone interpreter. Use `--port PORT`
+when the default listener is occupied. Project and store directories must be
+outside selected source folders. Building uses verified copies, never editable
+installs into author folders. Selected helper wheels participate in engine
+resolution before packs are built, including replacements for engine dependencies
+whose real versions still satisfy the declared constraints. Explicitly selected
+first-party packs may use their reserved namespaces only in this development
+capture; this does not grant registry admission. Missing sources, changed plan inputs, incompatible
+API ranges and dependency conflicts refuse rather than inventing versions or
+dropping constraints.
+
+Development generations are built from local folders, not reviewed by the
+registry; dependency ranges resolve at build time. After editing a pack, stop the
+engine with `dinkster-env --root /absolute/project stop --yes`, then repeat the
+plan and approved `develop` commands to build a new generation. An ordinary
+channel update refuses a local generation instead of changing its source.
+
+```sh
+dinkster-env --root /absolute/project history
+dinkster-env --root /absolute/project history show 1
+dinkster-env --root /absolute/project restore 1 --plan
+dinkster-env --root /absolute/project restore 1 --yes
+```
+
+Restore rebuilds the captured runtime from retained interpreter files, built
+wheels, exact dependency artifacts and pack archives. It needs no source checkout
+or network when those artifacts remain intact. Doctor reports separately whether
+all exact-recovery inputs are retained; a clean running generation can still have
+missing recovery artifacts. Current and previous generations use the existing
+retention protection. Older history alone is not an artifact backup: collection
+of its last inputs can make exact recovery unavailable.
+
+Source paths, package roots, content digests and available Git commit/dirty state
+describe the captured working bytes, including selected untracked edits. Recovery
+does not reset, clean, overwrite or back up author folders. Workflows, models,
+outputs and other project data are not recovered by software restore. No bundled
+Git, Git-URL fetching or contributor-environment synchronization is provided by
+this operation. When invoking tools through `uv run`, `--no-sync` prevents uv from
+silently changing that tool environment to match a checkout lock; it does not
+capture an environment or make arbitrary unrecorded edits recoverable.

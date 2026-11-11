@@ -628,6 +628,29 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
     assert not venv_python(tmp_path / "packs/example").exists()
 
 
+def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:
+    older, selected = tmp_path / "older", tmp_path / "selected"
+    older.mkdir()
+    selected.mkdir()
+    stale = _wheel(older, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    chosen = _wheel(selected, "fixture-extra", "1.2", "fixture_extra", "value = 29\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("fixture-extra==1.2\n")
+    lock = resolve_pack_lock(
+        pack="example",
+        variant="linux-cpu",
+        requirements=["fixture-extra>=1", f"fixture-extra @ {chosen.url}"],
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=[older, selected],
+    )
+    assert stale.sha256 != chosen.sha256
+    assert lock.packages == (LockedDistribution("fixture-extra", "1.2", (chosen,)),)
+    path = tmp_path / "pack-lock.json"
+    lock.write(path)
+    assert PackLock.read(path) == lock
+
+
 def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> None:
     archive = tmp_path / "source_only_fixture-1.0.zip"
     with zipfile.ZipFile(archive, "w") as source:
@@ -1024,3 +1047,48 @@ def test_doctor_rejects_unavailable_generation_even_without_packs(
     result = json.loads(output.out)
     assert result["packs"] == []
     assert "missing-python" in result["changes"][0]
+
+
+@pytest.mark.parametrize("problem", ["engine", "dependency"])
+def test_development_pack_build_refuses_incompatible_or_unresolvable_inputs(
+    tmp_path: Path, problem: str
+) -> None:
+    from dinkster_workers.development_sources import build_inputs
+
+    generation, source, index = (tmp_path / name for name in ("generation", "pack", "index"))
+    for directory in (generation, source, index):
+        directory.mkdir()
+    (generation / "engine-manifest.json").write_text('{"wheels": []}')
+    (generation / "constraints.txt").write_text("")
+    (source / "example").mkdir()
+    (source / "example/__init__.py").write_text("NODES = []\n")
+    engine = ">=9999" if problem == "engine" else ">=0.0.2"
+    requirements = [] if problem == "engine" else ["unavailable-development-helper==9999"]
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "example"\nversion = "1.0"\npublisher = "demo"\n'
+        f'engine = "{engine}"\nrequires = {json.dumps(requirements)}\n'
+        '[pack.entry]\nnodes = "example:NODES"\n'
+    )
+    store = tmp_path / "store"
+    (store / "wheels").mkdir(parents=True)
+    error = (
+        "declared engine requirement is incompatible"
+        if problem == "engine"
+        else "dependency conflict"
+    )
+    with pytest.raises(ProvisionError, match=error):
+        build_inputs(
+            {
+                "generation": str(generation),
+                "store": str(store),
+                "artifacts": str(tmp_path / "artifacts"),
+                "libraries": [],
+                "packs": [str(source)],
+                "packPaths": [str(source)],
+                "variant": "linux-cpu",
+                "accelerator": "cpu",
+                "index": index.as_uri(),
+            }
+        )
+    assert not (tmp_path / "artifacts/development-packs.lock").exists()
+    assert not (generation / "packs").exists()

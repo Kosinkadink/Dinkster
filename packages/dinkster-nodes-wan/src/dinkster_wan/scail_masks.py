@@ -18,10 +18,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _CATEGORY = "model/conditioning/wan/scail"
@@ -156,7 +156,7 @@ class SCAIL2ColoredMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SCAIL2ColoredMask",
+            node_type="dinkster.wan.scail2_colored_mask",
             display_name="Create SCAIL-2 Colored Mask",
             category=_CATEGORY,
             inputs=(
@@ -190,7 +190,7 @@ class SCAIL2ColoredMask(Node):
                 OutputSpec("reference_image_mask", _IMAGE),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SCAIL2ColoredMask")
 
     @classmethod
     def execute(

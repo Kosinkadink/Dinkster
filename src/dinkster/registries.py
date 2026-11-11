@@ -474,9 +474,21 @@ class StaticPackIndex:
     Credentials are hashed into filenames, never written to the snapshot.
     """
 
-    def __init__(self, directory: Path | None = None) -> None:
+    def __init__(
+        self, directory: Path | None = None, *, offline: bool = False, read_only: bool = False
+    ) -> None:
         self._documents: dict[tuple[str, str, str], dict[str, object]] = {}
+        self._locks: dict[tuple[str, str, str], bytes] = {}
         self._directory = directory
+        self._offline = offline
+        self._read_only = read_only
+
+    def _cache_path(self, key: tuple[str, str, str], suffix: str) -> Path | None:
+        return (
+            self._directory / (hashlib.sha256(json.dumps(key).encode()).hexdigest() + suffix)
+            if self._directory is not None
+            else None
+        )
 
     def _read(
         self, registry: NamedRegistry, path: str, timeout: float, token: str | None
@@ -484,11 +496,7 @@ class StaticPackIndex:
         credential = registry.token() if token is None else token
         key = (registry.endpoint, credential, path)
         if key not in self._documents:
-            cached = (
-                self._directory / (hashlib.sha256(json.dumps(key).encode()).hexdigest() + ".json")
-                if self._directory is not None
-                else None
-            )
+            cached = self._cache_path(key, ".json")
             if cached is not None and cached.exists():
                 try:
                     raw: object = json.loads(cached.read_bytes())
@@ -498,6 +506,10 @@ class StaticPackIndex:
                     raise InstallError("operation static index snapshot is not an object")
                 document = cast("dict[str, object]", raw)
             else:
+                if self._offline:
+                    raise InstallError(
+                        f"offline registry metadata missing: {registry.label} {path}"
+                    )
                 document = _index_get(
                     registry,
                     path,
@@ -515,11 +527,45 @@ class StaticPackIndex:
                 raise InstallError(
                     "registry static index has an unsupported schema or missing items"
                 )
-            if cached is not None and not cached.exists():
+            if (
+                cached is not None
+                and not self._offline
+                and not self._read_only
+                and not cached.exists()
+            ):
                 cached.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 cached.write_text(json.dumps(document), encoding="utf-8")
             self._documents[key] = document
         return self._documents[key]
+
+    def lock_bytes(
+        self, registry: NamedRegistry, path: str, digest: str, size: int, *, timeout: float
+    ) -> bytes:
+        """Read bound lock metadata; offline snapshots never fetch or repair missing inputs."""
+        token = registry.token()
+        key = (registry.endpoint, token, path)
+        cached = self._cache_path(key, ".lock")
+        if key in self._locks:
+            payload = self._locks[key]
+        elif cached is not None and cached.is_file():
+            with cached.open("rb") as handle:
+                payload = handle.read(size + 1)
+        else:
+            if self._offline:
+                raise InstallError(f"offline dependency lock missing: {registry.label} {path}")
+            headers = {"User-Agent": "dinkster-pack"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = urllib.request.Request(registry.endpoint + path, headers=headers)
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                payload = response.read(size + 1)
+        if len(payload) != size or artifact_digest(payload) != digest:
+            raise InstallError("published lock bytes differ from binding")
+        if cached is not None and not self._offline and not self._read_only and not cached.exists():
+            cached.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            cached.write_bytes(payload)
+        self._locks[key] = payload
+        return payload
 
     def catalog(
         self,
@@ -527,10 +573,11 @@ class StaticPackIndex:
         *,
         timeout: float = DEFAULT_RESOLVE_TIMEOUT,
         token: str | None = None,
+        include_libraries: bool = False,
     ) -> tuple[dict[str, object], ...]:
         document = self._read(registry, "/static/packs/index.json", timeout, token)
         if document["schemaVersion"] == 1:
-            return _static_releases(registry, document)
+            return _static_releases(registry, document, include_libraries=include_libraries)
         entries: list[dict[str, object]] = []
         names: set[str] = set()
         for value in cast("list[object]", document["items"]):
@@ -554,7 +601,7 @@ class StaticPackIndex:
             if name in names:
                 raise InstallError(f"registry static catalog repeats {name}")
             names.add(name)
-            if row["library"] is not True:
+            if include_libraries or row["library"] is not True:
                 entries.append(row)
         return tuple(entries)
 
@@ -565,8 +612,11 @@ class StaticPackIndex:
         *,
         timeout: float = DEFAULT_RESOLVE_TIMEOUT,
         token: str | None = None,
+        include_libraries: bool = False,
     ) -> tuple[dict[str, object], ...]:
-        catalog = self.catalog(registry, timeout=timeout, token=token)
+        catalog = self.catalog(
+            registry, timeout=timeout, token=token, include_libraries=include_libraries
+        )
         document = self._read(registry, "/static/packs/index.json", timeout, token)
         if document["schemaVersion"] == 1:
             return tuple(row for row in catalog if row["name"] == pack)
@@ -576,7 +626,7 @@ class StaticPackIndex:
         document = self._read(registry, "/static/" + str(entry["url"]), timeout, token)
         if document["schemaVersion"] != 2 or document.get("name") != pack:
             raise InstallError(f"registry static per-pack index identity differs for {pack}")
-        releases = _static_releases(registry, document)
+        releases = _static_releases(registry, document, include_libraries=include_libraries)
         if any(row["name"] != pack for row in releases):
             raise InstallError(
                 f"registry static per-pack index substitutes another pack for {pack}"
@@ -585,7 +635,10 @@ class StaticPackIndex:
 
 
 def _static_releases(
-    registry: NamedRegistry, document: Mapping[str, object]
+    registry: NamedRegistry,
+    document: Mapping[str, object],
+    *,
+    include_libraries: bool = False,
 ) -> tuple[dict[str, object], ...]:
     rows = document.get("items")
     releases: list[dict[str, object]] = []
@@ -594,7 +647,7 @@ def _static_releases(
         if not isinstance(value, dict):
             raise InstallError("registry static index contains a non-object release")
         row = cast("dict[str, object]", value)
-        if row.get("library") is True:
+        if row.get("library") is True and not include_libraries:
             continue
         name, version = row.get("name"), row.get("version")
         if not isinstance(name, str) or not isinstance(version, str):
@@ -671,7 +724,9 @@ def static_pack_release(
     token: str | None = None,
     index: StaticPackIndex | None = None,
 ) -> dict[str, object]:
-    for row in (index or StaticPackIndex()).releases(registry, pack, timeout=timeout, token=token):
+    for row in (index or StaticPackIndex()).releases(
+        registry, pack, timeout=timeout, token=token, include_libraries=True
+    ):
         if row["name"] == pack and row["version"] == version:
             return row
     raise InstallError(f"registry {registry.label} publishes no release {pack}@{version}")
@@ -942,6 +997,120 @@ def prepare_registry_update_sources(
     return Lockfile.of(entries)
 
 
+def read_registry_pack_locks(
+    config: RegistryConfig,
+    sources: Lockfile,
+    *,
+    variant: str,
+    base_id: str,
+    selected: NamedRegistry | None = None,
+    timeout: float = DEFAULT_RESOLVE_TIMEOUT,
+    index: StaticPackIndex | None = None,
+) -> tuple[PackLock, ...]:
+    """Inspect every binding before staging; never resolve dependency ranges."""
+    index = index or StaticPackIndex()
+    if (
+        re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", base_id) is None
+    ):
+        raise InstallError("published locks require a variant and exact sha256 base identity")
+    locks: list[PackLock] = []
+    errors: list[str] = []
+    for entry in sources.packs:
+        subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
+        try:
+            if entry.source != "registry" and not entry.source.startswith("registry:"):
+                raise InstallError("published lock requires registry provenance")
+            registry = config.registry_for(entry, selected)
+            fields = static_pack_release(
+                registry, entry.pack, entry.version, timeout=timeout, index=index
+            )
+            wheel, wheel_digest = static_release_wheel(registry, fields)
+            bindings = fields.get("installLocks")
+            binding = (
+                cast("dict[str, object]", bindings).get(variant)
+                if isinstance(bindings, dict)
+                else None
+            )
+            if wheel_digest != entry.artifact_digest or not isinstance(binding, dict):
+                raise InstallError("selected release or published binding differs")
+            facts = cast("dict[str, object]", binding)
+            digest, size = facts.get("digest"), facts.get("size")
+            lock_path = "locks/" + str(digest).replace(":", "/") + ".json"
+            if (
+                facts.get("baseId") != base_id
+                or facts.get("artifactDigest") != entry.artifact_digest
+                or facts.get("url") != lock_path
+                or not isinstance(digest, str)
+                or validate_artifact_digest(digest)
+                or type(size) is not int
+                or not 1 <= cast("int", size) <= MEBIBYTE
+            ):
+                raise InstallError("invalid archive/base/lock binding")
+            payload = index.lock_bytes(
+                registry, "/static/" + lock_path, digest, cast("int", size), timeout=timeout
+            )
+            lock = PackLock.from_json(payload)
+            if lock.pack != entry.pack or lock.variant != variant:
+                raise InstallError("dependency lock pack or variant differs")
+            if any(package.name == entry.pack for package in lock.packages):
+                raise InstallError("dependency lock repeats the outer pack wheel")
+            locks.append(
+                replace(
+                    lock,
+                    indexes=(registry.endpoint + f"/static/{variant}/simple/",),
+                    packages=(
+                        *lock.packages,
+                        LockedDistribution(entry.pack, entry.version, (wheel,)),
+                    ),
+                )
+            )
+        except (
+            InstallError,
+            OSError,
+            ValueError,
+            ProvisionError,
+            http.client.HTTPException,
+        ) as exc:
+            errors.append(f"{subject}: {exc}")
+    if errors:
+        raise InstallError("published dependency locks refused:\n" + "\n".join(errors))
+    return tuple(locks)
+
+
+def plan_registry_sources(
+    config: RegistryConfig,
+    registry: NamedRegistry,
+    minimums: Mapping[str, str],
+    *,
+    engine_version: str,
+    variant: str,
+    base_id: str,
+    index: StaticPackIndex,
+) -> tuple[Lockfile, tuple[PackLock, ...]]:
+    """Select sources and bound locks from metadata without acquiring pack archives."""
+    entries: list[LockedPack] = []
+    errors: list[str] = []
+    for pack, minimum in minimums.items():
+        try:
+            entries.append(
+                resolve_compatible_release(registry, pack, minimum, engine_version, index=index)
+            )
+        except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
+            errors.append(f"{pack}: {exc}")
+    sources = Lockfile.of(entries)
+    locks: tuple[PackLock, ...] = ()
+    try:
+        locks = read_registry_pack_locks(
+            config, sources, variant=variant, base_id=base_id, selected=registry, index=index
+        )
+    except InstallError as exc:
+        errors.append(str(exc))
+    if errors:
+        raise InstallError("registry plan refused:\n" + "\n".join(errors))
+    return sources, locks
+
+
 def prepare_registry_pack_locks(
     config: RegistryConfig,
     sources: Lockfile,
@@ -953,82 +1122,26 @@ def prepare_registry_pack_locks(
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     index: StaticPackIndex | None = None,
 ) -> tuple[Path, ...]:
-    """Acquire published dependency locks for exact selected sources and base.
-
-    Refuse the whole set before exposing output if any binding or bytes differ.
-    No dependency resolution or generation mutation occurs here.
-    """
-    index = index or StaticPackIndex()
+    """Stage the complete verified lock set only after metadata inspection succeeds."""
     if output.exists():
         raise InstallError("published lock output directory already exists")
-    if (
-        re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", base_id) is None
-    ):
-        raise InstallError("published locks require a variant and exact sha256 base identity")
+    locks = read_registry_pack_locks(
+        config,
+        sources,
+        variant=variant,
+        base_id=base_id,
+        selected=selected,
+        timeout=timeout,
+        index=index,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(dir=output.parent, prefix="published-locks-") as directory:
             staged = Path(directory)
             names: list[str] = []
-            for entry in sources.packs:
-                if entry.source != "registry" and not entry.source.startswith("registry:"):
-                    raise InstallError(f"{entry.pack}: published lock requires registry provenance")
-                registry = config.registry_for(entry, selected)
-                subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
-                fields = static_pack_release(
-                    registry, entry.pack, entry.version, timeout=timeout, index=index
-                )
-                wheel, wheel_digest = static_release_wheel(registry, fields)
-                bindings = fields.get("installLocks")
-                binding = (
-                    cast("dict[str, object]", bindings).get(variant)
-                    if isinstance(bindings, dict)
-                    else None
-                )
-                if wheel_digest != entry.artifact_digest or not isinstance(binding, dict):
-                    raise InstallError(f"{subject}: selected release or published binding differs")
-                facts = cast("dict[str, object]", binding)
-                digest, size = facts.get("digest"), facts.get("size")
-                lock_path = "locks/" + str(digest).replace(":", "/") + ".json"
-                if (
-                    facts.get("baseId") != base_id
-                    or facts.get("artifactDigest") != entry.artifact_digest
-                    or facts.get("url") != lock_path
-                    or not isinstance(digest, str)
-                    or validate_artifact_digest(digest)
-                    or type(size) is not int
-                    or not 1 <= cast("int", size) <= MEBIBYTE
-                ):
-                    raise InstallError(f"{subject}: invalid archive/base/lock binding")
-                headers = {"User-Agent": "dinkster-pack"}
-                token = registry.token()
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
-                request = urllib.request.Request(
-                    registry.endpoint + "/static/" + lock_path,
-                    headers=headers,
-                )
-                with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                    payload = response.read(cast("int", size) + 1)
-                if len(payload) != size or artifact_digest(payload) != digest:
-                    raise InstallError(f"{subject}: published lock bytes differ from binding")
-                name = entry.pack + ".pack-lock.json"
-                destination = staged / name
-                destination.write_bytes(payload)
-                lock = PackLock.read(destination)
-                if lock.pack != entry.pack or lock.variant != variant:
-                    raise InstallError(f"{subject}: dependency lock pack or variant differs")
-                if any(package.name == entry.pack for package in lock.packages):
-                    raise InstallError(f"{subject}: dependency lock repeats the outer pack wheel")
-                replace(
-                    lock,
-                    indexes=(registry.endpoint + f"/static/{variant}/simple/",),
-                    packages=(
-                        *lock.packages,
-                        LockedDistribution(entry.pack, entry.version, (wheel,)),
-                    ),
-                ).write(destination)
+            for lock in locks:
+                name = lock.pack + ".pack-lock.json"
+                lock.write(staged / name)
                 names.append(name)
             staged.rename(output)
         return tuple(output / name for name in names)

@@ -100,8 +100,6 @@ from dinkster_memory import (
     use_model_tenant_registry,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_native.memory import plan_reservations
-from dinkster_native.pool import default_pool
 from dinkster_protocol import (
     GRAPH_COMPILERS_SURFACE,
     WORKGROUP_DATA_PLANE_CAPABILITY,
@@ -162,8 +160,6 @@ from dinkster_registry import (
 from dinkster_schema import (
     ComboOption,
     ComboWidget,
-    ComfyAliasRegistry,
-    ComfyGroupRegistry,
     Node,
     NodeSchema,
     build_node_types,
@@ -173,10 +169,6 @@ from dinkster_schema import (
     claim_covers,
     claims_conflict,
     combo_choices_json_bytes,
-    comfy_alias_collision_problems,
-    comfy_alias_registry_problems,
-    comfy_group_collision_problems,
-    comfy_group_registry_problems,
     core_logger,
     reserved_root,
     schema_signature,
@@ -248,8 +240,11 @@ from dinkster_workers.catalog import (
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.manifest import validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
+from dinkster_workers.reservations import plan_reservations
+from dinkster_workers.resident_pool import default_pool
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
+from packaging.requirements import Requirement
 
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
@@ -303,7 +298,6 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
 _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
     {pack: distribution for pack, (_, distribution) in _FIRST_PARTY_PACK_METADATA.items()}
 )
-_PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _CHECKOUT_PACKS_LOCK = Path(__file__).with_name("checkout-packs.lock")
 _MODEL_PACK_IDS: tuple[str, ...] = ()
 
@@ -1302,8 +1296,6 @@ def _installed_pack_spec(
         docs=manifest_info.docs,
         locale_catalogs=manifest_info.locale_catalogs,
         templates=manifest_info.templates,
-        comfy_aliases=manifest_record.comfy_aliases,
-        comfy_groups=manifest_record.comfy_groups,
     )
     return PackSpec(
         manifest=manifest,
@@ -1567,51 +1559,7 @@ def _merge_pack_entry(
         raise CompositionError(
             f"{source}: pack id {pack_id!r} already declared with different info"
         )
-    candidate = {**packs, pack_id: info}
-    registries = {
-        existing_id: existing_info.comfy_aliases
-        for existing_id, existing_info in candidate.items()
-        if existing_info.comfy_aliases is not None
-    }
-    collisions = comfy_alias_collision_problems(registries)
-    if collisions:
-        raise CompositionError(f"{source}: {collisions[0]}")
-    group_registries = {
-        existing_id: existing_info.comfy_groups
-        for existing_id, existing_info in candidate.items()
-        if existing_info.comfy_groups is not None
-    }
-    group_collisions = comfy_group_collision_problems(group_registries)
-    if group_collisions:
-        raise CompositionError(f"{source}: {group_collisions[0]}")
     packs[pack_id] = info
-
-
-def _validate_registry_carriers(
-    owner: str,
-    spec_packs: Mapping[str, PackInfo],
-    node_packs: Mapping[str, str],
-) -> None:
-    """Every comfy alias/group record carrier must be a node attributed to
-    the pack entry announcing the registry.
-
-    This is the compose-time net for provider-gated carriers: the served
-    surface withholds schema-only types until an execution provider
-    composes, so the server can only enforce carrier ownership once the
-    carrier publishes. Here ``node_packs`` carries the pack's complete
-    declared attribution (no publication gating), so a registry naming a
-    node the pack never declares is refused before any worker serves it.
-    """
-    for pack_id, info in spec_packs.items():
-        for label, registry in (("alias", info.comfy_aliases), ("group", info.comfy_groups)):
-            if registry is None:
-                continue
-            for record in registry.records:
-                if node_packs.get(record.carrier) != pack_id:
-                    raise CompositionError(
-                        f"{owner}: comfy {label} record {record.id!r} carrier "
-                        f"{record.carrier!r} is not declared by pack {pack_id!r}"
-                    )
 
 
 def _validate_remote_authority(
@@ -2094,8 +2042,6 @@ class _RemoteSurface:
     body_arms: tuple[tuple[str, tuple[str, ...]], ...]
     schemas: dict[str, NodeSchema]
     node_packs: dict[str, str]
-    comfy_aliases: ComfyAliasRegistry | None
-    comfy_groups: ComfyGroupRegistry | None
     choices: dict[str, tuple[str, ...]]
     lazy_choice_ids: tuple[str, ...]
     compat_skips: dict[str, dict[str, CompatGateDiagnostic]]
@@ -4999,6 +4945,15 @@ class ServingComposer:
         )
         tenant_proxy: _PackTenantRegistry | None = None
         if spec.in_process:
+            needs_torch = spec.runtime_pins or any(
+                canonical_name(Requirement(requirement).name) in {"torch", "dinkster-inference"}
+                for requirement in manifest.requires
+            )
+            if needs_torch and not self._torch_capable():
+                raise CompositionError(
+                    f"in-process pack {manifest.name!r} requires a torch-capable serve "
+                    'environment; install "dinkster[inference]" in the serving interpreter'
+                )
             if self._private_staging:
                 reused_in_process = self._reusable_in_process.get(canonical)
                 if reused_in_process is None or reused_in_process.spec != spec:
@@ -5025,11 +4980,6 @@ class ServingComposer:
                     "generation baseline"
                 )
             if spec.runtime_pins:
-                if not self._torch_capable():
-                    raise CompositionError(
-                        f"in-process pack {manifest.name!r} requires a torch-capable "
-                        "serve environment"
-                    )
                 if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
                     raise CompositionError(
                         f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
@@ -5244,11 +5194,6 @@ class ServingComposer:
                     )
                 delta_schemas[node_type] = schema
                 delta_node_packs[node_type] = pack_id
-            _validate_registry_carriers(
-                manifest.name,
-                spec_packs,
-                {**composition.node_packs, **delta_node_packs},
-            )
             delta_choices: dict[str, tuple[str, ...]] = {}
             for choice_id, values in worker.combo_choices.items():
                 if not any(claim_covers(claim, choice_id) for claim in manifest.namespaces):
@@ -5541,8 +5486,6 @@ class ServingComposer:
             info = PackInfo(
                 display_name=spec.name,
                 source=source,
-                comfy_aliases=surface.comfy_aliases,
-                comfy_groups=surface.comfy_groups,
             )
             staged_packs = dict(composition.packs)
             _merge_pack_entry(staged_packs, spec.name, info, source)
@@ -5857,62 +5800,6 @@ class ServingComposer:
                 )
             delta_lazy_ids.append(choice_id)
         _validate_remote_authority(spec.name, delta_schemas, delta_choices, delta_lazy_ids)
-        aliases = worker.comfy_aliases
-        if aliases is not None:
-            records = tuple(record for record in aliases.records if record.carrier in delta_schemas)
-            source_types = {record.source.node_type for record in records}
-            aliases = (
-                replace(
-                    aliases,
-                    records=records,
-                    source_schemas=tuple(
-                        snapshot
-                        for snapshot in aliases.source_schemas
-                        if snapshot.schema.node_type in source_types
-                    ),
-                )
-                if records
-                else None
-            )
-        if aliases is not None:
-            alias_problems = comfy_alias_registry_problems(aliases, delta_schemas)
-            if alias_problems:
-                raise CompositionError(
-                    f"remote worker {spec.name!r}: invalid comfy alias registry: "
-                    f"{alias_problems[0]}"
-                )
-        groups = worker.comfy_groups
-        if groups is not None:
-            records = tuple(record for record in groups.records if record.carrier in delta_schemas)
-            source_types = {
-                node.source.node_type for record in records for _, node in record.pattern.nodes
-            }
-            group_types = {record.pattern.group_type for record in records}
-            groups = (
-                replace(
-                    groups,
-                    records=records,
-                    source_schemas=tuple(
-                        snapshot
-                        for snapshot in groups.source_schemas
-                        if snapshot.schema.node_type in source_types
-                    ),
-                    group_schemas=tuple(
-                        snapshot
-                        for snapshot in groups.group_schemas
-                        if snapshot.schema.node_type in group_types
-                    ),
-                )
-                if records
-                else None
-            )
-        if groups is not None:
-            group_problems = comfy_group_registry_problems(groups, delta_schemas)
-            if group_problems:
-                raise CompositionError(
-                    f"remote worker {spec.name!r}: invalid comfy group registry: "
-                    f"{group_problems[0]}"
-                )
         delta_compat_skips: dict[str, dict[str, CompatGateDiagnostic]] = {}
         for source_name, diagnostic in worker.compat_skips.items():
             node_id = source_name.removeprefix(spec.name + ".")
@@ -5932,8 +5819,6 @@ class ServingComposer:
             ),
             schemas=delta_schemas,
             node_packs=delta_node_packs,
-            comfy_aliases=aliases,
-            comfy_groups=groups,
             choices=delta_choices,
             lazy_choice_ids=tuple(delta_lazy_ids),
             compat_skips=delta_compat_skips,
@@ -6033,8 +5918,6 @@ class ServingComposer:
             info = PackInfo(
                 display_name=spec.name,
                 source=source,
-                comfy_aliases=surface.comfy_aliases,
-                comfy_groups=surface.comfy_groups,
             )
             staged_packs = {
                 pack_id: pack_info
@@ -6350,16 +6233,6 @@ class ServingComposer:
                         )
                     delta_schemas[node_type] = schema
                     delta_node_packs[node_type] = pack_id
-                _validate_registry_carriers(
-                    manifest.name,
-                    spec_packs,
-                    {
-                        node_type: pack_id
-                        for node_type, pack_id in composition.node_packs.items()
-                        if node_type not in record.delta.node_packs
-                    }
-                    | delta_node_packs,
-                )
                 delta_choices: dict[str, tuple[str, ...]] = {}
                 for choice_id, values in worker.combo_choices.items():
                     if not any(claim_covers(claim, choice_id) for claim in manifest.namespaces):
@@ -6827,25 +6700,6 @@ class ServingComposer:
                     extension=manifest.extension if manifest.extension_declared else None,
                     extension_contributions=member.extension_contributions,
                 )
-            replaced_types = {
-                node_type
-                for current in group_records.values()
-                for node_type in current.delta.node_packs
-            }
-            _validate_registry_carriers(
-                group_name,
-                staged_pack_table,
-                {
-                    node_type: pack_id
-                    for node_type, pack_id in self.composition.node_packs.items()
-                    if node_type not in replaced_types
-                }
-                | {
-                    node_type: pack_id
-                    for pack in group_records
-                    for node_type, pack_id in staged_records[pack].delta.node_packs.items()
-                },
-            )
             staged_owners = {
                 node_type: pack
                 for pack, current in staged_records.items()

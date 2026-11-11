@@ -87,32 +87,30 @@ class _FixedResolver:
 
 def _run_worker(checkpoint: Path, output_image: Path | None = None) -> dict[str, object]:
     from dinkster_assets import AssetRef, digest_file
-    from dinkster_native.fork_nodes import (
-        GenerationClipTextEncode,
-        GenerationKSampler,
-        GenerationLoadCheckpoint,
-        GenerationVAEDecode,
-    )
+    from dinkster_conditioning.clip import CLIPTextEncode
+    from dinkster_latent.vae import VAEDecode
+    from dinkster_models.model_file_loaders import CheckpointLoaderSimple
+    from dinkster_sampling.standard_sampling import KSampler
 
     torch = cast("Any", importlib.import_module("torch"))
     sd = importlib.import_module("dinkster_inference.sd")
-    loaded = GenerationLoadCheckpoint.execute(
-        checkpoint=AssetRef(
+    loaded = CheckpointLoaderSimple.execute(
+        ckpt_name=AssetRef(
             digest=digest_file(checkpoint),
             name=checkpoint.name,
             size=checkpoint.stat().st_size,
             resolver=_FixedResolver(checkpoint),
         )
     )
-    model, clip, vae = loaded["model"], loaded["clip"], loaded["vae"]
-    positive = GenerationClipTextEncode.execute(text=PROMPT, clip=clip)["conditioning"]
-    negative = GenerationClipTextEncode.execute(text="", clip=clip)["conditioning"]
+    model, clip, vae = loaded["MODEL"], loaded["CLIP"], loaded["VAE"]
+    positive = CLIPTextEncode.execute(text=PROMPT, clip=clip)["CONDITIONING"]
+    negative = CLIPTextEncode.execute(text="", clip=clip)["CONDITIONING"]
     latent = {"samples": torch.zeros((1, 4, HEIGHT // 8, WIDTH // 8), device="cpu")}
     records = []
     for _ in range(2):
         sampled = cast(
             "dict[str, Any]",
-            GenerationKSampler.execute(
+            KSampler.execute(
                 model=model,
                 seed=SEED,
                 steps=STEPS,
@@ -123,9 +121,9 @@ def _run_worker(checkpoint: Path, output_image: Path | None = None) -> dict[str,
                 negative=negative,
                 latent_image=latent,
                 denoise=1.0,
-            )["latent"],
+            )["LATENT"],
         )
-        image = GenerationVAEDecode.execute(samples=sampled, vae=vae)["image"]
+        image = VAEDecode.execute(samples=sampled, vae=vae)["IMAGE"]
         records.append(
             {
                 "latent": _sha256_tensor(sampled["samples"]),

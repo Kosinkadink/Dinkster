@@ -18,11 +18,11 @@ from dinkster_api.v1 import (
     NodeSchema,
     NumberWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
     publish_preview_artifact,
+    with_identity_replacement,
 )
 
 
@@ -46,7 +46,7 @@ class SAM3_TrackPreview(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3_TrackPreview",
+            node_type="dinkster.vision.sam3.sam3_track_preview",
             display_name="SAM3 Track Preview",
             category="image/detection",
             inputs=(
@@ -75,7 +75,7 @@ class SAM3_TrackPreview(Node):
             emits_previews=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3_TrackPreview")
 
     @staticmethod
     def _get_glyphs(device: Any, scale: int = 3) -> Any:

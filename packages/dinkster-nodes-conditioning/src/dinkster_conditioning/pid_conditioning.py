@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -39,9 +39,9 @@ _LATENT = TypeExpr.concrete(LATENT_TYPE)
 class PiDConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PiDConditioning",
+                node_type="dinkster.conditioning.pi_d_conditioning",
                 display_name="PiD Conditioning",
                 category="model/conditioning",
                 description=(
@@ -75,7 +75,8 @@ class PiDConditioning(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
-            )
+            ),
+            "PiDConditioning",
         )
 
     @classmethod

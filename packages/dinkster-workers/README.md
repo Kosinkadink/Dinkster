@@ -40,6 +40,12 @@ the jail changes what a hostile import can do, not what the report means.
 
 ## Use
 
+Worker-side inference adapters live here: `reservations` plans invocation
+budgets, `resident_pool` retains VAE provenance, and `device_memory` measures
+device costs. `attention` and `multigpu` configure the process-local inference
+runtime; `legacy_sources` converts weights-only checkpoints on demand. The
+host loads inference adapters lazily, so torch-free workers remain usable.
+
 Generation-layered dependency provisioning uses per-variant, hashed pack locks.
 See [Pack dependency locks](PACK-LOCK.md) for the format, opencv aliases and
 publisher/planner/provisioner interfaces.
@@ -129,6 +135,13 @@ blocked user namespaces, a mount-only degraded capability, or an unsafe bind
 policy refuses the pack launch instead of falling back to an ordinary child.
 It does not cover in-process packs or remote worker daemons.
 
+Unix worker endpoints refuse overlong socket paths before launching a child,
+with the encoded path length and platform limit in the error (107 bytes on
+Linux, 103 on macOS). Set `TMPDIR` to a shorter real directory before starting
+workers when this limit is exceeded. There is no automatic TCP fallback: a
+jailed worker's private network namespace cannot reach the host loopback
+listener, and changing transport must not relax the sandbox policy.
+
 The jail exposes only the worker's interpreter, pack, required Python import
 roots, a read-only system surface, and explicit policy binds. It provides a
 private `/tmp` plus fresh `/proc` and `/dev`; points `HOME` and `TMPDIR` at
@@ -180,20 +193,6 @@ translation refusals (source node name -> reason). The worker snapshots the
 mapping once at startup beside choices; the composed server attributes the
 entries to packs and exposes them through `/api/diagnostics`. Skips are
 advisory diagnostics, never schema or execution identity.
-
-A native pack may ship `comfy-aliases.json` beside `dinkster-pack.toml`. The file
-uses the `dinkster-comfy-alias/1` envelope and must be included beside the
-manifest in the built wheel. Manifest loading reads it as bounded, strict JSON
-without importing pack code. Worker startup verifies that every carrier is an
-owned native schema and validates the shared replacement references. The data
-is import metadata only; it never adds executable nodes or native schema
-replacements.
-
-A native pack may also ship `comfy-groups.json` beside the manifest. The
-`dinkster-comfy-group/1` envelope declares exact foreign subgraphs, their
-import-only source and collapsed schemas, and maintained replacement rules.
-It uses the same bounded strict-JSON loading and carrier ownership checks.
-Source and collapsed schemas never become executable or searchable nodes.
 
 ## Benchmark memory evidence
 

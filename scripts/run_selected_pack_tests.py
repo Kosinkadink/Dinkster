@@ -10,6 +10,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import time
 import tomllib
 import venv
 import zipfile
@@ -17,7 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
-from dinkster_registry.archive_admission import ARCHIVE_LIMIT
+from dinkster_registry.archive_admission import ARCHIVE_LIMIT, admission_timing
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
 from dinkster_workers.pack_wheel import pack_import_name, pack_manifest_path
@@ -37,6 +38,7 @@ _SUITES = {
         pack: (f"packages/{directory}/tests/test_*.py",)
         for pack, directory in _PACK_DIRECTORIES.items()
     },
+    "dinkster-nodes-dev": ("tests/test_gallery.py",),
     "dinkster-utilities": (
         "packages/dinkster-nodes-utilities/tests/test_*.py",
         "tests/test_comfy_loops.py",
@@ -125,6 +127,11 @@ def run_selected_tests(
     )
     import_packages = {pack_import_name(pack) for pack in _PACK_DIRECTORIES}
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
+        layout_started = time.perf_counter()
+        print(
+            json.dumps({"admissionTiming": "start", "pack": "defaults", "stage": "test-layout"}),
+            flush=True,
+        )
         work = Path(directory)
         checkout = work / "engine"
         tracked = subprocess.check_output(
@@ -265,6 +272,18 @@ def run_selected_tests(
         child = work / "test-child.py"
         shutil.copy2(Path(__file__).with_name("_selected_pack_test_child.py"), child)
         shutil.copy2(child, checkout / "_selected_pack_test_child.py")
+        print(
+            json.dumps(
+                {
+                    "admissionTiming": "end",
+                    "pack": "defaults",
+                    "stage": "test-layout",
+                    "status": "completed",
+                    "elapsedSeconds": time.perf_counter() - layout_started,
+                }
+            ),
+            flush=True,
+        )
         for pack in catalog.packs:
             if pack.pack in libraries:
                 continue
@@ -287,22 +306,24 @@ def run_selected_tests(
                         "modules": modules,
                         "tests": tests,
                         "packs": [p.pack for p in catalog.packs if p.pack not in libraries],
+                        "testPack": f"{pack.pack}@{pack.version}",
                     }
                 ),
                 encoding="utf-8",
             )
-            subprocess.run(
-                [
-                    str(python),
-                    "-I",
-                    "-B",
-                    str(child),
-                    str(config),
-                ],
-                cwd=checkout,
-                env=child_env,
-                check=True,
-            )
+            with admission_timing(f"{pack.pack}@{pack.version}", "test-child"):
+                subprocess.run(
+                    [
+                        str(python),
+                        "-I",
+                        "-B",
+                        str(child),
+                        str(config),
+                    ],
+                    cwd=checkout,
+                    env=child_env,
+                    check=True,
+                )
 
 
 if __name__ == "__main__":

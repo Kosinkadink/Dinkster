@@ -1,12 +1,12 @@
 [project]
 name = "dinkster-vision-sam3"
-version = "0.0.2"
+version = "0.0.3"
 description = "ComfyUI-origin vision-sam3 nodes"
 requires-python = ">=3.12"
 dependencies = [
     "dinkster-api",
     "torch",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
     "av>=14",
 ]
 

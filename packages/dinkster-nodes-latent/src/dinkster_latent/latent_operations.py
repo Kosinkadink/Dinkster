@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -58,13 +58,14 @@ def _float(
 class LatentApplyOperation(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentApplyOperation",
+                node_type="dinkster.latent.latent_apply_operation",
                 category=_CATEGORY,
                 inputs=(InputSpec("samples", _LATENT), InputSpec("operation", _OPERATION)),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "LatentApplyOperation",
         )
 
     @classmethod
@@ -78,9 +79,9 @@ class LatentApplyOperation(Node):
 class LatentApplyOperationCFG(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentApplyOperationCFG",
+                node_type="dinkster.latent.latent_apply_operation_cfg",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -89,7 +90,8 @@ class LatentApplyOperationCFG(Node):
                     _float("end_percent", 1.0, 0.0, 1.0, 0.001, optional=True),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "LatentApplyOperationCFG",
         )
 
     @classmethod
@@ -119,14 +121,15 @@ class LatentApplyOperationCFG(Node):
 class LatentOperationBlend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentOperationBlend",
+                node_type="dinkster.latent.latent_operation_blend",
                 display_name="Latent Operation Blend",
                 category=_CATEGORY,
                 inputs=(InputSpec("reference", _LATENT), _float("strength", 1.0, 0.0, 1.0, 0.0001)),
                 outputs=(OutputSpec("LATENT_OPERATION", _OPERATION),),
-            )
+            ),
+            "LatentOperationBlend",
         )
 
     @classmethod
@@ -152,13 +155,14 @@ class LatentOperationBlend(Node):
 class LatentOperationTonemapReinhard(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentOperationTonemapReinhard",
+                node_type="dinkster.latent.latent_operation_tonemap_reinhard",
                 category=_CATEGORY,
                 inputs=(_float("multiplier", 1.0, 0.0, 100.0, 0.01),),
                 outputs=(OutputSpec("LATENT_OPERATION", _OPERATION),),
-            )
+            ),
+            "LatentOperationTonemapReinhard",
         )
 
     @classmethod
@@ -182,9 +186,9 @@ class LatentOperationTonemapReinhard(Node):
 class LatentOperationSharpen(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentOperationSharpen",
+                node_type="dinkster.latent.latent_operation_sharpen",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec(
@@ -198,7 +202,8 @@ class LatentOperationSharpen(Node):
                     _float("alpha", 0.1, 0.0, 5.0, 0.01, advanced=True),
                 ),
                 outputs=(OutputSpec("LATENT_OPERATION", _OPERATION),),
-            )
+            ),
+            "LatentOperationSharpen",
         )
 
     @classmethod
@@ -235,9 +240,9 @@ class LatentOperationSharpen(Node):
 class ReplaceVideoLatentFrames(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ReplaceVideoLatentFrames",
+                node_type="dinkster.latent.replace_video_latent_frames",
                 display_name="Replace Video Latent Frames",
                 category="model/latent/batch",
                 inputs=(
@@ -251,7 +256,8 @@ class ReplaceVideoLatentFrames(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "ReplaceVideoLatentFrames",
         )
 
     @classmethod

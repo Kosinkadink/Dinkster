@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -40,7 +40,7 @@ class TextEncodeMingImageEdit(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeMingImageEdit",
+            node_type="dinkster.misc.models.text_encode_ming_image_edit",
             display_name="Text Encode Ming Image Edit",
             category="model/conditioning/ming image",
             inputs=(
@@ -61,7 +61,7 @@ class TextEncodeMingImageEdit(Node):
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
             input_order=("clip", "vae", "prompt", "images"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeMingImageEdit")
 
     @classmethod
     def execute(

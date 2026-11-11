@@ -23,9 +23,9 @@ def file_shard(path: str, count: int = 2) -> int:
         prefix = b"dinkster-windows-root-v2:7970:"
     if count == 12:
         # Balance whole files against case-split Linux histories and generations.
-        prefix = b"dinkster-root-pytest-v2:764:"
+        prefix = b"dinkster-root-pytest-v2:44225:"
     if count == 8:
-        # Keep unsplit runtime files balanced against the five case-split files.
+        # Keep unsplit runtime files balanced against the case-split files.
         prefix = b"dinkster-windows-runtime-v2:4621:"
     digest = hashlib.sha256(prefix + path.encode("utf-8")).digest()
     return digest[0] % count + 1

@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_models.context_windows import ContextWindowsManual
 
@@ -35,7 +35,7 @@ class LTXVContextWindows(ContextWindowsManual):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVContextWindows",
+            node_type="dinkster.ltx.ltxv_context_windows",
             display_name="LTXV Context Windows",
             category="model/patch/ltxv",
             description="Set context windows for LTXV-like models.",
@@ -67,7 +67,7 @@ class LTXVContextWindows(ContextWindowsManual):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVContextWindows")
 
     @classmethod
     def execute(

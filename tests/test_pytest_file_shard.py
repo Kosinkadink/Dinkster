@@ -78,8 +78,8 @@ def test_file_shards_support_extended_counts(count: int) -> None:
         },
         12: {
             "tests/test_serve.py": 9,
-            "tests/test_compose.py": 12,
-            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 3,
+            "tests/test_compose.py": 10,
+            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 5,
         },
     }
 

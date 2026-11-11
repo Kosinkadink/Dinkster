@@ -20,7 +20,12 @@ from dinkster_workers.pack_wheel import pack_manifest_path
 
 from scripts.acquire_engine_bases import acquire
 from scripts.build_official_packs import build, library_metadata
-from scripts.build_release import development_version, select_dependency_wheels
+from scripts.build_release import (
+    development_version,
+    select_dependency_wheels,
+    sha256,
+    versioned_sources,
+)
 
 
 def prepare_inputs(
@@ -39,14 +44,32 @@ def prepare_inputs(
     engine_dir = work / "engine"
     if candidate:
         engine_dir.mkdir()
+        version = development_version(root)
+        with versioned_sources(root, version) as staged:
+            subprocess.run(
+                [
+                    "uv",
+                    "build",
+                    "--package",
+                    "dinkster-api",
+                    "--wheel",
+                    "--out-dir",
+                    str(engine_dir),
+                ],
+                cwd=staged,
+                check=True,
+            )
         engine = {
             "format": "dinkster.engine/1",
             "repository": "Kosinkadink/Dinkster",
             "tag": f"main-{commit}",
             "commit": commit,
-            "version": development_version(root),
+            "version": version,
             "workerProtocol": PROTOCOL_VERSION,
-            "artifacts": [],
+            "artifacts": [
+                {"name": wheel.name, "size": wheel.stat().st_size, "sha256": sha256(wheel)}
+                for wheel in sorted(engine_dir.glob("*.whl"))
+            ],
             "dependencies": select_dependency_wheels(root, "uv", bases),
         }
         (engine_dir / "release-manifest.json").write_text(json.dumps(engine), encoding="ascii")

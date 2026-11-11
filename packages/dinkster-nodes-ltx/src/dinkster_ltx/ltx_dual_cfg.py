@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class LTXVDualCFGGuider(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="LTXVDualCFGGuider",
+            node_type="dinkster.ltx.ltxv_dual_cfg_guider",
             display_name="LTXV Dual CFG Guider",
             category="model/sampling/guiders",
             description=(
@@ -48,7 +48,7 @@ class LTXVDualCFGGuider(Node):
             ),
             outputs=(OutputSpec("GUIDER", TypeExpr.concrete(GUIDER_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVDualCFGGuider")
 
     @classmethod
     def execute(

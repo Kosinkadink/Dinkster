@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -23,7 +23,7 @@ class ImageHistogram(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageHistogram",
+            node_type="dinkster.image.image_histogram",
             display_name="Image Histogram",
             category="utilities",
             inputs=(InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
@@ -32,7 +32,7 @@ class ImageHistogram(Node):
                 for name in ("rgb", "luminance", "red", "green", "blue")
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageHistogram")
 
     @classmethod
     def execute(cls, *, image: Any) -> Mapping[str, object]:

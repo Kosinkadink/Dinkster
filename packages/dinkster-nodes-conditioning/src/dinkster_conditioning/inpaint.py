@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -76,9 +76,9 @@ def _masked_pixels(pixels: Any, mask: Any) -> Any:
 class InpaintModelConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="InpaintModelConditioning",
+                node_type="dinkster.conditioning.inpaint_model_conditioning",
                 display_name="InpaintModelConditioning",
                 category="model/conditioning",
                 inputs=(
@@ -94,7 +94,8 @@ class InpaintModelConditioning(Node):
                     OutputSpec("negative", _CONDITIONING),
                     OutputSpec("latent", _LATENT),
                 ),
-            )
+            ),
+            "InpaintModelConditioning",
         )
 
     @classmethod

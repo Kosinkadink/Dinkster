@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -196,9 +196,9 @@ def _tome_functions(
 class TomePatchModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="TomePatchModel",
+                node_type="dinkster.models.tome_patch_model",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -210,7 +210,8 @@ class TomePatchModel(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "TomePatchModel",
         )
 
     @classmethod
@@ -250,9 +251,9 @@ def _random_divisor(value: int, minimum: int, maximum_options: int = 1) -> int:
 class HyperTile(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="HyperTile",
+                node_type="dinkster.models.hyper_tile",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -280,7 +281,8 @@ class HyperTile(Node):
                     InputSpec("scale_depth", _BOOLEAN, default=False, advanced=True),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "HyperTile",
         )
 
     @classmethod
@@ -365,9 +367,9 @@ class PatchModelAddDownscale(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         method_widget = ComboWidget(tuple(ComboOption(method) for method in _UPSCALE_METHODS))
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PatchModelAddDownscale",
+                node_type="dinkster.models.patch_model_add_downscale",
                 display_name="PatchModelAddDownscale (Kohya Deep Shrink)",
                 category=_CATEGORY,
                 inputs=(
@@ -404,7 +406,8 @@ class PatchModelAddDownscale(Node):
                     InputSpec("upscale_method", _COMBO, widget=method_widget),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "PatchModelAddDownscale",
         )
 
     @classmethod

@@ -28,11 +28,11 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     digest_bytes,
-    first_party_schema,
     materialize_splat,
     parse_ply_splat,
     produced_output_scratch,
     render_splat_ply,
+    with_identity_replacement,
 )
 
 _SH_C0 = 0.28209479177387814
@@ -186,7 +186,7 @@ class File3DToSplat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="File3DToSplat",
+            node_type="dinkster.3d.file3_d_to_splat",
             display_name="Get Splat",
             search_terms=("load splat", "ply to splat", "import splat", "file to splat"),
             category="3d/splat",
@@ -213,7 +213,7 @@ class File3DToSplat(Node):
             ),
             outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "File3DToSplat")
 
     @classmethod
     def execute(cls, *, model_3d: Mapping[str, object]) -> Mapping[str, object]:
@@ -311,7 +311,7 @@ class SplatToFile3D(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SplatToFile3D",
+            node_type="dinkster.3d.splat_to_file3_d",
             display_name="Create 3D File (from Splat)",
             search_terms=("gaussian to ply", "splat to file", "export gaussian"),
             category="3d/splat",
@@ -330,7 +330,7 @@ class SplatToFile3D(Node):
             ),
             outputs=(OutputSpec("model_3d", TypeExpr.concrete(FILE_3D_SPLAT_ANY_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SplatToFile3D")
 
     @classmethod
     def execute(cls, *, splat: object, format: str = "ply") -> Mapping[str, object]:

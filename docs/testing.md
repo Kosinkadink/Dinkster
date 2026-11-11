@@ -6,6 +6,10 @@ makes, and these rules keep it that way as the codebase grows.
 
 ## Ground rules
 
+- **New single-pack execution tests use `dinkster_engine.testing` when enough.**
+  Use its real worker-process default and share startup with a module- or
+  session-scoped fixture. Keep composer and HTTP tests for behavior that needs
+  those layers. See the [engine testing guide](../packages/dinkster-engine/README.md#tests-from-pytest).
 - **Every bug fix ships with the regression test that would have caught it.**
   No exceptions - if it broke once without a test noticing, the suite has a
   hole exactly there.
@@ -143,9 +147,9 @@ The selections and setup commands in
 
 | Lane | Required execution |
 | --- | --- |
-| Linux CPython 3.12 root | All twelve serial `test` shards, with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
+| Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
 | Windows CPython 3.14.10 root | All ten serial `test` file shards, balanced by native Windows timings with module fixtures kept together, excluding the separate runtime selection and using the patched SQLite runtime |
-| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, generations, history and transactions split by sorted test ID, other files stay whole |
+| Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, collection, generations, history and transactions split by sorted test ID, other files stay whole |
 | CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
 | CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |

@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class LTXVDurationPredictor(Node):
     def define_schema(cls) -> NodeSchema:
         floating = TypeExpr.concrete(CORE_FLOAT)
         schema = NodeSchema(
-            node_type="LTXVDurationPredictor",
+            node_type="dinkster.ltx.ltxv_duration_predictor",
             display_name="LTXV Duration Predictor",
             category="model/conditioning/ltxv",
             inputs=(
@@ -61,7 +61,7 @@ class LTXVDurationPredictor(Node):
                 OutputSpec("seconds", floating, doc="Raw (unclamped) predicted duration."),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVDurationPredictor")
 
     @classmethod
     def execute(

@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -126,9 +126,9 @@ def _append_keyframes(
 class SetHookKeyframes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SetHookKeyframes",
+                node_type="dinkster.models.set_hook_keyframes",
                 display_name="Set Hook Keyframes",
                 category=_CATEGORY,
                 inputs=(
@@ -136,7 +136,8 @@ class SetHookKeyframes(Node):
                     InputSpec("hook_kf", _HOOK_KEYFRAMES, required=False),
                 ),
                 outputs=(OutputSpec("HOOKS", _HOOKS),),
-            )
+            ),
+            "SetHookKeyframes",
         )
 
     @classmethod
@@ -151,9 +152,9 @@ class SetHookKeyframes(Node):
 class CreateHookKeyframe(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CreateHookKeyframe",
+                node_type="dinkster.models.create_hook_keyframe",
                 display_name="Create Hook Keyframe",
                 category=_CATEGORY,
                 search_terms=("hook scheduling", "strength animation", "timed hook"),
@@ -173,7 +174,8 @@ class CreateHookKeyframe(Node):
                     InputSpec("prev_hook_kf", _HOOK_KEYFRAMES, required=False),
                 ),
                 outputs=(OutputSpec("HOOK_KF", _HOOK_KEYFRAMES),),
-            )
+            ),
+            "CreateHookKeyframe",
         )
 
     @classmethod
@@ -189,9 +191,9 @@ class CreateHookKeyframesInterpolated(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         interpolation = ("linear", "ease_in", "ease_out", "ease_in_out")
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CreateHookKeyframesInterpolated",
+                node_type="dinkster.models.create_hook_keyframes_interpolated",
                 display_name="Create Hook Keyframes Interp.",
                 category=_CATEGORY,
                 search_terms=(
@@ -239,7 +241,8 @@ class CreateHookKeyframesInterpolated(Node):
                     InputSpec("prev_hook_kf", _HOOK_KEYFRAMES, required=False),
                 ),
                 outputs=(OutputSpec("HOOK_KF", _HOOK_KEYFRAMES),),
-            )
+            ),
+            "CreateHookKeyframesInterpolated",
         )
 
     @classmethod
@@ -279,9 +282,9 @@ class CreateHookKeyframesInterpolated(Node):
 class CreateHookKeyframesFromFloats(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CreateHookKeyframesFromFloats",
+                node_type="dinkster.models.create_hook_keyframes_from_floats",
                 display_name="Create Hook Keyframes From Floats",
                 category=_CATEGORY,
                 search_terms=("batch keyframes", "strength list to keyframes"),
@@ -309,7 +312,8 @@ class CreateHookKeyframesFromFloats(Node):
                     InputSpec("prev_hook_kf", _HOOK_KEYFRAMES, required=False),
                 ),
                 outputs=(OutputSpec("HOOK_KF", _HOOK_KEYFRAMES),),
-            )
+            ),
+            "CreateHookKeyframesFromFloats",
         )
 
     @classmethod
@@ -348,7 +352,9 @@ def _combine_schema(node_type: str, count: int) -> NodeSchema:
 class CombineHooks2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_combine_schema("CombineHooks2", 2))
+        return with_identity_replacement(
+            _combine_schema("dinkster.models.combine_hooks2", 2), "CombineHooks2"
+        )
 
     @classmethod
     def execute(
@@ -362,7 +368,9 @@ class CombineHooks2(Node):
 class CombineHooks4(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_combine_schema("CombineHooks4", 4))
+        return with_identity_replacement(
+            _combine_schema("dinkster.models.combine_hooks4", 4), "CombineHooks4"
+        )
 
     @classmethod
     def execute(cls, **inputs: Any) -> Mapping[str, object]:
@@ -374,7 +382,9 @@ class CombineHooks4(Node):
 class CombineHooks8(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_combine_schema("CombineHooks8", 8))
+        return with_identity_replacement(
+            _combine_schema("dinkster.models.combine_hooks8", 8), "CombineHooks8"
+        )
 
     @classmethod
     def execute(cls, **inputs: Any) -> Mapping[str, object]:

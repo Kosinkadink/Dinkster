@@ -15,6 +15,7 @@ on:
       - pyproject.toml
       - uv.lock
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/release-tools.yml
       - scripts/build_tools_release.py
@@ -36,6 +37,7 @@ concurrency:
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.inputs.outputs.changed }}

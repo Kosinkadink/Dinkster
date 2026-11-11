@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.sampling_boundary import to_public, to_runtime
 
@@ -133,9 +133,9 @@ def _schema(node_type: str, inputs: tuple[InputSpec, ...]) -> NodeSchema:
 class SamplerCustom(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerCustom",
+                "dinkster.sampling.sampler_custom",
                 (
                     InputSpec("model", _MODEL),
                     InputSpec("add_noise", _BOOLEAN, default=True, advanced=True),
@@ -157,7 +157,8 @@ class SamplerCustom(Node):
                     InputSpec("sigmas", _SIGMAS),
                     InputSpec("latent_image", _LATENT),
                 ),
-            )
+            ),
+            "SamplerCustom",
         )
 
     @classmethod
@@ -203,9 +204,9 @@ class SamplerCustom(Node):
 class SamplerCustomAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerCustomAdvanced",
+                "dinkster.sampling.sampler_custom_advanced",
                 (
                     InputSpec("noise", _NOISE),
                     InputSpec("guider", _GUIDER),
@@ -213,7 +214,8 @@ class SamplerCustomAdvanced(Node):
                     InputSpec("sigmas", _SIGMAS),
                     InputSpec("latent_image", _LATENT),
                 ),
-            )
+            ),
+            "SamplerCustomAdvanced",
         )
 
     @classmethod

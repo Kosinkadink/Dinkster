@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_conditioning.controlnet import ControlNetApplyAdvanced
 
@@ -59,7 +59,7 @@ class ControlNetApplySD3(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ControlNetApplySD3",
+            node_type="dinkster.sd.control_net_apply_sd3",
             display_name="Apply Controlnet with VAE",
             category=_CATEGORY,
             deprecation=Deprecation(message="Use ControlNetApplyAdvanced with a VAE instead."),
@@ -78,7 +78,7 @@ class ControlNetApplySD3(Node):
                 OutputSpec("negative", _CONDITIONING),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ControlNetApplySD3")
 
     @classmethod
     def execute(

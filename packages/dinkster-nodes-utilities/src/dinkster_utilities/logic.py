@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -24,7 +24,7 @@ class ComfyNotNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ComfyNotNode",
+            node_type="dinkster.utilities.comfy_not_node",
             display_name="Not",
             category="utilities/logic",
             description=(
@@ -34,7 +34,7 @@ class ComfyNotNode(Node):
             inputs=(InputSpec("value", TypeExpr.wildcard()),),
             outputs=(OutputSpec("BOOLEAN", TypeExpr.concrete(CORE_BOOLEAN)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ComfyNotNode")
 
     @classmethod
     def execute(cls, *, value: object) -> Mapping[str, object]:
@@ -45,7 +45,7 @@ class ComfyAndNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ComfyAndNode",
+            node_type="dinkster.utilities.comfy_and_node",
             display_name="And",
             category="utilities/logic",
             description=(
@@ -64,7 +64,7 @@ class ComfyAndNode(Node):
             ),
             outputs=(OutputSpec("BOOLEAN", TypeExpr.concrete(CORE_BOOLEAN)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ComfyAndNode")
 
     @classmethod
     def execute(cls, *, values: Mapping[str, object]) -> Mapping[str, object]:
@@ -75,7 +75,7 @@ class ComfyOrNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ComfyOrNode",
+            node_type="dinkster.utilities.comfy_or_node",
             display_name="Or",
             category="utilities/logic",
             description=(
@@ -94,7 +94,7 @@ class ComfyOrNode(Node):
             ),
             outputs=(OutputSpec("BOOLEAN", TypeExpr.concrete(CORE_BOOLEAN)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ComfyOrNode")
 
     @classmethod
     def execute(cls, *, values: Mapping[str, object]) -> Mapping[str, object]:
@@ -105,7 +105,7 @@ class CustomCombo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CustomCombo",
+            node_type="dinkster.utilities.custom_combo",
             display_name="Custom Combo",
             category="utilities",
             inputs=(
@@ -121,7 +121,7 @@ class CustomCombo(Node):
             ),
             additional_inputs=TypeExpr.wildcard(),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CustomCombo")
 
     @classmethod
     def execute(cls, *, choice: str, index: int = 0, **kwargs: object) -> Mapping[str, object]:

@@ -31,13 +31,12 @@ def mapping(
     name: str = "ImageScale",
     revision: str = COMFYUI_REFERENCE_REVISION,
     reference_kind: str = "comfyui-pinned",
-    registry_kind: str = "alias",
     mapping_kind: str = "op",
     tier: str = "exact",
     target_kind: str = "node",
 ) -> dict[str, Any]:
     return {
-        "registryId": f"comfy_{registry_kind}:{pack}/{name}",
+        "registryId": f"{pack}/{name}",
         "mappingKind": mapping_kind,
         "tier": tier,
         "source": {
@@ -368,8 +367,6 @@ def test_receipt_enforces_pinned_execution_and_static_ecosystem_sources(
         mapping(pack="custom-pack", revision="deadbeef", reference_kind="comfyui-pinned"),
         mapping(pack="custom-pack", revision="deadbeef", reference_kind="ecosystem-pinned"),
         mapping(reference_kind="ecosystem-pinned"),
-        mapping(registry_kind="group", tier="exact"),
-        mapping(tier="grouped"),
     )
     for candidate in invalid:
         with pytest.raises(ConfidenceReceiptError):
@@ -405,7 +402,6 @@ def test_receipt_enforces_pinned_execution_and_static_ecosystem_sources(
         name="resize-stack",
         revision="deadbeef",
         reference_kind="static",
-        registry_kind="group",
         tier="grouped",
         target_kind="group",
     )
@@ -423,7 +419,6 @@ def test_receipt_enforces_pinned_execution_and_static_ecosystem_sources(
     vision_grouped = mapping(
         name="vision-stack",
         revision="c67885b1",
-        registry_kind="group",
         tier="grouped",
         target_kind="group",
     )

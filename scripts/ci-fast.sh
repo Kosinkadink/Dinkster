@@ -9,7 +9,6 @@ uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
 uv run --locked python scripts/check_builtin_type_spellings.py
-uv run --locked python scripts/check_pack_inference_imports.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright &
@@ -26,6 +25,8 @@ if [ "${1:-all}" = checks ]; then exit 0; fi
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_disabled_features.py \
   tests/test_settings.py \
+  tests/test_dependency_rule.py::test_core_paths_do_not_import_optional_packages_at_module_scope \
+  tests/test_dependency_rule.py::test_umbrella_optional_packages_are_locked \
   tests/test_extension_factory_guard.py \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
@@ -33,6 +34,8 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
+  tests/test_environment_collection.py \
+  tests/test_environment_state.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
@@ -46,6 +49,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_environment_cli.py::test_custom_cli_setup_retains_base_on_update_without_definition \
   tests/test_environment_history.py \
   tests/test_environment_runtime.py::test_start_status_idempotence_and_stop \
+  tests/test_environment_runtime.py::test_start_failure_preserves_exit_code_and_current_output \
   'tests/test_environment_transactions.py::test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation[crlf-None]' \
   tests/test_environment_transactions.py::test_completed_activation_recovers_history_publication_once_after_process_exit \
   tests/test_workflow_requirements.py \
@@ -54,6 +58,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_environment_tools.py \
   tests/test_release_install.py \
   tests/test_environment_generations.py::test_generation_retains_verified_engine_manifest \
+  tests/test_installer.py::test_exact_library_release_resolves_and_downloads_without_node_discovery \
   tests/test_installer.py::test_http_registry_fetcher_uses_verified_static_wheel \
   tests/test_installer.py::test_registry_download_retries_only_transport \
   tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_wheel_size \
@@ -78,6 +83,8 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
   tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
   tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
+  tests/test_library_publication.py::test_default_admission_probes_and_tests_selected_library_dependency \
+  tests/test_library_publication.py::test_admission_library_closure_intersects_ranges_and_activates_extras \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \

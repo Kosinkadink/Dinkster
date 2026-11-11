@@ -27,9 +27,9 @@ from dinkster_api.v1 import (
     TypeExpr,
     attach_saved_artifact,
     current_export_snapshot,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -44,9 +44,9 @@ _STRING = TypeExpr.concrete(CORE_STRING)
 class LoadLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LoadLatent",
+                node_type="dinkster.latent.load_latent",
                 display_name="Load Latent",
                 category="model/latent",
                 search_terms=("import latent", "open latent"),
@@ -61,7 +61,8 @@ class LoadLatent(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "LoadLatent",
         )
 
     @classmethod
@@ -76,9 +77,9 @@ class LoadLatent(Node):
 class SaveLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SaveLatent",
+                node_type="dinkster.latent.save_latent",
                 display_name="Save Latent",
                 category="model/latent",
                 search_terms=("export latent",),
@@ -97,7 +98,8 @@ class SaveLatent(Node):
                 outputs=(OutputSpec("samples", _LATENT),),
                 idempotent=False,
                 output_node=True,
-            )
+            ),
+            "SaveLatent",
         )
 
     @classmethod

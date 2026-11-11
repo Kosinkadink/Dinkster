@@ -26,10 +26,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     digest_bytes,
-    first_party_schema,
     initialize_inference_process,
     materialize_vision_packet,
     produced_output_scratch,
+    with_identity_replacement,
 )
 
 
@@ -77,7 +77,7 @@ class BuildPoseFile(Node):
             widget=ComboWidget(("disabled", "full", "eyes_mouth")),
         )
         schema = NodeSchema(
-            "BuildPoseFile",
+            "dinkster.vision.sam3d.body.build_pose_file",
             display_name="Create 3D Animation File",
             description="Build an animated GLB from pose data, or save a BVH mocap file.",
             search_terms=(
@@ -296,7 +296,7 @@ class BuildPoseFile(Node):
             ),
             outputs=(OutputSpec("model_3d", TypeExpr.concrete(FILE_3D_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BuildPoseFile")
 
     @classmethod
     def execute(

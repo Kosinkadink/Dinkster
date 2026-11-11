@@ -31,10 +31,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     render_image_png,
     report_event,
     report_preview,
+    with_identity_replacement,
 )
 
 from .native_support import MAX_DIMENSION, check_output_size, image_array, resize_array
@@ -536,7 +536,6 @@ class NativeGlslShader(Node):
             )
         schema = replace(
             schema,
-            node_type="GLSLShader",
             inputs=tuple(
                 replace(
                     spec,
@@ -582,7 +581,7 @@ class NativeGlslShader(Node):
             ),
             output_node=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GLSLShader")
 
     @classmethod
     def execute(

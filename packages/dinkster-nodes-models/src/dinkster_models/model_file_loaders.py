@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.model_file_loaders import (
     asset_input as _asset,
@@ -166,9 +166,9 @@ def _clip_type(name: str) -> object:
 class CheckpointLoaderSimple(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CheckpointLoaderSimple",
+                node_type="dinkster.models.checkpoint_loader_simple",
                 display_name="Load Checkpoint",
                 category="model/loaders",
                 description=(
@@ -202,7 +202,8 @@ class CheckpointLoaderSimple(Node):
                         ),
                     ),
                 ),
-            )
+            ),
+            "CheckpointLoaderSimple",
         )
 
     @classmethod
@@ -219,9 +220,9 @@ class CheckpointLoaderSimple(Node):
 class CheckpointLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CheckpointLoader",
+                node_type="dinkster.models.checkpoint_loader",
                 display_name="Load Checkpoint With Config (DEPRECATED)",
                 category="model/loaders",
                 deprecation=Deprecation("Deprecated in ComfyUI."),
@@ -235,7 +236,8 @@ class CheckpointLoader(Node):
                     OutputSpec("CLIP", _CLIP),
                     OutputSpec("VAE", _VAE),
                 ),
-            )
+            ),
+            "CheckpointLoader",
         )
 
     @classmethod
@@ -257,9 +259,9 @@ class CheckpointLoader(Node):
 class ControlNetLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ControlNetLoader",
+                node_type="dinkster.models.control_net_loader",
                 display_name="Load ControlNet Model",
                 category="model/loaders",
                 inputs=(_asset("control_net_name", "model/controlnet"),),
@@ -271,7 +273,8 @@ class ControlNetLoader(Node):
                     "load controlnet",
                     "controlnet loader",
                 ),
-            )
+            ),
+            "ControlNetLoader",
         )
 
     @classmethod
@@ -289,9 +292,9 @@ class ControlNetLoader(Node):
 class DiffControlNetLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="DiffControlNetLoader",
+                node_type="dinkster.models.diff_control_net_loader",
                 display_name="Load ControlNet Model (diff)",
                 category="model/loaders",
                 inputs=(
@@ -299,7 +302,8 @@ class DiffControlNetLoader(Node):
                     _asset("control_net_name", "model/controlnet"),
                 ),
                 outputs=(OutputSpec("CONTROL_NET", _CONTROL_NET),),
-            )
+            ),
+            "DiffControlNetLoader",
         )
 
     @classmethod
@@ -315,9 +319,9 @@ class DiffControlNetLoader(Node):
 class UNETLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="UNETLoader",
+                node_type="dinkster.models.unet_loader",
                 display_name="Load Diffusion Model",
                 category="model/loaders",
                 inputs=(
@@ -330,7 +334,8 @@ class UNETLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "UNETLoader",
         )
 
     @classmethod
@@ -352,9 +357,9 @@ class UNETLoader(Node):
 class CLIPLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPLoader",
+                node_type="dinkster.models.clip_loader",
                 display_name="Load CLIP",
                 category="model/loaders",
                 description=_CLIP_DESCRIPTION,
@@ -371,7 +376,8 @@ class CLIPLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CLIP", _CLIP),),
-            )
+            ),
+            "CLIPLoader",
         )
 
     @classmethod
@@ -393,9 +399,9 @@ class CLIPLoader(Node):
 class DualCLIPLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="DualCLIPLoader",
+                node_type="dinkster.models.dual_clip_loader",
                 display_name="Load CLIP (Dual)",
                 category="model/loaders",
                 description=_DUAL_CLIP_DESCRIPTION,
@@ -413,7 +419,8 @@ class DualCLIPLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CLIP", _CLIP),),
-            )
+            ),
+            "DualCLIPLoader",
         )
 
     @classmethod
@@ -435,14 +442,15 @@ class DualCLIPLoader(Node):
 class CLIPVisionLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPVisionLoader",
+                node_type="dinkster.models.clip_vision_loader",
                 display_name="Load CLIP Vision",
                 category="model/loaders",
                 inputs=(_asset("clip_name", "model/clip-vision"),),
                 outputs=(OutputSpec("CLIP_VISION", _CLIP_VISION),),
-            )
+            ),
+            "CLIPVisionLoader",
         )
 
     @classmethod
@@ -460,14 +468,15 @@ class CLIPVisionLoader(Node):
 class StyleModelLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="StyleModelLoader",
+                node_type="dinkster.models.style_model_loader",
                 display_name="Load Style Model",
                 category="model/loaders",
                 inputs=(_asset("style_model_name", "model/style"),),
                 outputs=(OutputSpec("STYLE_MODEL", _STYLE_MODEL),),
-            )
+            ),
+            "StyleModelLoader",
         )
 
     @classmethod

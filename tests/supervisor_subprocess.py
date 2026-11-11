@@ -302,6 +302,9 @@ def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProce
                     cast(Any, exc).stdout, cast(Any, exc).stderr = process.communicate()
                 else:
                     process.wait()
+                final_stack = trace.read_text() if trace.exists() else "child trace file absent"
+                if final_stack != stack:
+                    exc.add_note(f"Child diagnostics collected after cleanup:\n{final_stack}")
                 raise
             except BaseException:
                 process.kill()
@@ -433,15 +436,31 @@ def _main() -> None:
                     continue
                 # The asynchronous walker can race freed frames on CPython 3.12.
                 # An attached Python thread holds the GIL while dumping stacks.
+                started = time.monotonic()
                 trace.write(
-                    "Requested timeout snapshot\n"
-                    if requested
-                    else f"Timeout (0:00:{interval:02})!\n"
+                    (
+                        "Requested timeout snapshot\n"
+                        if requested
+                        else f"Timeout (0:00:{interval:02})!\n"
+                    )
+                    + f"Snapshot dump call started at {started:.6f}\n"
                 )
                 trace.flush()
-                faulthandler.dump_traceback(file=trace, all_threads=True)
-                if requested:
-                    acknowledgment.touch()
+                stage = "dump"
+                try:
+                    faulthandler.dump_traceback(file=trace, all_threads=True)
+                    trace.write(f"Snapshot dump completed in {time.monotonic() - started:.6f}s\n")
+                    trace.flush()
+                    if requested:
+                        stage = "acknowledgment"
+                        acknowledgment.touch()
+                except Exception as exc:
+                    trace.write(
+                        f"Snapshot {stage} failed after {time.monotonic() - started:.6f}s: "
+                        f"{type(exc).__name__}: {exc}\n"
+                    )
+                    trace.flush()
+                    raise
                 next_sample = time.monotonic() + interval
 
         observer = threading.Thread(target=observe, daemon=True)

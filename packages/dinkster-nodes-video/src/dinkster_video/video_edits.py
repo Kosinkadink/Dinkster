@@ -24,10 +24,10 @@ from dinkster_api.v1 import (
     disassemble_video,
     edit_video,
     effective_video_facts,
-    first_party_schema,
     resolver_from_env,
     save_video_stream,
     video_from_source,
+    with_identity_replacement,
 )
 
 _VIDEO = TypeExpr.concrete(VIDEO_TYPE)
@@ -70,7 +70,7 @@ class VideoSlice(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Video Slice",
+            node_type="dinkster.video.video_slice",
             display_name="Trim Video",
             category="video",
             search_terms=(
@@ -99,7 +99,7 @@ class VideoSlice(Node):
             ),
             outputs=(OutputSpec("video", _VIDEO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Video Slice")
 
     @classmethod
     def execute(
@@ -117,7 +117,7 @@ class VideoTrim(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VideoTrim",
+            node_type="dinkster.video.video_trim",
             display_name="Trim Video (Advanced)",
             category="video",
             editor_role="video-trim",
@@ -136,7 +136,7 @@ class VideoTrim(Node):
             ),
             outputs=(OutputSpec("video", _VIDEO, preview=True),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VideoTrim")
 
     @classmethod
     def execute(
@@ -155,7 +155,7 @@ class VideoCrop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VideoCrop",
+            node_type="dinkster.video.video_crop",
             display_name="Crop Video",
             category="video",
             editor_role="video-crop",
@@ -173,7 +173,7 @@ class VideoCrop(Node):
             ),
             outputs=(OutputSpec("video", _VIDEO, preview=True),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VideoCrop")
 
     @classmethod
     def execute(cls, *, video: object, crop: Mapping[str, object] | None) -> Mapping[str, object]:

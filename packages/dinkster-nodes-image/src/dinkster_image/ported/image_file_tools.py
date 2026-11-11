@@ -41,12 +41,12 @@ from dinkster_api.v1 import (
     TypeExpr,
     attach_saved_artifact,
     current_export_snapshot,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     open_image_components,
     render_image_png,
     report_preview,
+    with_identity_replacement,
 )
 
 from .advanced_image_encoding import inject_png_metadata
@@ -266,7 +266,7 @@ class SaveImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveImage",
+            node_type="dinkster.image.save_image",
             display_name="Save Image",
             category="image",
             description="Saves the input images to your ComfyUI output directory.",
@@ -303,7 +303,7 @@ class SaveImage(Node):
                 "download",
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveImage")
 
     @classmethod
     def execute(
@@ -358,7 +358,7 @@ class PreviewImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PreviewImage",
+            node_type="dinkster.image.preview_image",
             display_name="Preview Image",
             category="image",
             description="Preview the images without saving them to the ComfyUI output directory.",
@@ -374,7 +374,7 @@ class PreviewImage(Node):
                 "image viewer",
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PreviewImage")
 
     @classmethod
     def execute(cls, *, images: Any) -> Mapping[str, object]:
@@ -386,7 +386,7 @@ class SaveAnimatedWEBP(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "SaveAnimatedWEBP",
+            "dinkster.image.save_animated_webp",
             display_name="Save Animated WEBP",
             category="image",
             inputs=(
@@ -423,7 +423,7 @@ class SaveAnimatedWEBP(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveAnimatedWEBP")
 
     @classmethod
     def execute(
@@ -459,7 +459,7 @@ class SaveAnimatedPNG(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "SaveAnimatedPNG",
+            "dinkster.image.save_animated_png",
             display_name="Save Animated PNG",
             category="image",
             inputs=(
@@ -496,7 +496,7 @@ class SaveAnimatedPNG(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveAnimatedPNG")
 
     @classmethod
     def execute(
@@ -522,7 +522,7 @@ class Painter(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Painter",
+            node_type="dinkster.image.painter",
             display_name="Painter",
             category="image",
             inputs=(
@@ -557,7 +557,7 @@ class Painter(Node):
             outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
             emits_previews=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Painter")
 
     @classmethod
     def execute(
@@ -633,7 +633,7 @@ class LoadImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadImage",
+            node_type="dinkster.image.load_image",
             display_name="Load Image",
             category="image",
             inputs=(_asset_input("input"),),
@@ -648,7 +648,7 @@ class LoadImage(Node):
                 "image loader",
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadImage")
 
     @classmethod
     def execute(cls, *, image: AssetRef | LocalAssetRef) -> Mapping[str, object]:
@@ -660,7 +660,7 @@ class LoadImageMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadImageMask",
+            node_type="dinkster.image.load_image_mask",
             display_name="Load Image (as Mask)",
             category="image",
             inputs=(
@@ -674,7 +674,7 @@ class LoadImageMask(Node):
             outputs=(OutputSpec("MASK", _MASK),),
             search_terms=("import mask", "alpha mask", "channel mask"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadImageMask")
 
     @classmethod
     def execute(cls, *, image: AssetRef, channel: str) -> Mapping[str, object]:
@@ -691,7 +691,7 @@ class LoadImageOutput(LoadImage):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadImageOutput",
+            node_type="dinkster.image.load_image_output",
             display_name="Load Image (from Outputs)",
             category="image",
             description=(
@@ -703,7 +703,7 @@ class LoadImageOutput(LoadImage):
             outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
             search_terms=("output image", "previous generation"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadImageOutput")
 
 
 __all__ = [

@@ -15,9 +15,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -33,7 +33,7 @@ class Wan22ImageToVideoLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Wan22ImageToVideoLatent",
+            node_type="dinkster.wan.wan22_image_to_video_latent",
             category="model/conditioning/wan",
             inputs=(
                 InputSpec("vae", _VAE),
@@ -51,7 +51,7 @@ class Wan22ImageToVideoLatent(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Wan22ImageToVideoLatent")
 
     @classmethod
     def execute(

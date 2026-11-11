@@ -45,6 +45,7 @@ them from the registry each entry's provenance records.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import platform
@@ -103,6 +104,7 @@ from .registries import (
     default_pack_minimums,
     load_registries,
     parse_registry_spec,
+    plan_registry_sources,
     prepare_registry_pack_locks,
     prepare_registry_sources,
     prepare_registry_update_sources,
@@ -1088,6 +1090,56 @@ def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
 
 
+def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
+    validate_manifest = importlib.import_module(
+        "dinkster_supervisor.environment_artifacts"
+    ).validate_manifest
+
+    try:
+        engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)
+    except (OSError, ValueError) as exc:
+        raise InstallError(f"target engine metadata refused: {exc}") from exc
+    defaults = engine.get("defaultPacks")
+    if not isinstance(defaults, dict) or not defaults:
+        raise InstallError("target engine has no default pack declaration")
+    config = _registry_config(args)
+    selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
+    sources, locks = plan_registry_sources(
+        config,
+        select_registry(config, selector),
+        cast("dict[str, str]", defaults),
+        engine_version=cast("str", engine["version"]),
+        variant=args.variant,
+        base_id=args.base_id,
+        index=StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True),
+    )
+    payloads = {
+        (wheel.sha256, wheel.filename): wheel.size
+        for lock in locks
+        for package in lock.packages
+        for wheel in package.wheels
+    }
+    print(
+        json.dumps(
+            {
+                "engineVersion": engine["version"],
+                "engineRelease": args.engine_release,
+                "variant": args.variant,
+                "baseId": args.base_id,
+                "sources": json.loads(sources.record_json()),
+                "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+                "maximumPackPayloadBytes": sum(payloads.values()),
+                "plan": [
+                    f"select {entry.pack}@{entry.version} from {entry.source} "
+                    f"({entry.artifact_digest}) using its published {args.variant} lock"
+                    for entry in sources.packs
+                ],
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     if args.installed_lock and args.allow_missing:
@@ -1113,20 +1165,27 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
             if args.add:
                 selections: dict[str, str] = {}
-                installed_names = {entry.pack for entry in installed.packs}
+                installed_by_name = {entry.pack: entry for entry in installed.packs}
                 for raw in args.add:
                     parsed = parse_registry_spec(raw)
                     if parsed is None or raw != f"{parsed[0]}@{parsed[1]}":
                         raise InstallError("--add requires canonical PACK@VERSION selections")
                     pack, version = parsed
-                    if pack in installed_names or pack in selections:
-                        raise InstallError(f"{pack}: --add requires a distinct absent pack")
+                    if pack in selections:
+                        raise InstallError(f"{pack}: --add requires a distinct pack")
                     selections[pack] = version
-                registry = select_registry(config, args.registry)
-                fetch = routing_registry_fetcher(config, registry, index=index)
-                entries = list(installed.packs)
+                entries = [entry for entry in installed.packs if entry.pack not in selections]
                 args.artifacts.mkdir(parents=True, exist_ok=True)
                 for pack, version in selections.items():
+                    previous = installed_by_name.get(pack)
+                    registry = (
+                        config.registry_for(previous)
+                        if previous is not None
+                        and previous.source.startswith("registry:")
+                        and not args.registry
+                        else select_registry(config, args.registry)
+                    )
+                    fetch = routing_registry_fetcher(config, registry, index=index)
                     selected = resolve_release(
                         registry, pack, version, engine_version=dinkster_version, index=index
                     )
@@ -1139,8 +1198,6 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                         cached.parent.mkdir(parents=True, exist_ok=True)
                         cached.write_bytes(fetch(selected))
                     entry = registry_source_lock(selected, cached, engine_version=dinkster_version)
-                    if entry.publisher != "dinkster":
-                        raise InstallError(f"{pack}: --add requires a first-party pack")
                     entries.append(entry)
                 lock = Lockfile.of(entries)
             else:
@@ -1257,7 +1314,7 @@ def _cmd_prepare_registry_locks(args: argparse.Namespace) -> None:
             variant=args.variant,
             base_id=args.base_id,
             selected=select_registry(config, args.registry) if args.registry else None,
-            index=StaticPackIndex(args.index_snapshot),
+            index=StaticPackIndex(args.index_snapshot, offline=args.offline),
         )
     except OSError as exc:
         raise InstallError(f"published dependency lock preparation failed: {exc}") from exc
@@ -1321,7 +1378,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         if report.ok:
             print(f"Prepared runtime catalog: {report.pack_name} ({len(report.node_types)} nodes)")
         else:
-            print(render_text(report))
+            print(render_text(report), file=sys.stderr)
             failed = True
     if failed:
         raise InstallError("runtime catalog preparation failed; repair findings and retry")
@@ -1391,6 +1448,18 @@ def main() -> None:
     archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
 
+    source_plan = commands.add_parser(
+        "plan-registry-sources",
+        help="inspect target-release default packs and locks without acquiring archives",
+    )
+    source_plan.add_argument("--engine-manifest", type=Path, required=True)
+    source_plan.add_argument("--engine-release", required=True)
+    source_plan.add_argument("--variant", required=True)
+    source_plan.add_argument("--base-id", required=True)
+    source_plan.add_argument("--index-snapshot", type=Path)
+    source_plan.add_argument("--offline", action="store_true")
+    source_plan.set_defaults(handler=_cmd_plan_registry_sources)
+
     sources = commands.add_parser(
         "prepare-registry-sources",
         help="resolve compatible pack archives without creating a generation",
@@ -1426,7 +1495,7 @@ def main() -> None:
         action="append",
         default=[],
         metavar="PACK@VERSION",
-        help="add an exact absent first-party pack without re-resolving installed sources",
+        help="add or replace an exact registry pack without re-resolving other installed sources",
     )
     sources.set_defaults(handler=_cmd_prepare_registry_sources)
 
@@ -1438,6 +1507,9 @@ def main() -> None:
     locks.add_argument("--output", type=Path, required=True)
     locks.add_argument("--variant", required=True)
     locks.add_argument("--base-id", required=True)
+    locks.add_argument(
+        "--offline", action="store_true", help="use only cached index and published lock metadata"
+    )
     locks.add_argument(
         "--index-snapshot",
         type=Path,
