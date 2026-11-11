@@ -4,7 +4,7 @@ version = "0.0.3"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.moge"]
-requires = ["torch", "dinkster-inference==0.1.1"]
+requires = ["torch", "dinkster-inference"]
 
 [pack.sandbox]
 gpu = true

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +24,26 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert "secrets." not in text and "vars." not in text
     assert checks["name"] == "format, lint, types"
     assert fast["name"] == "tests"
-    assert "if" not in checks and fast["if"] == "${{ !cancelled() }}"
+    assert "if" not in checks
+    condition = fast["if"].removeprefix("${{").removesuffix("}}")
+    condition = re.sub(r"!(?!=)", "not ", condition.replace("&&", " and ").replace("||", " or "))
+    for event, draft, workflow_name, cancelled, allowed in [
+        ("pull_request", True, "ci", False, False),
+        ("pull_request", False, "ci", False, True),
+        ("pull_request", True, "Versioned wheel release", False, True),
+        ("merge_group", False, "ci", False, True),
+        ("workflow_dispatch", False, "ci", False, True),
+        ("pull_request", False, "ci", True, False),
+    ]:
+        github = SimpleNamespace(
+            event_name=event,
+            workflow=workflow_name,
+            event=SimpleNamespace(pull_request=SimpleNamespace(draft=draft)),
+        )
+        assert (
+            bool(eval(condition, {"github": github, "cancelled": lambda value=cancelled: value}))
+            is allowed
+        )
     assert any(step.get("run") == "bash scripts/ci-fast.sh checks" for step in checks["steps"])
     assert any(step.get("run") == "bash scripts/ci-fast.sh tests" for step in fast["steps"])
     gate = (evidence_paths.DINKSTER_ROOT / "scripts/ci-fast.sh").read_text()
@@ -136,7 +156,7 @@ def test_development_pack_selects_gallery_behavior() -> None:
     from tools.ci_selection import test_paths
 
     assert test_paths(evidence_paths.DINKSTER_ROOT, ["packages/dinkster-nodes-dev"]) == [
-        "tests/test_gallery.py"
+        str(Path("tests/test_gallery.py"))
     ]
 
 
@@ -266,7 +286,7 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert runtime_shards == list(range(1, 9))
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
     assert "--file-shard ${{ matrix.shard }}/8" in runtime_run["run"]
-    for name in ("artifacts", "cli", "generations", "history", "transactions"):
+    for name in ("artifacts", "cli", "collection", "generations", "history", "transactions"):
         assert f"'--case-shard-file', 'tests/test_environment_{name}.py'" in runtime_run["run"]
     assert "matrix.file-shard" not in runtime_run["run"]
     assert "$files = @(" not in runtime_run["run"]

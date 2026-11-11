@@ -18,6 +18,7 @@ on:
   push:
     tags: ["pack/**"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/official-packs.yml
       - scripts/select_official_packs.py
@@ -72,7 +73,7 @@ jobs:
           if-no-files-found: error
 
   select:
-    if: (github.event_name != 'workflow_dispatch' || (github.repository == 'Kosinkadink/Dinkster' && github.ref == 'refs/heads/main')) && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'))
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft != true) && (github.event_name != 'workflow_dispatch' || (github.repository == 'Kosinkadink/Dinkster' && github.ref == 'refs/heads/main')) && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'))
     permissions:
       contents: read
       actions: read

@@ -5,7 +5,7 @@ engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.sam3d.body"]
 type-namespaces = ["SAM3D_BODY_MODEL", "MHR_POSE_DATA"]
-requires = ["torch", "dinkster-inference==0.1.1", "numpy>=1.26", "scipy>=1.11", "pillow>=10", "dinkster-pack-helpers>=0.0.2,<1"]
+requires = ["torch", "dinkster-inference", "numpy>=1.26", "scipy>=1.11", "pillow>=10", "dinkster-pack-helpers>=0.0.2,<1"]
 
 [pack.sandbox]
 gpu = true

@@ -1,5 +1,10 @@
 ## Installed pack startup
 
+- Plain `pip install dinkster` supports CLI, catalog serving and torch-free
+  packs without installing torch or the inference runtime. Install
+  `dinkster[inference]` for in-process inference packs; missing inference
+  dependencies report that extra rather than installing them implicitly.
+  Managed generations and contributor setup retain inference support.
 - Static-only registry installs support both the release catalog and the split
   catalog with per-pack version files. Selection and acquisition share a snapshot
   within each operation; the next operation reads current publication state.
@@ -123,6 +128,13 @@
   upper bound for pack wheel bytes. Unavailable releases and invalid locks are
   reported together. Offline metadata discovery reads only retained channel,
   engine and base records and reports missing engine/base records together.
+- Managed setup and update can require a reviewed published engine and base
+  using paired `--engine-release` and `--base-id` arguments. A changed channel
+  selection refuses before creating project or store state rather than applying
+  different software. These selections cannot use a locally resolved base.
+  Explicit source catalogs and dependency locks are displayed with content
+  digests and rechecked after confirmation and before activation. Changing an
+  input during confirmation refuses before creating project or store state.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.
@@ -296,6 +308,26 @@
   the plan labels use of the last acquired channel selection. Cached channels are
   specific to the configured mirrors, and cached manifests must still match their
   recorded identities. Planning does not create or repair cache files.
+- Published runtime plans list exact engine/base payload paths, sizes and hashes,
+  verified cache reuse and missing runtime bytes before confirmation. Pack payloads
+  are separate from that runtime subtotal. Runtime acquisition also supports
+  cache-only operation: missing or corrupt runtime inputs are reported together
+  before cache mutation, without contacting mirrors or a package index.
+- `dinkster setup --plan --variant VARIANT` inspects the selected release's
+  declared default packs and exact-base registry dependency locks alongside its
+  runtime inputs. It shows project/store paths, engine binding, exact source
+  identities, lock hashes, wheel hashes/sizes and verified cache reuse without
+  acquiring payloads or creating installation state. `--json` retains the source
+  catalog and dependency-lock documents in its output. Pack bytes are labelled
+  as an upper bound across all locked wheel alternatives, not a target-selected
+  download promise. `--offline --plan` reads retained release and registry metadata
+  only; it does not fetch or repair missing metadata or wheel payloads.
+- `dinkster setup --root PATH --variant VARIANT` prints the published input plan
+  and asks `Apply this plan? [y/N]`. Declining changes nothing; non-terminal use
+  requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
+  acquires their verified pack archives, and builds and activates a managed
+  generation. `--yes` skips the prompt, not the plan or identity checks.
+  Offline application is refused; `--offline --plan` remains read-only.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU

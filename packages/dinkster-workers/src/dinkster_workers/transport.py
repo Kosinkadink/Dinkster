@@ -99,6 +99,15 @@ class BoundaryListener:
                     connected.set_result((reader, writer))
 
             socket_path = str(tmpdir / "worker.sock")
+            # sun_path includes a trailing NUL: 104 bytes on macOS, 108 on Linux.
+            limit = 103 if sys.platform == "darwin" else 107
+            path_bytes = len(os.fsencode(socket_path))
+            if path_bytes > limit:
+                raise TransportError(
+                    f"Unix socket path {socket_path!r} is {path_bytes} bytes; "
+                    f"the platform limit is {limit} bytes. "
+                    "Set TMPDIR to a shorter real directory before starting the worker."
+                )
             server = await asyncio.start_unix_server(on_connect, path=socket_path)
             return cls(server, f"unix:{socket_path}", {}, connected)
 

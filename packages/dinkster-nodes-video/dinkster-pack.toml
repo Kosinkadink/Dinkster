@@ -5,7 +5,7 @@ engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.video"]
 type-namespaces = ["INTERP_MODEL", "OPTICAL_FLOW"]
-requires = ["av>=14", "numpy>=1.26", "torch", "torchvision", "dinkster-inference==0.1.1"]
+requires = ["av>=14", "numpy>=1.26", "torch", "torchvision", "dinkster-inference"]
 
 [pack.sandbox]
 gpu = true

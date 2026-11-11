@@ -18,7 +18,13 @@ from typing import cast
 from dinkster_store import object_path, pack_archive_path
 
 from .environment_adoption import dependency_comparison, standalone_inputs
-from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
+from .environment_artifacts import (
+    acquire,
+    acquire_pack_locks,
+    discover,
+    runtime_inputs,
+    validate_manifest,
+)
 from .environment_collection import (
     automatic_generation_collection,
     cleanup_collection,
@@ -330,10 +336,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError(
             "adoption requires explicit --engine-release, --base-id and --variant"
         )
-    if adopting is None and (
-        getattr(args, "engine_release", None) or getattr(args, "base_id", None)
-    ):
-        raise EnvironmentError("--engine-release and --base-id require --adopt-from")
+    if (args.engine_release is None) != (args.base_id is None):
+        raise EnvironmentError(
+            "exact release selection requires both --engine-release and --base-id"
+        )
+    if args.engine_release is not None and getattr(args, "from_scratch", False):
+        raise EnvironmentError("exact published release selection cannot use --from-scratch")
     if args.yes and root.is_dir():
         _recover_pending(root)
     settings = _settings(root)
@@ -398,6 +406,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     for path in (args.catalog_lock, args.artifacts, *args.pack_lock):
         if path is not None and not path.is_absolute():
             raise EnvironmentError("source and dependency input paths must be absolute")
+    supplied_inputs: dict[Path, str] = {}
+    if not getattr(args, "from_scratch", False):
+        for path in (args.catalog_lock, *args.pack_lock):
+            if path is not None:
+                if path.is_symlink():
+                    raise EnvironmentError("source and dependency inputs must not be linked")
+                supplied_inputs[path] = content_digest(path)
     previous_root = root / "generations" / str(current) if current is not None else None
     in_process = tuple(args.in_process_pack or ())
     if args.in_process_pack is None and previous_root is not None:
@@ -414,9 +429,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         requested = configured
     store = select_store(root, requested)
     adoption = standalone_inputs(adopting, root, store) if adopting is not None else None
-    adoption_locks = (
-        {str(path): content_digest(path) for path in args.pack_lock} if adoption else {}
-    )
     if adoption is not None:
         if adoption["venvGroups"]:
             raise EnvironmentError("adoption does not support standalone shared-venv groups")
@@ -501,7 +513,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             )
     else:
         catalog = discover(mirrors, channel, store=store)
-        if adoption is not None and (
+        if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
         ):
@@ -531,9 +543,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             if definitions is not None:
                 template = native_template(catalog.bases)
                 selection = custom_selection(definitions, variant, template)
-        if adoption is not None and selection is not None:
+        if args.engine_release is not None and (custom is not None or selection is not None):
             raise EnvironmentError(
-                "adoption requires an exact published base, not a custom definition"
+                "exact release selection requires a published base, not a custom definition"
             )
         if custom is not None or selection is not None:
             template = template or native_template(catalog.bases)
@@ -551,6 +563,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
+        if custom is None and selection is None:
+            inputs = runtime_inputs(catalog, variant, store)
+            missing_bytes = sum(cast("int", row["size"]) for row in inputs if not row["cached"])
+            result["runtimeInputs"] = inputs
+            result["runtimeDownloadBytes"] = missing_bytes
+            plan.append(f"runtime cache: {missing_bytes} bytes missing; pack payloads are separate")
+            plan.extend(
+                f"runtime input {row['path']}: sha256:{row['sha256']} "
+                f"({row['size']} bytes; {'cached' if row['cached'] else 'not cached'})"
+                for row in inputs
+            )
         if catalog.cached_channel:
             plan.append("use the last acquired channel selection; release metadata is unavailable")
         if selection is not None:
@@ -622,6 +645,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         plan.append("workflow source feasibility: pending target preparation after confirmation")
         if (root / "project.json").read_bytes() != snapshot:
             raise EnvironmentError("project changed during planning; request a new plan")
+    plan.extend(f"input {path}: {identity}" for path, identity in supplied_inputs.items())
     if not _confirmed(args, plan):
         return 0
 
@@ -674,15 +698,24 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
+        changed_inputs = [
+            path
+            for path, identity in supplied_inputs.items()
+            if path.is_symlink() or content_digest(path) != identity
+        ]
         if development is not None:
             from .environment_development import verify_development_sources
 
             verify_development_sources(development)
         if adoption is not None and (
-            standalone_inputs(cast("Path", adopting), root, store) != adoption
-            or any(content_digest(Path(path)) != value for path, value in adoption_locks.items())
+            changed_inputs or standalone_inputs(cast("Path", adopting), root, store) != adoption
         ):
             raise EnvironmentError("standalone inputs changed after planning; request a new plan")
+        if changed_inputs:
+            subject = (
+                "target catalog" if args.catalog_lock in changed_inputs else "dependency inputs"
+            )
+            raise EnvironmentError(f"{subject} changed after planning; request a new plan")
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
@@ -713,6 +746,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     "workflow requirements failed revalidation; request a new plan"
                 )
 
+    revalidate()
     registry = registry_path().parent
     registry.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=adoption is None)
@@ -1381,16 +1415,17 @@ def main(argv: list[str] | None = None) -> None:
     setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
-    setup.add_argument("--engine-release", help="explicit published engine digest for adoption")
-    setup.add_argument("--base-id", help="explicit published base digest for adoption")
     develop = commands.add_parser("develop", help="capture and build explicit local sources")
     develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
     develop.add_argument("--pack-source", type=Path, action="append", required=True)
     develop.add_argument("--library-source", type=Path, action="append", default=[])
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
-    develop.set_defaults(from_scratch=True)
+    develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
     update = commands.add_parser("update", help="build and activate a channel's next generation")
+    for command in (setup, update):
+        command.add_argument("--engine-release", help="require this exact published engine digest")
+        command.add_argument("--base-id", help="require this exact published base digest")
     for command in (setup, update, develop):
         command.add_argument("--mirror", action="append", default=[])
         command.add_argument(

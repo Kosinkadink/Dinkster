@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -39,10 +38,7 @@ def _mask_crop_image() -> torch.Tensor:
     return torch.tensor([0.2, 0.4, 0.8, 0.1]).expand(2, 8, 12, 4).clone()
 
 
-def test_mask_crop_composites_broadcast_resized_mask_without_mutating_rgba(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(sys.modules, "dinkster_native.model3d.image_crop", None)
+def test_mask_crop_composites_broadcast_resized_mask_without_mutating_rgba() -> None:
     image = _mask_crop_image()
     mask = torch.full((1, 4, 6), 0.5)
     original_image, original_mask = image.clone(), mask.clone()

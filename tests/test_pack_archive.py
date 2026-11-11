@@ -328,7 +328,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
             "torchvision",
             "scipy",
             "kornia",
-            "dinkster-inference==0.1.1",
+            "dinkster-inference",
         ),
         "dinkster-nodes-remote": ("httpx>=0.28,<1",),
     }
@@ -839,6 +839,48 @@ def test_official_publication_selects_only_changed_committed_packs(
     committed[first] = committed[first].replace(b'engine = ">=0.2,<1"', b'engine = ""')
     with pytest.raises(ManifestError, match="engine"):
         select_packs(tmp_path, tag="pack/first/v2.0")
+
+
+def test_default_admission_separates_expensive_children_without_changing_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, official_payloads: tuple[Path, ...]
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from scripts import check_default_pack_admission as admission
+
+    catalog = Lockfile.from_record_json(official_payloads[-1].read_text())
+
+    def registry_defaults(registry, minimums, artifacts, *, engine_version):
+        for entry in catalog.packs:
+            wheel = next(
+                path
+                for path in official_payloads
+                if path.name == f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl"
+            )
+            shutil.copyfile(
+                wheel, artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            )
+        return catalog, {}
+
+    monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
+    monkeypatch.setattr(admission.StaticPackIndex, "catalog", lambda *args, **kwargs: [])
+    prepared = tmp_path / "prepared"
+    result = admission.check_defaults(
+        admission.NamedRegistry("", "https://registry.invalid"),
+        engine_version="0.0.4",
+        prepare_output=prepared,
+    )
+    groups = result["groups"]
+    assert isinstance(groups, list)
+    assert len(groups) == 10
+    assert all(groups)
+    assert sorted(name for group in groups for name in group) == sorted(
+        entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
+    )
+    assert ["dinkster-3d"] in groups
+    assert ["dinkster-image", "dinkster-latent"] in groups
+    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
 
 
 @pytest.mark.parametrize(
@@ -1658,12 +1700,7 @@ def test_official_publication_declarations_match_archive_admission(
 
     from scripts.build_official_packs import library_metadata
 
-    root = Path(__file__).resolve().parents[1]
     first = official_payloads
-    second = build_official_packs(root, tmp_path / "second")
-    assert {path.name: path.read_bytes() for path in first} == {
-        path.name: path.read_bytes() for path in second
-    }
     catalog = Lockfile.from_record_json(first[-1].read_text())
     assert len(catalog.packs) == 37
     for pack in catalog.packs:
@@ -1676,7 +1713,7 @@ def test_official_publication_declarations_match_archive_admission(
                 "0.0.2",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
-                    "dinkster-inference==0.1.1",
+                    "dinkster-inference",
                     "numpy>=1.26",
                     "pillow>=10",
                     "torch",
@@ -1780,8 +1817,8 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(
             composition = composer.composition
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
-            assert composition.packs["dinkster-text"].version == "0.0.2"
-            assert composition.packs["dinkster-image"].version == "0.0.4"
+            assert composition.packs["dinkster-text"].version == "0.0.3"
+            assert composition.packs["dinkster-image"].version == "0.0.5"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )

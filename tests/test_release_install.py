@@ -1142,7 +1142,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert f"Requires-Dist: dinkster-engine=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.1\n" in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.1\n" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.1; extra == 'inference'\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [
@@ -1604,10 +1605,23 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     frontend = tmp_path / "frontend.zip"
     frontend_payload, frontend_pin = artifact()
     frontend.write_bytes(frontend_payload)
+    inference_wheel = tmp_path / "dinkster_inference-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(inference_wheel, "w") as wheel:
+        metadata = "dinkster_inference-0.1.1.dist-info"
+        wheel.writestr(
+            f"{metadata}/METADATA",
+            "Metadata-Version: 2.1\nName: dinkster-inference\nVersion: 0.1.1\n",
+        )
+        wheel.writestr(
+            f"{metadata}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        )
+        wheel.writestr(f"{metadata}/RECORD", "")
+    monkeypatch.setenv("UV_FIND_LINKS", str(tmp_path))
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
             'dependencies = ["dinkster-engine==1.2.3"]\n'
+            '[project.optional-dependencies]\ninference = ["dinkster-inference==0.1.1"]\n'
             "[tool.uv.workspace]\n"
             'members = ["packages/dinkster-api", "packages/dinkster-engine", '
             '"packages/dinkster-supervisor"]\n'
