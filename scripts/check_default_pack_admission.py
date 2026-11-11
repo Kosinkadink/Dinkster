@@ -315,6 +315,10 @@ def check_defaults(
                             variant=variant,
                             python=generation_python,
                             constraints=constraints,
+                            indexes=("https://pypi.org/simple",),
+                            find_links=(runtime.resolve() / "wheelhouse",)
+                            if runtime is not None
+                            else (),
                             accelerator="cpu",
                         )
                 selected = Lockfile.from_record_json((output / "official-packs.lock").read_text())

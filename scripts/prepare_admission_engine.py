@@ -8,11 +8,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from dinkster_store import object_path
 from dinkster_supervisor.environment_artifacts import (
     EnvironmentCatalog,
     acquire,
     validate_manifest,
 )
+from dinkster_supervisor.environment_constraints import requirement_hashes
 from dinkster_supervisor.environment_generations import prepare_engine_interpreter
 from dinkster_supervisor.environment_state import Channel, interpreter, writer_lock
 from dinkster_workers.pack_lock import GenerationPackages
@@ -114,6 +116,18 @@ def prepare_engine(
         python = prepare_engine_interpreter(
             output / "generation", store=store, base=raw["id"], constraints=effective
         )
+    wheelhouse = output / "wheelhouse"
+    wheelhouse.mkdir()
+    sources = [release, object_path(store / "bases", raw["id"]) / "wheels"]
+    sources.extend(
+        object_path(store / "wheels", "sha256:" + identity)
+        for identity in requirement_hashes(effective.read_text())
+    )
+    for source in sources:
+        for wheel in source.glob("*.whl"):
+            link = wheelhouse / wheel.name
+            if not link.exists():
+                link.symlink_to(wheel.resolve())
     shutil.copyfile(base_manifest, output / "base-manifest.json")
     facts = GenerationPackages.inspect(python)
     (output / "runtime.json").write_text(

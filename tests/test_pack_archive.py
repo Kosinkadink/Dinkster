@@ -857,6 +857,7 @@ def test_official_publication_selects_only_changed_committed_packs(
         ("locked-prepared", "lock-base"),
         ("locked-prepared", "lock-artifact"),
         ("locked-prepared", "missing-lock"),
+        ("locked-runtime", None),
         ("published", None),
         ("published", "promotion"),
         ("published", "timeout"),
@@ -913,8 +914,8 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
         )
 
-    locked = mode == "locked-prepared"
-    is_prepared = mode in {"prepared", "locked-prepared"}
+    locked = mode in {"locked-prepared", "locked-runtime"}
+    is_prepared = mode in {"prepared", "locked-prepared", "locked-runtime"}
     generation = tmp_path / "generation-python"
     generation.touch()
     constraints = tmp_path / "constraints.txt"
@@ -928,6 +929,24 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         if locked
         else {}
     )
+    if mode == "locked-runtime":
+        from test_pack_environment import _generation, _wheel
+
+        runtime = tmp_path / "runtime"
+        wheelhouse = runtime / "wheelhouse"
+        wheelhouse.mkdir(parents=True)
+        _wheel(wheelhouse, "dinkster-api", "0.0.4.dev37", "dinkster_api", "")
+        _wheel(wheelhouse, "locked-extra", "1.2+cpu", "locked_extra", "")
+        python = _generation(tmp_path / "managed/python", [])
+        constraints.write_text("dinkster-api==0.0.4.dev37\nlocked-extra==1.2+cpu\n")
+        monkeypatch.setattr(
+            admission,
+            "read_runtime",
+            lambda *args: (python, "sha256:" + "f" * 64, constraints, "linux-cpu"),
+        )
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        context.clear()
+        context["runtime"] = runtime
 
     def dependency_lock(name):
         return PackLock(
@@ -960,7 +979,22 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             Lockfile.of([entries["candidate"]]).record_json()
         )
         if locked:
-            dependency_lock("candidate").write(output / "candidate-7.2-linux-cpu.pack-lock.json")
+            lock = dependency_lock("candidate")
+            if mode == "locked-runtime":
+                from dinkster_workers.pack_lock import resolve_pack_lock
+
+                resolved = resolve_pack_lock(
+                    pack="candidate",
+                    variant=kwargs["variant"],
+                    requirements=("dinkster-api>=0.0.2.dev0,<0.1", "locked-extra==1.2+cpu"),
+                    python=kwargs["python"],
+                    constraints=kwargs["constraints"],
+                    indexes=kwargs.get("indexes", ()),
+                    find_links=kwargs.get("find_links", ()),
+                    engine=">=0.0.2.dev0,<0.1",
+                )
+                lock = replace(resolved, packages=(*resolved.packages, *lock.packages))
+            lock.write(output / "candidate-7.2-linux-cpu.pack-lock.json")
 
     def registry_defaults(registry, minimums, artifacts, *, engine_version):
         # The candidate has no registry release: requesting it would fail here.
@@ -1006,6 +1040,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         )
         groups = output["groups"]
         assert isinstance(groups, list)
+        if mode == "locked-runtime":
+            lock = PackLock.read(prepared / "pack-locks/candidate.json")
+            assert [(item.name, item.version) for item in lock.packages] == [
+                ("locked-extra", "1.2+cpu"),
+                ("candidate", "7.2"),
+            ]
         assert sorted(name for group in groups for name in group) == [
             "candidate",
             "unchanged",
