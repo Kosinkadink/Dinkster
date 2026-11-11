@@ -26,6 +26,7 @@ from dinkster_api.v1 import (
     LOAD3D_MODEL_INFO_TYPE,
     LOAD_3D_TYPE,
     AbsentOutput,
+    CustomWidgetDescriptor,
     Deprecation,
     InputSpec,
     Node,
@@ -120,7 +121,11 @@ class _Preview3D(Node):
                     required=False,
                     advanced=True,
                 ),
-                InputSpec("viewport_state", TypeExpr.concrete(LOAD_3D_TYPE)),
+                InputSpec(
+                    "viewport_state",
+                    TypeExpr.concrete(LOAD_3D_TYPE),
+                    widget=CustomWidgetDescriptor("LOAD_3D"),
+                ),
                 InputSpec(
                     "camera_info",
                     TypeExpr.concrete(LOAD3D_CAMERA_TYPE),

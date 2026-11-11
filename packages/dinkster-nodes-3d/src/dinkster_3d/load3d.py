@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     LOAD_3D_TYPE,
     AssetRef,
     AssetWidget,
+    CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
     Node,
@@ -43,7 +44,11 @@ class Load3DAdvanced(Node):
                     widget=AssetWidget(kind="media/model3d", allow_upload=True),
                     source_filename=SourceFilenameSpec("media/model3d", "input"),
                 ),
-                InputSpec("viewport_state", TypeExpr.concrete(LOAD_3D_TYPE)),
+                InputSpec(
+                    "viewport_state",
+                    TypeExpr.concrete(LOAD_3D_TYPE),
+                    widget=CustomWidgetDescriptor("LOAD_3D"),
+                ),
                 *(
                     InputSpec(
                         axis,

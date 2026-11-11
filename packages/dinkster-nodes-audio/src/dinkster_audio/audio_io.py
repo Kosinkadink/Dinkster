@@ -12,6 +12,7 @@ from dinkster_api.v1 import (
     AUDIO_TYPE,
     AssetRef,
     AssetWidget,
+    CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
     Node,
@@ -86,7 +87,13 @@ class RecordAudio(LoadAudio):
             display_name="Record Audio",
             category="audio",
             search_terms=("microphone input", "audio capture", "voice input"),
-            inputs=(InputSpec("audio", TypeExpr.concrete(AUDIO_RECORD_TYPE)),),
+            inputs=(
+                InputSpec(
+                    "audio",
+                    TypeExpr.concrete(AUDIO_RECORD_TYPE),
+                    widget=CustomWidgetDescriptor("AUDIO_RECORD"),
+                ),
+            ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
         return with_identity_replacement(schema, "RecordAudio")
