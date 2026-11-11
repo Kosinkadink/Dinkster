@@ -65,7 +65,7 @@ def assess(
     for registry in registries:
         document, verified_at = store.cached(registry) if registry in provisioned else (None, None)
         if maximum_feed_age is not None and (
-            verified_at is None or instant - verified_at > maximum_feed_age
+            document is None or instant - document.issued_at > maximum_feed_age
         ):
             stale.append(registry)
         if document is None:

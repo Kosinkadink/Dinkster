@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Pack installation, retained rollback and serving selection enforce locally
+  cached verified security notices. Known malicious artifacts and explicitly
+  denied vulnerable releases refuse without deleting retained bytes or changing
+  the active selection. Retained vulnerable releases remain usable while their
+  decision is pending; a new vulnerable release requires exact-notice approval.
+  These checks do not fetch notices or stop an already running worker.
 - Static-only registry installs support both the release catalog and the split
   catalog with per-pack version files. Selection and acquisition share a snapshot
   within each operation; the next operation reads current publication state.

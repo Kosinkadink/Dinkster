@@ -13,6 +13,7 @@ from uuid import UUID
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from dinkster_registry import InstallError, LockedPack, Lockfile, build_artifact
 from dinkster_security.documents import SecurityError
 from dinkster_security.policy import Artifact, assess
 from dinkster_security.store import SecurityStore
@@ -214,6 +215,8 @@ def test_vulnerable_execution_continues_but_new_install_requires_exact_approval(
     store.answer(REGISTRY, UUID(NOTICE), 1, approved=True)
     assert assess(SecurityStore(store.path), inventory, installing=True).allowed
     assert not assess(store, inventory, refuse_vulnerable=True).allowed
+    assert assess(store, inventory, maximum_feed_age=timedelta(days=10), now=VERIFIED_AT).allowed
+    assert not assess(store, inventory, maximum_feed_age=timedelta(days=8), now=VERIFIED_AT).allowed
     store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
     assert not assess(SecurityStore(store.path), inventory).allowed
     other = Artifact("https://another.example.test", document.notices[0].release)
@@ -252,3 +255,75 @@ def test_malicious_bytes_block_rehosting_and_dependencies_without_misclassifying
     feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
     assert assess(store, inventory).allowed
+
+
+def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback(tmp_path: Path):
+    from dinkster.installer import Installer
+
+    installer = Installer(tmp_path / "installed", accelerator="cpu", runtime_probe=lambda _: ())
+    source = tmp_path / "pack"
+    source.mkdir()
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "test-pack"\n[pack.entry]\nnodes = "example:NODES"\n'
+    )
+    targets = []
+    archives = {}
+    for version in ("1.2.3", "2.0.0", "3.0.0"):
+        (source / "example.py").write_text(f'NODES = []\nVERSION = "{version}"\n')
+        archive = tmp_path / f"{version}.zip"
+        digest = build_artifact(source, archive)
+        entry = LockedPack(
+            "test-pack", version, digest, "publisher", ("test-pack",), "registry:" + REGISTRY
+        )
+        targets.append(Lockfile.of([entry]))
+        archives[version] = archive
+    installer.apply(
+        targets[0], {targets[0].packs[0].artifact_digest: archives["1.2.3"]}, venvs=False
+    )
+    installer.apply(
+        targets[1], {targets[1].packs[0].artifact_digest: archives["2.0.0"]}, venvs=False
+    )
+    key = Ed25519PrivateKey.generate()
+    store = SecurityStore(installer.root / "security.sqlite3")
+    store.provision_trust(json.dumps(_trust(key)).encode())
+    feed = _feed("malicious")
+    feed["notices"][0]["release"]["artifactDigest"] = targets[0].packs[0].artifact_digest
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    current = installer.current_number()
+    with pytest.raises(InstallError, match="security malicious"):
+        installer.rollback(venvs=False)
+    assert installer.current_number() == current
+    assert archives["1.2.3"].is_file()
+    spec = installer.packs_for_serving()[0]
+    assert spec.packs is not None and spec.packs["test-pack"].version == "2.0.0"
+    feed["revision"] = 2
+    feed["notices"][0].update(revision=2, previousRevision=1, state="vulnerable")
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    installer.rollback(venvs=False)
+    spec = installer.packs_for_serving()[0]
+    assert spec.packs is not None and spec.packs["test-pack"].version == "1.2.3"
+    store.answer(REGISTRY, UUID(NOTICE), 2, approved=False)
+    with pytest.raises(InstallError, match="decision denied"):
+        installer.packs_for_serving()
+    with pytest.raises(InstallError, match="decision denied"):
+        installer.apply(targets[0], venvs=False)
+    feed["revision"] = 3
+    feed["notices"][0].update(id="636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8", revision=3)
+    feed["notices"][0]["release"].update(
+        version="3.0.0", artifactDigest=targets[2].packs[0].artifact_digest
+    )
+    # New notices are added; authenticated updates cannot drop the original block record.
+    previous, _ = store.cached(REGISTRY)
+    assert previous is not None
+    feed["notices"].append(previous.notices[0].model_dump(mode="json", by_alias=True))
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    with pytest.raises(InstallError, match="decision pending"):
+        installer.apply(
+            targets[2], {targets[2].packs[0].artifact_digest: archives["3.0.0"]}, venvs=False
+        )
+    store.answer(REGISTRY, UUID("636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"), 3, approved=True)
+    installer.apply(
+        targets[2], {targets[2].packs[0].artifact_digest: archives["3.0.0"]}, venvs=False
+    )
+    spec = installer.packs_for_serving()[0]
+    assert spec.packs is not None and spec.packs["test-pack"].version == "3.0.0"
