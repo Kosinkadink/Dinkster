@@ -118,7 +118,7 @@ def expire_after_ready(
         def expire(process, input=None, timeout=None):
             if timeout is None:
                 return communicate(process, input=input)
-            assert timeout == 30
+            assert timeout == 120
             ready(process)
             # Exercise real communicate expiration, but only once the child is ready.
             return communicate(process, input=input, timeout=0)

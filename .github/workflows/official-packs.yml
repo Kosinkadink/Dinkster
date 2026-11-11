@@ -27,9 +27,12 @@ on:
       - scripts/build_official_packs.py
       - scripts/build_release_pack_locks.py
       - scripts/publish_official_packs.py
+      - scripts/check_disposable_publication.py
+      - scripts/check_publication_controls.py
+      - scripts/stage_publication_probe_index.py
       - scripts/base_bundles.json
       - packages/**/dinkster-pack.toml
-      - packages/dinkster-pack-helpers/pyproject.toml
+      - packages/**/pyproject.toml
 
 permissions:
   contents: read
@@ -39,6 +42,36 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  registry-service-image:
+    name: Build disposable registry image
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the pinned registry service
+        uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/dinkster-registry-service
+          ref: 269860f88669bfe9586a341c74e7ce6501df9930
+          persist-credentials: false
+          path: .disposable-registry-source
+      - name: Build the unchanged service Dockerfile without publishing
+        run: docker build --tag dinkster-disposable-registry:local .disposable-registry-source
+      - name: Prepare publisher dependencies before isolation
+        run: |
+          docker build --tag dinkster-disposable-publisher:local - <<'DOCKER'
+          FROM dinkster-disposable-registry:local
+          USER root
+          RUN uv pip install --python /app/.venv/bin/python dinkster-token-verifier==0.1.2
+          DOCKER
+          docker save dinkster-disposable-registry:local dinkster-disposable-publisher:local > disposable-images.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disposable-registry-images
+          path: disposable-images.tar
+          compression-level: 0
+          if-no-files-found: error
+
   select:
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft != true) && (github.event_name != 'workflow_dispatch' || (github.repository == 'Kosinkadink/Dinkster' && github.ref == 'refs/heads/main')) && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster'))
     permissions:
@@ -132,13 +165,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
-      - name: Find validated interrupted main publication inputs
-        id: continuation
-        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && steps.engine_release.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: uv run --no-sync python -m scripts.recover_official_publication --run "${{ github.run_id }}"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
       - name: Select committed pack changes or an exact pack tag
         id: select
         env:
@@ -164,6 +191,8 @@ jobs:
               packs, applicable = select_packs(root, before='0' * 40), True
           elif tag:
               packs, applicable = select_packs(root, tag=tag), True
+          elif event == 'workflow_run':
+              packs, applicable = select_packs(root, unpublished_at='https://registry.dinkster.org'), True
           else:
               packs, applicable = publication_selection(root, before), True
           if event not in {'workflow_run', 'workflow_dispatch'}:
@@ -173,6 +202,13 @@ jobs:
               output.write('engine=' + head + '\n')
               output.write('applicable=' + str(applicable).lower() + '\n')
           PY
+      - name: Find validated interrupted main publication inputs
+        id: continuation
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && steps.engine_release.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKS: ${{ steps.select.outputs.packs }}
+        run: uv run --no-sync python -m scripts.recover_official_publication --run "${{ github.run_id }}" --packs "$PACKS"
 
   sources:
     needs: select
@@ -314,6 +350,102 @@ jobs:
           name: publication-locks-${{ matrix.variant }}
           path: .official-publication/locks/${{ matrix.variant }}/*.pack-lock.json
           include-hidden-files: true
+          if-no-files-found: error
+
+  probe-index:
+    needs: [select, sources]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.engine }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: .official-publication
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
+      - name: Stage the complete scanner dependency index
+        run: uv run --no-sync python -m scripts.stage_publication_probe_index --sources .official-publication/sources --output .probe-index
+      - name: Prepare publisher ordering and dependency controls before isolation
+        run: uv run --no-sync python -m scripts.check_publication_controls prepare --bases .official-publication/bases --output .publication-controls
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disposable-probe-index
+          path: .probe-index
+          include-hidden-files: true
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disposable-publication-controls
+          path: .publication-controls
+          include-hidden-files: true
+          if-no-files-found: error
+
+  disposable-publication:
+    needs: [select, sources, locks, registry-service-image, probe-index]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.engine }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-publication-inputs
+          path: .official-publication
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: publication-locks-*
+          merge-multiple: true
+          path: .official-publication/locks
+      - uses: actions/download-artifact@v4
+        with:
+          name: disposable-probe-index
+          path: .probe-index
+      - uses: actions/download-artifact@v4
+        with:
+          name: disposable-registry-images
+          path: .disposable-images
+      - uses: actions/download-artifact@v4
+        with:
+          name: disposable-publication-controls
+          path: .publication-controls
+      - name: Load prebuilt images without pulling
+        run: docker load --input .disposable-images/disposable-images.tar
+      - name: Check ordering, active replay and incompatible dependency refusal
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          DINKSTER_ACCELERATOR: cpu
+        run: |
+          python3 -m scripts.check_publication_controls check \
+            --fixtures .publication-controls \
+            --service-image dinkster-disposable-registry:local \
+            --publisher-image dinkster-disposable-publisher:local > disposable-controls.json
+      - name: Publish selected candidates and verify active replay without external access
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          DINKSTER_ACCELERATOR: cpu
+        run: |
+          python3 scripts/check_disposable_publication.py \
+            --inputs .official-publication --package-index .probe-index \
+            --service-image dinkster-disposable-registry:local \
+            --publisher-image dinkster-disposable-publisher:local > disposable-publication.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: disposable-publication-result
+          path: |
+            disposable-controls.json
+            disposable-publication.json
           if-no-files-found: error
 
   publish:
