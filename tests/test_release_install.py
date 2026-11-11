@@ -2564,6 +2564,12 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
     assert job["timeout-minutes"] == 15
     acquisition = workflow["jobs"]["probe-index"]["steps"]
     assert any("check_publication_controls prepare" in step.get("run", "") for step in acquisition)
+    upload = next(
+        step["with"]
+        for step in acquisition
+        if step.get("with", {}).get("name") == "disposable-publication-controls"
+    )
+    assert upload["include-hidden-files"] is True
     isolated = workflow["jobs"]["disposable-publication"]["steps"]
     controls = next(
         index
@@ -2746,6 +2752,103 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "--publish" not in preflight["run"]
     assert "--check-published" in preflight["run"]
     assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [None, "repository", "head", "event", "workflow", "expired", "locks", "engine"],
+)
+def test_recovery_dispatch_requires_trusted_exact_head_artifacts(problem: str | None) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    script = next(
+        step["with"]["script"]
+        for step in workflow["jobs"]["select"]["steps"]
+        if step.get("id") == "engine_release"
+    )
+    head = "a" * 40
+    run = {
+        "id": 70,
+        "head_sha": head,
+        "head_branch": "main",
+        "head_repository": {"full_name": "Kosinkadink/Dinkster"},
+        "path": ".github/workflows/official-packs.yml",
+        "event": "workflow_run",
+        "conclusion": "success",
+    }
+    fixture = {
+        "head": head,
+        "run": run,
+        "engineRun": {**run, "event": "push"},
+        "engine": problem != "engine",
+        "artifact": {
+            "id": 100,
+            "name": "official-publication-inputs",
+            "expired": problem == "expired",
+            "workflow_run": {"id": 70},
+        },
+        "locks": [
+            {"id": index, "name": "publication-locks-" + variant, "expired": False}
+            for index, variant in enumerate(
+                json.loads((ROOT / "scripts/base_bundles.json").read_bytes()), 101
+            )
+        ],
+        "script": script,
+    }
+    if problem == "repository":
+        run["head_repository"] = {"full_name": "other/Dinkster"}
+    elif problem == "head":
+        run["head_sha"] = "b" * 40
+    elif problem == "event":
+        run["event"] = "pull_request"
+    elif problem == "workflow":
+        run["path"] = ".github/workflows/other.yml"
+    elif problem == "locks":
+        fixture["locks"] = []
+    # Execute the workflow's actual script, replacing only GitHub transport and outputs.
+    harness = r"""
+const fs = require('fs');
+const fixture = JSON.parse(fs.readFileSync(0, 'utf8'));
+const outputs = {};
+const context = {eventName: 'workflow_dispatch', repo: {owner: 'Kosinkadink', repo: 'Dinkster'},
+  payload: {inputs: {head: fixture.head, recovery_artifact: '100'}}};
+const core = {setOutput: (key, value) => outputs[key] = value};
+const actions = {getArtifact: async () => ({data: fixture.artifact}),
+  getWorkflowRun: async () => ({data: fixture.run}), listWorkflowRuns: () => {},
+  listJobsForWorkflowRun: () => {}, listWorkflowRunArtifacts: () => {}};
+const github = {rest: {repos: {compareCommitsWithBasehead: async () =>
+  ({data: {status: 'ahead'}})}, actions}, paginate: async (operation) => {
+    if (operation === actions.listWorkflowRuns) return [fixture.engineRun];
+    if (operation === actions.listJobsForWorkflowRun)
+      return fixture.engine ? [{name: 'release', conclusion: 'success'}] : [];
+    if (operation === actions.listWorkflowRunArtifacts) return fixture.locks;
+    throw new Error('unexpected endpoint');
+  }};
+new Function('context', 'core', 'github', 'return (async () => {' + fixture.script + '})()')
+  (context, core, github).then(() => console.log(JSON.stringify({outputs})))
+  .catch(error => console.log(JSON.stringify({error: error.message})));
+"""
+    result = json.loads(
+        subprocess.check_output(
+            ["node", "-e", harness], input=json.dumps(fixture), text=True, timeout=10
+        )
+    )
+    if problem is None:
+        assert result == {
+            "outputs": {
+                "recovery_run": 70,
+                "recovery_locks": "101,102,103,104,105,106",
+                "published": True,
+            }
+        }
+    else:
+        expected = (
+            "Catch-up publication requires a successful same-commit engine release"
+            if problem == "engine"
+            else "Recovery requires unexpired unique native lock artifacts"
+            if problem == "locks"
+            else "Recovery requires original successful main publication inputs at head"
+        )
+        assert result == {"error": expected}
 
 
 @pytest.mark.parametrize("recovery", [False, True])

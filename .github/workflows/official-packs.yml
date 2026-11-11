@@ -381,6 +381,7 @@ jobs:
         with:
           name: disposable-publication-controls
           path: .publication-controls
+          include-hidden-files: true
           if-no-files-found: error
 
   disposable-publication:
