@@ -549,8 +549,9 @@ def run_locked_probe(
     settings: ProbeSettings | None = None,
     require_isolation: bool = True,
     offline: bool = False,
+    source_roots: tuple[Path, ...] = (),
 ) -> StageResult:
-    """Probe verified archive bytes with the user's locked pack provisioner."""
+    """Probe caller-verified archives and dependency sources with the user's provisioner."""
     try:
         manifest = load_manifest(root / MANIFEST_FILENAME)
         if lock.pack != manifest.name:
@@ -575,7 +576,11 @@ def run_locked_probe(
         return StageResult((_block("probe.dependencies-incompatible", str(exc)),))
     with admission_timing(manifest.name, "probe-execution"):
         return _run_executable_probe(
-            root, settings or ProbeSettings(), require_isolation, python=python
+            root,
+            settings or ProbeSettings(),
+            require_isolation,
+            python=python,
+            source_roots=source_roots,
         )
 
 
@@ -674,6 +679,7 @@ def _run_executable_probe(
     dependencies: Path | None = None,
     *,
     python: Path | None = None,
+    source_roots: tuple[Path, ...] = (),
 ) -> StageResult:
     manifest_path = root / MANIFEST_FILENAME
     jail = None
@@ -698,18 +704,25 @@ def _run_executable_probe(
     executable = str(python) if python is not None else sys.executable
     command = [executable, "-m", probe_module, str(manifest_path)]
     environment = _probe_environment()
+    paths = [str(path) for path in source_roots]
     if dependencies is not None:
         # Trusted bootstrap imports the harness before adding dependency paths.
-        paths = [path for path in sys.path if path and Path(path).is_absolute()]
-        environment["PYTHONPATH"] = os.pathsep.join([*paths, str(dependencies)])
+        paths = [
+            *(path for path in sys.path if path and Path(path).is_absolute()),
+            str(dependencies),
+            *paths,
+        ]
+    if paths:
+        environment["PYTHONPATH"] = os.pathsep.join(paths)
         if jail is None:
             command = [
                 executable,
                 "-c",
-                "import runpy, sys; "
-                f"sys.path.extend([{str(dependencies)!r}]); "
+                "import importlib, sys; "
+                f"_probe = importlib.import_module({probe_module!r}); "
+                f"sys.path.extend({paths!r}); "
                 "sys.argv = sys.argv[1:]; "
-                f"runpy.run_module({probe_module!r}, run_name='__main__')",
+                "raise SystemExit(_probe.main())",
                 probe_module,
                 str(manifest_path),
             ]
@@ -727,7 +740,7 @@ def _run_executable_probe(
                 environment_file.seek(0)
                 env_fd = environment_file.fileno()
                 completed = _run_probe_process(
-                    jail.wrap(command, root, env_fd=env_fd),
+                    jail.wrap(command, root, env_fd=env_fd, source_roots=source_roots),
                     timeout_seconds=configured.probe_timeout_seconds,
                     output_limit_bytes=configured.probe_output_limit_bytes,
                     pass_fds=(env_fd,),

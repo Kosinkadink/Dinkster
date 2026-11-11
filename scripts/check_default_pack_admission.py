@@ -456,6 +456,7 @@ def check_defaults(
         libraries = selected_library_wheels(catalog, artifacts)
         graph: dict[str, set[str]] = {}
         sources = {}
+        import_roots: dict[str, Path] = {}
         for pack in catalog.packs:
             archive = pack_archive_path(artifacts, pack.artifact_digest)
             data = archive.read_bytes()
@@ -477,6 +478,7 @@ def check_defaults(
                 source = unpack_artifact(
                     archive, work / "sources" / pack.pack, pack.artifact_digest
                 )
+                import_roots[pack.pack] = source
                 source = pack_manifest_path(source).parent
             with admission_timing(identity, "manifest-admission"):
                 _require_accepted(
@@ -543,6 +545,14 @@ def check_defaults(
                                 else run_executable_probe(source)
                             )
                         else:
+                            reachable = [name]
+                            for dependency_name in reachable:
+                                if dependency_name in sources:
+                                    for dependency in load_manifest(
+                                        sources[dependency_name][0] / "dinkster-pack.toml"
+                                    ).dependencies:
+                                        if dependency.pack not in reachable:
+                                            reachable.append(dependency.pack)
                             probe = run_locked_probe(
                                 source,
                                 locks[name],
@@ -551,6 +561,7 @@ def check_defaults(
                                 wheel_store=work / "wheels",
                                 uv_cache=work / "uv-cache",
                                 variant=variant,
+                                source_roots=tuple(import_roots[item] for item in reachable),
                             )
                         _require_accepted(probe, identity)
                     with admission_timing(identity, "fast-security"):

@@ -41,6 +41,47 @@ from dinkster_workers.provision import ProvisionError
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("include_dependency", [False, True])
+def test_locked_probe_imports_only_supplied_pack_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, include_dependency: bool
+) -> None:
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    module = root / "color_tools/__init__.py"
+    module.write_text(
+        "from declared_support import DESCRIPTION\n"
+        + module.read_text().replace(
+            'description="Adjust image color properties."', "description=DESCRIPTION"
+        )
+    )
+    dependency = tmp_path / "dependency"
+    dependency.mkdir()
+    (dependency / "declared_support.py").write_text('DESCRIPTION = "Verified dependency source"\n')
+    # Keep this transport regression independent of engine-wheel construction.
+    monkeypatch.setattr(
+        "dinkster_registry.archive_admission.provision_pack",
+        lambda *args, **kwargs: Path(sys.executable),
+    )
+    result = run_locked_probe(
+        root,
+        PackLock("color-tools", "linux-cpu", ">=3.12", (), (), ()),
+        generation_python=Path(sys.executable),
+        packs=tmp_path / "packs",
+        wheel_store=tmp_path / "wheels",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+        source_roots=(dependency,) if include_dependency else (),
+        require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1",
+    )
+    assert result.blocked is not include_dependency, result.operator_details
+    if include_dependency:
+        assert result.data is not None
+        assert result.data["schemas"][0]["schema"]["description"] == "Verified dependency source"
+    else:
+        assert any(finding.code == "entry.unresolvable" for finding in result.findings)
+
+
 def test_locked_admission_refuses_the_same_base_conflict_as_user_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
