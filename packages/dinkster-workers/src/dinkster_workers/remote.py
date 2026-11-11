@@ -62,7 +62,7 @@ from dinkster_protocol import (
     WorkGroupDefinition,
 )
 from dinkster_protocol.pack_surfaces import PackRoute
-from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, NodeSchema
+from dinkster_schema import NodeSchema
 from dinkster_values import (
     ASSET_BASE_TYPE,
     Rendition,
@@ -190,16 +190,6 @@ class RemoteWorker:
         """The remote pack's node schemas, announced by the service's hello.
         Feed these to the Engine - this machine never imports the pack."""
         return self._session.schemas
-
-    @property
-    def comfy_aliases(self) -> ComfyAliasRegistry | None:
-        """Maintained ComfyUI import translations announced by the service."""
-        return self._session.comfy_aliases
-
-    @property
-    def comfy_groups(self) -> ComfyGroupRegistry | None:
-        """ComfyUI group translations announced by the service."""
-        return self._session.comfy_groups
 
     @property
     def combo_choices(self) -> Mapping[str, tuple[str, ...]]:
