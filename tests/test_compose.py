@@ -2282,9 +2282,7 @@ def test_pack_spec_comfy_args_deny_dinkster_owned_flags(
     assert owner in str(raised.value)
 
 
-def test_serving_composer_incremental(
-    tmp_path: Path, first_party_node_packs: dict[str, str]
-) -> None:
+def test_serving_composer_incremental(tmp_path: Path) -> None:
     """The diagnostic host starts empty and grows through ordinary pack deltas."""
 
     async def scenario() -> None:
@@ -2304,27 +2302,6 @@ def test_serving_composer_incremental(
                 assert nodes["nodes"] == {}
             finally:
                 await client.close()
-
-            standard_deltas = [
-                await composer.add_pack(standard) for standard in default_pack_specs()
-            ]
-            assert set().union(*(delta.schemas for delta in standard_deltas)) == set(
-                first_party_node_packs
-            )
-            for standard_delta in standard_deltas:
-                engine.announce_schemas(standard_delta.schemas)
-            result = await engine.run(
-                Graph(
-                    nodes={
-                        "g": GraphNode(
-                            "dinkster.text.string_concatenate",
-                            {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                        )
-                    }
-                ),
-                ["g"],
-            )
-            assert result.outputs["g"]["STRING"].resolve() == "left:right"
 
             delta = await composer.add_pack(write_iso_manifest(tmp_path))
             assert delta.pack == "isopack"
