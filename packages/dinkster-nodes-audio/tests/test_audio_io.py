@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     digest_file,
 )
 from dinkster_audio.audio_io import LoadAudio, PreviewAudio, RecordAudio
+from dinkster_schema.wire import schema_to_wire
 
 
 class _Resolver:
@@ -82,6 +83,9 @@ def test_record_audio_schema_and_cold_discovery() -> None:
     assert [(slot.id, slot.type.types) for slot in schema.inputs] == [
         ("audio", (AUDIO_RECORD_TYPE,))
     ]
+    wire = schema_to_wire(schema)
+    audio = next(entry for entry in wire["interface"] if entry["id"] == "audio")
+    assert audio["widget"] == {"type": "AUDIO_RECORD"}
     assert [(slot.id, slot.type.types) for slot in schema.outputs] == [("AUDIO", (AUDIO_TYPE,))]
     package = Path(__file__).resolve().parents[1]
     checkout = package.parents[1]

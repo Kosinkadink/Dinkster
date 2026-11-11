@@ -970,7 +970,7 @@ release-publication = [
 
 [[package]]
 name = "dinkster-3d"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-3d" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1079,7 +1079,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-audio"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "packages/dinkster-nodes-audio" }
 dependencies = [
     { name = "av" },
