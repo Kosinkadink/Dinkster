@@ -589,6 +589,7 @@ def prepare_registry_inputs(
     project: Path,
     installed_lock: Path | None = None,
     additions: tuple[str, ...] = (),
+    registry_arguments: tuple[str, ...] = (),
     pack_locks: tuple[Path, ...] = (),
     prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
     preflight: Callable[[Path, Path, Path], None] | None = None,
@@ -619,7 +620,16 @@ def prepare_registry_inputs(
         catalog = scratch / "dinkster.lock"
         artifacts = scratch / "artifacts"
         output = scratch / "locks"
-        command = [str(python), "-I", "-B", "-m", "dinkster.manager", "--root", str(project)]
+        command = [
+            str(python),
+            "-I",
+            "-B",
+            "-m",
+            "dinkster.manager",
+            "--root",
+            str(project),
+            *registry_arguments,
+        ]
 
         def run(arguments: list[str]) -> dict[str, object]:
             completed = subprocess.run([*command, *arguments], capture_output=True, text=True)

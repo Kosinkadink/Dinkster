@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
+
+from dinkster_store import object_path
 
 from .environment_generations import build_generation, pack_operation, prepare_registry_inputs
 from .environment_runtime import engine_status
@@ -17,6 +21,7 @@ from .environment_state import (
     Generation,
     Journal,
     content_digest,
+    interpreter,
     read_current,
     read_document,
     relative_file,
@@ -70,7 +75,109 @@ def _current(root: Path) -> tuple[Path, Generation, Path]:
     return source, generation, store
 
 
-def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> dict[str, object]:
+def inspect_pack_install(
+    root: Path,
+    selections: tuple[str, ...],
+    *,
+    updates: tuple[str, ...] | None = None,
+    registry_arguments: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Read the active engine's published metadata without acquiring payloads or writing state."""
+    root = root.resolve()
+    source, generation, store = _current(root)
+    inputs = _project_inputs(root)
+    registry_inputs: dict[str, str] = {}
+    for flag, value in zip(registry_arguments[::2], registry_arguments[1::2], strict=True):
+        if flag == "--registries":
+            path = Path(value)
+            if path.is_symlink():
+                raise EnvironmentError("pack installation refuses linked registry configuration")
+            registry_inputs[str(path)] = content_digest(path)
+    software = content_digest(source / "generation.json")
+    command = [
+        str(interpreter(source)),
+        "-I",
+        "-B",
+        "-m",
+        "dinkster.manager",
+        "--root",
+        str(root),
+        *registry_arguments,
+        "plan-registry-sources",
+        "--engine-manifest",
+        str(source / "engine-manifest.json"),
+        "--engine-release",
+        generation.engine_release,
+        "--installed-lock",
+        str(source / "dinkster.lock"),
+        "--variant",
+        generation.variant,
+        "--base-id",
+        generation.base,
+    ]
+    for selection in selections:
+        command.extend(["--add", selection])
+    if updates is not None:
+        command.extend(["--update", *updates])
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    errors: list[str] = []
+    if result.returncode:
+        errors.append(result.stderr.strip() or result.stdout.strip())
+    base = object_path(store / "bases", generation.base) / "python"
+    if not base.is_dir() or base.is_symlink():
+        errors.append(f"retained base {generation.base} is missing or linked")
+    if errors:
+        raise EnvironmentError("published pack review refused:\n" + "\n".join(errors))
+    try:
+        raw: object = json.loads(result.stdout)
+        if not isinstance(raw, dict):
+            raise ValueError("expected an object")
+        metadata = cast("dict[str, object]", raw)
+        if (
+            metadata.get("engineRelease") != generation.engine_release
+            or metadata.get("engineVersion") != generation.engine_version
+            or metadata.get("variant") != generation.variant
+            or metadata.get("baseId") != generation.base
+            or not isinstance(metadata.get("sources"), dict)
+            or not isinstance(metadata.get("dependencyLocks"), dict)
+            or not isinstance(metadata.get("plan"), list)
+        ):
+            raise ValueError("target engine returned inconsistent identities")
+    except ValueError as exc:
+        raise EnvironmentError(f"published pack review returned invalid metadata: {exc}") from exc
+    if (
+        _project_inputs(root) != inputs
+        or any(content_digest(Path(path)) != digest for path, digest in registry_inputs.items())
+        or content_digest(source / "generation.json") != software
+        or generation.drift(source)
+    ):
+        raise EnvironmentError("project changed after planning; request a new plan")
+    return {
+        "root": str(root),
+        "store": str(store),
+        "current": generation.number,
+        "software": software,
+        "projectInputs": inputs,
+        "registryInputs": registry_inputs,
+        "metadata": metadata,
+        "ownEnvironmentBytes": sum(
+            path.stat().st_size for path in base.rglob("*") if path.is_file()
+        ),
+    }
+
+
+def plan_pack_install(
+    root: Path,
+    selections: tuple[str, ...],
+    output: Path,
+    *,
+    registry_arguments: tuple[str, ...] = (),
+) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
     if not selections or len(selections) > 64:
@@ -98,6 +205,7 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
             project=root,
             installed_lock=source / "dinkster.lock",
             additions=selections,
+            registry_arguments=registry_arguments,
         ) as (catalog, artifacts, locks, _unavailable):
             preflight = pack_operation(
                 "preflight",

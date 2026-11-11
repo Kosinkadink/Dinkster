@@ -45,12 +45,14 @@ them from the registry each entry's provenance records.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
 import platform
 import sys
 import tempfile
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -378,21 +380,181 @@ def _finish(
     print(f"activated generation {number}")
 
 
+def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, object]) -> None:
+    if set(document) != {
+        "format",
+        "root",
+        "expires",
+        "selections",
+        "updates",
+        "registryArguments",
+        "review",
+    }:
+        raise InstallError("invalid pack plan fields; request a new plan")
+    for key in ("selections", "updates", "registryArguments"):
+        value = document[key]
+        if key == "updates" and value is None:
+            continue
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise InstallError("invalid pack plan arguments; request a new plan")
+    arguments = cast("list[str]", document["registryArguments"])
+    flags = arguments[::2]
+    if (
+        len(arguments) % 2
+        or len(set(flags)) != len(flags)
+        or any(flag not in ("--registry", "--registries") for flag in flags)
+        or not isinstance(document["review"], dict)
+        or type(document["expires"]) not in (int, float)
+    ):
+        raise InstallError("invalid pack plan review; request a new plan")
+    operations = importlib.import_module("dinkster_supervisor.environment_pack_install")
+    root = Path(args.root).resolve()
+    if document.get("root") != str(root):
+        raise InstallError("pack plan belongs to another project")
+    if not time.time() < cast("float", document["expires"]) <= time.time() + 900:
+        raise InstallError("pack plan expired; request a new plan")
+    selections = tuple(cast("list[str]", document["selections"]))
+    updates = document["updates"]
+    registry_arguments = tuple(cast("list[str]", document["registryArguments"]))
+    approved = cast("dict[str, object]", document["review"])
+    try:
+        observed = operations.inspect_pack_install(
+            root,
+            selections,
+            updates=tuple(cast("list[str]", updates)) if updates is not None else None,
+            registry_arguments=registry_arguments,
+        )
+        if observed != approved:
+            raise InstallError("pack plan is stale; request a new plan")
+        metadata = cast("dict[str, object]", approved["metadata"])
+        selected = cast("dict[str, object]", metadata["dependencyLocks"])
+        sources = Lockfile.from_record_json(json.dumps(metadata["sources"]))
+        additions = tuple(
+            f"{entry.pack}@{entry.version}" for entry in sources.packs if entry.pack in selected
+        )
+        if not additions:
+            print("nothing to do; no registry packs selected")
+            return
+        with tempfile.TemporaryDirectory(prefix="dinkster-pack-review-") as directory:
+            retained = Path(directory) / "inputs"
+            result = operations.plan_pack_install(
+                root, additions, retained, registry_arguments=registry_arguments
+            )
+            prepared = result["packPlan"]
+            acquired = Lockfile.from_record_json(json.dumps(prepared["sources"]))
+            if tuple(replace(entry, claims=()) for entry in acquired.packs) != tuple(
+                replace(entry, claims=()) for entry in sources.packs
+            ) or any(
+                prepared["dependencyLocks"].get(name) != lock for name, lock in selected.items()
+            ):
+                raise InstallError("pack inputs changed after approval; request a new plan")
+            if (
+                operations.inspect_pack_install(
+                    root,
+                    selections,
+                    updates=tuple(cast("list[str]", updates)) if updates is not None else None,
+                    registry_arguments=registry_arguments,
+                )
+                != approved
+            ):
+                raise InstallError("pack plan is stale; request a new plan")
+            applied = operations.apply_pack_install(root, retained, result["approval"])
+            print(f"activated generation {applied['current']}")
+    except (OSError, ValueError) as exc:
+        raise InstallError(str(exc)) from exc
+
+
+def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> None:
+    if not args.root or not (Path(args.root) / "store").is_file():
+        raise InstallError(
+            "registry.managed-generation-required: registry installs are bound to a "
+            "base and variant; "
+            "create an active project with dinkster-env setup before installing published packs"
+        )
+    if args.no_venv or args.allow_doctor_findings or args.workspace_package or args.shared_store:
+        raise InstallError(
+            "managed published packs require their reviewed locks and generation store"
+        )
+    root = Path(args.root).resolve()
+    registry_arguments: list[str] = []
+    for flag, value in (("--registry", args.registry), ("--registries", args.registries)):
+        if value:
+            registry_arguments.extend(
+                [flag, str(Path(value).resolve()) if flag == "--registries" else value]
+            )
+    operations = importlib.import_module("dinkster_supervisor.environment_pack_install")
+    selections = () if update else tuple(args.packs)
+    updates = tuple(args.packs) if update else None
+    try:
+        review = operations.inspect_pack_install(
+            root, selections, updates=updates, registry_arguments=tuple(registry_arguments)
+        )
+    except (OSError, ValueError) as exc:
+        raise InstallError(str(exc)) from exc
+    metadata = cast("dict[str, object]", review["metadata"])
+    print(f"Project: {root}\nStore: {review['store']}\nCurrent generation: {review['current']}")
+    print(
+        f"Retain engine {metadata['engineVersion']} ({metadata['engineRelease']}); "
+        f"base {metadata['baseId']}; variant {metadata['variant']}"
+    )
+    for line in cast("list[str]", metadata["plan"]):
+        print(line)
+    for name, lock in cast("dict[str, object]", metadata["dependencyLocks"]).items():
+        identity = hashlib.sha256(json.dumps(lock, sort_keys=True).encode("ascii")).hexdigest()
+        print(f"Dependency lock: {name}; sha256:{identity}")
+    print(f"Pack payload upper bound: {metadata['maximumPackPayloadBytes']} bytes")
+    print(f"Own-environment fallback: {review['ownEnvironmentBytes']} bytes; no automatic fallback")
+    print(f"Isolation: {ISOLATION_NOTE}")
+    print(
+        "No payload acquired; apply builds and activates a fresh generation; "
+        "project data is retained"
+    )
+    document = {
+        "format": "dinkster.pack-command-plan/1",
+        "root": str(root),
+        "selections": list(selections),
+        "updates": list(updates) if updates is not None else None,
+        "registryArguments": registry_arguments,
+        "expires": time.time() + 900,
+        "review": review,
+    }
+    if args.plan_file:
+        path = Path(args.plan_file)
+        if path.resolve().is_relative_to(root) or path.resolve().is_relative_to(
+            Path(review["store"])
+        ):
+            raise InstallError("pack plan must be outside the project and shared store")
+        with path.open("x", encoding="ascii") as stream:
+            json.dump(document, stream, sort_keys=True, indent=2)
+        print(f"plan written to {path}; apply with: dinkster pack --root {root} apply {path}")
+        return
+    if not _confirmed(args):
+        print("plan not applied; nothing changed")
+        return
+    _apply_managed_pack_plan(args, document)
+
+
 def _cmd_install(args: argparse.Namespace) -> None:
+    registry = [
+        not raw.startswith(GIT_PREFIX) and parse_registry_spec(raw) is not None
+        for raw in args.packs
+    ]
+    if any(registry):
+        if not all(registry):
+            raise InstallError(
+                "published selections cannot be mixed with local/git development sources"
+            )
+        _managed_pack_changes(args)
+        return
+    if args.root and (Path(args.root) / "store").is_file():
+        raise InstallError("local/git sources require explicit development; use dinkster develop")
     installer = _installer(args)
     current = installer.current_lockfile()
     entries = {entry.pack: entry for entry in (current.packs if current is not None else ())}
     for raw in args.packs:
-        spec = None if raw.startswith(GIT_PREFIX) else parse_registry_spec(raw)
         if raw.startswith(GIT_PREFIX):
             url, ref = _parse_git_spec(raw)
             entry, _ = lock_git_pack(url, installer.artifacts_dir, ref=ref)
-        elif spec is not None:
-            raise InstallError(
-                "registry.managed-generation-required: registry installs are bound to a base "
-                "and variant; use dinkster-env setup with --catalog-lock, --artifacts and "
-                "--pack-lock inputs instead of dinkster-pack install"
-            )
         else:
             pack_dir = resolve_manifest_path(raw).parent
             entry, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
@@ -415,6 +577,9 @@ def _cmd_remove(args: argparse.Namespace) -> None:
 
 
 def _cmd_update(args: argparse.Namespace) -> None:
+    if args.root and (Path(args.root) / "store").is_file():
+        _managed_pack_changes(args, update=True)
+        return
     installer = _installer(args)
     current = installer.current_lockfile()
     if current is None:
@@ -508,6 +673,10 @@ def _cmd_apply(args: argparse.Namespace) -> None:
     path = Path(args.plan_file)
     if not path.is_file():
         raise InstallError(f"no plan file at {path}")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("format") == "dinkster.pack-command-plan/1":
+        _apply_managed_pack_plan(args, document)
+        return
     record = PlanRecord.from_record_json(path.read_text())
     installer = _installer(args, accelerator=record.accelerator or None)
     current = installer.current_lockfile()

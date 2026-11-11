@@ -133,6 +133,13 @@
   including local development packs. Updates keep recorded registry provenance
   and do not downgrade; missing releases and invalid published locks are reported
   together without acquiring pack payloads or changing the project.
+- Published pack install/update commands on an active managed project display
+  the retained engine/base/variant, exact selected identities, published locks,
+  payload upper bound and worker cost before confirmation. Non-terminal use
+  requires `--yes` or a saved plan. Declining leaves the project and store
+  unchanged. Saved reviews expire after 15 minutes and refuse changed project
+  or selection metadata; successful application activates a fresh generation.
+  Local/git selections require explicit development rather than mixed installation.
 - Managed setup and update can require a reviewed published engine and base
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying

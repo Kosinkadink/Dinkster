@@ -116,6 +116,18 @@ updates use their recorded registry and never downgrade. The JSON plan includes
 published dependency locks and a pack payload size upper bound, but acquires
 no pack archives and does not create a generation or write a cache.
 
+For an active managed project, `dinkster pack --root PROJECT install PACK@VERSION`
+reviews published pack additions or replacements against its retained engine,
+base and variant. `update [PACK ...]` reviews compatible installed registry
+updates. The terminal displays the selection, published dependency-lock identities,
+payload upper bound and worker cost before confirmation. Use `--yes` for unattended
+application, or `--plan FILE` to save the review outside the project and store.
+`dinkster pack --root PROJECT apply FILE` rechecks that review before using the
+shared generation builder and activation. Saved reviews expire after 15 minutes;
+changed project or selected release metadata requires a new review. Local/git
+sources cannot be mixed with published selections; use `dinkster develop` for
+explicit unlocked development.
+
 For a source lock containing registry packs, `prepare-registry-locks` accepts
 `--catalog-lock`, a new `--output` directory, `--variant` and the exact
 `--base-id sha256:...`. It downloads the dependency locks already published

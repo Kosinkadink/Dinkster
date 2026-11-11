@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import subprocess
@@ -38,8 +39,12 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
 
 
+@pytest.mark.parametrize("pack_route", ["supervisor", "command"])
 def test_fresh_install_engine_update_pack_install_and_exact_restore(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    pack_route: str,
 ):
     from importlib.metadata import version
 
@@ -48,7 +53,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     from dinkster_workers.pack_lock import PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_release, run_cli
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -135,19 +140,77 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             f'endpoint="http://127.0.0.1:{server.server_port}"\ndefault=true\n'
         )
         review = tmp_path / "review"
-        code, planned = _run(root, "packs-plan", "healthy@1.0.0", "--output", str(review))
-        assert code == 0, planned
-        assert len(history(root)) == 2
-        code, result = _run(
-            root,
-            "packs-apply",
-            "--input",
-            str(review),
-            "--approval",
-            planned["approval"],
-            timeout=120,
-        )
-        assert code == 0 and result["current"] == 3, result
+        if pack_route == "command":
+            store = Path((root / "store").read_text().strip())
+            before = {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file()
+            }
+            registry_config = tmp_path / "external-registries.toml"
+            registry_text = (root / "registries.toml").read_text()
+            registry_config.write_text(registry_text)
+            command = (
+                "--root",
+                str(root),
+                "--registries",
+                str(registry_config),
+                "install",
+                "healthy@1.0.0",
+            )
+            with monkeypatch.context() as terminal:
+                terminal.setattr(sys, "stdin", io.StringIO())
+                with pytest.raises(SystemExit):
+                    run_cli(*command)
+                refusal = capsys.readouterr()
+                assert "--yes" in refusal.err
+                assert "Pack payload upper bound:" in refusal.out
+                terminal.setattr(sys.stdin, "isatty", lambda: True)
+                terminal.setattr("builtins.input", lambda _: "no")
+                run_cli(*command)
+                assert "nothing changed" in capsys.readouterr().out
+            assert {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file()
+            } == before
+            run_cli(*command, "--plan", str(review))
+            capsys.readouterr()
+            saved = json.loads(review.read_bytes())
+            registry_config.write_text(registry_text + "\n# changed configuration\n")
+            with pytest.raises(SystemExit):
+                run_cli("--root", str(root), "apply", str(review))
+            assert "stale" in capsys.readouterr().err
+            registry_config.write_text(registry_text)
+            tampered = tmp_path / "tampered.json"
+            malformed = {**saved, "registryArguments": ["--help"]}
+            tampered.write_text(json.dumps(malformed))
+            with pytest.raises(SystemExit):
+                run_cli("--root", str(root), "apply", str(tampered))
+            assert "invalid pack plan" in capsys.readouterr().err
+            saved["review"]["current"] = 999
+            tampered.write_text(json.dumps(saved))
+            with pytest.raises(SystemExit):
+                run_cli("--root", str(root), "apply", str(tampered))
+            assert "stale" in capsys.readouterr().err
+            run_cli("--root", str(root), "apply", str(review))
+            assert "activated generation 3" in capsys.readouterr().out
+        else:
+            code, planned = _run(root, "packs-plan", "healthy@1.0.0", "--output", str(review))
+            assert code == 0, planned
+            assert len(history(root)) == 2
+            code, result = _run(
+                root,
+                "packs-apply",
+                "--input",
+                str(review),
+                "--approval",
+                planned["approval"],
+                timeout=120,
+            )
+            assert code == 0 and result["current"] == 3, result
         code, listed = _run(root, "history")
         assert code == 0, listed
         records = listed["history"]
