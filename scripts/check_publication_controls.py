@@ -7,14 +7,8 @@ import hashlib
 import json
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
-from dinkster_registry import LockedPack, Lockfile, artifact_digest
-from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-from dinkster_workers.pack_wheel import build_pack_archive
-
-from scripts.build_release import read_base_manifest
 from scripts.check_disposable_publication import check_publication
 
 HELPER = "dinkster-dry-run-helpers"
@@ -23,6 +17,12 @@ CONSUMER = "dinkster-dry-run-consumer"
 
 def prepare_fixture(bases: Path, output: Path, *, incompatible: bool = False) -> None:
     """Create ordinary wheels and complete locks, retaining the supplied base identities."""
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from dinkster_workers.pack_wheel import build_pack_archive
+
+    from scripts.build_release import read_base_manifest
+
     sources = output / "sources"
     sources.mkdir(parents=True)
     library = output / "library"
@@ -120,50 +120,51 @@ def prepare_fixture(bases: Path, output: Path, *, incompatible: bool = False) ->
     )
 
 
-def check_controls(bases: Path, service_image: str, publisher_image: str) -> dict:
+def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> dict:
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory(prefix="disposable-publication-controls-") as directory:
-        work = Path(directory)
-        good, broken = work / "good", work / "broken"
-        prepare_fixture(bases, good)
-        results = []
-        for reversed_order in (False, True):
-            if reversed_order:
-                path = good / "sources/official-packs.lock"
-                catalog = json.loads(path.read_bytes())
-                catalog["packs"].reverse()
-                path.write_text(json.dumps(catalog), encoding="ascii")
-            result = check_publication(
-                root,
-                good,
-                good / "index",
-                service_image,
-                publisher_image,
-            )
-            first, replay = result["submissions"]
-            if [row["pack"] for row in first] != [HELPER, CONSUMER]:
-                raise RuntimeError("publisher did not submit the library before its consumer")
-            if [row["state"] for row in replay] != ["published", "published"]:
-                raise RuntimeError("unchanged replay did not recognize every active identity")
-            results.append(result)
-        prepare_fixture(bases, broken, incompatible=True)
-        try:
-            check_publication(root, broken, broken / "index", service_image, publisher_image)
-        except RuntimeError as exc:
-            expected = f"{CONSUMER}: selected {HELPER} excludes >=2"
-            if expected not in str(exc):
-                raise
-        else:
-            raise RuntimeError("publisher accepted an incompatible selected dependency")
-        return {"orderingAndReplay": results, "incompatibleDependencyRefused": True}
+    good, broken = fixtures / "good", fixtures / "broken"
+    results = []
+    for reversed_order in (False, True):
+        if reversed_order:
+            path = good / "sources/official-packs.lock"
+            catalog = json.loads(path.read_bytes())
+            catalog["packs"].reverse()
+            path.write_text(json.dumps(catalog), encoding="ascii")
+        result = check_publication(root, good, good / "index", service_image, publisher_image)
+        first, replay = result["submissions"]
+        if [row["pack"] for row in first] != [HELPER, CONSUMER]:
+            raise RuntimeError("publisher did not submit the library before its consumer")
+        if [row["state"] for row in replay] != ["published", "published"]:
+            raise RuntimeError("unchanged replay did not recognize every active identity")
+        results.append(result)
+    try:
+        check_publication(root, broken, broken / "index", service_image, publisher_image)
+    except RuntimeError as exc:
+        expected = f"{CONSUMER}: selected {HELPER} excludes >=2"
+        if expected not in str(exc):
+            raise
+    else:
+        raise RuntimeError("publisher accepted an incompatible selected dependency")
+    return {"orderingAndReplay": results, "incompatibleDependencyRefused": True}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bases", required=True, type=Path)
-    parser.add_argument("--service-image", required=True)
-    parser.add_argument("--publisher-image", required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    prepare = commands.add_parser("prepare")
+    prepare.add_argument("--bases", required=True, type=Path)
+    prepare.add_argument("--output", required=True, type=Path)
+    check = commands.add_parser("check")
+    check.add_argument("--fixtures", required=True, type=Path)
+    check.add_argument("--service-image", required=True)
+    check.add_argument("--publisher-image", required=True)
     args = parser.parse_args()
-    print(
-        json.dumps(check_controls(args.bases.resolve(), args.service_image, args.publisher_image))
-    )
+    if args.command == "prepare":
+        prepare_fixture(args.bases.resolve(), args.output.resolve() / "good")
+        prepare_fixture(args.bases.resolve(), args.output.resolve() / "broken", incompatible=True)
+    else:
+        print(
+            json.dumps(
+                check_controls(args.fixtures.resolve(), args.service_image, args.publisher_image)
+            )
+        )

@@ -368,12 +368,19 @@ jobs:
       - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
       - name: Stage the complete scanner dependency index
         run: uv run --no-sync python -m scripts.stage_publication_probe_index --sources .official-publication/sources --output .probe-index
+      - name: Prepare publisher ordering and dependency controls before isolation
+        run: uv run --no-sync python -m scripts.check_publication_controls prepare --bases .official-publication/bases --output .publication-controls
       - uses: actions/upload-artifact@v4
         with:
           name: disposable-probe-index
           path: .probe-index
           include-hidden-files: true
           compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disposable-publication-controls
+          path: .publication-controls
           if-no-files-found: error
 
   disposable-publication:
@@ -403,8 +410,21 @@ jobs:
         with:
           name: disposable-registry-images
           path: .disposable-images
+      - uses: actions/download-artifact@v4
+        with:
+          name: disposable-publication-controls
+          path: .publication-controls
       - name: Load prebuilt images without pulling
         run: docker load --input .disposable-images/disposable-images.tar
+      - name: Check ordering, active replay and incompatible dependency refusal
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          DINKSTER_ACCELERATOR: cpu
+        run: |
+          python3 -m scripts.check_publication_controls check \
+            --fixtures .publication-controls \
+            --service-image dinkster-disposable-registry:local \
+            --publisher-image dinkster-disposable-publisher:local > disposable-controls.json
       - name: Publish selected candidates and verify active replay without external access
         env:
           CUDA_VISIBLE_DEVICES: ""
@@ -415,9 +435,12 @@ jobs:
             --service-image dinkster-disposable-registry:local \
             --publisher-image dinkster-disposable-publisher:local > disposable-publication.json
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: disposable-publication-result
-          path: disposable-publication.json
+          path: |
+            disposable-controls.json
+            disposable-publication.json
           if-no-files-found: error
 
   publish:

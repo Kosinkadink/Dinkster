@@ -2562,6 +2562,33 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
         checkout["with"]["path"],
     ]
     assert job["timeout-minutes"] == 15
+    acquisition = workflow["jobs"]["probe-index"]["steps"]
+    assert any("check_publication_controls prepare" in step.get("run", "") for step in acquisition)
+    isolated = workflow["jobs"]["disposable-publication"]["steps"]
+    controls = next(
+        index
+        for index, step in enumerate(isolated)
+        if "check_publication_controls check" in step.get("run", "")
+    )
+    publication = next(
+        index
+        for index, step in enumerate(isolated)
+        if "python3 scripts/check_disposable_publication.py" in step.get("run", "")
+    )
+    assert controls < publication
+    assert any(
+        step.get("with", {}).get("name") == "disposable-publication-controls"
+        for step in isolated[:controls]
+    )
+    # The isolated runner must not install host packages to execute staged controls.
+    help_result = subprocess.run(
+        [sys.executable, "-S", "-m", "scripts.check_publication_controls", "check", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--fixtures" in help_result.stdout
 
 
 @pytest.mark.parametrize(
