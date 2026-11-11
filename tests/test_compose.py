@@ -3252,7 +3252,7 @@ def test_failed_start_reaps_started_workers(
             .replace('types = "isopack_nodes:register_types"\n', "")
         )
         with pytest.raises(RuntimeError, match="failed to start"):
-            await compose_serving([good, bad], worker_env=WORKER_ENV)
+            await compose_serving([good, bad], include_default_packs=False, worker_env=WORKER_ENV)
         assert started
         assert all(worker in closed for worker in started)
 
