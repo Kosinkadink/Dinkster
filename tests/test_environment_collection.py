@@ -2365,7 +2365,10 @@ def test_space_report_refuses_unknown_or_encoded_allocation(
     assert report["allocatedBytes"] is None
     assert report["automaticReclaimableBytes"] is None
     assert report["additionalExplicitReclaimableBytes"] is None
-    assert report["warnings"]
+    assert any(
+        f"Allocation unavailable under {root / 'generations/2'}:" in warning
+        for warning in cast("list[str]", report["warnings"])
+    )
 
 
 @pytest.mark.parametrize("change", ["none", "reference", "store-membership"])

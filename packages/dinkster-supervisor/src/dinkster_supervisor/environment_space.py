@@ -411,7 +411,7 @@ def _allocation(
         try:
             visit(path, owner)
         except (OSError, ValueError) as exc:
-            warnings.append(str(exc))
+            warnings.append(f"Allocation unavailable under {path}: {exc}")
     for item in files.values():
         if item.allocated:
             account(item.allocated, [item], False)
