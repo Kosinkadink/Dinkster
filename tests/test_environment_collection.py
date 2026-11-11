@@ -2289,14 +2289,14 @@ def test_space_report_real_clones_are_shared_and_read_only(cleanup_project: Path
         def settle() -> None:
             for path in root.rglob("*"):
                 if path.is_file():
-                    with path.open("rb") as stream:
+                    with path.open("r+b") as stream:
                         os.fsync(stream.fileno())
 
         settle()
         baseline = space_report(root)
         size = 1024 * 1024
         source.write_bytes(bytes(range(256)) * (size // 256))
-        with source.open("rb") as stream:
+        with source.open("r+b") as stream:
             os.fsync(stream.fileno())
         try:
             if sys.platform == "linux":
