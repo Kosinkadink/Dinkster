@@ -101,7 +101,15 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
         "docs": not code,
         "engine": engine,
         "runtime": shared
-        or "tests/test_remote.py" in code
+        or any(
+            path
+            in {
+                "tests/test_remote.py",
+                "tests/test_durable_delegations.py",
+                "tests/test_produced_video_assets.py",
+            }
+            for path in code
+        )
         or any(runtime_path(path) for path in code),
         "packs": sorted(path.relative_to(root).as_posix() for path in selected & tested),
     }

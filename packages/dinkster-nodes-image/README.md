@@ -107,6 +107,5 @@ parity corpus is
 `tests/fixtures/mirror-parity/image_filter_v1.json`, regenerated with
 `uv run python tools/generate_image_filter_mirror_vector.py`.
 
-`dinkster-pack.toml` is the public composition boundary. `IMAGE_NODES`,
-`register_image_types`, and `comfy-aliases.json` are host wiring and
-translation data, not stable Python APIs for other packs.
+`dinkster-pack.toml` is the public composition boundary. `IMAGE_NODES`
+and `register_image_types` are host wiring, not stable Python APIs for other packs.
