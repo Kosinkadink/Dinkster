@@ -9,6 +9,11 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import webbrowser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +25,18 @@ def run(*args: str, cwd: Path = ROOT) -> None:
 
 def output(*args: str, cwd: Path = ROOT) -> str:
     return subprocess.check_output(args, cwd=cwd, text=True).strip()
+
+
+def open_browser_when_ready(url: str) -> None:
+    for _attempt in range(600):
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as response:
+                if response.status == 200 and json.load(response)["ok"] is True:
+                    webbrowser.open(url)
+                    return
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(0.1)
 
 
 def main() -> int:
@@ -66,18 +83,29 @@ def main() -> int:
     relative_python = "Scripts/python.exe" if windows else "bin/python"
     python = str(ROOT / ".venv" / relative_python)
     os.environ["DINKSTER_EXECUTION_PYTHON"] = python
-    run(python, "-m", "dinkster.cli", "setup")
+    home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
     launch = [
         python,
         "-m",
-        "dinkster.cli",
+        "dinkster.serve",
+        "--watch-packs",
+        "--host",
+        "127.0.0.1",
         "--port",
         str(args.port),
+        "--library-root",
+        str(home / "library"),
+        "--install-root",
+        "",
+        "--prepare-stale-catalogs",
+        "--allow-mount-changes",
         "--frontend-root",
         str(frontend / "packages/app/dist"),
     ]
-    if args.no_browser:
-        launch.append("--no-browser")
+    url = f"http://127.0.0.1:{args.port}"
+    print(f"Development editor: {url}", flush=True)
+    if not args.no_browser:
+        threading.Thread(target=open_browser_when_ready, args=(url,), daemon=True).start()
     run(*launch)
     return 0
 

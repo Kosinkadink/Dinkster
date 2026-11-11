@@ -34,8 +34,11 @@ def _wait_active(
     version: str | None,
     candidate_id: str | None,
     deadline: float,
+    artifact_digest: str | None = None,
 ) -> None:
     subject = f"{dependency.pack}@{version or dependency.version}"
+    if candidate_id is not None:
+        subject += f" (candidate {candidate_id})"
     last = "no active public version"
     while (remaining := deadline - time.monotonic()) > 0:
         path = f"/v1/packs/{quote(dependency.pack, safe='')}/versions"
@@ -65,6 +68,13 @@ def _wait_active(
                     and document.get("version") == version
                     and document.get("packName") == dependency.pack
                 ):
+                    if (
+                        artifact_digest is not None
+                        and document.get("artifact", {}).get("digest") != artifact_digest
+                    ):
+                        raise RegistryPublishError(
+                            f"{subject}: public archive digest differs from built archive"
+                        )
                     return
                 last = document.get("stateReason") or document.get("state") or last
                 break
@@ -327,10 +337,13 @@ def publish_official_packs(
             "artifactDigest": pack.artifact_digest,
             "locks": str(locks),
         }
+        result.append(row)
         if registry is not None:
             if pack.pack in public:
                 row.update(state="published")
-                result.append(row)
+                (output / "result.json").write_text(
+                    json.dumps(result, indent=2) + "\n", encoding="utf-8"
+                )
                 continue
             for dep in dependencies[pack.pack]:
                 _wait_active(
@@ -339,7 +352,12 @@ def publish_official_packs(
                     selected[dep.pack].version if dep.pack in selected else None,
                     candidates.get(dep.pack),
                     time.monotonic() + activation_timeout,
+                    selected[dep.pack].artifact_digest if dep.pack in selected else None,
                 )
+            row["state"] = "submitting"
+            (output / "result.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8"
+            )
             try:
                 verdict = publish_release(
                     registry,
@@ -355,7 +373,33 @@ def publish_official_packs(
                 ) from exc
             row.update(state=verdict.state, candidateId=verdict.candidate_id)
             candidates[pack.pack] = verdict.candidate_id
-        result.append(row)
+        (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if registry is not None:
+        deadline = time.monotonic() + activation_timeout
+        failures = []
+        for row in result:
+            pack = selected[str(row["pack"])]
+            if pack.pack not in candidates:
+                continue
+            try:
+                _wait_active(
+                    registry,
+                    PackDependency(pack.pack, "==" + pack.version),
+                    pack.version,
+                    candidates[pack.pack],
+                    deadline,
+                    pack.artifact_digest,
+                )
+            except RegistryPublishError as exc:
+                row["reason"] = str(exc)
+                failures.append(str(exc))
+            else:
+                row["state"] = "published"
+            (output / "result.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8"
+            )
+        if failures:
+            raise RegistryPublishError("Publication incomplete:\n" + "\n".join(failures))
     return result
 
 
@@ -369,18 +413,20 @@ if __name__ == "__main__":
     parser.add_argument("--check-published", action="store_true")
     parser.add_argument("--registry", default="https://registry.dinkster.org")
     args = parser.parse_args()
-    print(
-        json.dumps(
-            publish_official_packs(
-                Path(__file__).resolve().parents[1],
-                args.sources.resolve(),
-                args.base_manifest,
-                args.pack_lock,
-                args.output.resolve(),
-                registry=NamedRegistry("", args.registry, token_env="DINKSTER_REGISTRY_TOKEN")
-                if args.publish
-                else None,
-                preflight_registry=args.registry if args.check_published else None,
-            )
+    try:
+        result = publish_official_packs(
+            Path(__file__).resolve().parents[1],
+            args.sources.resolve(),
+            args.base_manifest,
+            args.pack_lock,
+            args.output.resolve(),
+            registry=NamedRegistry("", args.registry, token_env="DINKSTER_REGISTRY_TOKEN")
+            if args.publish
+            else None,
+            preflight_registry=args.registry if args.check_published else None,
         )
-    )
+    except RegistryPublishError as exc:
+        if args.output.exists():
+            (args.output / "failure.txt").write_text(str(exc) + "\n", encoding="utf-8")
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(result))

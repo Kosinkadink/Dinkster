@@ -1636,6 +1636,8 @@ def test_probe_jail_refuses_dissolving_root(tmp_path: Path) -> None:
 
     with pytest.raises(SandboxError):
         build_probe_bwrap_command(sys.executable, "/home")
+    with pytest.raises(SandboxError):
+        build_probe_bwrap_command(sys.executable, tmp_path, source_roots=(Path("/home"),))
 
 
 def test_probe_jail_wrap_applies_environment_and_rlimits_via_bootstrap(tmp_path: Path) -> None:

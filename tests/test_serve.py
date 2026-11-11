@@ -2538,9 +2538,20 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
-@pytest.mark.parametrize("failed_pack", [False, True])
+@pytest.mark.parametrize(
+    ("failed_pack", "development"),
+    [
+        (False, "published"),
+        (True, "local"),
+        (False, "captured"),
+        (False, "watched"),
+        (False, "installed-local"),
+        (False, "installed-git"),
+        (False, "installed-registry"),
+    ],
+)
 def test_serve_empty_generation_health_distinguishes_failed_selection(
-    tmp_path: Path, failed_pack: bool
+    tmp_path: Path, failed_pack: bool, development: str
 ) -> None:
     from dinkster_registry import Lockfile
 
@@ -2552,11 +2563,46 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
     (generation / "generation.json").write_text(
         json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
     )
+    if development == "captured":
+        (generation / "development-sources.json").write_text(
+            json.dumps({"format": "dinkster.development-sources/1", "sources": []})
+        )
     extra = (
         ("--no-default-packs", "--pack", str(write_iso_manifest(tmp_path / "bad", name="core")))
         if failed_pack
         else ("--generation", str(generation))
     )
+    if development == "watched":
+        extra = ("--no-default-packs", "--watch-packs")
+    if development.startswith("installed-"):
+        from dataclasses import replace
+
+        from dinkster.installer import Installer, lock_local_pack
+
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "example").mkdir()
+        (source / "example/__init__.py").write_text(
+            "from dinkster_api.v1 import Node, NodeSchema\n"
+            "class Probe(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='example.probe')\n"
+            "NODES = (Probe,)\n"
+        )
+        (source / "dinkster-pack.toml").write_text(
+            '[pack]\nname="example"\npublisher="acme"\n'
+            'version="1.0"\nengine=">=0.0.2.dev0,<1"\nnamespaces=["example"]\n'
+            '[pack.entry]\nnodes="example:NODES"\n[pack.sandbox]\n'
+        )
+        installer = Installer(tmp_path / "installed")
+        entry, _ = lock_local_pack(source, installer.artifacts_dir)
+        if development == "installed-git":
+            entry = replace(entry, source="git:https://example.invalid/pack@" + "a" * 40)
+        elif development == "installed-registry":
+            entry = replace(entry, source="registry:public", publisher="acme", version="1.0")
+        installer.apply(Lockfile.of([entry]), venvs=False)
+        extra = ("--no-default-packs", "--install-root", str(installer.root))
     port = free_port()
     log = tmp_path / "empty-generation.log"
     with log.open("wb") as output:
@@ -2572,6 +2618,8 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
             assert isinstance(packs, dict)
             if failed_pack:
                 assert packs["core"]["state"] == "failed"
+            elif development.startswith("installed-"):
+                assert packs["example"]["state"] == "announced"
             else:
                 assert packs == {}
 
@@ -2582,9 +2630,22 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                         assert (await response.json())["ok"] is (not failed_pack)
                     async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
                         assert response.status == 200
-                        assert (await response.json())["nodes"] == {}
+                        catalog = await response.json()
+                        assert set(catalog["nodes"]) == (
+                            {"example.probe"} if development.startswith("installed-") else set()
+                        )
+                        if development not in {"published", "installed-registry"}:
+                            label = catalog["dinkster"]["development"]
+                            assert label["mode"] == "development"
+                            assert label["reproducible"] is False
+                            assert "not reproducible from dependency ranges" in label["description"]
+                        else:
+                            assert "development" not in catalog["dinkster"]
 
             run_scenario(check())
+            assert ("development: not reviewed by the registry" in log.read_text()) is (
+                development not in {"published", "installed-registry"}
+            )
         except Exception as exc:
             exc.add_note(log.read_text())
             raise

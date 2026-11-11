@@ -30,6 +30,7 @@ from dinkster_api.v1 import (
     AssetError,
     AssetRef,
     AssetWriter,
+    CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
     MountSnapshotWriter,
@@ -72,7 +73,11 @@ class _Save3D(Node):
                     default="3d/ComfyUI",
                     widget=StringWidget(multiline=False),
                 ),
-                InputSpec("viewport_state", TypeExpr.concrete(LOAD_3D_TYPE)),
+                InputSpec(
+                    "viewport_state",
+                    TypeExpr.concrete(LOAD_3D_TYPE),
+                    widget=CustomWidgetDescriptor("LOAD_3D"),
+                ),
                 InputSpec(
                     "model_3d_info",
                     TypeExpr.concrete(LOAD3D_MODEL_INFO_TYPE),

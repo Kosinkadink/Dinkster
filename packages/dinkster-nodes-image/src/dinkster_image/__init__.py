@@ -6,7 +6,6 @@ from dinkster_api.v1 import (
     ASSET_TYPE,
     BOUNDING_BOXES_TYPE,
     COLOR_TYPE,
-    COMPOSITOR_TYPE,
     IMAGECOMPARE_TYPE,
     LAYERS_TYPE,
     WEBCAM_TYPE,
@@ -17,6 +16,7 @@ from dinkster_api.v1 import (
     latent_fingerprint,
     register_asset_type,
     register_box_types,
+    register_compositor_type,
     register_media_types,
     resolver_from_env,
     validate_latent_encoded,
@@ -24,7 +24,6 @@ from dinkster_api.v1 import (
 
 from .bounding_boxes import CreateBoundingBoxes
 from .image_compositor import ImageCompositor
-from .layer_recipe import coerce_delta, decode_delta, encode_delta, validate_delta_encoded
 from .layers_from_bounding_boxes import LayersFromBoundingBoxes
 from .ported import NODES as PORTED_NODES
 from .webcam import WebcamCapture
@@ -45,16 +44,7 @@ def register_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env(), type_id=WEBCAM_TYPE)
     register_media_types(registry)
     register_box_types(registry)
-    if COMPOSITOR_TYPE not in registry:
-        registry.register(
-            COMPOSITOR_TYPE,
-            encode=encode_delta,
-            decode=decode_delta,
-            coerce=coerce_delta,
-            meta=lambda obj: {"version": coerce_delta(obj)["version"]},
-            validate_encoded=validate_delta_encoded,
-            asset_references_complete=True,
-        )
+    register_compositor_type(registry)
     for type_id in (BOUNDING_BOXES_TYPE, COLOR_TYPE, IMAGECOMPARE_TYPE):
         if type_id not in registry:
             registry.register(type_id)

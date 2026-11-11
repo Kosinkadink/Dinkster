@@ -19,6 +19,7 @@ from dinkster_api.v1 import (
     AbsentOutput,
     AssetRef,
     AssetWidget,
+    CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
     Node,
@@ -49,7 +50,11 @@ class Load3D(Node):
                     widget=AssetWidget(kind="media/model3d", allow_upload=True),
                     source_filename=SourceFilenameSpec("media/model3d", "input"),
                 ),
-                InputSpec("image", TypeExpr.concrete(LOAD_3D_TYPE)),
+                InputSpec(
+                    "image",
+                    TypeExpr.concrete(LOAD_3D_TYPE),
+                    widget=CustomWidgetDescriptor("LOAD_3D"),
+                ),
                 *(
                     InputSpec(
                         axis,

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import subprocess
 from email.parser import BytesParser
 from pathlib import Path
 from typing import cast
 from zipfile import BadZipFile, ZipFile
 
+import packaging
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
@@ -21,6 +25,104 @@ _HASH = re.compile(r"(?<!\S)--hash=sha256:([0-9a-f]{64})(?=\s|$)")
 def requirement_hashes(requirements: str) -> frozenset[str]:
     """Keep every hashed alternative, including other-platform marker rows."""
     return frozenset(_HASH.findall(requirements.replace("\\\n", "").replace("\\\r\n", "")))
+
+
+def wheel_compatibility(python: Path) -> dict[str, object]:
+    """Inspect target compatibility without loading its installed distributions."""
+    script = (
+        "import json, sys; sys.path.insert(0, sys.argv[1]); "
+        "from packaging.tags import sys_tags; "
+        "from packaging.markers import default_environment; "
+        "print(json.dumps({'tags': [str(tag) for tag in sys_tags()], "
+        "'markers': default_environment()}))"
+    )
+    result = subprocess.run(
+        [str(python), "-I", "-S", "-c", script, str(Path(packaging.__file__).parent.parent)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode:
+        raise EnvironmentError(f"cannot inspect wheel compatibility: {result.stderr.strip()}")
+    return cast("dict[str, object]", json.loads(result.stdout))
+
+
+def selected_wheel_rows(
+    requirements: str, wheels: list[dict[str, object]], compatibility: dict[str, object]
+) -> list[dict[str, object]]:
+    """Select the same immutable wheel identities for preview and construction."""
+    tags = {tag: rank for rank, tag in enumerate(cast("list[str]", compatibility["tags"]))}
+    candidates: dict[str, list[tuple[int, str, str, Version, dict[str, object]]]] = {}
+    for row in wheels:
+        filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+        try:
+            name, version, _, wheel_tags = parse_wheel_filename(filename)
+        except InvalidWheelFilename:
+            continue
+        ranks = [tags[str(tag)] for tag in wheel_tags if str(tag) in tags]
+        if ranks:
+            candidates.setdefault(name, []).append((min(ranks), filename, sha, version, row))
+    selected: list[dict[str, object]] = []
+    for line in requirements.replace("\\\r\n", "").replace("\\\n", "").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        try:
+            requirement = Requirement(_HASH.sub("", line).strip())
+        except InvalidRequirement as exc:
+            raise EnvironmentError("engine constraints contain an invalid requirement") from exc
+        if requirement.marker is not None and not requirement.marker.evaluate(
+            cast("dict[str, str]", compatibility["markers"])
+        ):
+            continue
+        versions = list(requirement.specifier)
+        hashes = set(_HASH.findall(line))
+        if (
+            requirement.url is not None
+            or len(versions) != 1
+            or versions[0].operator != "=="
+            or "*" in versions[0].version
+            or not hashes
+        ):
+            raise EnvironmentError("engine requirements must use exact version pins and hashes")
+        name = canonicalize_name(requirement.name)
+        for _, filename, sha, version, row in sorted(
+            candidates.get(name, ()), key=lambda candidate: candidate[:3]
+        ):
+            if version not in requirement.specifier or sha not in hashes:
+                continue
+            selected.append({"filename": filename, "size": row["size"], "sha256": sha})
+            break
+        else:
+            raise EnvironmentError(f"offline generation wheel missing or corrupt: {requirement}")
+    return sorted(selected, key=lambda row: cast("str", row["filename"]))
+
+
+def selected_wheel_requirements(
+    python: Path, requirements: str, directories: list[Path]
+) -> tuple[str, list[dict[str, object]]]:
+    """Choose verified compatible bytes, then pin sync to those exact local URLs."""
+    paths: dict[tuple[str, str], Path] = {}
+    rows: list[dict[str, object]] = []
+    for path in sorted({path for directory in directories for path in directory.glob("*.whl")}):
+        sha = path.parent.name
+        if re.fullmatch(r"[0-9a-f]{64}", sha) is None:
+            with path.open("rb") as stream:
+                sha = hashlib.file_digest(stream, "sha256").hexdigest()
+        identity = (path.name, sha)
+        if identity not in paths:
+            paths[identity] = path
+            rows.append({"filename": path.name, "size": path.stat().st_size, "sha256": sha})
+    selected = selected_wheel_rows(requirements, rows, wheel_compatibility(python))
+    pins: list[str] = []
+    for row in selected:
+        filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+        path = paths[filename, sha]
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != sha:
+                raise EnvironmentError(f"offline generation wheel missing or corrupt: {filename}")
+        name = parse_wheel_filename(filename)[0]
+        pins.append(f"{name} @ {path.resolve().as_uri()} --hash=sha256:{sha}")
+    return "\n".join(pins) + "\n", selected
 
 
 def validate_base_requirements(

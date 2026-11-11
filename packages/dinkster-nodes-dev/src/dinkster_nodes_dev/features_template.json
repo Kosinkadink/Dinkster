@@ -1,0 +1,45 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "dev-node-features",
+  "root": "root",
+  "graphs": {
+    "root": {
+      "id": "root",
+      "name": "Node Feature Examples",
+      "nodes": {
+        "slot": {"id": "slot", "type": "dev.features.slot", "values": {"source": 7}, "dynamic": {"source": {"selected": "integer"}}},
+        "count": {"id": "count", "type": "dev.features.output_count", "values": {"count": 3, "start": 10}},
+        "conditional": {"id": "conditional", "type": "dev.features.conditional", "values": {}},
+        "widgets": {"id": "widgets", "type": "dev.features.widget_kinds", "values": {}},
+        "representations": {"id": "representations", "type": "dev.features.representations", "values": {}},
+        "descriptors": {"id": "descriptors", "type": "dev.features.output_descriptors", "values": {"entries": "{\"entries\":[{\"id\":\"answer\",\"name\":\"Answer\",\"type\":\"integer\"}]}"}},
+        "source": {"id": "source", "type": "dev.features.image_source", "values": {}},
+        "mirror": {"id": "mirror", "type": "dev.features.mirror", "values": {"gain": 0.5}}
+      },
+      "links": {
+        "image": {"id": "image", "from": {"node": "source", "port": "image"}, "to": {"node": "mirror", "port": "image"}}
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 10
+    }
+  },
+  "view": {
+    "graphs": {
+      "root": {
+        "nodes": {
+          "slot": {"position": {"x": 40, "y": 50}},
+          "count": {"position": {"x": 400, "y": 50}},
+          "conditional": {"position": {"x": 760, "y": 50}},
+          "widgets": {"position": {"x": 40, "y": 380}},
+          "representations": {"position": {"x": 400, "y": 380}},
+          "descriptors": {"position": {"x": 760, "y": 380}},
+          "source": {"position": {"x": 40, "y": 750}},
+          "mirror": {"position": {"x": 400, "y": 750}}
+        }
+      }
+    }
+  },
+  "meta": {"title": "Node Feature Examples"}
+}

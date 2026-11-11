@@ -10,6 +10,7 @@ import sys
 import tempfile
 from contextlib import ExitStack
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from platform import machine
@@ -67,6 +68,7 @@ from .environment_runtime import (
     stop_engine,
     validate_assignment,
 )
+from .environment_space import space_report
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -125,6 +127,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     current = read_current(root)
     result["current"] = current
+    if args.operation == "space":
+        result["space"] = space_report(root)
+        return 0
     if args.operation == "history":
         entries = history(root)
         for entry in entries:
@@ -1109,15 +1114,15 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if "artifact-sources.json" in expected
                 else None,
             )
-            added_locks = {
+            added_pack_metadata = {
                 name
                 for name, _ in repaired.files
                 if len(Path(name).parts) == 3
                 and Path(name).parts[0] == "packs"
-                and Path(name).parts[2] == "pack-lock.json"
+                and Path(name).parts[2] in {"pack-lock.json", "installed-wheels.json"}
                 and name not in expected
             }
-            if set(dict(repaired.files)) - added_locks != set(expected):
+            if set(dict(repaired.files)) - added_pack_metadata != set(expected):
                 raise EnvironmentError(
                     "repaired file inventory differs from the retained generation"
                 )
@@ -1372,7 +1377,7 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> None:
+def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, required=True, help="absolute prospective project root"
@@ -1387,6 +1392,7 @@ def main(argv: list[str] | None = None) -> None:
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
+    space = commands.add_parser("space", help="observe managed software disk allocation")
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -1490,6 +1496,7 @@ def main(argv: list[str] | None = None) -> None:
         tools,
         catalog,
         status,
+        space,
         packs_plan,
         packs_apply,
         doctor,
@@ -1506,9 +1513,10 @@ def main(argv: list[str] | None = None) -> None:
         move,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
-    args = parser.parse_args(argv)
-    if not args.root.is_absolute():
-        parser.error("--root must be absolute")
+    return parser if operation is None else commands.choices[operation]
+
+
+def run(args: argparse.Namespace) -> int:
     result: dict[str, object] = {
         "format": "dinkster.environment-result/1",
         "operation": args.operation,
@@ -1621,9 +1629,96 @@ def main(argv: list[str] | None = None) -> None:
             print(
                 json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
             )
+        if args.operation == "space" and code == 0:
+            report = cast("dict[str, object]", result["space"])
+
+            def size(value: object) -> str:
+                if type(value) is not int:
+                    return "unavailable"
+                amount = float(value)
+                for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+                    if amount < 1024:
+                        return f"{amount:.2f} {unit} ({value} bytes)"
+                    amount /= 1024
+                return f"{amount:.2f} PiB ({value} bytes)"
+
+            print("Managed software disk space (read-only)")
+            print(f"Project: {report['project']}")
+            print(f"Shared store: {report['store'] or 'not configured'}")
+            observed = datetime.fromtimestamp(
+                cast("int", report["observedAt"]) / 1_000_000_000, UTC
+            )
+            print(
+                f"Observed: {observed.isoformat()}; "
+                f"{'complete' if report['complete'] else 'incomplete'}"
+            )
+            print(f"Total allocated: {size(report['allocatedBytes'])}")
+            print(f"Shared allocation counted once: {size(report['sharedAllocatedBytes'])}")
+            print(report["scope"])
+            print(report["sharing"])
+            groups = cast("dict[str, dict[str, object]]", report["groups"])
+            for row in cast("list[dict[str, object]]", report["generations"]):
+                group = groups[cast("str", row["allocationGroup"])]
+                print(
+                    f"Generation {row['generation']} ({row['status']}): "
+                    f"exclusive {size(group['exclusiveAllocatedBytes'])}; "
+                    f"shared {size(group['sharedAllocatedBytes'])}"
+                )
+                for reason in cast("list[str]", row["reasons"]):
+                    print(f"  {reason}")
+            for row in cast("list[dict[str, object]]", report["stores"]):
+                group = groups[cast("str", row["allocationGroup"])]
+                print(
+                    f"{row['label']}: exclusive {size(group['exclusiveAllocatedBytes'])}; "
+                    f"shared {size(group['sharedAllocatedBytes'])}"
+                )
+                for reason in cast("list[str]", row["reasons"]):
+                    print(f"  {reason}")
+            for name, group in groups.items():
+                if name.startswith("project/") or name == "generation-quarantine":
+                    label = (
+                        "Software history and settings"
+                        if name.startswith("project/")
+                        else "Generation quarantine"
+                    )
+                    print(
+                        f"{label} (protected): exclusive {size(group['exclusiveAllocatedBytes'])}; "
+                        f"shared {size(group['sharedAllocatedBytes'])}"
+                    )
+            print(f"Automatic cleanup can release now: {size(report['automaticReclaimableBytes'])}")
+            print(
+                f"Eligible generation backlog: {size(report['eligibleGenerationReclaimableBytes'])}"
+            )
+            print(
+                "Explicit cleanup can release additionally: "
+                f"{size(report['additionalExplicitReclaimableBytes'])}"
+            )
+            policy = cast("dict[str, object]", report["policy"])
+            print(
+                f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
+                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+            )
+            print(f"Change settings: {report['settingsCommand']}")
+            print(report["settingsHelp"])
+            for key in (
+                "warnings",
+                "cleanupWarnings",
+                "eligibilityWarnings",
+                "reclaimabilityWarnings",
+            ):
+                for warning in cast("list[str]", report[key]):
+                    print(f"Warning: {warning}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
-    raise SystemExit(code)
+    return code
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argument_parser()
+    args = parser.parse_args(argv)
+    if not args.root.is_absolute():
+        parser.error("--root must be absolute")
+    raise SystemExit(run(args))
 
 
 if __name__ == "__main__":

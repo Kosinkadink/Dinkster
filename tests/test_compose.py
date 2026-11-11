@@ -42,6 +42,7 @@ from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import Node, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.manifest import resolve_entry
@@ -278,6 +279,71 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     pool = ResidentPool()
     monkeypatch.setattr("dinkster.compose.default_pool", lambda: pool)
     return pool
+
+
+@pytest.mark.parametrize(
+    "compositor_value, width",
+    [
+        ({"version": 2, "documentDigest": None, "commands": []}, 7),
+        ({}, 7),
+        (None, 7),
+        (
+            {
+                "version": 2,
+                "documentDigest": None,
+                "commands": [{"op": "canvas", "changes": {"width": 5}}],
+            },
+            5,
+        ),
+    ],
+)
+def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta(
+    compositor_value: object, width: int
+) -> None:
+    import numpy as np
+
+    async def scenario() -> None:
+        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
+        assert not image.in_process
+        assert prepare_catalog(image.manifest, environment=os.environ).ok
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(image)
+            assert composer._records["dinkster-image"].worker.cold
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "image": GraphNode(
+                            "dinkster.image.empty_image",
+                            {"width": 7, "height": 3, "batch_size": 1, "color": 0x123456},
+                        ),
+                        "layer": GraphNode(
+                            "dinkster.image.add_layer", {"image": Link("image", "IMAGE")}
+                        ),
+                        "compose": GraphNode(
+                            "dinkster.image.image_compositor",
+                            {
+                                "layers": Link("layer", "LAYERS"),
+                                **(
+                                    {"compositor": compositor_value}
+                                    if compositor_value is not None
+                                    else {}
+                                ),
+                            },
+                        ),
+                    }
+                ),
+                ["compose"],
+            )
+            pixels = np.asarray(image_input(result.outputs["compose"]["IMAGE"].resolve()))
+            assert pixels.shape == (1, 3, width, 3)
+            expected = np.broadcast_to(np.asarray([0x12, 0x34, 0x56]), pixels.shape)
+            np.testing.assert_array_equal(np.rint(pixels * 255).astype(np.uint8), expected)
+            assert result.diagnostics == ()
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
 
 
 def write_iso_manifest(
@@ -753,7 +819,9 @@ def test_compose_serving_default_resolution_is_atomic(
     ("pack_id", "directory", "expected_version"),
     [
         ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.5"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.7"),
+        ("dinkster-audio", "dinkster-nodes-audio", "0.0.4"),
+        ("dinkster-3d", "dinkster-nodes-3d", "0.0.4"),
         ("dinkster-models", "dinkster-nodes-models", "0.0.5"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
@@ -1446,7 +1514,9 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             CompositionError,
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
         ):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -1644,7 +1714,7 @@ def test_compose_rejects_uncovered_node_type(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, presentation=False, namespaces=None)
         with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
-            await compose_serving([manifest], worker_env=WORKER_ENV)
+            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -2789,7 +2859,7 @@ def test_failed_start_reaps_started_workers(
             .replace('types = "isopack_nodes:register_types"\n', "")
         )
         with pytest.raises(RuntimeError, match="failed to start"):
-            await compose_serving([good, bad], worker_env=WORKER_ENV)
+            await compose_serving([good, bad], include_default_packs=False, worker_env=WORKER_ENV)
         assert started
         assert all(worker in closed for worker in started)
 
@@ -2861,7 +2931,7 @@ def test_pack_spec_attribution_outside_table_fails(tmp_path: Path) -> None:
             attribute=lambda nt: "elsewhere",
         )
         with pytest.raises(CompositionError, match="not among this spec's pack"):
-            await compose_serving([spec])
+            await compose_serving([spec], include_default_packs=False)
 
     run_scenario(scenario())
 
@@ -2900,7 +2970,7 @@ def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
             attribute=lambda nt: "pack-b",
         )
         with pytest.raises(CompositionError, match="different info"):
-            await compose_serving([first, second])
+            await compose_serving([first, second], include_default_packs=False)
 
     run_scenario(scenario())
 

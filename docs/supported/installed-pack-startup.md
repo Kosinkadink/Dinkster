@@ -1,5 +1,22 @@
 ## Installed pack startup
 
+- Pack installation, retained rollback and serving selection enforce locally
+  cached verified security notices. Known malicious artifacts and explicitly
+  denied vulnerable releases refuse without deleting retained bytes or changing
+  the active selection. Retained vulnerable releases remain usable while their
+  decision is pending; a new vulnerable release requires exact-notice approval.
+  These checks do not fetch notices or stop an already running worker.
+- Managed engine and pack environments retain the exact selected wheel identities and
+  distinguish them from unused lock alternatives and inherited dependencies.
+  The records are sealed with the generation and preserved in software snapshots.
+- Managed generation pack selection checks cached notices against sealed library
+  identities and transitive pack sources. A malicious dependency blocks its
+  consumer as affected, not malicious. Missing or changed wheel provenance refuses
+  selection when security checking is configured. This is not a supervisor
+  launch gate or a running-worker monitor.
+- Verified ownership notices accept an explicit operator-owned previous owner.
+  An omitted previous owner, empty new publisher or unchanged owner is refused
+  without losing cached release notices.
 - Plain `pip install dinkster` supports CLI, catalog serving and torch-free
   packs without installing torch or the inference runtime. Install
   `dinkster[inference]` for in-process inference packs; missing inference
@@ -45,7 +62,9 @@
 - Software restore rebuilds isolated and in-process pack dependencies from the
   snapshot's complete locks, including after its old generation was pruned;
   it does not inherit packs from the current generation.
-- Software history records the generation interpreter's wheel compatibility tags.
+- Software history records the generation interpreter's wheel compatibility tags
+  and requirement markers. Replacement previews identify the exact selected
+  engine/base wheels; reconstruction must retain those identities.
   Restore planning reports missing pack dependency wheels before activation,
   honors inherited base/engine and in-process dependencies, and verifies retained
   wheel bytes without creating project or cache files.
@@ -171,8 +190,11 @@
   Prepared maps do not imply scanner acceptance or live default availability.
 - Default-set admission checks resolve registry archives against the engine
   under test and require every pack to pass the registry scanner, including
-  the isolated executable probe. Missing defaults, rejected packs and security
-  review requirements fail the check without publishing any pack.
+  the isolated executable probe. Published defaults use their verified dependency
+  locks on the named managed base, without package-index dependency resolution.
+  A missing lock, changed artifact or incompatible base refuses admission.
+  Missing defaults, rejected packs and security review requirements fail the
+  check without publishing any pack.
 - Selected-archive behavioral tests use each first-party pack's independent
   distribution, including vision packs. They verify selected source provenance
   and refuse checkout fallbacks or replacement of engine-owned tests.
@@ -417,6 +439,24 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env --root ROOT space --json` observes managed generation and shared
+  store allocation without collecting or changing cleanup settings. Linux uses
+  physical extents, counts hardlinks and overlapping clone extents once, and
+  separates shared bytes from exclusive rows. It reports automatic cleanup
+  policy, generation retention reasons, eligible backlog and additional explicit
+  cleanup allocation. User libraries are excluded. Unsupported, changing,
+  delayed or encoded allocation is unavailable, not replaced by logical file
+  sizes. Shared clone references outside the scan make reclaimability unknown.
+  Protected software history and settings are included separately from disposable
+  generations and stores. Shared-store metadata includes registrations and cached
+  channel, engine and base manifests, without treating them as reclaimable.
+  Empty shared-store categories remain visible. Without
+  `--json`, the command shows the same report with IEC units, exact byte counts,
+  retention reasons and settings guidance.
+  Windows uses native allocation and file identities, including resident data,
+  and checks the volume's clone capability before counting shared extents.
+  Unreadable allocation, reparse points and named streams make sizes unavailable;
+  they are never silently omitted or replaced with logical sizes.
 - `dinkster-env cleanup --plan` reports retained, candidate and deferred
   generation numbers with reasons without recovering or modifying the project.
   Status includes the same preview and visible pending quarantine warnings.
@@ -481,6 +521,10 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
+- Source run scripts explicitly select watched checkout development without
+  invoking published setup or loading a standalone installed-pack root. The
+  terminal and node catalog label the source session as unreviewed and not
+  reproducible from dependency ranges; the browser opens after health succeeds.
 - A pip-installed engine has no implicit official pack selection. Managed
   generations serve their admitted registry sources. Checkout development
   selects verified local sources with each pack's declared version, without
@@ -640,11 +684,19 @@
 
 ### Development generations from local folders
 
+Standalone local-folder and `git+URL[@REF]` pack installs remain available as
+development inputs without a published dependency lock. Their plans report
+range resolution and lack of registry review. Serving an installed local/git
+selection, or an explicit local pack, labels both command output and the node
+catalog as development and not reproducible from ranges. A registry-only
+selection does not gain that label, and standalone install refuses a registry
+version rather than resolving it as development.
+
 Select local software explicitly; nothing needs publishing first:
 
 ```sh
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
 dinkster-env --root /absolute/project status
 dinkster-env --root /absolute/project doctor
 dinkster-env --root /absolute/project start --yes

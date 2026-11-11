@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     document_meta,
     flatten,
     from_comfy_layers,
+    materialize_latent,
     ordered_layer_ids,
     validate_image_document_encoded,
 )
@@ -41,7 +42,7 @@ def migrate_layers(obj: object) -> ImageDocument:
     if isinstance(obj, ImageDocument):
         return obj
     if isinstance(obj, Mapping):
-        return from_comfy_layers(cast(Mapping[str, Any], obj))
+        return from_comfy_layers(materialize_latent(cast(Mapping[str, Any], obj)))
     elif isinstance(obj, LayerStack):
         sources = obj.expanded()
         width = obj.canvas_width or max(
