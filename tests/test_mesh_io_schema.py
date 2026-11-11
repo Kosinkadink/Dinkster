@@ -67,7 +67,6 @@ assert set(schema.inputs[0].type.types) == {
 assert [(slot.id, slot.type.types) for slot in schema.outputs] == [('splat', ('SPLAT',))]
 assert 'dinkster_3d.mesh_gltf_read' not in sys.modules
 assert 'dinkster_3d.mesh_file_read' not in sys.modules
-assert 'dinkster_native.model3d.mesh' not in sys.modules
 for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud):
     assert NODES.count(node) == 1 and node.schema().node_type.startswith("dinkster.3d.")
     schema = node.schema()

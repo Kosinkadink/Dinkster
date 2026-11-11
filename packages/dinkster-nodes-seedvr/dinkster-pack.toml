@@ -4,7 +4,7 @@ version = "0.0.3"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.seedvr"]
-requires = ["torch", "dinkster-inference==0.1.1", "numpy"]
+requires = ["torch", "dinkster-inference", "numpy"]
 
 [pack.sandbox]
 gpu = true

@@ -4,7 +4,7 @@ version = "0.0.5"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.hidream"]
-requires = ["dinkster-inference==0.1.1", "torch", "dinkster-pack-helpers>=0.0.2,<1"]
+requires = ["dinkster-inference", "torch", "dinkster-pack-helpers>=0.0.2,<1"]
 
 [pack.sandbox]
 gpu = true

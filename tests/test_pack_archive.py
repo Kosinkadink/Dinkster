@@ -328,7 +328,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
             "torchvision",
             "scipy",
             "kornia",
-            "dinkster-inference==0.1.1",
+            "dinkster-inference",
         ),
         "dinkster-nodes-remote": ("httpx>=0.28,<1",),
     }
@@ -1713,7 +1713,7 @@ def test_official_publication_declarations_match_archive_admission(
                 "0.0.2",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
-                    "dinkster-inference==0.1.1",
+                    "dinkster-inference",
                     "numpy>=1.26",
                     "pillow>=10",
                     "torch",

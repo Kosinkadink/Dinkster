@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dinkster_assets import AssetError, require_digest, validate_vae_hint_field
 from dinkster_memory.resident import ResidentPool as GenericResidentPool
 
-from .devices import comfy_resident_meta
+from .device_memory import comfy_resident_meta
 
 
 def _source_text(value: str | None, field: str) -> str | None:

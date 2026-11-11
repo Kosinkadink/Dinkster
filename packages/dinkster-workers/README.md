@@ -40,6 +40,12 @@ the jail changes what a hostile import can do, not what the report means.
 
 ## Use
 
+Worker-side inference adapters live here: `reservations` plans invocation
+budgets, `resident_pool` retains VAE provenance, and `device_memory` measures
+device costs. `attention` and `multigpu` configure the process-local inference
+runtime; `legacy_sources` converts weights-only checkpoints on demand. The
+host loads inference adapters lazily, so torch-free workers remain usable.
+
 Generation-layered dependency provisioning uses per-variant, hashed pack locks.
 See [Pack dependency locks](PACK-LOCK.md) for the format, opencv aliases and
 publisher/planner/provisioner interfaces.

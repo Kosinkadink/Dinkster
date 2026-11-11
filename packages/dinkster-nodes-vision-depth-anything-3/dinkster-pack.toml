@@ -5,7 +5,7 @@ engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.depth.anything.3"]
 type-namespaces = ["DA3_MODEL", "DA3_GEOMETRY"]
-requires = ["torch", "dinkster-inference==0.1.1"]
+requires = ["torch", "dinkster-inference"]
 
 [pack.sandbox]
 gpu = true

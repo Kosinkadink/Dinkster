@@ -181,7 +181,7 @@ def _legacy_checkpoint_conversion_capable() -> bool:
     try:
         return all(
             importlib.util.find_spec(module) is not None
-            for module in ("dinkster_native", "torch", "safetensors.torch")
+            for module in ("torch", "safetensors.torch")
         )
     except Exception:  # noqa: BLE001 - unavailable optional components omit capability
         return False
@@ -190,7 +190,7 @@ def _legacy_checkpoint_conversion_capable() -> bool:
 def _convert_legacy_checkpoint(path: Path, logical_name: str) -> tuple[str, str | None]:
     """Run the native weight converter and classify its stable result."""
     try:
-        legacy_sources = importlib.import_module("dinkster_native.legacy_sources")
+        legacy_sources = importlib.import_module("dinkster_workers.legacy_sources")
     except Exception as exc:  # noqa: BLE001 - unavailable worker runtime is retryable
         return "error", f"{type(exc).__name__}: {exc}"
     try:
@@ -221,7 +221,7 @@ def _discover_attention_runtime(
     import_module: Callable[[str], object] = importlib.import_module,
 ) -> tuple[object | None, AttentionCapabilityEvidence | None, AttentionRouteToken | None]:
     try:
-        module = import_module("dinkster_native.attention")
+        module = import_module("dinkster_workers.attention")
         factory = getattr(module, "create_attention_runtime", None)
         if not callable(factory):
             raise AttentionRouteDiscoveryError("native attention runtime has no factory")

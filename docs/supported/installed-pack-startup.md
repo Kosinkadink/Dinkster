@@ -1,5 +1,10 @@
 ## Installed pack startup
 
+- Plain `pip install dinkster` supports CLI, catalog serving and torch-free
+  packs without installing torch or the inference runtime. Install
+  `dinkster[inference]` for in-process inference packs; missing inference
+  dependencies report that extra rather than installing them implicitly.
+  Managed generations and contributor setup retain inference support.
 - Static-only registry installs support both the release catalog and the split
   catalog with per-pack version files. Selection and acquisition share a snapshot
   within each operation; the next operation reads current publication state.

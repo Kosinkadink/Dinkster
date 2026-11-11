@@ -294,6 +294,8 @@ def write_constraints(
                 "export",
                 "--locked",
                 "--all-packages",
+                "--extra",
+                "inference",
                 "--no-dev",
                 "--group",
                 "engine-base",
@@ -530,6 +532,9 @@ def build(
     base_manifests: list[Path] | None = None,
     payload_artifacts: list[Path] | None = None,
 ) -> dict[str, object]:
+    from tools.verify_pinned_inference import pinned_requirement
+
+    pinned_requirement(root)
     version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
     if output.exists() and any(output.iterdir()):

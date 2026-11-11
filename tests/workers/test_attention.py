@@ -9,7 +9,7 @@ import pytest
 
 torch = cast("Any", pytest.importorskip("torch"))
 
-from dinkster_native import attention  # noqa: E402
+from dinkster_workers import attention  # noqa: E402
 
 
 def test_attention_runtime_starts_on_cpu_without_comfy_arguments() -> None:
@@ -17,7 +17,7 @@ def test_attention_runtime_starts_on_cpu_without_comfy_arguments() -> None:
         [
             sys.executable,
             "-c",
-            "from dinkster_native.attention import create_attention_runtime; "
+            "from dinkster_workers.attention import create_attention_runtime; "
             "runtime = create_attention_runtime(); "
             "import dinkster_inference.model_management as memory; "
             "assert memory.get_torch_device().type == 'cpu'; "
@@ -38,7 +38,7 @@ def test_attention_runtime_resolves_upstream_named_attention() -> None:
             "-c",
             """
 import torch
-from dinkster_native import attention
+from dinkster_workers import attention
 
 runtime = attention.create_attention_runtime()
 assert "sdpa" in runtime.capabilities.available_policies
@@ -244,7 +244,7 @@ def test_sampling_clone_resolves_distributed_activation_at_consumption(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_api.v1 import prepare_sampling_model
-    from dinkster_native import multigpu
+    from dinkster_workers import multigpu
     from dinkster_workers.execution import ExecutionContext, use_execution_context
 
     class Model:

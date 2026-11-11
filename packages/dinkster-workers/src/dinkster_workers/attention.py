@@ -1,4 +1,4 @@
-"""Process-owned attention routing for fork-backed sampling."""
+"""Worker-process attention routing for fork-backed sampling."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from dinkster_protocol import (
     AttentionRouteToken,
     derive_attention_route_token,
 )
+
 from dinkster_workers import current_execution_context
 
 torch = cast("Any", importlib.import_module("torch"))
