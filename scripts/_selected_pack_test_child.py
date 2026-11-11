@@ -111,7 +111,7 @@ def main() -> int:
         print(f"Selected module {module}: {spec.origin}", flush=True)
     if len(sys.argv) > 2 and sys.argv[2] == "--check-only":
         return 0
-    identity = config["testPack"]
+    identity = config.get("testPack", "selected-tests")
     with admission_timing(identity, "child-provenance"):
         subprocess.run(
             [
