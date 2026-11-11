@@ -881,14 +881,15 @@ def test_default_admission_separates_expensive_children_without_changing_selecti
     )
     groups = result["groups"]
     assert isinstance(groups, list)
-    assert len(groups) == 10
+    assert len(groups) == 13
     assert all(groups)
     assert sorted(name for group in groups for name in group) == sorted(
         entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
     )
     assert ["dinkster-3d"] in groups
-    assert ["dinkster-image", "dinkster-latent"] in groups
-    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert ["dinkster-image"] in groups
+    assert ["dinkster-video"] in groups
+    assert ["dinkster-audio"] in groups
     assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
 
 
