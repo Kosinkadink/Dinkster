@@ -386,7 +386,9 @@
   delayed or encoded allocation is unavailable, not replaced by logical file
   sizes. Shared clone references outside the scan make reclaimability unknown.
   Protected software history and settings are included separately from disposable
-  generations and stores. Empty shared-store categories remain visible. Without
+  generations and stores. Shared-store metadata includes registrations and cached
+  channel, engine and base manifests, without treating them as reclaimable.
+  Empty shared-store categories remain visible. Without
   `--json`, the command shows the same report with IEC units, exact byte counts,
   retention reasons and settings guidance.
   Windows uses native allocation and file identities, including resident data,

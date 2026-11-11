@@ -523,7 +523,15 @@ def space_report(root: Path) -> dict[str, object]:
     if store is not None:
         for _, engine in object_entries(store / "engines"):
             group_paths[engine / "artifacts"] = "store/pack-archives"
-        for category in ("bases", "wheels", "downloads", "engines", "uv-cache", ".garbage"):
+        for category in (
+            "bases",
+            "wheels",
+            "downloads",
+            "engines",
+            "uv-cache",
+            ".garbage",
+            "metadata",
+        ):
             path = store / category
             group = f"store/{category}"
             if not path.exists():
@@ -584,7 +592,7 @@ def space_report(root: Path) -> dict[str, object]:
         "pack-archives": "Pack archives",
         "uv-cache": "uv cache",
         ".garbage": "Store quarantine",
-        "metadata": "Store registration metadata",
+        "metadata": "Store metadata",
     }
     groups = cast("dict[str, dict[str, int | None]]", allocation["groups"])
     stores: list[dict[str, object]] = []
@@ -606,7 +614,7 @@ def space_report(root: Path) -> dict[str, object]:
                     "Shared stores are never removed by automatic cleanup.",
                     "Quarantined files are retained until operation recovery or cleanup."
                     if category == ".garbage"
-                    else "Registration metadata is protected from explicit cleanup."
+                    else "Store metadata is protected from explicit cleanup."
                     if category == "metadata"
                     else "Explicit cleanup checks references from every registered project.",
                 ],

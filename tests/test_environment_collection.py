@@ -2408,6 +2408,9 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
     archives = engine / "artifacts"
     archives.mkdir(parents=True)
     (archives / "fixture.zip").write_bytes(b"pack archive" * 733)
+    metadata = store / "metadata/channels/main.json"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_bytes(b"retained channel manifest" * 733)
     for path in tmp_path.rglob("*"):
         if path.is_file():
             with path.open("rb") as stream:
@@ -2463,6 +2466,10 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
     assert report["complete"], report
     assert report["automaticReclaimableBytes"] == 0
     groups = cast("dict[str, dict[str, int]]", report["groups"])
+    assert groups["store/metadata"]["exclusiveAllocatedBytes"] == sum(
+        p.lstat().st_blocks * 512
+        for p in (store / "projects.json", store / "metadata", *(store / "metadata").rglob("*"))
+    )
     assert groups["store/pack-archives"]["exclusiveAllocatedBytes"] == sum(
         p.lstat().st_blocks * 512 for p in (archives, *archives.rglob("*"))
     )
