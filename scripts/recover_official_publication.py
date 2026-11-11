@@ -26,8 +26,12 @@ def _pages(path: str, key: str) -> list[dict]:
     return [row for page in pages for row in page[key]]
 
 
-def recovery_inputs(root: Path, current_run: int) -> dict[str, str]:
+def recovery_inputs(
+    root: Path, current_run: int, *, packs: list[str] | None = None
+) -> dict[str, str]:
     """Reuse only complete source/lock production from an earlier interrupted main run."""
+    if packs == []:
+        return {}
     repository = "repos/Kosinkadink/Dinkster"
     runs = _pages(
         f"{repository}/actions/workflows/official-packs.yml/runs?branch=main&per_page=100",
@@ -123,6 +127,16 @@ def recovery_inputs(root: Path, current_run: int) -> dict[str, str]:
             except SupersededPublication as error:
                 print(f"publication run {run['id']}: continuation skipped; {error}")
                 continue
+            if packs is not None:
+                catalog = Lockfile.from_record_json(
+                    (work / "sources/official-packs.lock").read_text()
+                )
+                if {pack.pack for pack in catalog.packs} != set(packs):
+                    print(
+                        f"publication run {run['id']}: continuation skipped; "
+                        "recovered sources do not match missing public versions"
+                    )
+                    continue
         return {
             "recovery_run": str(run["id"]),
             "recovery_head": head,
@@ -171,6 +185,7 @@ def validate_recovered_sources(root: Path, work: Path, head: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=int)
+    parser.add_argument("--packs", type=json.loads)
     parser.add_argument("--validate", type=Path)
     parser.add_argument("--head")
     args = parser.parse_args()
@@ -180,7 +195,7 @@ if __name__ == "__main__":
             parser.error("--validate requires --head")
         validate_recovered_sources(root, args.validate, args.head)
     elif args.run is not None:
-        outputs = recovery_inputs(root, args.run)
+        outputs = recovery_inputs(root, args.run, packs=args.packs)
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             for key, value in outputs.items():
                 output.write(f"{key}={value}\n")
