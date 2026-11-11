@@ -118,6 +118,8 @@ def check_publication(
             "DINKSTER_PUBLIC_BASE_URL=http://registry:8000",
             "--env",
             "DINKSTER_PROBE_PACKAGE_INDEX_URL=http://wheels:8000/simple/",
+            "--env",
+            "DINKSTER_PROBE_DEPENDENCY_SOURCE=index",
         )
         registry = run_container(
             "registry",
