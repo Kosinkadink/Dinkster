@@ -6,7 +6,6 @@ import email.parser
 import hashlib
 import json
 import shutil
-import subprocess
 import sys
 import zipfile
 from importlib.metadata import version
@@ -33,25 +32,10 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
     library_wheels: dict[str, Path] = {}
     library_versions: dict[str, str] = {}
     built_wheels: list[dict[str, Any]] = []
-    for number, value in enumerate(inputs["libraries"]):
+    for value in inputs["libraries"]:
         source = Path(value)
-        if source.is_file():
-            wheel = artifacts / source.name
-            shutil.copyfile(source, wheel)
-        else:
-            output = artifacts / f"library-{number}"
-            result = subprocess.run(
-                ["uv", "build", "--wheel", "--no-sources", "--out-dir", str(output), str(source)],
-                cwd=source,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode:
-                raise ProvisionError(f"development library build refused: {result.stderr.strip()}")
-            built = list(output.glob("*.whl"))
-            if len(built) != 1:
-                raise ProvisionError(f"expected one library wheel: {source}")
-            wheel = built[0]
+        wheel = artifacts / source.name
+        shutil.copyfile(source, wheel)
         with zipfile.ZipFile(wheel) as archive:
             metadata = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
             if len(metadata) != 1 or any(

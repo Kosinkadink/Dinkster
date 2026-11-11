@@ -215,7 +215,13 @@ def retain_wheels(
     return rows
 
 
-def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[str, Any]:
+def prepare_local(
+    source: Path,
+    selection: dict[str, Any],
+    store: Path,
+    *,
+    library_wheels: tuple[Path, ...] = (),
+) -> dict[str, Any]:
     """Resolve once, retain exact wheels, and return ordinary generation build inputs."""
     if content_digest(source / "uv.lock") != selection["lockDigest"]:
         raise EnvironmentError("checkout lock changed after planning; request a new plan")
@@ -325,7 +331,9 @@ def prepare_local(source: Path, selection: dict[str, Any], store: Path) -> dict[
                 cwd=source,
             )
         engine_requirements = work / "engine.in"
-        engine_requirements.write_text("\n".join(str(path) for path in sorted(built.glob("*.whl"))))
+        engine_requirements.write_text(
+            "\n".join(str(path) for path in (*sorted(built.glob("*.whl")), *library_wheels))
+        )
         engine = _resolve(
             engine_requirements,
             effective,

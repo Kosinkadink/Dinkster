@@ -59,6 +59,43 @@ def wheel_pack(root: Path, *, requires: str = "demo-core>=2") -> Path:
     return root
 
 
+@pytest.mark.parametrize("selected", [None, "another-folder", "pack"])
+def test_development_reserved_namespace_requires_the_explicit_source_capture(
+    tmp_path: Path, selected: str | None
+) -> None:
+    source = wheel_pack(tmp_path / "pack")
+    manifest = source / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text().replace(
+            'publisher = "demo"', 'publisher = "dinkster"\nnamespaces = ["dinkster.image"]'
+        )
+    )
+    archive = tmp_path / "demo_nodes-1.2.3-py3-none-any.whl"
+    build_pack_archive(source, archive)
+    entry = LockedPack(
+        "demo-nodes",
+        "1.2.3",
+        artifact_digest(archive.read_bytes()),
+        "dinkster",
+        ("dinkster-image",),
+        "local-build:" + str(source),
+    )
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    stage_generation_packs(generation, Lockfile.of([entry]), {entry.pack: archive})
+    if selected is not None:
+        (generation / "development-sources.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.development-sources/1",
+                    "sources": [{"kind": "pack", "path": str(tmp_path / selected)}],
+                }
+            )
+        )
+    (spec,) = generation_pack_specs(generation, (entry.pack,))
+    assert spec.trust_reserved is (selected == "pack")
+
+
 def test_managed_catalog_imports_only_declared_pack_dependency_closure(tmp_path: Path) -> None:
     from dinkster_workers.doctor import prepare_catalog
 

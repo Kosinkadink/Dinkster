@@ -357,8 +357,8 @@ def resolve_pack_lock(
             if "archive" in item:
                 archive = cast("dict[str, Any]", item["archive"])
                 location = cast("str", archive.get("url", archive.get("path", "")))
-                if urlparse(location).scheme in {"", "file"} and urlparse(location).path.endswith(
-                    ".whl"
+                if ("path" in archive and Path(archive["path"]).suffix == ".whl") or (
+                    urlparse(location).scheme == "file" and urlparse(location).path.endswith(".whl")
                 ):
                     archives.append(archive)
             for wheel in [*item.get("wheels", []), *archives]:

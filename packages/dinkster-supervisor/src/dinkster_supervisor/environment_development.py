@@ -164,7 +164,23 @@ def captured_development_sources(
             if _identity(_files(target)) != row["contentDigest"]:
                 raise EnvironmentError(f"development source changed during capture: {source}")
             roots[row["kind"]].append(target)
-        yield roots["engine"][0], tuple(roots["pack"]), tuple(roots["library"])
+        from .environment_local import run_local_command
+
+        libraries: list[Path] = []
+        for number, source in enumerate(roots["library"]):
+            if source.is_file():
+                libraries.append(source)
+                continue
+            output = work / "library-wheels" / str(number)
+            run_local_command(
+                ["uv", "build", "--wheel", "--no-sources", "--out-dir", str(output), str(source)],
+                cwd=source,
+            )
+            wheels = list(output.glob("*.whl"))
+            if len(wheels) != 1:
+                raise EnvironmentError(f"expected one development library wheel: {source}")
+            libraries.append(wheels[0])
+        yield roots["engine"][0], tuple(roots["pack"]), tuple(libraries)
 
 
 def prepare_development_packs(
@@ -235,8 +251,8 @@ def prepare_development_packs(
     stage_pack_sources(
         generation, catalog_lock=artifacts / "development-packs.lock", artifacts=artifacts
     )
-    prepare_pack_catalogs(generation, in_process)
     write_document(
         generation / "development-sources.json",
         {**selection["development"], "builtWheels": result["builtWheels"]},
     )
+    prepare_pack_catalogs(generation, in_process)

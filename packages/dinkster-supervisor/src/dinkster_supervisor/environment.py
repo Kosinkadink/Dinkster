@@ -869,7 +869,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         local_source, local_packs, local_libraries = preparation.enter_context(
                             captured_development_sources(development, store)
                         )
-                    inputs = prepare_local(local_source, local, store)
+                    inputs = prepare_local(
+                        local_source, local, store, library_wheels=local_libraries
+                    )
                     base_id = inputs["base"]
                     constraints = inputs["constraints"]
                     engine_version = inputs["engine_version"]

@@ -590,7 +590,11 @@ matching the host; `--python /absolute/python` explicitly selects an existing
 interpreter instead of the configured standalone interpreter. Use `--port PORT`
 when the default listener is occupied. Project and store directories must be
 outside selected source folders. Building uses verified copies, never editable
-installs into author folders. Missing sources, changed plan inputs, incompatible
+installs into author folders. Selected helper wheels participate in engine
+resolution before packs are built, including replacements for engine dependencies
+whose real versions still satisfy the declared constraints. Explicitly selected
+first-party packs may use their reserved namespaces only in this development
+capture; this does not grant registry admission. Missing sources, changed plan inputs, incompatible
 API ranges and dependency conflicts refuse rather than inventing versions or
 dropping constraints.
 
