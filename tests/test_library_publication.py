@@ -488,12 +488,13 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         )
     prepared = tmp_path / "prepared" if mode == "prepared" else None
     if prepared is not None:
-        admission.check_defaults(
+        preparation = admission.check_defaults(
             admission.NamedRegistry("", "https://registry.invalid"),
             engine_version="0.0.3",
             candidate_base="b" * 40,
             prepare_output=prepared,
         )
+        assert preparation["groups"] == [["dinkster-text"]]
     if published == "missing":
         with pytest.raises(ValueError, match=r"dinkster-test-helpers.*>=0\.0\.1"):
             admission.check_defaults(

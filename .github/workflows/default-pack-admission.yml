@@ -36,7 +36,7 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     outputs:
       engine: ${{ steps.identity.outputs.engine }}
       version: ${{ steps.identity.outputs.version }}
@@ -82,7 +82,7 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 6
     outputs:
       groups: ${{ steps.sources.outputs.groups }}
     env:
@@ -151,7 +151,7 @@ jobs:
     needs: [select, prepare]
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
