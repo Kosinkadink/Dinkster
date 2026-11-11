@@ -1715,7 +1715,7 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
 
 
 def test_composed_server_end_to_end(tmp_path: Path) -> None:
-    """One server: text nodes in-process, the pack isolated, both executing
+    """One server: development nodes in-process, the pack isolated, both executing
     through the same queue; /api/nodes attributes each side truthfully and
     carries the manifest's declared presentation."""
 
@@ -1723,8 +1723,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         manifest = write_iso_manifest(tmp_path)
         composition = await compose_serving(
             [
-                replace(default_pack_spec("dinkster-text"), in_process=True),
-                default_pack_spec("dinkster-models"),
+                PackSpec(DEV_PACK_MANIFEST, in_process=True),
                 manifest,
             ],
             include_default_packs=False,
@@ -1733,12 +1732,12 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         published_schemas = {
             node_type: schema
             for node_type, schema in composition.schemas.items()
-            if node_type.startswith("iso.") or node_type == "dinkster.text.string_concatenate"
+            if node_type.startswith("iso.") or node_type == "dev.util.delay"
         }
         published_packs = {
             pack_id: info
             for pack_id, info in composition.packs.items()
-            if pack_id in {"isopack", "dinkster-text"}
+            if pack_id in {"isopack", "dinkster-nodes-dev"}
         }
         app = create_app(
             composition.make_engine,
@@ -1761,7 +1760,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         await client.start_server()
         try:
             # Provenance: manifest presentation reaches the packs table,
-            # pack nodes and standard nodes both attribute to their packs. A
+            # isolated and in-process nodes both attribute to their packs. A
             # plain dev pack exposes where its bytes live but no pin -
             # version/artifactDigest stay omitted (unpinned), never null.
             data = await (await client.get("/api/nodes")).json()
@@ -1773,7 +1772,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "source": f"local:{Path(manifest).parent.resolve()}",
             }
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
-            assert data["nodes"]["dinkster.text.string_concatenate"]["pack"] == "dinkster-text"
+            assert data["nodes"]["dev.util.delay"]["pack"] == "dinkster-nodes-dev"
             blob_size = next(
                 item
                 for item in data["nodes"]["iso.blob_out"]["interface"]
@@ -1786,17 +1785,17 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "unit": "bytes",
             }
 
-            devices = await client.get("/api/choices/devices.gpu")
-            assert devices.status == 200, await devices.text()
-            assert "cpu" in await devices.json()
+            samplers = await client.get("/api/choices/dev.gallery.samplers")
+            assert samplers.status == 200, await samplers.text()
+            assert "euler" in await samplers.json()
 
-            # One graph spanning both workers: text concatenation runs
+            # One graph spanning both workers: the development delay runs
             # in-process, iso.chatty in the pack process, one job.
             graph = Graph(
                 nodes={
                     "g": GraphNode(
-                        "dinkster.text.string_concatenate",
-                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
+                        "dev.util.delay",
+                        {"value": "left:right", "seconds": 0},
                     ),
                     "c": GraphNode("iso.chatty", {"value": "hi"}),
                     "b": GraphNode("iso.blob_out", {"size": 3}),
@@ -1819,7 +1818,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             assert status.get("state") == "completed", status
 
             for node_id, output_id, expected in (
-                ("g", "STRING", "left:right"),
+                ("g", "value", "left:right"),
                 ("c", "value", "HI"),
             ):
                 response = await client.get(
