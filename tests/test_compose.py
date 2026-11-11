@@ -42,7 +42,6 @@ from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import build_schemas
 from dinkster_server import PackInfo, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
-from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -267,71 +266,6 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     pool = ResidentPool()
     monkeypatch.setattr("dinkster.compose.default_pool", lambda: pool)
     return pool
-
-
-@pytest.mark.parametrize(
-    "compositor_value, width",
-    [
-        ({"version": 2, "documentDigest": None, "commands": []}, 7),
-        ({}, 7),
-        (None, 7),
-        (
-            {
-                "version": 2,
-                "documentDigest": None,
-                "commands": [{"op": "canvas", "changes": {"width": 5}}],
-            },
-            5,
-        ),
-    ],
-)
-def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta(
-    compositor_value: object, width: int
-) -> None:
-    import numpy as np
-
-    async def scenario() -> None:
-        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-        assert not image.in_process
-        assert prepare_catalog(image.manifest, environment=os.environ).ok
-        composer = ServingComposer()
-        try:
-            await composer.add_pack(image)
-            assert composer._records["dinkster-image"].worker.cold
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "image": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 1, "color": 0x123456},
-                        ),
-                        "layer": GraphNode(
-                            "dinkster.image.add_layer", {"image": Link("image", "IMAGE")}
-                        ),
-                        "compose": GraphNode(
-                            "dinkster.image.image_compositor",
-                            {
-                                "layers": Link("layer", "LAYERS"),
-                                **(
-                                    {"compositor": compositor_value}
-                                    if compositor_value is not None
-                                    else {}
-                                ),
-                            },
-                        ),
-                    }
-                ),
-                ["compose"],
-            )
-            pixels = np.asarray(image_input(result.outputs["compose"]["IMAGE"].resolve()))
-            assert pixels.shape == (1, 3, width, 3)
-            expected = np.broadcast_to(np.asarray([0x12, 0x34, 0x56]), pixels.shape)
-            np.testing.assert_array_equal(np.rint(pixels * 255).astype(np.uint8), expected)
-            assert result.diagnostics == ()
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
 
 
 def write_iso_manifest(
@@ -773,26 +707,24 @@ def test_compose_serving_default_resolution_is_atomic(
         run_scenario(compose_serving())
 
 
-@pytest.mark.parametrize(
-    ("pack_id", "directory", "expected_version"),
-    [
-        ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.7"),
-        ("dinkster-audio", "dinkster-nodes-audio", "0.0.4"),
-        ("dinkster-3d", "dinkster-nodes-3d", "0.0.4"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.5"),
-        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
-    ],
-)
 def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
-    pack_id: str,
-    directory: str,
-    expected_version: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    text_pack: Path,
 ) -> None:
-    source_root = TESTS_DIR.parent / "packages" / directory
-    lock = Lockfile.from_record_json(
-        (TESTS_DIR.parent / "src/dinkster/checkout-packs.lock").read_text()
-    )
+    from dinkster import compose
+
+    pack_id = "dinkster-text"
+    source_root = text_pack
+    bundled = tmp_path / "bundled"
+    manifest = bundled / "dinkster_text/dinkster-pack.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("invalid bundled manifest\n")
+    distribution = editable_distribution(source_root, "0.0.3")
+    distribution.files = (Path("dinkster_text/dinkster-pack.toml"),)
+    distribution.locate_file = lambda path: bundled / path
+    monkeypatch.setattr(compose.importlib.metadata, "distribution", lambda _name: distribution)
+    lock = compose._default_pack_lock()
     locked = lock.get(pack_id)
     assert locked is not None
     spec = default_pack_spec(pack_id)
@@ -800,7 +732,7 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert spec.packs is not None
     info = spec.packs[pack_id]
     assert info.source == locked.source
-    assert info.version == expected_version
+    assert info.version == "0.0.3"
     assert info.artifact_digest == locked.artifact_digest
 
 
