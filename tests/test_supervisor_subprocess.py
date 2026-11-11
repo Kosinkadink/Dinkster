@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -179,18 +180,31 @@ def test_child_output_and_timeout_diagnostics(
 
 
 @pytest.mark.parametrize("blocked", [False, True])
-def test_isolated_probe_lifecycle_preserves_command_and_output(
-    tmp_path: Path, blocked: bool, expire_after_ready
+@pytest.mark.parametrize("kind", ["probe", "manager", "manager-help"])
+def test_unwrapped_child_lifecycle_preserves_command_and_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked: bool, kind: str, expire_after_ready
 ) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         listener.settimeout(30)
+        arguments = (
+            ["unchanged argument"]
+            if kind == "probe"
+            else [
+                "--root",
+                str(tmp_path),
+                "prepare-registry-sources",
+                *(["--help"] if kind == "manager-help" else []),
+                "unchanged argument",
+            ]
+        )
         probe = (
             "import os, socket, sys\n"
             "from pathlib import Path\n"
-            "assert sys.flags.isolated and sys.dont_write_bytecode\n"
-            "assert sys.argv == ['-c', 'unchanged argument']\n"
+            f"assert bool(sys.flags.isolated) == {kind == 'probe'!r}\n"
+            "assert sys.dont_write_bytecode\n"
+            f"assert sys.argv[1:] == {arguments!r}\n"
             f"root = Path({str(tmp_path)!r})\n"
             "(root / 'pid').write_text(str(os.getpid()))\n"
             f"connection = socket.create_connection({listener.getsockname()!r}, timeout=30)\n"
@@ -205,11 +219,23 @@ def test_isolated_probe_lifecycle_preserves_command_and_output(
             "print('probe stderr', file=sys.stderr)\n"
             "sys.exit(7)\n"
         )
+        python = str(vars(sys)["_base_executable"])
+        if kind == "probe":
+            command = [python, "-I", "-B", "-c", probe, *arguments]
+            category = "interpreter probe"
+        else:
+            package = tmp_path / "dinkster"
+            package.mkdir()
+            (package / "__init__.py").write_text("")
+            (package / "manager.py").write_text(probe)
+            monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+            command = [python, "-B", "-m", "dinkster.manager", *arguments]
+            category = (
+                "manager source help" if kind == "manager-help" else "manager source preparation"
+            )
         parent = (
             "import subprocess, threading\n"
-            f"result = subprocess.run([{str(vars(sys)['_base_executable'])!r}, "
-            f"'-I', '-B', '-c', {probe!r}, 'unchanged argument'], "
-            "capture_output=True, text=True, timeout=60)\n"
+            f"result = subprocess.run({command!r}, capture_output=True, text=True, timeout=60)\n"
             "assert (result.returncode, result.stdout, result.stderr) == "
             "(7, 'probe stdout\\n', 'probe stderr\\n'), result\n"
             f"__import__('pathlib').Path({str(tmp_path / 'checked')!r}).touch()\n"
@@ -224,14 +250,15 @@ def test_isolated_probe_lifecycle_preserves_command_and_output(
             with pytest.raises(subprocess.TimeoutExpired) as raised:
                 run([str(vars(sys)["_base_executable"]), "-c", parent])
             notes = "\n".join(raised.value.__notes__)
-            assert f"Unwrapped interpreter probe pid={(tmp_path / 'pid').read_text()}," in notes
+            assert "unchanged argument" not in notes
+            assert f"Unwrapped {category} pid={(tmp_path / 'pid').read_text()}," in notes
             assert (
                 "state before cleanup=alive, returncode before cleanup=None"
                 if blocked
                 else "state before cleanup=exited, returncode before cleanup=7"
-            ) in notes.split("Unwrapped interpreter probe", 1)[1]
+            ) in notes.split(f"Unwrapped {category}", 1)[1]
             lifecycle = json.loads(
-                notes.split("Probe lifecycle (seconds since launch started): ", 1)[1].splitlines()[
+                notes.split("Child lifecycle (seconds since launch started): ", 1)[1].splitlines()[
                     0
                 ]
             )
@@ -279,9 +306,35 @@ def test_exited_probe_retains_windows_exit_code_259(tmp_path: Path, expire_after
         "state before cleanup=exited, returncode before cleanup=259"
     ) in notes
     lifecycle = json.loads(
-        notes.split("Probe lifecycle (seconds since launch started): ", 1)[1].splitlines()[0]
+        notes.split("Child lifecycle (seconds since launch started): ", 1)[1].splitlines()[0]
     )
     assert "observed_exit" not in lifecycle
+
+
+def test_offline_uv_lifecycle_preserves_sync_result(tmp_path: Path, expire_after_ready) -> None:
+    uv = shutil.which("uv")
+    assert uv is not None
+    environment = tmp_path / "empty-environment"
+    subprocess.run(
+        [uv, "venv", "--offline", "--python", sys.executable, str(environment)],
+        check=True,
+        capture_output=True,
+    )
+    python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    command = [uv, "pip", "sync", "--offline", "--python", str(python), "-"]
+    parent = (
+        "import subprocess, threading\n"
+        f"result = subprocess.run({command!r}, input='', capture_output=True, text=True)\n"
+        "assert result.returncode == 0 and result.stdout == '', result\n"
+        f"__import__('pathlib').Path({str(tmp_path / 'checked')!r}).touch()\n"
+        "threading.Event().wait(90)\n"
+    )
+    expire_after_ready(lambda process: wait_until((tmp_path / "checked").exists))
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        run([str(vars(sys)["_base_executable"]), "-c", parent])
+    notes = "\n".join(raised.value.__notes__)
+    assert "Unwrapped offline uv sync pid=" in notes
+    assert "state before cleanup=exited, returncode before cleanup=0" in notes
 
 
 @pytest.mark.parametrize(
