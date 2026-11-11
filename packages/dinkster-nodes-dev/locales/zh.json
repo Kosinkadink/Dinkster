@@ -1,0 +1,14 @@
+{
+  "nodes": {
+    "dev.features.widget_kinds": {
+      "displayName": "\u529f\u80fd\uff1a\u63a7\u4ef6\u7c7b\u578b",
+      "description": "\u5c1d\u8bd5\u9009\u62e9\u3001Markdown\u3001\u989c\u8272\u3001\u5217\u8868\u548c\u5e2e\u52a9\u6309\u94ae\u3002"
+    }
+  },
+  "blueprints": {
+    "node-features": {"name": "\u8282\u70b9\u529f\u80fd\u793a\u4f8b"}
+  },
+  "guides": {
+    "node-features": {"title": "\u5c1d\u8bd5\u8282\u70b9\u529f\u80fd"}
+  }
+}
