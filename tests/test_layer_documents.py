@@ -17,10 +17,6 @@ from dinkster_api.v1 import InputSpec, Node, NodeSchema, TypeExpr, register_medi
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
-from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
-from dinkster_image.layer_document import FlattenLayers, SplitLayers
-from dinkster_image.layer_io import SaveLayers
-from dinkster_image.types import register_image_types
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
@@ -95,27 +91,21 @@ def document() -> ImageDocument:
     )
 
 
-def test_native_and_layer_wire_share_one_canonical_document() -> None:
+def test_comfy_layer_wire_preserves_canonical_document_and_immutability() -> None:
     value = document()
     registry = TypeRegistry()
-    register_image_types(registry)
     register_comfy_layers(registry)
-    for type_id in ("dinkster.layers", "comfy.LAYERS"):
-        spec = registry.spec(type_id)
-        encoded = spec.encode(value)
-        assert encoded == value.data
-        assert cast(ImageDocument, spec.decode(encoded)).data == encoded
-    assert registry.equivalent_type("comfy.LAYERS") == "dinkster.layers"
+    spec = registry.spec("comfy.LAYERS")
+    encoded = spec.encode(value)
+    assert encoded == value.data
+    assert cast(ImageDocument, spec.decode(encoded)).data == encoded
     record = value.to_record()
     record["canvas"]["width"] = 100
     assert value.to_record()["canvas"]["width"] == 2
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
-def test_document_boundary_preserves_external_and_auxiliary_references(
-    type_id, monkeypatch
-) -> None:
-    from dinkster_assets import AssetError, AssetRef, AssetVault, digest_bytes
+def test_document_boundary_preserves_external_and_auxiliary_references(monkeypatch) -> None:
+    from dinkster_assets import AssetRef, AssetVault, digest_bytes
     from dinkster_assets.value import value_asset_references
     from dinkster_values import default_encode
 
@@ -135,8 +125,8 @@ def test_document_boundary_preserves_external_and_auxiliary_references(
     monkeypatch.setattr(ImageDocument, "render", forbid_io)
     monkeypatch.setattr(AssetVault, "writer", forbid_io)
     registry = TypeRegistry()
-    register_image_types(registry)
-    wrapped = registry.wrap(type_id, expected)
+    register_comfy_layers(registry)
+    wrapped = registry.wrap("comfy.LAYERS", expected)
     codec = ValueCodec(registry)
     blobs, segments = [], []
     wire, _ = codec.encode(wrapped, blobs, segments)
@@ -158,26 +148,19 @@ def test_document_boundary_preserves_external_and_auxiliary_references(
         orphan["digest"]: 6,
         auxiliary.digest: 9,
     }
-    if type_id == "comfy.LAYERS":
-        assert (
-            value_asset_references({"document": received}, complete_registry=registry) == references
-        )
-    else:
-        with pytest.raises(AssetError, match="incomplete"):
-            value_asset_references({"document": received}, complete_registry=registry)
+    assert value_asset_references({"document": received}, complete_registry=registry) == references
     first = TypeRegistry()
-    first_spec = first.register(type_id)
-    register_image_types(first)
-    assert first.spec(type_id) is first_spec
-    assert not first.spec(type_id).asset_references_complete
+    first_spec = first.register("comfy.LAYERS")
+    register_comfy_layers(first)
+    assert first.spec("comfy.LAYERS") is first_spec
+    assert not first.spec("comfy.LAYERS").asset_references_complete
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
 @pytest.mark.parametrize(
     "invalid",
     ["omitted", "last", "size", "digest", "conflict", "malformed", "noncanonical", "payload"],
 )
-def test_document_boundary_refuses_uncovered_resources_before_exposure(type_id, invalid) -> None:
+def test_document_boundary_refuses_uncovered_resources_before_exposure(invalid) -> None:
     from dinkster_assets import digest_bytes
     from dinkster_values import default_encode
     from dinkster_workers.boundary import EncodedPayloadValidationError
@@ -189,8 +172,8 @@ def test_document_boundary_refuses_uncovered_resources_before_exposure(type_id, 
     )
     record["allocation"]["nextOrdinal"] = 3
     registry = TypeRegistry()
-    register_image_types(registry)
-    wrapped = registry.wrap(type_id, ImageDocument.from_record(record))
+    register_comfy_layers(registry)
+    wrapped = registry.wrap("comfy.LAYERS", ImageDocument.from_record(record))
     codec = ValueCodec(registry)
     blobs, segments = [], []
     wire, _ = codec.encode(wrapped, blobs, segments)
@@ -222,10 +205,7 @@ def test_document_boundary_refuses_uncovered_resources_before_exposure(type_id, 
         codec.decode(wire, blobs, [])
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
-def test_document_rendition_needs_no_raster_resources(
-    type_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_document_rendition_needs_no_raster_resources(monkeypatch: pytest.MonkeyPatch) -> None:
     record = document().to_record()
     for resource in record["resources"].values():
         resource.pop("inline")
@@ -237,17 +217,14 @@ def test_document_rendition_needs_no_raster_resources(
     monkeypatch.setattr(ImageDocument, "render", forbid_raster)
     monkeypatch.setattr(ImageDocument, "read_resource", forbid_raster)
     registry = TypeRegistry()
-    register = register_image_types if type_id == "dinkster.layers" else register_comfy_layers
-    register(registry)
-    register(registry)
-    spec = registry.spec(type_id)
-    value = registry.wrap(type_id, spec.decode(spec.encode(expected)))
+    register_comfy_layers(registry)
+    register_comfy_layers(registry)
+    spec = registry.spec("comfy.LAYERS")
+    value = registry.wrap("comfy.LAYERS", spec.decode(spec.encode(expected)))
     rendition = registry.render(value, "document")
     assert rendition.mime == IMAGE_DOCUMENT_MEDIA_TYPE
     assert rendition.data == expected.data
-    assert [s.kind for s in registry.renditions_of(type_id) if s.default] == [
-        "image" if type_id == "dinkster.layers" else "document"
-    ]
+    assert [s.kind for s in registry.renditions_of("comfy.LAYERS") if s.default] == ["document"]
 
 
 @pytest.mark.parametrize("mode", BLEND_MODES)
@@ -336,8 +313,6 @@ def test_clipping_and_grouping_use_z_order_not_object_key_order() -> None:
     value = ImageDocument.from_record(record)
     grouped = apply_commands(value, [{"op": "group", "ids": [clipped]}])
     assert grouped.render().png == value.render().png
-    split = cast(dict[str, Any], SplitLayers.execute(layers=grouped))
-    np.testing.assert_array_equal(split["images"][0], flatten(value, f"layer:{base}")[0])
 
 
 def test_comfy_missing_canvas_and_zero_dimensions_use_source_size() -> None:
@@ -349,6 +324,8 @@ def test_comfy_missing_canvas_and_zero_dimensions_use_source_size() -> None:
 
 
 def large_document() -> ImageDocument:
+    from dinkster_image.types import register_image_types
+
     value = empty_document(64, 64)
     rng = np.random.default_rng(0)
     for index in range(50):
@@ -630,70 +607,6 @@ def test_seedream_style_document_uses_transparency_masks_and_z_index() -> None:
     np.testing.assert_array_equal(
         flatten(value)[0], np.array([[[[0, 0, 0], [1, 1, 1]]]], dtype=np.float32)
     )
-
-
-def test_layer_aliases_execute() -> None:
-    fixture = json.loads(
-        (Path(__file__).parent / "fixtures/layer_document_goldens.json").read_text()
-    )
-    for case in fixture["cases"]:
-        value = from_comfy_layers(case["layers"])
-        assert value.to_record()["extensions"]["comfy"]["inputs"] == case["inputs"]
-        result = cast(dict[str, Any], CreateLayeredImage.execute(layers=value, compositor={}))
-        np.testing.assert_allclose(result["image"], case["image"], atol=1 / 255, rtol=0)
-        np.testing.assert_allclose(result["transparency_mask"], case["mask"], atol=1 / 255, rtol=0)
-        background, subject = case["layers"]["layers"]
-        built = AddLayer.execute(image=np.asarray(background["image"], dtype=np.float32))["layers"]
-        built = LayersFromBoundingBoxes.execute(
-            layers=built,
-            image=np.asarray(subject["image"], dtype=np.float32),
-            mask=np.asarray(subject["mask"], dtype=np.float32),
-            bboxes=json.dumps([{"x": 1, "y": 1, "width": 2, "height": 2}]),
-        )["layers"]
-        assert isinstance(built, ImageDocument)
-        identifier = built.to_record()["rootLayerIds"][-1]
-        built = apply_commands(
-            built,
-            [
-                {
-                    "op": "layer",
-                    "id": identifier,
-                    "changes": {"opacity": round(subject["opacity"] * 65535)},
-                }
-            ],
-        )
-        result = cast(
-            dict[str, Any],
-            CreateLayeredImage.execute(layers=built, compositor={}, color_space="linear"),
-        )
-        np.testing.assert_allclose(result["image"], case["image"], atol=1 / 255, rtol=0)
-        np.testing.assert_allclose(result["transparency_mask"], case["mask"], atol=1 / 255, rtol=0)
-
-
-@pytest.mark.parametrize("case_index", range(3))
-def test_layer_node_source_goldens(case_index: int) -> None:
-    fixture = json.loads(
-        (Path(__file__).parent / "fixtures/layer_document_goldens.json").read_text()
-    )
-    case = fixture["aliasCases"][case_index]
-    inputs = case["inputs"]
-    inputs["layers"] = from_comfy_layers(inputs["layers"])
-    for key in ("image", "mask"):
-        if key in inputs:
-            inputs[key] = np.asarray(inputs[key], dtype=np.float32)
-    if case["node"] == "AddLayer":
-        inputs["flip_horizontal"] = inputs.pop("flip_h")
-        value = AddLayer.execute(**inputs)["layers"]
-    elif case["node"] == "LayersFromBoundingBoxes":
-        value = LayersFromBoundingBoxes.execute(**inputs)["layers"]
-        assert isinstance(value, ImageDocument)
-        record = value.to_record()
-        assert record["layers"][record["rootLayerIds"][-1]]["z_index"] == 11
-    else:
-        value = inputs["layers"]
-    result = cast(dict[str, Any], CreateLayeredImage.execute(layers=value, color_space="linear"))
-    np.testing.assert_allclose(result["image"], case["image"], atol=1 / 255, rtol=0)
-    np.testing.assert_allclose(result["transparency_mask"], case["mask"], atol=1 / 255, rtol=0)
 
 
 def test_psd_real_raster_fixture() -> None:
@@ -1202,6 +1115,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
         encode_layer_stack,
         layer_stack_meta,
     )
+    from dinkster_image.types import register_image_types
     from dinkster_protocol import LazyStatusInvocation
     from dinkster_values import CORE_BOOLEAN
     from dinkster_workers.host import serve_connection
@@ -1344,6 +1258,7 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
         encode_layer_stack,
         layer_stack_meta,
     )
+    from dinkster_image.types import register_image_types
 
     producer = AssetVault(tmp_path / "producer")
     host = AssetVault(tmp_path / "host")
@@ -1472,6 +1387,8 @@ def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
         encode_layer_stack,
         layer_stack_meta,
     )
+    from dinkster_image.layer_io import SaveLayers
+    from dinkster_image.types import register_image_types
     from dinkster_protocol import Invocation
     from dinkster_server import ServerLibrary
     from dinkster_server.queue import Job, JobKey
@@ -1614,6 +1531,10 @@ def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
 def test_isolated_worker_shm_flatten_matches_in_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, large: bool, layer_document_pack: Path
 ) -> None:
+    from dinkster_image.compositor import AddLayer
+    from dinkster_image.layer_document import FlattenLayers
+    from dinkster_image.types import register_image_types
+
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
 
     async def run() -> None:
