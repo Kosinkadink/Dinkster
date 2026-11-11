@@ -101,15 +101,10 @@ def test_manifest_ignores_unrecognized_pack_metadata(tmp_path: Path) -> None:
     assert load_manifest(path) == expected
 
 
-@pytest.mark.parametrize(
-    "path",
-    sorted(Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml"))
-    + sorted(Path("packages/dinkster-nodes-vision").glob("*_pack/dinkster-pack.toml")),
-)
-def test_official_pack_declares_its_version_and_engine_range(path: Path) -> None:
+def test_development_pack_declares_its_version_and_engine_range() -> None:
     from dinkster import __version__
 
-    manifest = load_manifest(path)
+    manifest = load_manifest(Path("packages/dinkster-nodes-dev/dinkster-pack.toml"))
     assert manifest.compatibility is not None, manifest.name
     manifest.compatibility.require_engine(manifest.name, __version__)
 

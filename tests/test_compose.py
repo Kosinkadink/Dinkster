@@ -67,12 +67,51 @@ TESTS_DIR = Path(__file__).parent
 DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
-FIRST_PARTY_NODE_PACKS = {
-    node.schema().node_type: manifest.name
-    for spec in default_pack_specs()
-    if (manifest := load_manifest(spec.manifest)).nodes_entry
-    for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
-}
+
+
+@pytest.fixture(scope="module")
+def first_party_node_packs() -> dict[str, str]:
+    return {
+        node.schema().node_type: manifest.name
+        for spec in default_pack_specs()
+        if (manifest := load_manifest(spec.manifest)).nodes_entry
+        for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
+    }
+
+
+@pytest.fixture
+def text_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from dinkster import compose
+
+    root = tmp_path / "text-pack"
+    module = root / "src/dinkster_text"
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text("NODES = ()\n", encoding="utf-8")
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "dinkster-text"\nversion = "0.0.3"\n'
+        'engine = ">=0.0.2.dev0,<2"\npublisher = "dinkster"\n'
+        'namespaces = ["dinkster.text"]\n'
+        '[pack.entry]\nnodes = "dinkster_text:NODES"\n',
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster-text"\nversion = "0.0.3"\n', encoding="utf-8"
+    )
+    lock = Lockfile.of(
+        [
+            LockedPack(
+                "dinkster-text",
+                "0.0.3",
+                compose._installed_pack_digest(manifest, module),
+                "dinkster",
+                ("dinkster-text",),
+                "python:dinkster-text==0.0.3",
+            )
+        ]
+    )
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: lock)
+    return root
 
 
 def editable_distribution(root: Path, version: str) -> SimpleNamespace:
@@ -339,10 +378,12 @@ def test_default_pack_specs_verify_independently_versioned_checkout_sources(
         compose._default_pack_lock.cache_clear()
 
 
-def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_first_party_pack_uses_its_own_distribution(
+    monkeypatch: pytest.MonkeyPatch, text_pack: Path
+) -> None:
     import dinkster.compose as compose
 
-    distribution = editable_distribution(TESTS_DIR.parent / "packages/dinkster-nodes-text", "1.2.3")
+    distribution = editable_distribution(text_pack, "1.2.3")
     requested: list[str] = []
     locked = compose._default_pack_lock().get("dinkster-text")
     assert locked is not None
@@ -844,18 +885,19 @@ def test_unpinned_pack_records_development_mode_when_production_was_requested(
 def test_compose_defaults_only(
     tmp_path: Path,
     shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+    first_party_node_packs: dict[str, str],
 ) -> None:
     """Installed defaults provide the standard surface through independent packs."""
     runner, defaults = shared_default_composition
 
     async def scenario() -> None:
         async with defaults as composition:
-            assert set(composition.schemas) == set(FIRST_PARTY_NODE_PACKS)
+            assert set(composition.schemas) == set(first_party_node_packs)
             assert not any(t.startswith("dev.") for t in composition.schemas)
             assert set(composition.packs) == (
-                set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}
+                set(first_party_node_packs.values()) | {"dinkster-nodes-remote"}
             )
-            assert composition.node_packs == FIRST_PARTY_NODE_PACKS
+            assert composition.node_packs == first_party_node_packs
             locked = default_pack_specs()
             assert {
                 next(iter(spec.packs))
@@ -901,7 +943,7 @@ def test_compose_defaults_only(
                 response = await client.get("/api/nodes")
                 payload = await response.json()
                 assert response.status == 200, payload
-                assert set(payload["nodes"]) == set(FIRST_PARTY_NODE_PACKS)
+                assert set(payload["nodes"]) == set(first_party_node_packs)
             finally:
                 await client.close()
 
@@ -949,10 +991,12 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert info.artifact_digest == locked.artifact_digest
 
 
-def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_pack_publishes_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_pack: Path
+) -> None:
     from dinkster import compose
 
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     copied = tmp_path / "pack"
     shutil.copytree(source, copied)
     manifest = copied / "dinkster-pack.toml"
@@ -1057,7 +1101,7 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
 
 
 def test_default_pack_uses_embedded_wheel_artifact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_pack: Path
 ) -> None:
     from dinkster_registry import artifact_digest, unpack_artifact
     from dinkster_workers.pack_wheel import build_pack_archive
@@ -1065,7 +1109,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     output = tmp_path / "wheel"
     build_pack_archive(source, output)
     archive = next(output.glob("*.whl"))
@@ -1174,21 +1218,21 @@ def test_installed_pack_digest_rejects_locale_symlinks(tmp_path: Path) -> None:
         compose._installed_pack_digest(manifest, module)
 
 
-def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
+def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path, text_pack: Path) -> None:
     from dinkster_registry import artifact_digest, unpack_artifact
     from dinkster_workers.pack_wheel import build_pack_archive
 
     from dinkster import compose
 
-    source = Path(__file__).parent.parent / "packages/dinkster-nodes-image"
+    source = text_pack
     output = tmp_path / "wheel"
     build_pack_archive(source, output)
     archive = next(output.glob("*.whl"))
     unpack_artifact(archive, tmp_path, artifact_digest(archive.read_bytes()))
-    bundled = tmp_path / "dinkster_image"
+    bundled = tmp_path / "dinkster_text"
 
     source_digest = compose._installed_pack_digest(
-        source / "dinkster-pack.toml", source / "src/dinkster_image"
+        source / "dinkster-pack.toml", source / "src/dinkster_text"
     )
     bundled_digest = compose._installed_pack_digest(bundled / "dinkster-pack.toml", None)
 
@@ -1198,11 +1242,12 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
 def test_default_pack_refuses_version_outside_suite_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    text_pack: Path,
 ) -> None:
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     copied = tmp_path / "source"
     copied.mkdir()
     manifest = copied / "dinkster-pack.toml"
@@ -1269,13 +1314,14 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
 def test_undeclared_pack_version_is_not_replaced_by_distribution_version(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    text_pack: Path,
 ) -> None:
     from dinkster_workers.pack_wheel import PackArchiveError
 
     from dinkster import compose
 
     copied = tmp_path / "source"
-    shutil.copytree(TESTS_DIR.parent / "packages/dinkster-nodes-text", copied)
+    shutil.copytree(text_pack, copied)
     manifest = copied / "dinkster-pack.toml"
     manifest.write_text(
         "\n".join(
@@ -1293,12 +1339,12 @@ def test_undeclared_pack_version_is_not_replaced_by_distribution_version(
 
 
 def test_default_pack_refuses_bytes_outside_suite_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_pack: Path
 ) -> None:
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     copied = tmp_path / "source"
     copied.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", copied / "dinkster-pack.toml")
@@ -1371,6 +1417,7 @@ def test_default_suite_refuses_non_suite_lock(
 
 def test_checkout_defaults_do_not_require_standard_suite_distribution(
     monkeypatch: pytest.MonkeyPatch,
+    first_party_node_packs: dict[str, str],
 ) -> None:
     from dinkster import compose
 
@@ -1383,7 +1430,7 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
     compose._default_pack_lock.cache_clear()
-    expected = tuple(sorted(set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}))
+    expected = tuple(sorted(set(first_party_node_packs.values()) | {"dinkster-nodes-remote"}))
     try:
         assert compose.default_pack_ids() == expected
         for pack_id in expected:
@@ -2568,7 +2615,9 @@ def test_pack_spec_comfy_args_deny_dinkster_owned_flags(
     assert owner in str(raised.value)
 
 
-def test_serving_composer_incremental(tmp_path: Path) -> None:
+def test_serving_composer_incremental(
+    tmp_path: Path, first_party_node_packs: dict[str, str]
+) -> None:
     """The diagnostic host starts empty and grows through ordinary pack deltas."""
 
     async def scenario() -> None:
@@ -2593,7 +2642,7 @@ def test_serving_composer_incremental(tmp_path: Path) -> None:
                 await composer.add_pack(standard) for standard in default_pack_specs()
             ]
             assert set().union(*(delta.schemas for delta in standard_deltas)) == set(
-                FIRST_PARTY_NODE_PACKS
+                first_party_node_packs
             )
             for standard_delta in standard_deltas:
                 engine.announce_schemas(standard_delta.schemas)
