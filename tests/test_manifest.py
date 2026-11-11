@@ -355,6 +355,13 @@ def test_locale_metadata_preserves_exact_node_and_port_ids(tmp_path: Path, field
         ("[" * 70 + "]" * 70, "nesting depth"),
         ("[" + ",".join("0" for _ in range(JSON_MAX_ITEMS)) + "]", "item count"),
     ],
+    ids=[
+        "duplicate-key",
+        "non-finite-number",
+        "overflow-number",
+        "excessive-depth",
+        "excessive-items",
+    ],
 )
 def test_locale_catalog_rejects_hostile_json(tmp_path: Path, body: str, message: str) -> None:
     manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
