@@ -1,29 +1,267 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
+import venv
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
+import packaging
 import pytest
-from dinkster_registry import artifact_digest
+from dinkster_registry import LockedPack, Lockfile, artifact_digest
 from dinkster_registry.archive_admission import (
     ProbeSettings,
     run_doctor_static,
     run_executable_probe,
     run_fast_security,
     run_ingest_integrity,
+    run_locked_probe,
     run_manifest_admission,
 )
 from dinkster_schema import PackCompatibility
 from dinkster_workers import ManifestError, load_manifest
+from dinkster_workers.pack_environment import provision_pack, venv_python
+from dinkster_workers.pack_lock import (
+    GenerationPackages,
+    LockedDistribution,
+    LockedWheel,
+    PackLock,
+    plan_pack,
+)
 from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
+from dinkster_workers.provision import ProvisionError
 
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
+
+
+def test_locked_probe_installs_only_locked_wheels_without_index_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry.archive_admission import StageResult
+    from test_pack_environment import _generation, _wheel
+
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    wheel = _wheel(
+        tmp_path,
+        "locked-extra",
+        "1.2",
+        "locked_extra",
+        "VALUE = 37\n",
+        requires=("unresolved-transitive-control>=99",),
+    )
+    python = _generation(tmp_path / "generation/python", [])
+    lock = PackLock(
+        "color-tools",
+        "linux-cpu",
+        ">=3.12",
+        ("locked-extra>=1",),
+        ("http://127.0.0.1:1/unreachable-index",),
+        (LockedDistribution("locked-extra", "1.2", (wheel,)),),
+    )
+
+    def probe(root, settings, require_isolation, *, python, source_roots):
+        value = subprocess.check_output(
+            [str(python), "-I", "-c", "import locked_extra; print(locked_extra.VALUE)"],
+            text=True,
+        )
+        return StageResult(data={"lockedValue": int(value)})
+
+    # Exercise acquisition and the real user provisioner, independently of the jail transport.
+    monkeypatch.setattr("dinkster_registry.archive_admission._run_executable_probe", probe)
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    result = run_locked_probe(
+        root,
+        lock,
+        generation_python=python,
+        packs=tmp_path / "packs",
+        wheel_store=tmp_path / "wheels",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+    )
+    assert not result.blocked and result.data == {"lockedValue": 37}
+    assert PackLock.read(tmp_path / "packs/color-tools/pack-lock.json") == lock
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("include_dependency", [False, True])
+def test_locked_probe_imports_only_supplied_pack_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, include_dependency: bool
+) -> None:
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    module = root / "color_tools/__init__.py"
+    module.write_text(
+        "from declared_support import DESCRIPTION\n"
+        + module.read_text().replace(
+            'description="Adjust image color properties."', "description=DESCRIPTION"
+        )
+    )
+    dependency = tmp_path / "dependency"
+    dependency.mkdir()
+    (dependency / "declared_support.py").write_text('DESCRIPTION = "Verified dependency source"\n')
+    # Keep this transport regression independent of engine-wheel construction.
+    monkeypatch.setattr(
+        "dinkster_registry.archive_admission.provision_pack",
+        lambda *args, **kwargs: Path(sys.executable),
+    )
+    result = run_locked_probe(
+        root,
+        PackLock("color-tools", "linux-cpu", ">=3.12", (), (), ()),
+        generation_python=Path(sys.executable),
+        packs=tmp_path / "packs",
+        wheel_store=tmp_path / "wheels",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+        source_roots=(dependency,) if include_dependency else (),
+        require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1",
+    )
+    assert result.blocked is not include_dependency, result.operator_details
+    if include_dependency:
+        assert result.data is not None
+        assert result.data["schemas"][0]["schema"]["description"] == "Verified dependency source"
+    else:
+        assert any(finding.code == "entry.unresolvable" for finding in result.findings)
+
+
+def test_locked_admission_refuses_the_same_base_conflict_as_user_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generation = tmp_path / "generation"
+    venv.EnvBuilder(with_pip=False).create(generation)
+    python = venv_python(generation)
+    site = Path(
+        subprocess.check_output(
+            [str(python), "-I", "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+            text=True,
+        ).strip()
+    )
+    shutil.copytree(Path(packaging.__file__).parent, site / "packaging")
+    metadata = site / "simpleeval-1.0.7.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Name: simpleeval\nVersion: 1.0.7\n")
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text()
+        .replace(
+            'name = "color-tools"',
+            'name = "dinkster-utilities"\nrequires = ["simpleeval==1.0.8"]',
+        )
+        .replace("color_tools:PACK_NODES", "dinkster_utilities:PACK_NODES")
+    )
+    (root / "color_tools").rename(root / "dinkster_utilities")
+    lock = PackLock(
+        "dinkster-utilities",
+        "linux-cpu",
+        ">=3.12",
+        ("simpleeval==1.0.8",),
+        (),
+        (LockedDistribution("simpleeval", "1.0.8", ()),),
+    )
+    plan = plan_pack(
+        lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=0
+    )
+    assert plan.conflicts == ("simpleeval: generation has 1.0.7, lock needs 1.0.8",)
+    with pytest.raises(ProvisionError, match="generation has 1.0.7, lock needs 1.0.8") as refused:
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=generation / "packs",
+            wheel_store=tmp_path / "wheels",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+            offline=True,
+        )
+    result = run_locked_probe(
+        root,
+        lock,
+        generation_python=python,
+        packs=generation / "packs",
+        wheel_store=tmp_path / "wheels",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+        offline=True,
+        require_isolation=False,
+    )
+    assert result.blocked and not result.review
+    assert [(finding.code, finding.message) for finding in result.findings] == [
+        ("probe.dependencies-incompatible", str(refused.value))
+    ]
+    assert not (generation / "packs").exists()
+    assert not (tmp_path / "wheels").exists()
+    assert not (tmp_path / "cache").exists()
+
+    from scripts import check_default_pack_admission as admission
+
+    prepared = tmp_path / "prepared"
+    artifacts = prepared / "artifacts"
+    artifacts.mkdir(parents=True)
+    archive = tmp_path / "dinkster_utilities-1.2.3-py3-none-any.whl"
+    build_pack_archive(root, archive)
+    payload = archive.read_bytes()
+    digest = artifact_digest(payload)
+    (artifacts / f"{digest.removeprefix('blake3:')}.zip").write_bytes(payload)
+    (prepared / "catalog.lock").write_text(
+        Lockfile.of(
+            [LockedPack("dinkster-utilities", "1.2.3", digest, "dinkster", (), "registry")]
+        ).record_json()
+    )
+    base = "sha256:" + "f" * 64
+    (prepared / "engine.json").write_text(
+        json.dumps(
+            {
+                "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                "engineVersion": "0.9.2",
+                "baseId": base,
+                "variant": "linux-cpu",
+            }
+        )
+    )
+    output = prepared / "pack-locks"
+    output.mkdir()
+    replace(
+        lock,
+        packages=(
+            *lock.packages,
+            LockedDistribution(
+                "dinkster-utilities",
+                "1.2.3",
+                (
+                    LockedWheel(
+                        archive.name,
+                        len(payload),
+                        hashlib.sha256(payload).hexdigest(),
+                        archive.as_uri(),
+                    ),
+                ),
+            ),
+        ),
+    ).write(output / "dinkster-utilities.json")
+    constraints = generation / "constraints.txt"
+    constraints.write_text("")
+    monkeypatch.setattr(admission, "default_pack_minimums", lambda: {"dinkster-utilities": "1"})
+    with pytest.raises(ValueError) as default_refused:
+        admission.check_defaults(
+            admission.NamedRegistry("", "https://registry.example"),
+            engine_version="0.9.2",
+            prepared_sources=prepared,
+            generation_python=python,
+            base_id=base,
+            constraints=constraints,
+        )
+    assert str(default_refused.value) == (
+        "default dinkster-utilities@1.2.3 admission refused: "
+        f"probe.dependencies-incompatible: {refused.value}"
+    )
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
@@ -82,10 +320,24 @@ def test_service_fixture_archive_contract(
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("name", ["example-pack", "color-tools"])
-def test_service_fixture_probe_contract(name: str) -> None:
+@pytest.mark.parametrize("broken_entry", [False, True])
+def test_service_fixture_probe_contract(tmp_path: Path, name: str, broken_entry: bool) -> None:
+    root = tmp_path / name
+    shutil.copytree(FIXTURES / name, root)
+    if broken_entry:
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(manifest.read_text().replace(":PACK_NODES", ":MISSING_NODES"))
     result = run_executable_probe(
-        FIXTURES / name, require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
+        root, require_isolation=os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
     )
+    if broken_entry:
+        assert result.blocked and not result.review
+        assert [(finding.code, finding.effect) for finding in result.findings] == [
+            ("entry.unresolvable", "block"),
+            ("probe.declared-observed-needs", "signal"),
+        ]
+        assert result.data == {"schemas": []}
+        return
     assert [(finding.code, finding.effect) for finding in result.findings] == [
         ("probe.declared-observed-needs", "signal")
     ]

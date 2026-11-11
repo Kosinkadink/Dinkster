@@ -453,6 +453,72 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     )
 
 
+@pytest.mark.parametrize("problem", [None, "base", "engine", "constraints", "python", "packages"])
+def test_admission_runtime_binds_the_engine_base_and_installed_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
+    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+    from dinkster_workers.pack_lock import GenerationPackages
+    from test_environment_artifacts import _mirror
+    from test_pack_environment import _generation
+
+    from scripts import prepare_admission_engine as admission
+
+    base, engine, channel = _mirror(tmp_path / "mirror")
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: base["id"][7:]}))
+    monkeypatch.setattr(admission, "git_head", lambda root: engine["commit"])
+    runtime = tmp_path / "runtime"
+    _generation(runtime / "generation/python", [])
+    python = interpreter(runtime / "generation")
+    if not python.exists():
+        python.symlink_to("python")
+    constraints = runtime / "generation/constraints.txt"
+    constraints.write_text("locked-extra==1.2\n")
+    shutil.copyfile(
+        tmp_path / f"mirror/base/{base['variant']}/{base['id'][7:]}/manifest.json",
+        runtime / "base-manifest.json",
+    )
+    shutil.copytree(
+        tmp_path / f"mirror/engine/{channel['engine']['release'][7:]}", runtime / "engine"
+    )
+    facts = GenerationPackages.inspect(python)
+    record = {
+        "commit": engine["commit"],
+        "engineVersion": engine["version"],
+        "engineRelease": channel["engine"]["release"],
+        "baseId": base["id"],
+        "variant": base["variant"],
+        "python": str(python),
+        "constraints": str(constraints),
+        "constraintsSha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        "packages": dict(facts.versions),
+        "pythonVersion": facts.python_version,
+    }
+    if problem == "base":
+        record["baseId"] = "sha256:" + "e" * 64
+    elif problem == "engine":
+        record["engineRelease"] = "sha256:" + "e" * 64
+    elif problem == "constraints":
+        constraints.write_text("locked-extra==9\n")
+    elif problem == "python":
+        record["python"] = sys.executable
+    elif problem == "packages":
+        record["packages"] = {"uninstalled": "1.2"}
+    (runtime / "runtime.json").write_text(json.dumps(record))
+    if problem:
+        with pytest.raises((ValueError, EnvironmentError)):
+            admission.read_runtime(runtime, root, engine["version"])
+    else:
+        assert admission.read_runtime(runtime, root, engine["version"]) == (
+            python,
+            base["id"],
+            constraints,
+            base["variant"],
+        )
+
+
 def test_default_pack_admission_uses_complete_version_history() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
@@ -546,7 +612,11 @@ def test_default_admission_workflow_selects_publication_candidates(
         echo development-engine
       elif [ "$4" = "-" ]; then
         "$TEST_PYTHON" -
+      elif [ "$5" = "scripts.prepare_admission_engine" ]; then
+        mkdir -p admission-runtime/engine
+        echo '{}' > admission-runtime/base-manifest.json
       else
+        mkdir -p admission-sources
         printf '%s\\0' "$@" > admission-arguments
         echo '{"groups": [["dinkster-image"], ["dinkster-audio", "dinkster-video"]]}'
       fi
@@ -582,6 +652,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         ("0" * 40 if all_candidates else base)
         if pull_request
         else ".publication/sources/official-packs.lock",
+        "--runtime",
+        "admission-runtime",
         "--prepare-output",
         "admission-sources",
     ]
@@ -591,7 +663,6 @@ def test_default_admission_workflow_selects_publication_candidates(
         {"group": 2, "packs": '["dinkster-audio", "dinkster-video"]'},
     ]
     prepared = tmp_path / "admission-sources"
-    prepared.mkdir()
     (prepared / "engine.json").write_text('{"engineVersion": "prepared-engine"}')
     command = workflow["jobs"]["admission"]["steps"][-1]["run"]
     subprocess.run(
@@ -608,6 +679,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         "scripts.check_default_pack_admission",
         "--engine-version",
         "prepared-engine",
+        "--runtime",
+        "admission-runtime",
         "--prepared-sources",
         "admission-sources",
         "--pack",
@@ -3024,6 +3097,8 @@ def test_official_publication_recovery_reuses_inputs_without_resolving_locks(
         "missing-artifact",
         "artifact-head",
         "invalid-head",
+        "invalid-engine-head",
+        "engine-ancestor",
         "foreign-branch",
         "foreign-path",
         "foreign-event",
@@ -3037,10 +3112,13 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     from scripts import recover_official_publication
     from scripts.recover_official_publication import recovery_inputs
 
+    engine_head = {"invalid-engine-head": "main", "engine-ancestor": "b" * 40}.get(
+        problem or "", "a" * 40
+    )
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as inputs:
         inputs.writestr("sources/official-packs.lock", "{}")
-        inputs.writestr("engine/release-manifest.json", "{}")
+        inputs.writestr("engine/release-manifest.json", json.dumps({"commit": engine_head}))
     monkeypatch.setattr(
         recover_official_publication, "validate_recovered_sources", lambda *args: None
     )
@@ -3125,7 +3203,12 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: subprocess.CompletedProcess(a, 1 if problem == "ancestor" else 0),
+        lambda command, **kw: subprocess.CompletedProcess(
+            command,
+            1
+            if problem == "ancestor" or (problem == "engine-ancestor" and command[-2] == "b" * 40)
+            else 0,
+        ),
     )
     if problem in {"completed", "foreign-run", "foreign-branch", "foreign-path", "foreign-event"}:
         assert recovery_inputs(tmp_path, 90) == {}
@@ -3149,6 +3232,8 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
                 "missing-artifact": "unexpired and unique",
                 "invalid-head": "source commit must belong to main",
                 "ancestor": "source commit must belong to main",
+                "invalid-engine-head": "engine commit must belong",
+                "engine-ancestor": "engine commit must belong",
             }[problem],
         ):
             recovery_inputs(tmp_path, 90)
@@ -3162,7 +3247,18 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
 
 
 @pytest.mark.parametrize(
-    "change", [None, "code", "older-valid", "pack-tests", "removed", "engine", "catalog", "bases"]
+    "change",
+    [
+        None,
+        "code",
+        "older-valid",
+        "pack-tests",
+        "removed",
+        "engine",
+        "catalog",
+        "bases",
+        "workflow-head",
+    ],
 )
 def test_publication_continuation_requires_unchanged_selected_git_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, change: str | None
@@ -3228,7 +3324,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
             }
         )
     )
-    if change in {None, "pack-tests"}:
+    if change in {None, "pack-tests", "workflow-head"}:
         validate_recovered_sources(root, work, head)
     else:
         assert change is not None
@@ -3274,8 +3370,14 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
     jobs = [{"name": "sources", "conclusion": "success"}] + [
         {"name": f"locks ({v}, runner)", "conclusion": "success"} for v in variants
     ]
+    workflow_head = after if change == "workflow-head" else head
     artifacts = [
-        {"id": i, "name": name, "expired": False, "workflow_run": {"id": 70, "head_sha": head}}
+        {
+            "id": i,
+            "name": name,
+            "expired": False,
+            "workflow_run": {"id": 70, "head_sha": workflow_head},
+        }
         for i, name in enumerate(
             ["official-publication-inputs", *(f"publication-locks-{v}" for v in variants)], 100
         )
@@ -3297,7 +3399,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
                     "workflow_runs": [
                         {
                             "id": 70,
-                            "head_sha": head,
+                            "head_sha": workflow_head,
                             "head_branch": "main",
                             "head_repository": {"full_name": "Kosinkadink/Dinkster"},
                             "path": ".github/workflows/official-packs.yml",
@@ -3334,8 +3436,9 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
 
     monkeypatch.setattr(subprocess, "check_output", read)
     monkeypatch.setattr(subprocess, "run", run)
-    if change in {None, "pack-tests"}:
+    if change in {None, "pack-tests", "workflow-head"}:
         assert recovery_inputs(root, 90)["recovery_run"] == "70"
+        assert recovery_inputs(root, 90)["recovery_head"] == head
         assert (
             recovery_inputs(root, 90, packs=["dinkster-nodes-foundation"])["recovery_run"] == "70"
         )
