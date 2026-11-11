@@ -266,7 +266,7 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert runtime_shards == list(range(1, 9))
     runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
     assert "--file-shard ${{ matrix.shard }}/8" in runtime_run["run"]
-    for name in ("artifacts", "cli", "generations", "history", "transactions"):
+    for name in ("artifacts", "cli", "collection", "generations", "history", "transactions"):
         assert f"'--case-shard-file', 'tests/test_environment_{name}.py'" in runtime_run["run"]
     assert "matrix.file-shard" not in runtime_run["run"]
     assert "$files = @(" not in runtime_run["run"]
