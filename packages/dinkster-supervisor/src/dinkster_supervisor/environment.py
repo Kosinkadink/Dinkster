@@ -370,6 +370,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     for path in (args.catalog_lock, args.artifacts, *args.pack_lock):
         if path is not None and not path.is_absolute():
             raise EnvironmentError("source and dependency input paths must be absolute")
+    supplied_inputs: dict[Path, str] = {}
+    if not getattr(args, "from_scratch", False):
+        for path in (args.catalog_lock, *args.pack_lock):
+            if path is not None:
+                if path.is_symlink():
+                    raise EnvironmentError("source and dependency inputs must not be linked")
+                supplied_inputs[path] = content_digest(path)
     previous_root = root / "generations" / str(current) if current is not None else None
     in_process = tuple(args.in_process_pack or ())
     if args.in_process_pack is None and previous_root is not None:
@@ -386,9 +393,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         requested = configured
     store = select_store(root, requested)
     adoption = standalone_inputs(adopting, root, store) if adopting is not None else None
-    adoption_locks = (
-        {str(path): content_digest(path) for path in args.pack_lock} if adoption else {}
-    )
     if adoption is not None:
         if adoption["venvGroups"]:
             raise EnvironmentError("adoption does not support standalone shared-venv groups")
@@ -560,6 +564,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         plan.append("workflow source feasibility: pending target preparation after confirmation")
         if (root / "project.json").read_bytes() != snapshot:
             raise EnvironmentError("project changed during planning; request a new plan")
+    plan.extend(f"input {path}: {identity}" for path, identity in supplied_inputs.items())
     if not _confirmed(args, plan):
         return 0
 
@@ -612,11 +617,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
+        changed_inputs = [
+            path
+            for path, identity in supplied_inputs.items()
+            if path.is_symlink() or content_digest(path) != identity
+        ]
         if adoption is not None and (
-            standalone_inputs(cast("Path", adopting), root, store) != adoption
-            or any(content_digest(Path(path)) != value for path, value in adoption_locks.items())
+            changed_inputs or standalone_inputs(cast("Path", adopting), root, store) != adoption
         ):
             raise EnvironmentError("standalone inputs changed after planning; request a new plan")
+        if changed_inputs:
+            subject = (
+                "target catalog" if args.catalog_lock in changed_inputs else "dependency inputs"
+            )
+            raise EnvironmentError(f"{subject} changed after planning; request a new plan")
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
@@ -647,6 +661,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     "workflow requirements failed revalidation; request a new plan"
                 )
 
+    revalidate()
     registry = registry_path().parent
     registry.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=adoption is None)

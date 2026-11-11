@@ -127,6 +127,9 @@
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying
   different software. These selections cannot use a locally resolved base.
+  Explicit source catalogs and dependency locks are displayed with content
+  digests and rechecked after confirmation and before activation. Changing an
+  input during confirmation refuses before creating project or store state.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.

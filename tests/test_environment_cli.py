@@ -193,6 +193,78 @@ def test_setup_requires_reviewed_release_before_creating_project_or_store(
     assert not (tmp_path / "user-data").exists()
 
 
+@pytest.mark.parametrize("changed", ["catalog", "dependency"])
+def test_setup_refuses_inputs_changed_during_confirmation_before_creating_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    changed: str,
+):
+    from dinkster_supervisor import environment
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _mirror(mirror)
+    catalog, dependency = tmp_path / "catalog.lock", tmp_path / "pack-lock.json"
+    catalog.write_text(Lockfile.of(()).record_json())
+    dependency.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.pack-lock/1",
+                "pack": "demo",
+                "variant": "fixture-cpu",
+                "requiresPython": ">=3.12",
+                "requirements": [],
+                "indexes": [],
+                "packages": [],
+            }
+        )
+    )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    target = catalog if changed == "catalog" else dependency
+    stream = io.StringIO()
+    monkeypatch.setattr(stream, "isatty", lambda: True)
+    monkeypatch.setattr(sys, "stdin", stream)
+
+    def confirm(prompt: str) -> str:
+        assert prompt == "Apply this plan? [y/N] "
+        target.write_bytes(target.read_bytes() + b" ")
+        return "yes"
+
+    monkeypatch.setattr("builtins.input", confirm)
+    with pytest.raises(SystemExit) as exited:
+        environment.main(
+            [
+                "--root",
+                str(root),
+                "setup",
+                "--channel",
+                "main",
+                "--mirror",
+                str(mirror),
+                "--variant",
+                "fixture-cpu",
+                "--data",
+                str(store),
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(artifacts),
+                "--pack-lock",
+                str(dependency),
+            ]
+        )
+    captured = capsys.readouterr()
+    assert exited.value.code == 1
+    subject = "target catalog" if changed == "catalog" else "dependency inputs"
+    assert f"{subject} changed after planning; request a new plan" in captured.err
+    assert not root.exists()
+    assert not store.exists()
+    assert not (tmp_path / "user-data").exists()
+
+
 @pytest.mark.parametrize(
     ("host", "architecture", "override", "expected"),
     [
