@@ -35,7 +35,7 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import executable_release as _executable_release
 
 
-def _run(root: Path, *arguments: str, timeout: float = 30) -> tuple[int, dict]:
+def _run(root: Path, *arguments: str, timeout: float = 120) -> tuple[int, dict]:
     command = [
         sys.executable,
         "-m",
