@@ -5,7 +5,7 @@ What this proves: the bytes round-trip losslessly through numpy alone (the
 torchless-engine half of the IMAGE story), torch tensors are accepted
 by duck type without this interpreter ever importing torch, fingerprints
 are runtime-form-independent (hazard H4: a tensor fingerprinted in a worker
-keys the same cache entry as its numpy twin here), and the image pack
+keys the same cache entry as its numpy twin here), and the canonical media
 registration declares and serves the PNG
 rendition from encoded payloads - the /api/values path in miniature."""
 
@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
 from dinkster_api.v1 import MASK_TYPE as COMFY_MASK_TYPE
-from dinkster_image import register_types as register_image_types
+from dinkster_api.v1 import register_asset_type, register_media_types
 from dinkster_values import (
     PNG_CONTAINER_VERSION,
     EncodedPayload,
@@ -399,7 +399,8 @@ def test_render_rejects_unrenderable_shapes() -> None:
 
 def make_host_registry() -> TypeRegistry:
     registry = TypeRegistry()
-    register_image_types(registry)
+    register_asset_type(registry)
+    register_media_types(registry)
     return registry
 
 
@@ -488,7 +489,7 @@ def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
 
 def test_comfy_host_types_registration_is_idempotent() -> None:
     registry = make_host_registry()
-    register_image_types(registry)  # second spec / reload: no raise
+    register_media_types(registry)
     assert "ASSET" in registry
     assert len(registry.renditions_of(COMFY_IMAGE_TYPE)) == 1
 
@@ -496,8 +497,8 @@ def test_comfy_host_types_registration_is_idempotent() -> None:
 def test_comfy_host_base_asset_registration_is_independent_of_image() -> None:
     registry = TypeRegistry()
     registry.register(COMFY_IMAGE_TYPE)
-    register_image_types(registry)
-    register_image_types(registry)
+    register_media_types(registry)
+    register_asset_type(registry)
     assert "ASSET" in registry
 
 

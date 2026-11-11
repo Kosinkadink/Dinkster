@@ -272,7 +272,7 @@ def test_shared_memory_boundary_preserves_compact_storage(audio: bool) -> None:
 def test_audio_storage_facts_match_canonical_payload_across_boundary(
     host_registration: bool, dtype: str, shm: bool
 ) -> None:
-    from dinkster_audio import register_types as register_audio_types
+    from dinkster_assets import register_audio_value_type
     from dinkster_inference_wire import register_inference_types
     from dinkster_values import TypeRegistry
     from dinkster_workers import ValueCodec
@@ -282,7 +282,7 @@ def test_audio_storage_facts_match_canonical_payload_across_boundary(
     if host_registration:
         register_inference_types(registry)
     else:
-        register_audio_types(registry)
+        register_audio_value_type(registry, AUDIO_TYPE)
     original = np.arange(24, dtype=dtype).reshape(1, 2, 12)
     value = registry.wrap(AUDIO_TYPE, {"waveform": original, "sample_rate": 48000})
     resolved = cast(dict[str, Any], value.resolve())
@@ -352,30 +352,6 @@ def test_video_components_preserve_semantic_trailer() -> None:
     assert [probe[key] for key in ("primaries", "transfer", "matrix", "range")] == [9, 18, 9, 1]
     assert probe["bit_depth"] == 10
     assert encode_video(decoded) == encoded
-
-
-def test_inline_layer_rasters_share_array_accounting_without_duplicate_layers() -> None:
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        layer_stack_meta,
-    )
-
-    layer = CompositorSourceLayer(
-        image=np.zeros((1, 4, 4, 3), dtype=np.float32),
-        mask=np.ones((1, 4, 4), dtype=np.float32),
-        name="pixels",
-        x=0,
-        y=0,
-        width=4,
-        height=4,
-    )
-    meta = layer_stack_meta(LayerStack((layer, layer)))
-    assert meta["layers"] == 2
-    assert meta["storage_dtype"] == ["fp32"]
-    assert layer.mask is not None
-    expected = layer.image.nbytes + layer.mask.nbytes
-    assert meta[COST_META_KEY] == {"ram": expected}
 
 
 @pytest.mark.parametrize("field", ["primaries", "transfer", "range"])

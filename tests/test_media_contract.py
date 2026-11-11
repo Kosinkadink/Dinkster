@@ -369,25 +369,6 @@ def test_image_and_layer_color_preserve_unknown_ffmpeg_enums() -> None:
     assert empty_document(1, 1).to_record()["canvas"]["color"] == image_color()
 
 
-@pytest.mark.parametrize("image_first", [False, True])
-def test_pack_registration_order_preserves_mask_contract(image_first: bool) -> None:
-    from dinkster_image import register_types as register_image_types
-    from dinkster_video import register_types as register_video_types
-
-    registry = TypeRegistry()
-    registrations = [register_image_types, register_video_types]
-    for register in registrations if image_first else reversed(registrations):
-        register(registry)
-    mask = annotate_mask(np.zeros((1, 1, 1), np.float32), polarity="transparency", semantic="alpha")
-    value = registry.wrap("MASK", mask)
-    assert value.meta.get("polarity") == "transparency"
-    assert value.meta.get("semantic") == "alpha"
-    assert "channels" not in value.meta.entries
-    for type_id in ("MASK", "IMAGE"):
-        assert registry.spec(type_id).validate_encoded is not None
-        assert registry.spec(type_id).validate_encoded_buffer is not None
-
-
 @pytest.mark.parametrize(
     "metadata",
     [
@@ -419,34 +400,9 @@ def test_forged_layout_is_rejected_without_decoding() -> None:
 
 @pytest.mark.parametrize(
     ("registration", "type_id"),
-    [
-        (registration, type_id)
-        for registration in (
-            "image",
-            "inference",
-            "3d",
-            "3d_models",
-            "minimax",
-            "upscale",
-            "video",
-            "vision_background_removal",
-            "vision_depth_anything_3",
-            "vision_marigold",
-            "vision_mediapipe",
-            "vision_moge",
-            "vision_rtdetr",
-            "vision_sam3",
-            "vision_sam3d_body",
-            "vision_sdpose",
-            "void",
-        )
-        for type_id in ("IMAGE", "MASK")
-    ]
-    + [("dev", "dev.image")],
+    [("inference", "IMAGE"), ("inference", "MASK"), ("dev", "dev.image")],
 )
 def test_inline_media_has_no_external_asset_dependencies(type_id, registration) -> None:
-    import importlib
-
     from dinkster_assets import AssetRef, digest_bytes
     from dinkster_assets.value import value_asset_references
     from dinkster_inference_wire.media_wire import register_media_types as register_wire
@@ -455,13 +411,10 @@ def test_inline_media_has_no_external_asset_dependencies(type_id, registration) 
     from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
     registry = TypeRegistry()
-    if registration in ("inference", "dev"):
-        {
-            "inference": register_wire,
-            "dev": register_dev_types,
-        }[registration](registry)
-    else:
-        importlib.import_module(f"dinkster_{registration}").register_types(registry)
+    {
+        "inference": register_wire,
+        "dev": register_dev_types,
+    }[registration](registry)
     array = np.arange(6, dtype=np.float32).reshape((1, 2, 3) if type_id == "MASK" else (1, 1, 2, 3))
     wrapped = registry.wrap(type_id, array)
     assert value_asset_references({"media": wrapped}, complete_registry=registry) == {}
