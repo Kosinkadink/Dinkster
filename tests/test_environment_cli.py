@@ -81,15 +81,7 @@ sys.addaudithook(audit)
 runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 """,
         ]
-    result = (
-        run_with_diagnostics(command, timeout=timeout)
-        if "setup" in arguments
-        or "update" in arguments
-        or "restore" in arguments
-        or "move" in arguments
-        or ("doctor" in arguments and "--repair" in arguments)
-        else subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-    )
+    result = run_with_diagnostics(command, timeout=timeout)
     assert result.stdout, result.stderr
     document = json.loads(result.stdout)
     assert document["format"] == "dinkster.environment-result/1"

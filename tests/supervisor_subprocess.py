@@ -3,19 +3,122 @@
 from __future__ import annotations
 
 import faulthandler
+import importlib.util
 import json
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import FunctionType
 from typing import Any, cast
 from uuid import uuid4
 
 _WRAPPER = f"import runpy; runpy.run_path({str(Path(__file__).resolve())!r}, run_name='__main__')"
+operation_reports: list[str] = []
+
+
+@contextmanager
+def _trace_operations(path: Path):
+    # Diagnostic parents can use a base interpreter without supervisor packages.
+    if importlib.util.find_spec("dinkster_supervisor") is None:
+        yield
+        return
+    from dinkster_supervisor import (
+        environment_archives,
+        environment_artifacts,
+        environment_downloads,
+        environment_generations,
+        environment_move,
+        environment_runtime,
+        environment_state,
+        environment_transactions,
+    )
+
+    operations = {
+        function.__code__: f"{module.__name__}.{name}"
+        for module, names in (
+            (environment_archives, ("extract_base", "_verify_frame", "_validate_staging")),
+            (environment_artifacts, ("acquire", "acquire_base")),
+            (environment_downloads, ("fetch_artifact",)),
+            (
+                environment_generations,
+                (
+                    "prepare_engine_interpreter",
+                    "build_generation",
+                    "stage_pack_sources",
+                    "prepare_pack_catalogs",
+                    "pack_operation",
+                ),
+            ),
+            (environment_move, ("execute_move",)),
+            (environment_runtime, ("start_engine", "stop_engine", "_request")),
+            (environment_state, ("atomic_write",)),
+            (environment_transactions, ("activate",)),
+        )
+        for name in names
+        if (function := getattr(module, name))
+    }
+    operations[subprocess.run.__code__] = "subprocess.run"
+    operations[cast(FunctionType, shutil.rmtree).__code__] = "shutil.rmtree"
+    monitoring = sys.monitoring
+    tool = monitoring.PROFILER_ID
+    monitoring.use_tool_id(tool, "supervisor operation timings")
+    with _open_trace(path) as trace:
+        origin = time.monotonic()
+
+        def record(event, code):
+            trace.write(f"{time.monotonic() - origin:.6f}s {event} {operations[code]}\n")
+            trace.flush()
+
+        def start(code, offset):
+            record("start", code)
+
+        def complete(code, offset, result):
+            record("return", code)
+
+        def failed(code, offset, error):
+            if code in operations:
+                record("unwind", code)
+
+        callbacks = {
+            monitoring.events.PY_START: start,
+            monitoring.events.PY_RETURN: complete,
+            monitoring.events.PY_UNWIND: failed,
+        }
+        try:
+            for event, callback in callbacks.items():
+                monitoring.register_callback(tool, event, callback)
+            monitoring.set_events(tool, monitoring.events.PY_UNWIND)
+            for code in operations:
+                monitoring.set_local_events(
+                    tool, code, monitoring.events.PY_START | monitoring.events.PY_RETURN
+                )
+            yield
+        finally:
+            monitoring.set_events(tool, 0)
+            for code in operations:
+                monitoring.set_local_events(tool, code, 0)
+            for event in callbacks:
+                monitoring.register_callback(tool, event, None)
+            monitoring.free_tool_id(tool)
+
+
+def _retain_operations(directory: Path, elapsed: float) -> str:
+    path = directory / "child.operations"
+    trace = path.read_text() if path.exists() else "operation trace absent\n"
+    report = (
+        f"{os.environ.get('PYTEST_CURRENT_TEST', 'outside pytest')}: "
+        f"supervisor child wait {elapsed:.6f}s\n"
+        "Operation timestamps are relative to tracing startup; nested intervals overlap.\n" + trace
+    )
+    operation_reports.append(report)
+    return report
 
 
 def _process_state(pid: int) -> tuple[str, int | None]:
@@ -28,16 +131,24 @@ def _process_state(pid: int) -> tuple[str, int | None]:
         kernel32.OpenProcess.restype = wintypes.HANDLE
         kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
         kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
-        handle = kernel32.OpenProcess(0x1000, False, pid)
+        handle = kernel32.OpenProcess(0x1000 | 0x100000, False, pid)
         if not handle:
             return "unavailable", None
         try:
+            # An exited process may legitimately return STILL_ACTIVE (259).
+            state = kernel32.WaitForSingleObject(handle, 0)
+            if state == 258:
+                return "alive", None
+            if state != 0:
+                return "unavailable", None
             code = wintypes.DWORD()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return "unavailable", None
-            return ("alive", None) if code.value == 259 else ("exited", code.value)
+            return "exited", code.value
         finally:
             kernel32.CloseHandle(handle)
     try:
@@ -79,6 +190,28 @@ def _nested_diagnostics(directory: Path) -> str:
             f"state before cleanup={state}, returncode before cleanup={code}\n"
             f"Nested child stack before cleanup:\n"
             f"{saved or '(no nested child stack recorded)'}"
+        )
+    for path in sorted(directory.glob("unwrapped-*.json")):
+        record = json.loads(path.read_text())
+        pid = record.get("pid")
+        code = record.get("returncode")
+        state, code = (
+            ("exited", code)
+            if code is not None
+            else ("starting", None)
+            if pid is None
+            else _process_state(pid)
+        )
+        lifecycle = {
+            key: record[key] - record["started"]
+            for key in ("spawned", "observed_exit")
+            if key in record
+        }
+        rows.append(
+            f"Unwrapped {record['command']} pid={pid}, "
+            f"state before cleanup={state}, returncode before cleanup={code}\n"
+            f"Child lifecycle (seconds since launch started): {json.dumps(lifecycle)}\n"
+            f"Child observed after {time.monotonic() - record['started']:.6f}s"
         )
     return "\n".join(rows)
 
@@ -131,6 +264,7 @@ def _request_snapshot(directory: Path) -> str:
 def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
+        started = time.monotonic()
         with subprocess.Popen(
             [
                 command[0],
@@ -148,6 +282,7 @@ def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProc
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
+                elapsed = time.monotonic() - started
                 # poll must precede kill: an exited child can leave inherited pipes open.
                 returncode = process.poll()
                 snapshot = _request_snapshot(Path(directory))
@@ -158,7 +293,8 @@ def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProc
                     f"returncode before cleanup={returncode}\n"
                     f"{snapshot}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
-                    f"{_nested_diagnostics(Path(directory))}"
+                    f"{_nested_diagnostics(Path(directory))}\n"
+                    f"{_retain_operations(Path(directory), elapsed)}"
                 )
                 process.kill()
                 if os.name == "nt":
@@ -178,6 +314,7 @@ def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProc
                     saved = stack.read_text()
                     if "Fatal Python error:" in saved or "Windows fatal exception:" in saved:
                         stderr += f"\nFatal child diagnostics ({stack.stem}):\n{saved}"
+            _retain_operations(Path(directory), time.monotonic() - started)
             return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
@@ -185,7 +322,19 @@ def _trace_nested_commands(directory: Path) -> None:
     class TracedPopen(subprocess.Popen):
         def __init__(self, args, *positional, **keywords):
             self.trace_path: Path | None = None
+            self.child_path: Path | None = None
+            self.child_record: dict[str, Any] = {}
             module = None
+            command = None
+            if isinstance(args, (list, tuple)) and tuple(args[1:4]) == ("-I", "-B", "-c"):
+                command = "interpreter probe"
+            elif (
+                isinstance(args, (list, tuple))
+                and tuple(args[1:3]) == ("pip", "sync")
+                and "--offline" in args
+                and Path(os.fsdecode(args[0])).stem.lower() == "uv"
+            ):
+                command = "offline uv sync"
             if isinstance(args, (list, tuple)) and "-m" in args:
                 index = args.index("-m")
                 module = args[index + 1]
@@ -202,20 +351,40 @@ def _trace_nested_commands(directory: Path) -> None:
                         str(self.trace_path),
                         *args[index + 1 :],
                     ]
-                else:
-                    module = None
+                elif module == "dinkster.manager" and "prepare-registry-sources" in args:
+                    command = (
+                        "manager source help" if "--help" in args else "manager source preparation"
+                    )
             if self.trace_path is not None:
                 # Register before spawning so timeout collection includes children still starting.
                 temporary = self.trace_path.with_suffix(".tmp")
                 temporary.write_text(json.dumps({"module": module}))
                 temporary.replace(self.trace_path)
+            elif command is not None:
+                # Observe raw commands without rewriting arguments or retaining private inputs.
+                self.child_path = directory / f"unwrapped-{uuid4().hex}.json"
+                self.child_record = {"command": command, "started": time.monotonic()}
+                self._save_child()
             super().__init__(args, *positional, **keywords)
+            if self.child_path is not None:
+                self.child_record.update(pid=self.pid, spawned=time.monotonic())
+                self._save_child()
             if self.trace_path is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
                 temporary.write_text(str(self.pid))
                 temporary.replace(self.trace_path.with_suffix(".launcher"))
 
+        def _save_child(self):
+            if self.child_path is not None:
+                temporary = self.child_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(self.child_record))
+                temporary.replace(self.child_path)
+
         def _record_exit(self, code):
+            if self.child_path is not None and code is not None:
+                self.child_record.update(returncode=code, observed_exit=time.monotonic())
+                self._save_child()
+                self.child_path = None
             if self.trace_path is not None and code is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
                 temporary.write_text(str(code))
@@ -247,7 +416,12 @@ def _main() -> None:
         temporary.write_text(str(os.getpid()))
         temporary.replace(Path(location).with_suffix(".pid"))
     sys.argv = [module, *(arguments[1:] if module == "-c" else arguments)]
-    with _open_trace(trace_path) as trace:
+    operations = (
+        _trace_operations(trace_path.with_suffix(".operations"))
+        if mode == "supervisor"
+        else nullcontext()
+    )
+    with _open_trace(trace_path) as trace, operations:
         faulthandler.enable(file=trace)
         finished = threading.Event()
         interval = 25 if mode == "supervisor" else 5

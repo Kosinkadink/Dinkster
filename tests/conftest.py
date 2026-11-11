@@ -25,6 +25,27 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "network(*hosts): requires outbound HTTPS to named hosts")
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    from supervisor_subprocess import operation_reports
+
+    report = yield
+    if operation_reports:
+        report.sections.append(("Supervisor child operation timings", "\n".join(operation_reports)))
+        operation_reports.clear()
+    return report
+
+
+def pytest_terminal_summary(terminalreporter) -> None:
+    for reports in terminalreporter.stats.values():
+        for report in reports:
+            if isinstance(report, pytest.TestReport):
+                for name, text in report.sections:
+                    if name == "Supervisor child operation timings":
+                        terminalreporter.section(name)
+                        terminalreporter.write_line(text)
+
+
 @pytest.fixture(scope="session")
 def network_reachability() -> dict[str, str | None]:
     return {}
