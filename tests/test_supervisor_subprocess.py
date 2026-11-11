@@ -481,7 +481,7 @@ def test_nested_child_state_and_stack_at_timeout(
     )
     arguments = ["--root", "", "prepare-catalogs"] if module_name == "dinkster.manager" else []
     (tmp_path / "diagnostic_parent.py").write_text(
-        "import faulthandler, subprocess, threading\n"
+        "import faulthandler, subprocess, threading, time\n"
         f"if {late!r}:\n"
         "    sampled = threading.Event()\n"
         "    dump = faulthandler.dump_traceback\n"
@@ -489,8 +489,14 @@ def test_nested_child_state_and_stack_at_timeout(
         "        dump(*args, **kwargs)\n"
         "        sampled.set()\n"
         "    faulthandler.dump_traceback = record_sample\n"
-        f"    __import__('pathlib').Path({str(tmp_path / 'awaiting-snapshot')!r}).touch()\n"
+        f"    handshake = __import__('pathlib').Path({str(tmp_path / 'awaiting-snapshot')!r})\n"
+        "    handshake.touch()\n"
         "    assert sampled.wait(30), 'supervisor sample absent'\n"
+        # Nested startup must not join the preliminary supervisor-only snapshot request.
+        "    deadline = time.monotonic() + 30\n"
+        "    while handshake.exists():\n"
+        "        assert time.monotonic() < deadline, 'supervisor handshake incomplete'\n"
+        "        threading.Event().wait(0.01)\n"
         f"result = subprocess.run([{sys.executable!r}, '-B', '-m', {module_name!r}, "
         f"*{arguments!r}, {str(tmp_path)!r}], capture_output=True, text=True)\n"
         "assert (result.returncode, result.stdout, result.stderr) == "
@@ -506,7 +512,9 @@ def test_nested_child_state_and_stack_at_timeout(
         if late:
             wait_until((tmp_path / "awaiting-snapshot").exists)
             assert _request_snapshot(directory) == "Timeout snapshot acknowledged"
+            assert not list(directory.glob("nested-*.json"))
             (directory / "snapshot.request").unlink()
+            (tmp_path / "awaiting-snapshot").unlink()
         if blocked:
             wait_until((tmp_path / "blocked-ready").exists)
         else:
