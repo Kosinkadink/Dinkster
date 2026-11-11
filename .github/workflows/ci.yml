@@ -96,6 +96,30 @@ jobs:
           cache-dependency-glob: uv.lock
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
+      - name: Create a disposable ReFS clone-test volume
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $image = Join-Path $env:RUNNER_TEMP "clone-proof-$([guid]::NewGuid()).vhdx"
+          $letter = 71..90 | ForEach-Object { [char]$_ } | Where-Object { -not (Test-Path "${_}:\") } | Select-Object -First 1
+          if (-not $letter) { throw 'No unused drive letter for disposable clone proof' }
+          @"
+          create vdisk file="$image" maximum=2048 type=expandable
+          select vdisk file="$image"
+          attach vdisk
+          create partition primary
+          format fs=refs quick label=DinksterCloneProof
+          assign letter=$letter
+          "@ | diskpart
+          $volume = Get-Volume -DriveLetter $letter -ErrorAction Stop
+          if ($volume.FileSystem -ne 'ReFS') { throw 'Disposable ReFS creation failed; see diskpart output' }
+          $root = "${letter}:\clone-tests"
+          New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
+          Set-FileIntegrity -FileName $root -Enable $false -ErrorAction Stop
+          "DINKSTER_CLONE_TEST_ROOT=$root" >> $env:GITHUB_ENV
+          'DINKSTER_REQUIRE_REAL_CLONES=1' >> $env:GITHUB_ENV
+      - name: Require real Windows clone allocation coverage
+        run: uv run --no-sync python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
       - run: uv run --no-sync python -m pytest -q --durations=0 --durations-min=0 tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_environment_collection.py tests/test_setup_envs.py tests/test_release_install.py::test_development_version_counts_commits_since_the_last_version_tag tests/test_release_install.py::test_default_admission_workflow_selects_publication_candidates
       - name: Verify published setup and bounded subprocess diagnostics
         run: uv run --no-sync python -m pytest -q tests/test_environment_cli.py::test_confirmed_offline_setup_update_rollback_and_busy_refusal tests/test_environment_history.py::test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs tests/test_environment_history.py::test_snapshot_refuses_modified_metadata_and_linked_pack_parents tests/test_environment_runtime.py::test_start_status_idempotence_and_stop tests/test_environment_transactions.py::test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation tests/test_supervisor_subprocess.py
@@ -204,6 +228,23 @@ jobs:
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
         run: uv run --no-sync python tools/verify_pinned_inference.py
+      - name: Create a disposable XFS clone-test volume
+        if: needs.checks.outputs.engine == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xfsprogs
+          image=$(mktemp "$RUNNER_TEMP/clone-proof-XXXXXX.img")
+          volume=$(mktemp -d "$RUNNER_TEMP/clone-proof-XXXXXX")
+          truncate -s 2G "$image"
+          mkfs.xfs -f -m reflink=1 "$image"
+          sudo mount -o loop "$image" "$volume"
+          sudo chown "$(id -u):$(id -g)" "$volume"
+          echo "DINKSTER_CLONE_TEST_ROOT=$volume" >> "$GITHUB_ENV"
+          echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
+      - name: Require real Linux clone allocation coverage
+        if: needs.checks.outputs.engine == 'true'
+        run: uv run --no-sync python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:

@@ -6,10 +6,12 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import socket
 import struct
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -2259,6 +2261,135 @@ def test_space_report_windows_counts_hardlinks_and_resident_data_and_refuses_nam
     assert unavailable["automaticReclaimableBytes"] is None
     assert any("named stream" in warning for warning in cast("list[str]", unavailable["warnings"]))
     assert stream.read_bytes() == b"must not be silently excluded" * 4096
+
+
+@pytest.mark.parametrize("outside", [False, True], ids=["managed-clone", "outside-clone"])
+def test_space_report_real_clones_are_shared_and_read_only(cleanup_project: Path, outside: bool):
+    from dinkster_supervisor.environment_space import space_report
+
+    volume = os.environ.get("DINKSTER_CLONE_TEST_ROOT")
+    required = os.environ.get("DINKSTER_REQUIRE_REAL_CLONES") == "1"
+
+    def unavailable(reason: str) -> None:
+        if required:
+            pytest.fail(f"real clone coverage is required: {reason}")
+        pytest.skip(reason)
+
+    with tempfile.TemporaryDirectory(dir=volume) as scratch:
+        root = Path(scratch) / "project"
+        shutil.copytree(cleanup_project, root)
+        (root / "store").unlink()
+        source = root / "generations/2/__pycache__/original.bin"
+        target = root / ("models/clone.bin" if outside else "generations/7/__pycache__/clone.bin")
+        source.parent.mkdir()
+        target.parent.mkdir(exist_ok=True)
+        source.touch()
+        target.touch()
+
+        def settle() -> None:
+            for path in root.rglob("*"):
+                if path.is_file():
+                    with path.open("rb") as stream:
+                        os.fsync(stream.fileno())
+
+        settle()
+        baseline = space_report(root)
+        size = 1024 * 1024
+        source.write_bytes(bytes(range(256)) * (size // 256))
+        with source.open("rb") as stream:
+            os.fsync(stream.fileno())
+        try:
+            if sys.platform == "linux":
+                import fcntl
+
+                with source.open("rb") as original, target.open("r+b") as clone:
+                    fcntl.ioctl(clone.fileno(), 0x40049409, original.fileno())  # FICLONE
+            elif sys.platform == "win32":
+                import ctypes
+                import msvcrt
+                from ctypes import wintypes
+
+                win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
+                kernel = win_dll("kernel32", use_last_error=True)
+                kernel.DeviceIoControl.argtypes = [
+                    wintypes.HANDLE,
+                    wintypes.DWORD,
+                    wintypes.LPVOID,
+                    wintypes.DWORD,
+                    wintypes.LPVOID,
+                    wintypes.DWORD,
+                    ctypes.POINTER(wintypes.DWORD),
+                    wintypes.LPVOID,
+                ]
+
+                class DuplicateExtents(ctypes.Structure):
+                    _fields_ = [
+                        ("source", wintypes.HANDLE),
+                        ("source_offset", ctypes.c_int64),
+                        ("target_offset", ctypes.c_int64),
+                        ("length", ctypes.c_int64),
+                    ]
+
+                target.write_bytes(bytes(size))
+                get_handle = getattr(msvcrt, "get_osfhandle")  # noqa: B009 - Linux stubs omit it
+                with source.open("rb") as original, target.open("r+b") as clone:
+                    request = DuplicateExtents(get_handle(original.fileno()), 0, 0, size)
+                    returned = wintypes.DWORD()
+                    if not kernel.DeviceIoControl(
+                        get_handle(clone.fileno()),
+                        0x00098344,
+                        ctypes.byref(request),
+                        ctypes.sizeof(request),
+                        None,
+                        0,
+                        ctypes.byref(returned),
+                        None,
+                    ):
+                        win_error = getattr(ctypes, "WinError")  # noqa: B009 - Linux stubs omit it
+                        raise win_error()
+            else:
+                unavailable("native clone observation requires Linux or Windows")
+        except OSError as exc:
+            unavailable(f"filesystem clone operation refused: {exc}")
+        assert source.stat().st_ino != target.stat().st_ino
+        assert target.read_bytes() == source.read_bytes()
+        settle()
+        assert baseline["complete"], baseline
+
+        def census() -> dict:
+            return {
+                str(path.relative_to(root)): (
+                    info.st_mode,
+                    info.st_size,
+                    info.st_ino,
+                    info.st_nlink,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                    getattr(info, "st_blocks", None),
+                    path.read_bytes() if path.is_file() else None,
+                )
+                for path in [root, *root.rglob("*")]
+                for info in [path.lstat()]
+            }
+
+        before = census()
+        report = space_report(root)
+        assert report["complete"], report
+        assert report["allocatedBytes"] == cast("int", baseline["allocatedBytes"]) + size
+        assert (
+            report["sharedAllocatedBytes"] == cast("int", baseline["sharedAllocatedBytes"]) + size
+        )
+        groups = cast("dict[str, dict[str, int]]", report["groups"])
+        assert groups["generation/2"]["sharedAllocatedBytes"] == size
+        if not outside:
+            assert groups["generation/7"]["sharedAllocatedBytes"] == size
+        assert report["automaticReclaimableBytes"] is None
+        assert report["additionalExplicitReclaimableBytes"] is None
+        assert any(
+            "outside this report" in warning
+            for warning in cast("list[str]", report["reclaimabilityWarnings"])
+        )
+        assert census() == before
 
 
 @pytest.mark.parametrize("retained_partner", [True, False])
