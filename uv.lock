@@ -1030,6 +1030,7 @@ dependencies = [
     { name = "alembic" },
     { name = "av" },
     { name = "blake3" },
+    { name = "cryptography" },
     { name = "dinkster-opentimelineio" },
     { name = "filelock" },
     { name = "numpy" },
@@ -1037,6 +1038,7 @@ dependencies = [
     { name = "pillow" },
     { name = "psd-tools" },
     { name = "psutil" },
+    { name = "pydantic" },
     { name = "sqlalchemy" },
 ]
 
@@ -1046,6 +1048,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "av", specifier = "==18.1.0" },
     { name = "blake3", specifier = ">=0.4" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "dinkster-opentimelineio", specifier = "==0.19.0" },
     { name = "filelock", specifier = ">=4.2.4,<5" },
     { name = "numpy", specifier = ">=1.26" },
@@ -1053,6 +1056,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10" },
     { name = "psd-tools", specifier = ">=1.14.3,<1.20" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
 ]
 
@@ -1274,7 +1278,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-image"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "packages/dinkster-nodes-image" }
 dependencies = [
     { name = "av" },
@@ -1778,7 +1782,9 @@ source = { editable = "packages/dinkster-supervisor" }
 dependencies = [
     { name = "aiohttp" },
     { name = "blake3" },
+    { name = "cryptography" },
     { name = "packaging" },
+    { name = "pydantic" },
     { name = "zstandard" },
 ]
 
@@ -1791,7 +1797,9 @@ environment-tools = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "blake3", specifier = ">=1.0" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "packaging", specifier = ">=24" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "zstandard", specifier = ">=0.25" },
 ]
 

@@ -23,6 +23,11 @@ from dinkster_registry import (
     unpack_artifact,
 )
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.inventory import generation_dependencies
+from dinkster_security.policy import Artifact as SecurityArtifact
+from dinkster_security.policy import assess
+from dinkster_security.store import SecurityStore
 from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
@@ -33,6 +38,7 @@ from dinkster_workers.provision import ProvisionError
 from . import __version__ as engine_version
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
+from .registries import RegistryConfig, load_registries
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
@@ -139,9 +145,53 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
         or len(set(hosting)) != len(hosting)
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
-    return variant, generation_pack_specs(
+    specs = generation_pack_specs(
         generation, tuple(hosting), local_build=record.get("source") == "local"
     )
+    project = generation.parent.parent
+    database = project / "security.sqlite3"
+    if database.is_file():
+        lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
+        libraries = generation_dependencies(
+            generation, record["files"], tuple(entry.pack for entry in lock.packs), tuple(hosting)
+        )
+        config = project / "registries.toml"
+        registries = load_registries(config) if config.is_file() else RegistryConfig()
+        entries = {entry.pack: entry for entry in lock.packs}
+        artifacts: list[SecurityArtifact] = []
+        for entry, spec in zip(lock.packs, specs, strict=True):
+            dependencies = {
+                entries[Path(path).name].artifact_digest
+                for path in spec.env["PYTHONPATH"].split(os.pathsep)
+                if Path(path).name != entry.pack
+            }
+            registry = (
+                registries.registry_for(entry).endpoint
+                if entry.source == "registry" or entry.source.startswith("registry:")
+                else entry.source
+            )
+            artifacts.append(
+                SecurityArtifact(
+                    registry,
+                    SecurityRelease.model_validate(
+                        {
+                            "pack": entry.pack,
+                            "version": entry.version,
+                            "artifactDigest": entry.artifact_digest,
+                        }
+                    ),
+                    tuple(sorted(dependencies | set(libraries[entry.pack]))),
+                )
+            )
+        result = assess(SecurityStore(database), tuple(artifacts))
+        if not result.allowed:
+            finding = next(item for item in result.findings if not item.allowed)
+            raise CompositionError(
+                f"security {finding.state}: {finding.artifact.release.pack}, "
+                f"notice {finding.notice.id} revision {finding.notice.revision}, "
+                f"decision {finding.decision}"
+            )
+    return variant, specs
 
 
 def generation_pack_specs(

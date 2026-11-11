@@ -134,9 +134,10 @@ def provision_pack(
     """Recheck the plan and stage hashed wheels before recording the pack lock."""
     _require_fresh_generation(packs.parent)
     plan.require_layering()
+    parent_packages = GenerationPackages.inspect(generation_python)
     current_plan = plan_pack(
         plan.lock,
-        GenerationPackages.inspect(generation_python),
+        parent_packages,
         variant=variant,
         own_environment_size=plan.own_environment_size,
     )
@@ -161,9 +162,9 @@ def provision_pack(
             with tempfile.TemporaryDirectory(prefix="dinkster-wheel-pins-") as temporary:
                 requirements = Path(temporary) / "requirements.txt"
                 pins: list[str] = []
-                for wheel in plan.wheels:
-                    name, version, _, _ = parse_wheel_filename(wheel.filename)
-                    pins.append(f"{name}=={version} --hash=sha256:{wheel.sha256}")
+                for wheel, path in zip(plan.wheels, wheels, strict=True):
+                    name, _, _, _ = parse_wheel_filename(wheel.filename)
+                    pins.append(f"{name} @ {path.resolve().as_uri()} --hash=sha256:{wheel.sha256}")
                 requirements.write_text("\n".join(pins) + "\n", encoding="ascii")
                 _run(
                     [
@@ -177,23 +178,38 @@ def provision_pack(
                         "--require-hashes",
                         "--only-binary",
                         ":all:",
-                        *(
-                            ["--offline", "--no-index"]
-                            if offline or len(plan.lock.indexes) != 1
-                            else ["--index-url", plan.lock.indexes[0]]
-                        ),
+                        "--offline",
+                        "--no-index",
                         *(["--break-system-packages"] if in_process else []),
-                        *(
-                            argument
-                            for parent in sorted({path.parent for path in wheels})
-                            for argument in ("--find-links", str(parent))
-                        ),
                         "--requirements",
                         str(requirements),
                     ],
                     uv_cache,
                 )
         plan.lock.write(destination / "pack-lock.json")
+        (destination / "installed-wheels.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "wheels": [
+                        {"filename": wheel.filename, "size": wheel.size, "sha256": wheel.sha256}
+                        for wheel in plan.wheels
+                    ],
+                    "inherited": sorted(
+                        {
+                            package.name
+                            for package in plan.lock.packages
+                            if package.name in parent_packages.versions
+                        }
+                        | ({"dinkster-api"} if plan.lock.engine is not None else set())
+                    ),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="ascii",
+        )
         return python
     except BaseException:
         shutil.rmtree(destination, ignore_errors=True)

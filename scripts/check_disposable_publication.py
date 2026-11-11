@@ -213,6 +213,7 @@ def check_publication(
             [
                 "/source",
                 "/source/src",
+                "/source/packages/dinkster-supervisor/shared",
                 *[
                     "/source/" + str(path.relative_to(root))
                     for path in sorted((root / "packages").glob("*/src"))

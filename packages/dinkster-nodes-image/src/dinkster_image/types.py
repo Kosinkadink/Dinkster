@@ -325,6 +325,7 @@ def register_image_types(registry: TypeRegistry) -> None:
         register_asset_type,
         register_comfy_compositor,
         register_comfy_layers,
+        register_compositor_type,
         register_save_target_type,
         render_image_png,
         render_mask_png,
@@ -333,7 +334,6 @@ def register_image_types(registry: TypeRegistry) -> None:
     )
 
     from .layer_document import decode_layers, layer_meta, migrate_layers, validate_layers_encoded
-    from .layer_recipe import coerce_delta, decode_delta, encode_delta, validate_delta_encoded
 
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
@@ -429,16 +429,7 @@ def register_image_types(registry: TypeRegistry) -> None:
             mime=IMAGE_DOCUMENT_MEDIA_TYPE,
             render=lambda obj: migrate_layers(obj).data,
         )
-    if COMPOSITOR_TYPE not in registry:
-        registry.register(
-            COMPOSITOR_TYPE,
-            encode=encode_delta,
-            decode=decode_delta,
-            coerce=coerce_delta,
-            meta=lambda obj: {"version": coerce_delta(obj)["version"]},
-            validate_encoded=validate_delta_encoded,
-            asset_references_complete=True,
-        )
+    register_compositor_type(registry)
     register_comfy_layers(registry)
     register_comfy_compositor(registry)
     register_box_types(registry)

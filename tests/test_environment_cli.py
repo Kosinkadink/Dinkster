@@ -1653,7 +1653,7 @@ environment.main()
         verified = cached_wheel.read_bytes()
         cached_wheel.write_bytes(b"corrupt local wheel")
         code, repair_failed = _run(root, "doctor", "--repair", "--yes")
-        assert code == 1 and "offline generation sync failed" in repair_failed["error"]
+        assert code == 1 and "offline generation wheel missing or corrupt" in repair_failed["error"]
         assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         cached_wheel.write_bytes(verified)

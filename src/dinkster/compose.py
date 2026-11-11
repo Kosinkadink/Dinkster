@@ -87,6 +87,7 @@ from dinkster_engine import (
     Worker,
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
+from dinkster_image_document.compositor import register_compositor_type
 from dinkster_inference_wire import register_inference_types
 from dinkster_memory import (
     FullReleaseResult,
@@ -1305,6 +1306,7 @@ def _installed_pack_spec(
         env={} if env is None else env,
         require_catalog=locked is not None and locked.source.startswith("registry:"),
         asset_vault_write=asset_vault_write,
+        host_types=register_compositor_type if pack_id == "dinkster-image" else None,
     )
 
 

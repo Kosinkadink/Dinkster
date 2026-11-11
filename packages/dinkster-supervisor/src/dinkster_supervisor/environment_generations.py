@@ -19,7 +19,7 @@ from typing import cast
 from blake3 import blake3
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 
-from .environment_constraints import requirement_hashes
+from .environment_constraints import requirement_hashes, selected_wheel_requirements
 from .environment_downloads import fetch_artifact
 from .environment_state import (
     EnvironmentError,
@@ -575,15 +575,18 @@ def prepare_engine_interpreter(
         "--offline",
         "--no-index",
         "--require-hashes",
+        # A same-version base distribution need not have come from the selected wheel.
+        "--reinstall",
         "--only-binary",
         ":all:",
         "--link-mode",
         link_mode,
         "-",
     ]
-    # Wheel sources can exceed Windows' command-line limit in large stores.
-    requirements = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in links)
-    requirements += constraints.read_text(encoding="utf-8")
+    # Keep selected local wheel URLs off Windows' bounded command line.
+    requirements, selected = selected_wheel_requirements(
+        python, constraints.read_text(encoding="utf-8"), links
+    )
     environment = {
         **os.environ,
         "UV_CACHE_DIR": str(store / "uv-cache"),
@@ -604,6 +607,10 @@ def prepare_engine_interpreter(
     )
     if result.returncode:
         raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+    write_document(
+        destination / "installed-wheels.json",
+        {"format": "dinkster.installed-wheels/1", "wheels": selected, "inherited": []},
+    )
     return python
 
 
@@ -945,7 +952,10 @@ def build_generation(
             if path.is_file()
             and (
                 path.relative_to(destination).parts[0] != "packs"
-                or (len(path.relative_to(destination).parts) == 3 and path.name == "pack-lock.json")
+                or (
+                    len(path.relative_to(destination).parts) == 3
+                    and path.name in {"pack-lock.json", "installed-wheels.json"}
+                )
             )
             and (
                 "__pycache__" not in path.relative_to(destination).parts

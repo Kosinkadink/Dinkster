@@ -82,6 +82,11 @@ before conversion to an image document. The separate-worker transport keeper is
 It covers engine-encoded empty, default and edited compositor values, exact
 output pixels and masks, and refusal of malformed compositor payloads.
 
+The compositor widget codec and recipe normalization live in the shared
+`dinkster-image-document` module and cross the pack-author API. The default
+image PackSpec installs that same codec through `host_types`, so lazy serving
+can wrap literals before starting the isolated image worker.
+
 The `dinkster.compositor.state` event's `documentDigest` identifies the canonical
 input document, before commands or color-space overrides. Its `document` is
 the post-edit preview. Apply sends the input digest with commands relative to
