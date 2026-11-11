@@ -644,6 +644,14 @@
 
 ### Development generations from local folders
 
+Standalone local-folder and `git+URL[@REF]` pack installs remain available as
+development inputs without a published dependency lock. Their plans report
+range resolution and lack of registry review. Serving an installed local/git
+selection, or an explicit local pack, labels both command output and the node
+catalog as development and not reproducible from ranges. A registry-only
+selection does not gain that label, and standalone install refuses a registry
+version rather than resolving it as development.
+
 Select local software explicitly; nothing needs publishing first:
 
 ```sh

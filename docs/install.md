@@ -265,6 +265,15 @@ generations can both be reactivated without rebuilding them.
 
 ### Development packs from local folders
 
+The standalone local/git path is development-only. `dinkster pack --root ROOT
+install --yes ./pack` and `dinkster pack --root ROOT install --yes
+git+https://host/pack.git@REF` retain plan/consent and resolve dependency ranges
+without requiring a published lock. The plan labels these sources as unreviewed
+and not reproducible from ranges. Serve that selection explicitly with
+`python -m dinkster.serve --no-default-packs --install-root ROOT`; the terminal
+and node catalog carry the development label. A published registry spec is
+refused on the standalone install route, never silently resolved as development.
+
 Use the explicit development command when an engine, pack or helper library has
 not been published. The source engine must be a Dinkster checkout. Select a new
 project outside those folders and the base variant for the host:

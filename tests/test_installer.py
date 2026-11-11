@@ -3160,6 +3160,8 @@ def test_cli_git_install_and_update(tmp_path: Path, capsys: pytest.CaptureFixtur
     run_cli("--root", root, "install", "--no-venv", "--yes", f"git+{url}")
     out = capsys.readouterr().out
     assert "add: demo" in out and "activated generation 1" in out
+    assert "development: local/git sources are not reviewed by the registry" in out
+    assert "not reproducible from ranges" in out
     installer = Installer(Path(root))
     lockfile = installer.current_lockfile()
     assert lockfile is not None
