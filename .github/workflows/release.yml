@@ -6,6 +6,7 @@ on:
     tags:
       - "v*.*.*"
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
@@ -38,6 +39,7 @@ concurrency:
 
 jobs:
   changes:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     outputs:
       engine: ${{ steps.inputs.outputs.engine }}
