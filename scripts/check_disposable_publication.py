@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -55,6 +56,7 @@ def check_publication(
     name = "dinkster-publication-" + uuid.uuid4().hex
     containers: list[str] = []
     network_created = volume_created = False
+    token: str | None = None
     environment = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
 
     def docker(*arguments: str, token: str | None = None) -> str:
@@ -301,6 +303,31 @@ def check_publication(
             "submissions": submissions,
             "elapsedSeconds": time.monotonic() - start,
         }
+    except Exception:
+        # Retain scanner diagnostics before deleting the disposable database.
+        report = (
+            "import json,sqlite3; db=sqlite3.connect('/data/registry.sqlite'); "
+            "print(json.dumps(db.execute('SELECT stage,operator_details,doctor "
+            "FROM release_scan_runs ORDER BY created_at DESC LIMIT 10').fetchall()))"
+        )
+        try:
+            result = subprocess.run(
+                ["docker", "exec", name + "-registry", "python", "-c", report],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if result.returncode == 0:
+                diagnostic = result.stdout[-65536:]
+                print(
+                    diagnostic.replace(token, "<redacted>") if token else diagnostic,
+                    file=sys.stderr,
+                )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        raise
     finally:
         # Cleanup has its own bound even when the publication deadline expired.
         deadline = time.monotonic() + 60
