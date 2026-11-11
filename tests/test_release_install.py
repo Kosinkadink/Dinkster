@@ -2522,9 +2522,7 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         }
 
 
-def test_disposable_registry_acquisition_uses_public_source_for_all_pull_requests(
-    tmp_path: Path,
-) -> None:
+def test_disposable_registry_acquisition_uses_public_source_for_all_pull_requests() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
     assert "pull_request_target" not in workflow[True]
     assert "packages/**/pyproject.toml" in workflow[True]["pull_request"]["paths"]
@@ -2553,18 +2551,19 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
     assert len(pin) == 40 and all(char in "0123456789abcdef" for char in pin)
     assert checkout["with"]["persist-credentials"] is False
     assert "ssh-key" not in checkout["with"]
-    docker = tmp_path / "docker"
-    docker.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="ascii")
-    docker.chmod(0o755)
     service_build = next(
         step["run"]
         for step in job["steps"]
         if "docker build --tag" in step.get("run", "")
         and ".disposable-registry-source" in step["run"]
     )
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
     build = subprocess.run(
-        ["bash", "-c", service_build],
-        env={"PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]},
+        [bash, "-e", "-c", "docker() { printf '%s\\n' \"$@\"; }\n" + service_build],
         capture_output=True,
         text=True,
         check=True,

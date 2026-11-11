@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request, url2pathname, urlopen
 from zipfile import ZipFile
 
 from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
@@ -79,7 +79,7 @@ def stage_index(sources: Path, output: Path) -> dict:
         name = unquote(parts.path.rsplit("/", 1)[-1])
         destination = output / name
         if parts.scheme == "file":
-            source = Path(unquote(parts.path)).resolve()
+            source = Path(url2pathname(parts.path)).resolve()
             if source.parent != sources.resolve():
                 raise ValueError("local probe wheel must be a selected source")
             digest, size = sha256(source), source.stat().st_size
