@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-hidream"
-version = "0.0.5"
+version = "0.0.6"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.hidream"]
