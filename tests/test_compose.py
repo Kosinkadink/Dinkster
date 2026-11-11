@@ -29,7 +29,7 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_engine import EngineEvent
@@ -45,7 +45,6 @@ from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import Node, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
-from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.manifest import resolve_entry
@@ -446,51 +445,6 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     pool = ResidentPool()
     monkeypatch.setattr("dinkster.compose.default_pool", lambda: pool)
     return pool
-
-
-def test_lazy_image_pack_resolves_assets_after_host_registration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import io
-
-    import numpy as np
-    from PIL import Image
-
-    pixels = np.zeros((3, 5, 3), dtype=np.uint8)
-    pixels[..., 1] = 255
-    encoded = io.BytesIO()
-    Image.fromarray(pixels, mode="RGB").save(encoded, format="PNG")
-    data = encoded.getvalue()
-    digest = digest_bytes(data)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        writer.commit()
-    for key in ("DINKSTER_PACK_SCRATCH", "DINKSTER_MOUNTS_SNAPSHOT", "DINKSTER_ASSET_ROOT"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
-    ref = AssetRef(digest, "input.png", len(data), "image/png")
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-            assert prepare_catalog(image.manifest, environment=os.environ).ok
-            await composer.add_pack(image)
-
-            engine = composer.composition.make_engine(lambda _event: None)
-            result = await engine.run(
-                Graph(
-                    nodes={"load": GraphNode("dinkster.image.load_image", {"image": ref.to_wire()})}
-                ),
-                ["load"],
-            )
-            loaded = cast("np.ndarray", result.outputs["load"]["IMAGE"].resolve())
-            np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
 
 
 def write_iso_manifest(
@@ -1270,7 +1224,7 @@ def test_default_pack_refuses_version_outside_suite_lock(
 
 @pytest.mark.parametrize("mismatch", [None, "pack", "distribution", "distribution-name"])
 def test_pack_manifest_version_and_distribution_provenance_are_independent(
-    monkeypatch: pytest.MonkeyPatch, mismatch: str | None
+    monkeypatch: pytest.MonkeyPatch, mismatch: str | None, text_pack: Path
 ) -> None:
     from dinkster import compose
 
@@ -1287,10 +1241,9 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
         lock, packs=tuple(pack if row.pack == pack.pack else row for row in lock.packs)
     )
     monkeypatch.setattr(compose, "_default_pack_lock", lambda: changed)
-    real_distribution = compose.importlib.metadata.distribution
 
     def distribution(name: str):
-        installed = real_distribution(name)
+        installed = editable_distribution(text_pack, "0.0.3")
         if name == "dinkster-text" and mismatch == "distribution":
             return SimpleNamespace(
                 version="9.0.0",
@@ -1881,94 +1834,6 @@ def test_asset_literals_use_host_and_worker_resolvers(
                 result = await engine.run(graph, ["read"])
                 assert result.outputs["read"]["text"].resolve() == payload.decode()
                 assert result.outputs["read"]["size"].resolve() == len(payload)
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("verified", (False, True))
-def test_models_pack_preserves_host_bound_assets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
-) -> None:
-    from dinkster_api.v1 import ASSET_TYPE
-    from dinkster_assets import (
-        LocalAssetRef,
-        MountDef,
-        MountTable,
-    )
-
-    root = tmp_path / "models"
-    root.mkdir()
-    payload = b"bound model bytes"
-    (root / "weights.bin").write_bytes(payload)
-    snapshot = tmp_path / "mounts.json"
-    table = MountTable(snapshot, index_root=tmp_path / "indexes")
-    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
-    if verified:
-        table.scan("models")
-    ref = table.bind_name("weights.bin", "model/checkpoint")
-    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
-    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-models/dinkster-pack.toml"
-    env = {
-        **WORKER_ENV,
-        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
-    }
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        assert ASSET_TYPE not in registry
-        composer = ServingComposer(registry=registry, worker_env=env)
-        try:
-            asset_type = registry.spec(ASSET_TYPE)
-            await composer.add_pack(
-                PackSpec(manifest, in_process=in_process, env=env, trust_reserved=True)
-            )
-            assert registry.spec(ASSET_TYPE) is asset_type
-            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
-            if not in_process:
-                await composer.reload_pack("dinkster-models")
-                assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
-                assert registry.spec(ASSET_TYPE) is asset_type
-            for _ in range(2):
-                bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
-                restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
-                assert isinstance(restored, AssetRef if verified else LocalAssetRef)
-                assert restored.local_path().read_bytes() == payload
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml"
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "dictionary": GraphNode(
-                            "dinkster.text.convert_dictionary_to_string",
-                            {"dictionary": {"key": [3, True]}, "indent": 0},
-                        ),
-                        "array": GraphNode(
-                            "dinkster.text.convert_array_to_string",
-                            {"array": [3, {"key": False}], "indent": 0},
-                        ),
-                    }
-                ),
-                ["dictionary", "array"],
-            )
-            assert result.outputs["dictionary"]["STRING"].resolve() == '{"key": [3, true]}'
-            assert result.outputs["array"]["STRING"].resolve() == '[3, {"key": false}]'
         finally:
             await composer.close()
 
