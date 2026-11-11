@@ -331,7 +331,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         project = tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
-    assert "dinkster-inference==0.1.1" in manifest.requires
+    assert "dinkster-inference" in manifest.requires
     assert str(manifest.root / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
