@@ -614,6 +614,65 @@ def test_public_commands_without_setup_refuse_without_creating_state(
     assert not (tmp_path / "absent").exists()
 
 
+@pytest.mark.parametrize("command", [[], ["serve"], ["stop"]])
+def test_public_runtime_plan_leaves_the_project_unchanged(
+    tmp_path: Path, monkeypatch, capsys, command: list[str]
+) -> None:
+    from test_environment_cli import _runtime_project
+
+    root = tmp_path / "project"
+    root.mkdir()
+    _runtime_project(root)
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "wrong-default"))
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert cli_main([*command, "--root", str(root), "--plan", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "planned" and result["current"] == 1
+    assert result["engines"] == []
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    assert not (tmp_path / "wrong-default").exists()
+
+
+def test_public_update_and_rollback_rebuild_the_selected_project(
+    tmp_path: Path, monkeypatch, capfd
+) -> None:
+    import subprocess
+
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments.build import build
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root = Path(fixture["root"])
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA", "DINKSTER_HOME"):
+        monkeypatch.setenv(name, str(tmp_path / "user-data"))
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    try:
+        subprocess.run(fixture["commands"]["setup"], check=True, capture_output=True, timeout=60)
+        assert cli_main(["stop", "--root", str(root), "--json"]) == 0
+        capfd.readouterr()
+        subprocess.run(fixture["commands"]["advance"], check=True, capture_output=True, timeout=30)
+        for operation, expected_version in (("update", "2.0"), ("rollback", "1.0")):
+            current = (root / "current").read_bytes()
+            assert cli_main([operation, "--root", str(root), "--plan", "--json"]) == 0
+            assert json.loads(capfd.readouterr().out)["status"] == "planned"
+            assert (root / "current").read_bytes() == current
+            assert cli_main([operation, "--root", str(root), "--yes", "--json"]) == 0
+            result = json.loads(capfd.readouterr().out)
+            assert result["status"] == "applied", result
+            generation = root / "generations" / str(result["current"])
+            assert (
+                json.loads((generation / "generation.json").read_text())["engine"]["version"]
+                == expected_version
+            )
+            assert cli_main(["stop", "--root", str(root), "--json"]) == 0
+            capfd.readouterr()
+        assert not (tmp_path / "user-data/project").exists()
+    finally:
+        cli_main(["stop", "--root", str(root), "--json"])
+
+
 def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, monkeypatch) -> None:
     from dinkster_server.app import install_browser_request_security, install_cors
 

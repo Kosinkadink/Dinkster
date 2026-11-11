@@ -68,6 +68,9 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "doctor",
         "serve",
         "setup",
+        "stop",
+        "update",
+        "rollback",
         "pack",
         "installs",
         "demo",
@@ -75,6 +78,24 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
     ):
         assert name in listing
     assert "run/bootstrap a registry service" not in listing
+
+
+@pytest.mark.parametrize("command", [[], ["serve"], ["stop"], ["update"], ["rollback"]])
+def test_lifecycle_help_lists_project_and_operation_options(command: list[str], capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main([*command, "--help"])
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "usage: dinkster" in help_text
+    assert "--root" in help_text
+    assert "--plan" in help_text and "--yes" in help_text
+    if command in ([], ["serve"]):
+        assert "--port" in help_text and "--gpu" in help_text
+        assert "--no-browser" in help_text
+    elif command == ["update"]:
+        assert "--channel" in help_text and "--variant" in help_text
+    elif command == ["rollback"]:
+        assert "--approve" in help_text
 
 
 def test_unknown_command_is_loud_exit_2(capsys) -> None:

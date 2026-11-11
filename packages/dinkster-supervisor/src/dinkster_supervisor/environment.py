@@ -1372,7 +1372,7 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> None:
+def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, required=True, help="absolute prospective project root"
@@ -1507,9 +1507,11 @@ def main(argv: list[str] | None = None) -> None:
         move,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
-    args = parser.parse_args(argv)
-    if not args.root.is_absolute():
-        parser.error("--root must be absolute")
+    return parser if operation is None else commands.choices[operation]
+
+
+def run(args: argparse.Namespace) -> int:
+    """Execute a parsed generation operation using the shared result contract."""
     result: dict[str, object] = {
         "format": "dinkster.environment-result/1",
         "operation": args.operation,
@@ -1630,7 +1632,15 @@ def main(argv: list[str] | None = None) -> None:
         import webbrowser
 
         webbrowser.open(cast("str", result["url"]))
-    raise SystemExit(code)
+    return code
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argument_parser()
+    args = parser.parse_args(argv)
+    if not args.root.is_absolute():
+        parser.error("--root must be absolute")
+    raise SystemExit(run(args))
 
 
 if __name__ == "__main__":
