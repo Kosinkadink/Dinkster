@@ -954,6 +954,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
     [
         None,
         "update",
+        "catalog-failure",
         "restore",
         "extra",
         "missing",
@@ -1050,7 +1051,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     'cuda = ["unavailable-cuda-fixture>=1"]\n'
                 )
         (source / "dinkster-pack.toml").write_text(manifest_text)
-        (source / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
+        nodes = HEALTHY_NODES.replace("healthy", name)
+        if problem == "catalog-failure":
+            nodes = f"raise RuntimeError('{name} catalog refused')\n" + nodes
+        (source / f"{name}_nodes.py").write_text(nodes)
         archive = artifacts / "staging.zip"
         identity = build_artifact(source, archive)
         archive.rename(artifacts / f"{identity.removeprefix('blake3:')}.zip")
@@ -1081,10 +1085,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     catalog = tmp_path / "official-packs.lock"
     catalog.write_text(Lockfile.of(entries).record_json())
     previous = None
+    prior_generation = None
     number = 1
-    if problem == "update":
+    if problem in {"update", "catalog-failure"}:
         previous = root / "generations/1"
-        build_generation(
+        prior_generation = build_generation(
             root=root,
             number=1,
             store=store,
@@ -1116,6 +1121,19 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         artifacts=artifacts,
         source_generation=previous,
     )
+    if problem == "catalog-failure":
+        assert previous is not None
+        assert prior_generation is not None
+        metadata = (previous / "generation.json").read_bytes()
+        with pytest.raises(EnvironmentError, match="pack catalog preparation failed") as error:
+            invoke()
+        for name in ("healthy", "other"):
+            assert f"{name} catalog refused" in str(error.value)
+        assert read_current(root) == 1
+        assert (previous / "generation.json").read_bytes() == metadata
+        assert prior_generation.drift(previous) == ()
+        assert not (root / "generations/2").exists()
+        return
     custom = None
     if problem == "custom":
         from dinkster_supervisor.environment_custom import prepare_custom_pack_locks

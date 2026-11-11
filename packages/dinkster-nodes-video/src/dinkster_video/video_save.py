@@ -28,9 +28,9 @@ from dinkster_api.v1 import (
     bind_video_value,
     current_export_snapshot,
     effective_video_facts,
-    first_party_schema,
     resolver_from_env,
     save_video_stream,
+    with_identity_replacement,
 )
 
 from .webm_save import EncodedVideoSpool
@@ -96,7 +96,7 @@ class SaveVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveVideo",
+            node_type="dinkster.video.save_video",
             display_name="Save Video",
             category="video",
             description="Saves the input videos to your ComfyUI output directory.",
@@ -149,7 +149,7 @@ class SaveVideo(Node):
             output_node=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveVideo")
 
     @classmethod
     def execute(

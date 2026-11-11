@@ -25,8 +25,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -56,16 +56,17 @@ _CATEGORY = "model/sampling/sigmas"
 class SplitSigmas(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SplitSigmas",
+                node_type="dinkster.sampling.split_sigmas",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("sigmas", _SIGMAS),
                     InputSpec("step", _INT, default=0, widget=NumberWidget(min=0, max=10_000)),
                 ),
                 outputs=(OutputSpec("high_sigmas", _SIGMAS), OutputSpec("low_sigmas", _SIGMAS)),
-            )
+            ),
+            "SplitSigmas",
         )
 
     @classmethod
@@ -77,9 +78,9 @@ class SplitSigmas(Node):
 class SplitSigmasDenoise(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SplitSigmasDenoise",
+                node_type="dinkster.sampling.split_sigmas_denoise",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("sigmas", _SIGMAS),
@@ -91,7 +92,8 @@ class SplitSigmasDenoise(Node):
                     ),
                 ),
                 outputs=(OutputSpec("high_sigmas", _SIGMAS), OutputSpec("low_sigmas", _SIGMAS)),
-            )
+            ),
+            "SplitSigmasDenoise",
         )
 
     @classmethod
@@ -106,13 +108,14 @@ class SplitSigmasDenoise(Node):
 class FlipSigmas(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="FlipSigmas",
+                node_type="dinkster.sampling.flip_sigmas",
                 category=_CATEGORY,
                 inputs=(InputSpec("sigmas", _SIGMAS),),
                 outputs=(OutputSpec("sigmas", _SIGMAS),),
-            )
+            ),
+            "FlipSigmas",
         )
 
     @classmethod
@@ -129,9 +132,9 @@ class FlipSigmas(Node):
 class SetFirstSigma(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SetFirstSigma",
+                node_type="dinkster.sampling.set_first_sigma",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("sigmas", _SIGMAS),
@@ -143,7 +146,8 @@ class SetFirstSigma(Node):
                     ),
                 ),
                 outputs=(OutputSpec("sigmas", _SIGMAS),),
-            )
+            ),
+            "SetFirstSigma",
         )
 
     @classmethod
@@ -156,9 +160,9 @@ class SetFirstSigma(Node):
 class ExtendIntermediateSigmas(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ExtendIntermediateSigmas",
+                node_type="dinkster.sampling.extend_intermediate_sigmas",
                 category=_CATEGORY,
                 search_terms=("interpolate sigmas",),
                 inputs=(
@@ -185,7 +189,8 @@ class ExtendIntermediateSigmas(Node):
                     ),
                 ),
                 outputs=(OutputSpec("sigmas", _SIGMAS),),
-            )
+            ),
+            "ExtendIntermediateSigmas",
         )
 
     @classmethod
@@ -225,9 +230,9 @@ class ExtendIntermediateSigmas(Node):
 class SamplingPercentToSigma(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SamplingPercentToSigma",
+                node_type="dinkster.sampling.sampling_percent_to_sigma",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -249,7 +254,8 @@ class SamplingPercentToSigma(Node):
                     ),
                 ),
                 outputs=(OutputSpec("sigma_value", _FLOAT),),
-            )
+            ),
+            "SamplingPercentToSigma",
         )
 
     @classmethod
@@ -269,9 +275,9 @@ class SamplingPercentToSigma(Node):
 class ManualSigmas(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ManualSigmas",
+                node_type="dinkster.sampling.manual_sigmas",
                 category=_CATEGORY,
                 search_terms=("custom noise schedule", "define sigmas"),
                 inputs=(
@@ -280,7 +286,8 @@ class ManualSigmas(Node):
                     ),
                 ),
                 outputs=(OutputSpec("sigmas", _SIGMAS),),
-            )
+            ),
+            "ManualSigmas",
         )
 
     @classmethod

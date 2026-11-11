@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -80,7 +80,7 @@ class TextEncodeFibo2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeFibo2",
+            node_type="dinkster.misc.models.text_encode_fibo2",
             category="model/conditioning/fibo",
             inputs=(
                 InputSpec("clip", _CLIP),
@@ -119,7 +119,7 @@ class TextEncodeFibo2(Node):
                 "batch_size",
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeFibo2")
 
     @classmethod
     def execute(

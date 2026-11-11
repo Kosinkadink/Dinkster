@@ -21,11 +21,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     render_image_png,
     report_preview,
+    with_identity_replacement,
 )
 
 _BOUNDING_BOX = TypeExpr.concrete(BOUNDING_BOX_TYPE)
@@ -38,7 +38,7 @@ class ImageCropToMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageCropToMask",
+            node_type="dinkster.image.image_crop_to_mask",
             display_name="Crop Image to Mask",
             category="image/transform",
             search_terms=(
@@ -91,7 +91,7 @@ class ImageCropToMask(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE, display_name="images"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageCropToMask")
 
     @classmethod
     def execute(
@@ -128,7 +128,7 @@ class ImageCropV2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageCropV2",
+            node_type="dinkster.image.image_crop_v2",
             display_name="Crop Image",
             category="image/transform",
             description="Crop an image to the specified dimensions.",
@@ -145,7 +145,7 @@ class ImageCropV2(Node):
             emits_previews=True,
             search_terms=("crop", "cut", "trim"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageCropV2")
 
     @classmethod
     def execute(cls, *, image: Any, crop_region: Mapping[str, int]) -> Mapping[str, object]:

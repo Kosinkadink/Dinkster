@@ -23,6 +23,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 BASELINES = {
     ("RipperPC", "guidance", "sdpa", "short"): 1.974,
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
@@ -228,12 +231,12 @@ def _conditioning(torch: Any, seed: int) -> list[list[object]]:
 
 
 def _route(policy: str) -> tuple[Any, Any]:
-    from dinkster_native.attention import create_attention_runtime
     from dinkster_protocol import (
         AttentionPolicy,
         AttentionPolicyConfig,
         derive_attention_route_token,
     )
+    from dinkster_workers.attention import create_attention_runtime
 
     runtime = create_attention_runtime()
     token = derive_attention_route_token(
@@ -279,11 +282,10 @@ def _run_sample(
     video_vae: Any = None,
     audio_vae: Any = None,
 ) -> tuple[dict[str, Any], float, dict[str, Any]]:
-    from dinkster_native.fork_nodes import (
-        GenerationKSampler,
-        GenerationVAEDecode,
-        NativeVAEDecodeAudio,
-    )
+    from dinkster_latent.audio_vae import VAEDecodeAudio
+    from dinkster_latent.vae import VAEDecode
+    from dinkster_pack_helpers.sampling_boundary import to_runtime
+    from dinkster_sampling.standard_sampling import KSampler
 
     torch = cast("Any", importlib.import_module("torch"))
     if collective_timer is not None:
@@ -295,7 +297,7 @@ def _run_sample(
     cuda_started.record()
     sampled = cast(
         "dict[str, Any]",
-        GenerationKSampler.execute(
+        KSampler.execute(
             model=model,
             seed=seed,
             steps=steps,
@@ -306,7 +308,7 @@ def _run_sample(
             negative=negative,
             latent_image=latent,
             denoise=1.0,
-        )["latent"],
+        )["LATENT"],
     )
     cuda_finished.record()
     fence_started = time.perf_counter()
@@ -319,10 +321,11 @@ def _run_sample(
     decode_seconds = 0.0
     if video_vae is not None and audio_vae is not None:
         decode_started = time.perf_counter()
-        video = cast("Any", GenerationVAEDecode.execute(samples=sampled, vae=video_vae)["image"])
+        decode_samples = {**sampled, "samples": to_runtime(samples)}
+        video = cast("Any", VAEDecode.execute(samples=decode_samples, vae=video_vae)["IMAGE"])
         audio = cast(
             "dict[str, Any]",
-            NativeVAEDecodeAudio.execute(samples=sampled, vae=audio_vae)["audio"],
+            VAEDecodeAudio.execute(samples=decode_samples, vae=audio_vae)["AUDIO"],
         )["waveform"]
         torch.cuda.synchronize()
         decode_seconds = time.perf_counter() - decode_started
@@ -356,16 +359,15 @@ def run_worker(args: argparse.Namespace) -> int:
     worker_started = time.perf_counter()
     inventory = _inventory()
     torch = cast("Any", importlib.import_module("torch"))
-    from dinkster_native.attention import (
+    from dinkster_minimax.minimax_h3_latent import EmptyMiniMaxH3LatentAV
+    from dinkster_models.model_file_loaders import UNETLoader
+    from dinkster_workers import ExecutionContext, use_execution_context
+    from dinkster_workers.attention import (
         activate_distributed_attention,
         release_distributed_attention,
     )
-    from dinkster_native.fork_nodes import (
-        GenerationLoadDiffusionModel,
-        NativeEmptyMiniMaxH3AV,
-        NativeLoadVae,
-    )
-    from dinkster_workers import ExecutionContext, use_execution_context
+
+    from tools.inference_artifacts import load_vae
 
     if not torch.cuda.is_available():
         raise ReceiptError("MiniMax H3 receipt worker requires CUDA")
@@ -374,32 +376,32 @@ def run_worker(args: argparse.Namespace) -> int:
     load_started = time.perf_counter()
     model = cast(
         "Any",
-        GenerationLoadDiffusionModel.execute(
-            diffusion_model=_asset(args.model, args.model_digest), weight_dtype="default"
-        )["model"],
+        UNETLoader.execute(unet_name=_asset(args.model, args.model_digest), weight_dtype="default")[
+            "MODEL"
+        ],
     )
     model_load_seconds = time.perf_counter() - load_started
     video_vae = (
-        NativeLoadVae.execute(vae=_asset(args.video_vae, args.video_vae_digest))["vae"]
+        load_vae(_asset(args.video_vae, args.video_vae_digest))
         if args.video_vae is not None
         else None
     )
     audio_vae = (
-        NativeLoadVae.execute(vae=_asset(args.audio_vae, args.audio_vae_digest))["vae"]
+        load_vae(_asset(args.audio_vae, args.audio_vae_digest))
         if args.audio_vae is not None
         else None
     )
     model_size = int(model.model_size())
     loading_route = {
-        "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
+        "loader": "dinkster_models.model_file_loaders.UNETLoader",
         "mmap_backed_state_dict": bool(model.fast_disk),
         "dynamic_weight_loading": bool(model.is_dynamic()),
     }
     latent = cast(
         "dict[str, object]",
-        NativeEmptyMiniMaxH3AV.execute(
-            width=args.width, height=args.height, frame_count=args.frames
-        )["latent"],
+        EmptyMiniMaxH3LatentAV.execute(width=args.width, height=args.height, length=args.frames)[
+            "LATENT"
+        ],
     )
     positive = _conditioning(torch, 220)
     negative = _conditioning(torch, 221) if args.mode == "guidance" else []

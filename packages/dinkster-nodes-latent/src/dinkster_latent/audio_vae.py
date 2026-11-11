@@ -17,10 +17,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -62,15 +62,16 @@ def _decode_audio(
 class VAEEncodeAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VAEEncodeAudio",
+                node_type="dinkster.latent.vae_encode_audio",
                 display_name="VAE Encode Audio",
                 category="model/latent",
                 search_terms=("audio to latent",),
                 inputs=(InputSpec("audio", _AUDIO), InputSpec("vae", _VAE)),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "VAEEncodeAudio",
         )
 
     @classmethod
@@ -93,15 +94,16 @@ class VAEEncodeAudio(Node):
 class VAEDecodeAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VAEDecodeAudio",
+                node_type="dinkster.latent.vae_decode_audio",
                 display_name="VAE Decode Audio",
                 category="model/latent",
                 search_terms=("latent to audio",),
                 inputs=(InputSpec("samples", _LATENT), InputSpec("vae", _VAE)),
                 outputs=(OutputSpec("AUDIO", _AUDIO),),
-            )
+            ),
+            "VAEDecodeAudio",
         )
 
     @classmethod
@@ -112,9 +114,9 @@ class VAEDecodeAudio(Node):
 class VAEDecodeAudioTiled(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VAEDecodeAudioTiled",
+                node_type="dinkster.latent.vae_decode_audio_tiled",
                 display_name="VAE Decode Audio (Tiled)",
                 category="model/latent",
                 search_terms=("latent to audio",),
@@ -132,7 +134,8 @@ class VAEDecodeAudioTiled(Node):
                     ),
                 ),
                 outputs=(OutputSpec("AUDIO", _AUDIO),),
-            )
+            ),
+            "VAEDecodeAudioTiled",
         )
 
     @classmethod

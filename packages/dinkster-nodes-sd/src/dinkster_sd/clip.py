@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_clip_vision_output,
+    with_identity_replacement,
 )
 
 
@@ -24,7 +24,7 @@ class unCLIPConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="unCLIPConditioning",
+            node_type="dinkster.sd.un_clip_conditioning",
             display_name="unCLIPConditioning",
             category="model/conditioning",
             inputs=(
@@ -45,7 +45,7 @@ class unCLIPConditioning(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "unCLIPConditioning")
 
     @classmethod
     def execute(

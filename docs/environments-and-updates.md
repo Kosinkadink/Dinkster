@@ -1016,8 +1016,12 @@ channel publication.
 
 The non-default `engine-base` dependency group carries numpy 2.5.1 and
 contrib-headless OpenCV 5.0.0.93 in `uv.lock`. The release export explicitly
-includes the group; mandatory inference dependencies bring torch and torchvision
-into ordinary workspace sync.
+includes that group and the `dinkster[inference]` extra. The extra holds the
+single authored inference version pin; release selections and constraints keep
+it in managed generations. Source setup exports the same extra. Workspace pack
+dependencies also require inference, so `uv sync --all-packages` retains torch
+and torchvision. Bare `pip install dinkster` does not install those runtimes;
+in-process torch packs require `dinkster[inference]` in the serving interpreter.
 These requirements do not embed an index URL. A torch/torchvision bump must have cp314 wheels
 for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.

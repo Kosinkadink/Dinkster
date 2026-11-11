@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _COMBO = TypeExpr.concrete(CORE_COMBO)
@@ -46,7 +46,7 @@ class HunyuanVideo15LatentUpscaleWithModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="HunyuanVideo15LatentUpscaleWithModel",
+            node_type="dinkster.hunyuan.hunyuan_video15_latent_upscale_with_model",
             display_name="Hunyuan Video 1.5 Latent Upscale With Model",
             category="model/latent/hunyuan video",
             inputs=(
@@ -63,7 +63,7 @@ class HunyuanVideo15LatentUpscaleWithModel(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "HunyuanVideo15LatentUpscaleWithModel")
 
     @classmethod
     def execute(

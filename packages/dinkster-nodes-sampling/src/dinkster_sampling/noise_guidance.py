@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -29,9 +29,9 @@ _FLOAT = TypeExpr.concrete(CORE_FLOAT)
 class EpsilonScaling(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="Epsilon Scaling",
+                node_type="dinkster.sampling.epsilon_scaling",
                 category="model/patch/unet",
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -44,7 +44,8 @@ class EpsilonScaling(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "Epsilon Scaling",
         )
 
     @classmethod
@@ -64,9 +65,9 @@ class EpsilonScaling(Node):
 class TemporalScoreRescaling(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="TemporalScoreRescaling",
+                node_type="dinkster.sampling.temporal_score_rescaling",
                 display_name="TSR - Temporal Score Rescaling",
                 category="model/patch/unet",
                 description=(
@@ -101,7 +102,8 @@ class TemporalScoreRescaling(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL, display_name="patched_model"),),
-            )
+            ),
+            "TemporalScoreRescaling",
         )
 
     @classmethod
@@ -159,9 +161,9 @@ def fourier_filter(x: Any, scale_low: float, scale_high: float, freq_cutoff: int
 class FreSca(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="FreSca",
+                node_type="dinkster.sampling.fre_sca",
                 display_name="FreSca",
                 search_terms=("frequency guidance",),
                 category="experimental",
@@ -196,7 +198,8 @@ class FreSca(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "FreSca",
         )
 
     @classmethod

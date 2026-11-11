@@ -35,7 +35,7 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import executable_release as _executable_release
 
 
-def _run(root: Path, *arguments: str, timeout: float = 30) -> tuple[int, dict]:
+def _run(root: Path, *arguments: str, timeout: float = 120) -> tuple[int, dict]:
     command = [
         sys.executable,
         "-m",
@@ -81,15 +81,7 @@ sys.addaudithook(audit)
 runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 """,
         ]
-    result = (
-        run_with_diagnostics(command, timeout=timeout)
-        if "setup" in arguments
-        or "update" in arguments
-        or "restore" in arguments
-        or "move" in arguments
-        or ("doctor" in arguments and "--repair" in arguments)
-        else subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-    )
+    result = run_with_diagnostics(command, timeout=timeout)
     assert result.stdout, result.stderr
     document = json.loads(result.stdout)
     assert document["format"] == "dinkster.environment-result/1"
@@ -140,10 +132,136 @@ def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(tmp_
     assert result["status"] == "planned"
     assert any("last acquired channel selection" in line for line in result["plan"])
     assert any(base["id"] in line and engine["version"] in line for line in result["plan"])
+    assert result["runtimeDownloadBytes"] == 0
+    assert all(row["cached"] for row in result["runtimeInputs"])
+    assert {Path(row["path"]).name for row in result["runtimeInputs"]} == {
+        "fixture_base-1.0-py3-none-any.whl",
+        "fixture_engine-2.0-py3-none-any.whl",
+        "constraints.txt",
+    }
     assert not root.exists()
     assert {
         path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
     } == before
+
+
+@pytest.mark.parametrize("selection", ["matching", "engine", "base", "unpaired", "local"])
+def test_setup_requires_reviewed_release_before_creating_project_or_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str
+):
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    base, _, channel = _mirror(mirror)
+    release = channel["engine"]["release"]
+    arguments = [
+        "setup",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--engine-release",
+        "sha256:" + "a" * 64 if selection == "engine" else release,
+    ]
+    if selection != "unpaired":
+        arguments.extend(("--base-id", "sha256:" + "b" * 64 if selection == "base" else base["id"]))
+    if selection == "local":
+        arguments.append("--from-scratch")
+    arguments.append("--plan" if selection == "matching" else "--yes")
+    code, result = _run(root, *arguments)
+    if selection == "matching":
+        assert code == 0, result
+        assert result["status"] == "planned"
+        assert any(base["id"] in line for line in result["plan"])
+    else:
+        assert code != 0, result
+        expected = {
+            "engine": "does not match the approved engine release/base",
+            "base": "does not match the approved engine release/base",
+            "unpaired": "requires both --engine-release and --base-id",
+            "local": "cannot use --from-scratch",
+        }
+        assert expected[selection] in result["error"]
+    assert not root.exists()
+    assert not store.exists()
+    assert not (tmp_path / "user-data").exists()
+
+
+@pytest.mark.parametrize("changed", ["catalog", "dependency"])
+def test_setup_refuses_inputs_changed_during_confirmation_before_creating_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    changed: str,
+):
+    from dinkster_supervisor import environment
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _mirror(mirror)
+    catalog, dependency = tmp_path / "catalog.lock", tmp_path / "pack-lock.json"
+    catalog.write_text(Lockfile.of(()).record_json())
+    dependency.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.pack-lock/1",
+                "pack": "demo",
+                "variant": "fixture-cpu",
+                "requiresPython": ">=3.12",
+                "requirements": [],
+                "indexes": [],
+                "packages": [],
+            }
+        )
+    )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    target = catalog if changed == "catalog" else dependency
+    stream = io.StringIO()
+    monkeypatch.setattr(stream, "isatty", lambda: True)
+    monkeypatch.setattr(sys, "stdin", stream)
+
+    def confirm(prompt: str) -> str:
+        assert prompt == "Apply this plan? [y/N] "
+        target.write_bytes(target.read_bytes() + b" ")
+        return "yes"
+
+    monkeypatch.setattr("builtins.input", confirm)
+    with pytest.raises(SystemExit) as exited:
+        environment.main(
+            [
+                "--root",
+                str(root),
+                "setup",
+                "--channel",
+                "main",
+                "--mirror",
+                str(mirror),
+                "--variant",
+                "fixture-cpu",
+                "--data",
+                str(store),
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(artifacts),
+                "--pack-lock",
+                str(dependency),
+            ]
+        )
+    captured = capsys.readouterr()
+    assert exited.value.code == 1
+    subject = "target catalog" if changed == "catalog" else "dependency inputs"
+    assert f"{subject} changed after planning; request a new plan" in captured.err
+    assert not root.exists()
+    assert not store.exists()
+    assert not (tmp_path / "user-data").exists()
 
 
 @pytest.mark.parametrize(
@@ -1246,7 +1364,15 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert not list((root / "journal").glob("*.json"))
         assert not list(store.glob(".registry-*"))
     monkeypatch.delenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM")
-    code, installed = _run(root, *arguments, "--yes")
+    code, installed = _run(
+        root,
+        *arguments,
+        "--engine-release",
+        selected_release.channel.engine_release,
+        "--base-id",
+        base["id"],
+        "--yes",
+    )
     assert code == 0, installed
     try:
         assert installed["current"] == 1 and installed["status"] == "applied"
@@ -1294,6 +1420,18 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
             if p.is_file()
             and not (p.is_relative_to(root / "runtime") and p.name.endswith((".log", ".lock")))
         }
+        code, stale = _run(
+            root,
+            "update",
+            "--channel",
+            "stable",
+            "--engine-release",
+            selected_release.channel.engine_release,
+            "--base-id",
+            base["id"],
+            "--yes",
+        )
+        assert code == 1 and "approved engine release/base" in stale["error"], stale
         code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
         assert code == 0 and any(
             "change project selection" in step for step in selection_plan["plan"]
@@ -1339,7 +1477,18 @@ environment.main()
         assert Journal.read(journals[-1]).stage == "building"
         assert (root / "current").read_text() == "1\n"
         started = time.monotonic()
-        code, updated = _run(root, "update", "--channel", "stable", "--yes")
+        reviewed = discover((str(mirror),), "stable")
+        code, updated = _run(
+            root,
+            "update",
+            "--channel",
+            "stable",
+            "--engine-release",
+            reviewed.channel.engine_release,
+            "--base-id",
+            base["id"],
+            "--yes",
+        )
         elapsed = time.monotonic() - started
         assert code == 0, updated
         assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
@@ -1715,3 +1864,130 @@ def test_public_fixture_commands_install_update_and_rollback(
         if (root / "current").exists():
             run("stop")
             assert all(row["state"] == "stopped" for row in run("status")["engines"])
+
+
+@pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
+def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
+    tmp_path: Path, problem: str | None
+):
+    source = Path(__file__).resolve().parents[1]
+    engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = engine / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
+    library.mkdir()
+    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    root, store = tmp_path / "prospective", tmp_path / "store"
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    arguments = (
+        "develop",
+        "--source",
+        str(engine),
+        "--pack-source",
+        str(pack if problem != "missing" else tmp_path / "absent"),
+        "--library-source",
+        str(library),
+        "--variant",
+        variant,
+        "--python",
+        sys.executable,
+        "--data",
+        str(store),
+    )
+    code, plan = _run(root, *arguments, "--plan")
+    if problem == "missing":
+        assert code == 1 and "source folder is missing" in plan["error"]
+    else:
+        assert code == 0, plan
+        assert any("not reviewed by the registry" in line for line in plan["plan"])
+        assert any("dependency ranges resolved at build time" in line for line in plan["plan"])
+        assert [row["kind"] for row in plan["development"]["sources"]] == [
+            "engine",
+            "pack",
+            "library",
+        ]
+        if problem is not None:
+            changed = {"engine": engine, "pack": pack, "library": library}[problem]
+            (changed / "untracked.py").write_text("VALUE = 23\n")
+            code, refused = _run(root, *arguments, "--approve", plan["sourceApproval"], "--plan")
+            assert code == 1 and "changed from the approved plan" in refused["error"]
+    assert not root.exists()
+    assert not store.exists()
+
+
+def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_path: Path):
+    generation = _generation(tmp_path, 1).parent
+    store = tmp_path / "capture"
+    base = {
+        "source": "local",
+        "variant": "linux-cpu",
+        "workerProtocol": 1,
+        "wheels": [],
+        "interpreter": {
+            "files": {"python/runtime": "sha256:" + hashlib.sha256(b"runtime").hexdigest()}
+        },
+    }
+    base_id = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
+    base["id"] = base_id
+    runtime = object_path(store / "bases", base_id) / "python/runtime"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"runtime")
+    engine = {"source": "local", "version": "0.3.1", "workerProtocol": 1, "wheels": []}
+    engine_id = "sha256:" + hashlib.sha256(json.dumps(engine, sort_keys=True).encode()).hexdigest()
+    seal = generation / "generation.json"
+    record = json.loads(seal.read_text())
+    record.update(source="local", base=base_id, engine={"version": "0.3.1", "release": engine_id})
+    metadata = {"constraints.txt": (generation / "constraints.txt").read_text()}
+    for name, document in (
+        ("base-manifest.json", base),
+        ("engine-manifest.json", engine),
+        ("development-sources.json", {"format": "dinkster.development-sources/1", "sources": []}),
+    ):
+        path = generation / name
+        path.write_text(json.dumps(document))
+        record["files"][name] = content_digest(path)
+        metadata[name] = path.read_text()
+    seal.write_text(json.dumps(record))
+    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "store").write_text(str(store))
+    (tmp_path / "history").mkdir()
+    (tmp_path / "history/00000000000000000001.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.install-history/1",
+                "id": 1,
+                "generation": 1,
+                "snapshot": {
+                    "source": "local",
+                    "metadata": metadata,
+                    "base": {"id": base_id, "variant": "linux-cpu"},
+                    "engine": {"release": engine_id, "version": "0.3.1"},
+                    "workerProtocol": 1,
+                    "inProcessPacks": [],
+                },
+            }
+        )
+    )
+    for operation in ("status", "doctor", "history"):
+        code, result = _run(tmp_path, operation)
+        assert code == 0, result
+        described = result["history"][0] if operation == "history" else result
+        assert "not reviewed by the registry" in described["sourceDescription"]
+        if operation == "doctor":
+            assert result["exactRecovery"] == {"available": True, "missing": []}
+    runtime.unlink()
+    code, missing = _run(tmp_path, "doctor")
+    assert code == 0 and missing["status"] == "clean", missing
+    assert missing["exactRecovery"]["available"] is False
+    assert missing["exactRecovery"]["missing"][0]["kind"] == "local base"
+    (generation / "python/module.py").write_text("ANSWER = 99\n")
+    code, damaged = _run(tmp_path, "doctor")
+    assert code == 1 and damaged["status"] == "drift", damaged
+    assert "built from local folders" in damaged["sourceDescription"]

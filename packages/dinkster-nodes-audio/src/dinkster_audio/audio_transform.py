@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_audio,
+    with_identity_replacement,
 )
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -26,13 +26,13 @@ class SplitAudioChannels(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SplitAudioChannels",
+            node_type="dinkster.audio.split_audio_channels",
             display_name="Split Audio Channels",
             category="audio",
             inputs=(InputSpec("audio", _AUDIO),),
             outputs=(OutputSpec("left", _AUDIO), OutputSpec("right", _AUDIO)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SplitAudioChannels")
 
     @classmethod
     def execute(cls, *, audio: Any) -> Mapping[str, object]:
@@ -56,7 +56,7 @@ class AudioAdjustVolume(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="AudioAdjustVolume",
+            node_type="dinkster.audio.audio_adjust_volume",
             display_name="Adjust Audio Volume",
             category="audio",
             inputs=(
@@ -74,7 +74,7 @@ class AudioAdjustVolume(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "AudioAdjustVolume")
 
     @classmethod
     def execute(cls, *, audio: Any, volume: int) -> Mapping[str, object]:

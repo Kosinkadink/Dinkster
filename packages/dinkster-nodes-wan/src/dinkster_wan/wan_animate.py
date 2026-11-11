@@ -22,10 +22,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -79,7 +79,7 @@ class WanAnimateToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanAnimateToVideo",
+            node_type="dinkster.wan.wan_animate_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -118,7 +118,7 @@ class WanAnimateToVideo(Node):
                 OutputSpec("video_frame_offset", _INT, display_name="video_frame_offset"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanAnimateToVideo")
 
     @classmethod
     def execute(
@@ -282,7 +282,7 @@ class WanAnimate2ToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanAnimate2ToVideo",
+            node_type="dinkster.wan.wan_animate2_to_video",
             category=_CATEGORY,
             description=(
                 "Animate a character in a reference image using a video, effectively replicating "
@@ -421,7 +421,7 @@ class WanAnimate2ToVideo(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanAnimate2ToVideo")
 
     @classmethod
     def execute(
@@ -574,7 +574,7 @@ class WanAnimate2Cache(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanAnimate2Cache",
+            node_type="dinkster.wan.wan_animate2_cache",
             category=_CATEGORY,
             description=(
                 "Caches the pose-video's per-block activations so it runs once instead of on "
@@ -612,7 +612,7 @@ class WanAnimate2Cache(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanAnimate2Cache")
 
     @classmethod
     def execute(cls, *, model: Any, device: str, dtype: str = "default") -> Mapping[str, object]:

@@ -189,6 +189,8 @@ def setup(
             "export",
             "--locked",
             "--all-packages",
+            "--extra",
+            "inference",
             "--no-emit-workspace",
             "--no-annotate",
             "--no-header",

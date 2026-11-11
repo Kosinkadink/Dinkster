@@ -26,6 +26,7 @@ from dinkster_api.v1 import (
     LOAD3D_MODEL_INFO_TYPE,
     LOAD_3D_TYPE,
     AbsentOutput,
+    CustomWidgetDescriptor,
     Deprecation,
     InputSpec,
     Node,
@@ -33,7 +34,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -41,7 +42,7 @@ class Preview3D(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Preview3D",
+            node_type="dinkster.3d.preview3_d",
             display_name="Preview 3D & Animation (DEPRECATED)",
             category="3d",
             description=(
@@ -81,7 +82,7 @@ class Preview3D(Node):
                 OutputSpec("bg_image", TypeExpr.concrete(IMAGE_TYPE), optional=True),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Preview3D")
 
     @classmethod
     def execute(
@@ -95,6 +96,8 @@ class Preview3D(Node):
 
 
 class _Preview3D(Node):
+    node_type: str
+    source_type: str
     formats: ClassVar[tuple[str, ...]]
     output_type: ClassVar[str]
     label: ClassVar[str]
@@ -104,7 +107,7 @@ class _Preview3D(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type=cls.__name__,
+            node_type=cls.node_type,
             display_name=cls.label,
             search_terms=cls.aliases,
             category="3d",
@@ -118,7 +121,11 @@ class _Preview3D(Node):
                     required=False,
                     advanced=True,
                 ),
-                InputSpec("viewport_state", TypeExpr.concrete(LOAD_3D_TYPE)),
+                InputSpec(
+                    "viewport_state",
+                    TypeExpr.concrete(LOAD_3D_TYPE),
+                    widget=CustomWidgetDescriptor("LOAD_3D"),
+                ),
                 InputSpec(
                     "camera_info",
                     TypeExpr.concrete(LOAD3D_CAMERA_TYPE),
@@ -146,7 +153,7 @@ class _Preview3D(Node):
                 )
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, cls.source_type)
 
     @classmethod
     def execute(
@@ -174,6 +181,8 @@ class _Preview3D(Node):
 
 
 class Preview3DAdvanced(_Preview3D):
+    node_type = "dinkster.3d.preview3_d_advanced"
+    source_type = "Preview3DAdvanced"
     formats = (
         FILE_3D_GLB_TYPE,
         FILE_3D_GLTF_TYPE,
@@ -190,6 +199,8 @@ class Preview3DAdvanced(_Preview3D):
 
 
 class PreviewGaussianSplat(_Preview3D):
+    node_type = "dinkster.3d.preview_gaussian_splat"
+    source_type = "PreviewGaussianSplat"
     formats = (
         FILE_3D_SPLAT_ANY_TYPE,
         FILE_3D_PLY_TYPE,
@@ -219,6 +230,8 @@ class PreviewGaussianSplat(_Preview3D):
 
 
 class PreviewPointCloud(_Preview3D):
+    node_type = "dinkster.3d.preview_point_cloud"
+    source_type = "PreviewPointCloud"
     formats = (FILE_3D_POINT_CLOUD_ANY_TYPE, FILE_3D_PLY_TYPE)
     output_type = FILE_3D_POINT_CLOUD_ANY_TYPE
     label = "Preview Point Cloud"

@@ -12,10 +12,10 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     render_mask_png,
     report_preview,
+    with_identity_replacement,
 )
 
 _MASK = TypeExpr.concrete(MASK_TYPE)
@@ -25,7 +25,7 @@ class MaskPreview(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MaskPreview",
+            node_type="dinkster.image.mask_preview",
             display_name="Preview Mask",
             description="Preview the masks without saving them to the ComfyUI output directory.",
             category="image/mask",
@@ -42,7 +42,7 @@ class MaskPreview(Node):
             emits_previews=True,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MaskPreview")
 
     @classmethod
     def execute(cls, *, mask: Any) -> Mapping[str, object]:

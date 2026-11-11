@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -48,7 +48,7 @@ def _schema(
 ) -> NodeSchema:
     return NodeSchema(
         node_type=name,
-        display_name=display or name,
+        display_name=display or "",
         category=category,
         description=description,
         inputs=inputs,
@@ -67,9 +67,11 @@ class EmptyChromaRadianceLatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyChromaRadianceLatentImage", "model/latent/chroma radiance", _image_inputs()
+            "dinkster.misc.models.empty_chroma_radiance_latent_image",
+            "model/latent/chroma radiance",
+            _image_inputs(),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyChromaRadianceLatentImage")
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:

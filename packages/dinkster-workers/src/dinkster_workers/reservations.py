@@ -30,7 +30,7 @@ from typing import cast
 from dinkster_memory import InvocationView, ReservationRequest
 from dinkster_values import COST_META_KEY, RESOURCE_ID_META_KEY, iter_value_tree
 
-from .pool import default_pool
+from .resident_pool import default_pool
 
 CHECKPOINT_RAM_FACTOR = 2.6
 """Comfy-arm peak incremental RAM multiplier for load_checkpoint.

@@ -150,6 +150,7 @@ def _start_engine(
     ]
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
+        log_offset = log.tell()
         if os.name != "nt":
             log_path.chmod(0o600)
         try:
@@ -169,15 +170,47 @@ def _start_engine(
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
         if inspected["state"] == "failed" and _identity_matches(inspected):
+            failure = _startup_failure(
+                f"engine {name} failed before becoming ready",
+                inspected.get("_engineExitCode"),
+                log_path,
+                log_offset,
+            )
             stop_engine(root, name, generation=generation)
-            raise EnvironmentError(f"engine {name} failed before becoming ready")
-        if process.poll() is not None:
+            raise failure
+        exit_code = process.poll()
+        if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
-            raise EnvironmentError(f"engine {name} exited before becoming ready")
+            raise _startup_failure(
+                f"engine {name} exited before becoming ready (supervisor launcher)",
+                exit_code,
+                log_path,
+                log_offset,
+            )
         time.sleep(_POLL_INTERVAL)
     stop_engine(root, name, generation=generation)
     raise EnvironmentError(f"engine {name} did not become ready")
+
+
+def _startup_failure(
+    message: str, exit_code: object, log_path: Path, log_offset: int
+) -> EnvironmentError:
+    code = str(exit_code) if type(exit_code) is int else "unavailable"
+    try:
+        with log_path.open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            # Bound the error payload and exclude output from previous launches.
+            start = max(log_offset, log.tell() - 64 * 1024)
+            log.seek(start)
+            output = log.read(64 * 1024).decode("utf-8", errors="replace")
+        if start > log_offset:
+            output = "[earlier output truncated]\n" + output
+    except OSError as exc:
+        output = f"[cannot read captured output: {exc}]"
+    return EnvironmentError(
+        f"{message}; exit code {code}\nCaptured output ({log_path}):\n" + (output or "[no output]")
+    )
 
 
 def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None:
@@ -454,6 +487,7 @@ def _write_record(root: Path, name: str, record: dict[str, object]) -> None:
 def _inspect(record: dict[str, object]) -> dict[str, object]:
     inspected = dict(record)
     inspected["_verifiedIdentity"] = False
+    inspected["_engineExitCode"] = None
     lifecycle = cast("Path", record["_processState"])
     if lifecycle.is_dir():
         state = process_state(
@@ -501,6 +535,9 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
         return inspected
     inspected["state"] = state
     inspected["_verifiedIdentity"] = True
+    engine = status_document.get("engine")
+    if isinstance(engine, dict):
+        inspected["_engineExitCode"] = cast("dict[str, object]", engine).get("exitCode")
     return inspected
 
 

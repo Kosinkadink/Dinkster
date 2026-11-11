@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -55,7 +55,7 @@ class MoGeRender(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MoGeRender",
+            node_type="dinkster.vision.moge.mo_ge_render",
             display_name="Render MoGe Geometry",
             description="Render a depth map or normal map from geometry data",
             category="image/geometry estimation",
@@ -84,7 +84,7 @@ class MoGeRender(Node):
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MoGeRender")
 
     @classmethod
     def execute(cls, *, moge_geometry: Any, output: str = "depth") -> Mapping[str, object]:

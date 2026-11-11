@@ -1,4 +1,4 @@
-"""Device residency and cost meta for resident Comfy values.
+"""Worker device residency and cost meta for resident Comfy values.
 
 Which GPU a sampler occupies is a fact of the *model value it receives*,
 never of the node type (DESIGN: hazard H12). ComfyUI encodes that fact in

@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -104,9 +104,9 @@ def _patch_sampling(model: Any, sampling: Any) -> Any:
 class ModelSamplingDiscrete(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingDiscrete",
+                "dinkster.models.model_sampling_discrete",
                 "model/patch",
                 (
                     _combo(
@@ -116,7 +116,8 @@ class ModelSamplingDiscrete(Node):
                     ),
                     InputSpec("zsnr", _BOOLEAN, default=False, advanced=True),
                 ),
-            )
+            ),
+            "ModelSamplingDiscrete",
         )
 
     @classmethod
@@ -194,9 +195,9 @@ class ModelSamplingDiscrete(Node):
 class ModelSamplingContinuousEDM(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingContinuousEDM",
+                "dinkster.models.model_sampling_continuous_edm",
                 "model/patch",
                 (
                     _combo(
@@ -207,7 +208,8 @@ class ModelSamplingContinuousEDM(Node):
                     _sigma("sigma_max", 120.0),
                     _sigma("sigma_min", 0.002),
                 ),
-            )
+            ),
+            "ModelSamplingContinuousEDM",
         )
 
     @classmethod
@@ -245,16 +247,17 @@ class ModelSamplingContinuousEDM(Node):
 class ModelSamplingContinuousV(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingContinuousV",
+                "dinkster.models.model_sampling_continuous_v",
                 "model/patch",
                 (
                     _combo("sampling", ("v_prediction",), "v_prediction"),
                     _sigma("sigma_max", 500.0),
                     _sigma("sigma_min", 0.03),
                 ),
-            )
+            ),
+            "ModelSamplingContinuousV",
         )
 
     @classmethod
@@ -273,10 +276,13 @@ class ModelSamplingContinuousV(Node):
 class ModelSamplingStableCascade(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingStableCascade", "model/patch/stable cascade", (_float("shift", 2.0),)
-            )
+                "dinkster.models.model_sampling_stable_cascade",
+                "model/patch/stable cascade",
+                (_float("shift", 2.0),),
+            ),
+            "ModelSamplingStableCascade",
         )
 
     @classmethod
@@ -291,10 +297,13 @@ class ModelSamplingStableCascade(Node):
 class ModelSamplingSD3(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingSD3", "model/patch/stable diffusion", (_float("shift", 3.0),)
-            )
+                "dinkster.models.model_sampling_sd3",
+                "model/patch/stable diffusion",
+                (_float("shift", 3.0),),
+            ),
+            "ModelSamplingSD3",
         )
 
     @classmethod
@@ -327,9 +336,9 @@ def _flow_patch(
 class ModelSamplingAuraFlow(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingAuraFlow",
+                "dinkster.models.model_sampling_aura_flow",
                 "model/patch",
                 (
                     _float("shift", 1.73),
@@ -344,7 +353,8 @@ class ModelSamplingAuraFlow(Node):
                         ),
                     ),
                 ),
-            )
+            ),
+            "ModelSamplingAuraFlow",
         )
 
     @classmethod
@@ -355,9 +365,9 @@ class ModelSamplingAuraFlow(Node):
 class ModelSamplingFlux(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelSamplingFlux",
+                "dinkster.models.model_sampling_flux",
                 "model/patch/flux",
                 (
                     _float("max_shift", 1.15, advanced=True),
@@ -375,7 +385,8 @@ class ModelSamplingFlux(Node):
                         widget=NumberWidget(min=16, max=_MAX_RESOLUTION, step=8),
                     ),
                 ),
-            )
+            ),
+            "ModelSamplingFlux",
         )
 
     @classmethod
@@ -395,9 +406,9 @@ class ModelSamplingFlux(Node):
 class ModelNoiseScale(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelNoiseScale",
+                "dinkster.models.model_noise_scale",
                 "model/patch",
                 (
                     InputSpec(
@@ -411,7 +422,8 @@ class ModelNoiseScale(Node):
                         widget=NumberWidget(min=0.0, max=64.0, step=0.01),
                     ),
                 ),
-            )
+            ),
+            "ModelNoiseScale",
         )
 
     @classmethod
@@ -428,9 +440,9 @@ class ModelNoiseScale(Node):
 class RescaleCFG(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "RescaleCFG",
+                "dinkster.models.rescale_cfg",
                 "model/patch",
                 (
                     InputSpec(
@@ -440,7 +452,8 @@ class RescaleCFG(Node):
                         widget=NumberWidget(min=0.0, max=1.0, step=0.01),
                     ),
                 ),
-            )
+            ),
+            "RescaleCFG",
         )
 
     @classmethod
@@ -485,13 +498,14 @@ class RescaleCFG(Node):
 class ModelComputeDtype(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _sampling_schema(
-                "ModelComputeDtype",
+                "dinkster.models.model_compute_dtype",
                 "advanced/debug",
                 (_combo("dtype", ("default", "fp32", "fp16", "bf16"), "default", advanced=True),),
                 search_terms=("model precision", "change dtype"),
-            )
+            ),
+            "ModelComputeDtype",
         )
 
     @classmethod
@@ -509,9 +523,9 @@ class ModelComputeDtype(Node):
 class ModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ModelAttentionBackend",
+                node_type="dinkster.models.model_attention_backend",
                 display_name="Model Attention Backend",
                 category="model/patch",
                 description=(
@@ -545,7 +559,8 @@ class ModelAttentionBackend(Node):
                         doc="The model with the selected attention backend.",
                     ),
                 ),
-            )
+            ),
+            "ModelAttentionBackend",
         )
 
     @classmethod

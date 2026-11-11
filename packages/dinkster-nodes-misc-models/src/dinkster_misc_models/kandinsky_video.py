@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -35,7 +35,7 @@ class Kandinsky5ImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Kandinsky5ImageToVideo",
+            node_type="dinkster.misc.models.kandinsky5_image_to_video",
             category="model/conditioning/kandinsky",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -67,7 +67,7 @@ class Kandinsky5ImageToVideo(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Kandinsky5ImageToVideo")
 
     @classmethod
     def execute(

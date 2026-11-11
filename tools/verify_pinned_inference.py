@@ -8,19 +8,56 @@ import re
 import tomllib
 from pathlib import Path
 
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENT_PATTERN = re.compile(r"dinkster-inference==([0-9]+\.[0-9]+\.[0-9]+)")
 
 
 def pinned_requirement(repo_root: Path = REPO_ROOT) -> tuple[str, str]:
-    project = tomllib.loads(
-        repo_root.joinpath("packages/dinkster-native/pyproject.toml").read_text()
-    )
-    for requirement in project["project"]["dependencies"]:
-        match = REQUIREMENT_PATTERN.fullmatch(requirement)
-        if match is not None:
-            return match.group(0), match.group(1)
-    raise RuntimeError("dinkster-native has no exact dinkster-inference release requirement")
+    root_project = repo_root / "pyproject.toml"
+    document = tomllib.loads(root_project.read_text())
+    extra = document.get("project", {}).get("optional-dependencies", {}).get("inference", [])
+    if len(extra) != 1 or (match := REQUIREMENT_PATTERN.fullmatch(extra[0])) is None:
+        raise RuntimeError(
+            "dinkster[inference] has no exact dinkster-inference release requirement"
+        )
+    pins: list[tuple[Path, str]] = []
+    paths = {
+        root_project,
+        *repo_root.glob("packages/*/pyproject.toml"),
+        *repo_root.glob("packages/**/*pack.toml"),
+    }
+    for path in sorted(paths):
+        data = tomllib.loads(path.read_text())
+        project = data.get("project", {})
+        pack = data.get("pack", {})
+        uv = data.get("tool", {}).get("uv", {})
+        groups = [
+            project.get("dependencies", []),
+            *project.get("optional-dependencies", {}).values(),
+            *data.get("dependency-groups", {}).values(),
+            pack.get("requires", []),
+            *pack.get("extra-requires", {}).values(),
+            uv.get("constraint-dependencies", []),
+            uv.get("override-dependencies", []),
+        ]
+        for group in groups:
+            for text in group:
+                if not isinstance(text, str):
+                    continue
+                requirement = Requirement(text)
+                if canonicalize_name(requirement.name) == "dinkster-inference" and (
+                    requirement.specifier or requirement.url
+                ):
+                    pins.append((path, text))
+    if pins != [(root_project, match.group(0))]:
+        locations = ", ".join(str(path.relative_to(repo_root)) for path, _ in pins)
+        raise RuntimeError(
+            f"inference must have one authored pin in dinkster[inference]: {locations}"
+        )
+    return match.group(0), match.group(1)
 
 
 def _module_tree(package_root: Path, module: str) -> ast.Module:

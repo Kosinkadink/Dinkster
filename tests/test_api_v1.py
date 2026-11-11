@@ -188,7 +188,7 @@ GOLDEN_V1_SURFACE = (
     "schema_from_wire",
     "schema_signature",
     "schema_to_wire",
-    "first_party_schema",
+    "with_identity_replacement",
     # -- reporting and logging (dinkster-schema)
     "LOG_EVENT",
     "PREVIEW_EVENT",
@@ -966,7 +966,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_memory.resident as resident_pool
     import dinkster_protocol
     import dinkster_schema
-    import dinkster_schema.first_party as first_party
+    import dinkster_schema.identity as identity
     import dinkster_values
     import dinkster_values.resident as resident_codec
     import dinkster_video_runtime
@@ -978,7 +978,7 @@ def test_reexports_are_the_internal_objects() -> None:
         "register_mesh_type": geometry_wire,
         "register_shape_subdivides_type": shape_wire,
         "register_voxel_type": voxel_wire,
-        "first_party_schema": first_party,
+        "with_identity_replacement": identity,
         "default_pool": resident_pool,
         "comfy_resident_meta": resident_codec,
         "IMAGE_DOCUMENT_MEDIA_TYPE": document_format,

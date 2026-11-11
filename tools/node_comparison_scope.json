@@ -38,10 +38,6 @@
     "dinkster-void",
     "dinkster-wan"
   ],
-  "extraOwners": {
-    "ImageCompare": "dinkster-image",
-    "GLSLShader": "dinkster-image"
-  },
   "exclusions": [
     {
       "reason": "API node",

@@ -13,9 +13,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
     report_progress,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -27,9 +27,9 @@ _INT = TypeExpr.concrete(CORE_INT)
 class GetLatentSize(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="GetLatentSize",
+                node_type="dinkster.latent.get_latent_size",
                 display_name="Get Image/Video Latent Size",
                 description=(
                     "Returns the width, height, frame count, and batch size of an image or "
@@ -46,7 +46,8 @@ class GetLatentSize(Node):
                     OutputSpec("batch_size", _INT, doc="The number of latents in the batch."),
                 ),
                 search_terms=("dimensions", "resolution", "latent info", "video latent size"),
-            )
+            ),
+            "GetLatentSize",
         )
 
     @classmethod

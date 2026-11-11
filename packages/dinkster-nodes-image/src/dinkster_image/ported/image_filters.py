@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from PIL import Image
 
@@ -100,9 +100,9 @@ def _gaussian_kernel(kernel_size: int, sigma: float, *, device: Any, dtype: Any)
 class ImageBlend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageBlend",
+                "dinkster.image.image_blend",
                 "Blend Images",
                 "image/filters",
                 (
@@ -111,7 +111,8 @@ class ImageBlend(Node):
                     _number("blend_factor", _FLOAT, 0.5, 0.0, 1.0, 0.01),
                     _combo("blend_mode", _BLEND_MODES),
                 ),
-            )
+            ),
+            "ImageBlend",
         )
 
     @classmethod
@@ -168,9 +169,9 @@ class ImageBlend(Node):
 class ImageBlur(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageBlur",
+                "dinkster.image.image_blur",
                 "Blur Image",
                 "image/filters",
                 (
@@ -178,7 +179,8 @@ class ImageBlur(Node):
                     _number("blur_radius", _INT, 1, 1, 31, 1),
                     _number("sigma", _FLOAT, 1.0, 0.1, 10.0, 0.1),
                 ),
-            )
+            ),
+            "ImageBlur",
         )
 
     @classmethod
@@ -205,9 +207,9 @@ class ImageBlur(Node):
 class ImageQuantize(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageQuantize",
+                "dinkster.image.image_quantize",
                 "Quantize Image",
                 "image/filters",
                 (
@@ -215,7 +217,8 @@ class ImageQuantize(Node):
                     _number("colors", _INT, 256, 1, 256, 1),
                     _combo("dither", _DITHER_MODES),
                 ),
-            )
+            ),
+            "ImageQuantize",
         )
 
     @staticmethod
@@ -270,9 +273,9 @@ class ImageQuantize(Node):
 class ImageSharpen(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageSharpen",
+                "dinkster.image.image_sharpen",
                 "Sharpen Image",
                 "image/filters",
                 (
@@ -281,7 +284,8 @@ class ImageSharpen(Node):
                     _number("sigma", _FLOAT, 1.0, 0.1, 10.0, 0.01, advanced=True),
                     _number("alpha", _FLOAT, 1.0, 0.0, 5.0, 0.01, advanced=True),
                 ),
-            )
+            ),
+            "ImageSharpen",
         )
 
     @classmethod
@@ -316,9 +320,9 @@ class ImageSharpen(Node):
 class ImageScaleToTotalPixels(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageScaleToTotalPixels",
+                "dinkster.image.image_scale_to_total_pixels",
                 "Scale Image to Total Pixels",
                 "image/upscaling",
                 (
@@ -327,7 +331,8 @@ class ImageScaleToTotalPixels(Node):
                     _number("megapixels", _FLOAT, 1.0, 0.01, 16.0, 0.01),
                     _number("resolution_steps", _INT, 1, 1, 256, advanced=True),
                 ),
-            )
+            ),
+            "ImageScaleToTotalPixels",
         )
 
     @classmethod
@@ -347,7 +352,7 @@ class Canny(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Canny",
+            node_type="dinkster.image.canny",
             display_name="Detect Edges (Canny)",
             category="image/filters",
             search_terms=("edge detection", "outline", "contour detection", "line art"),
@@ -358,7 +363,7 @@ class Canny(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Canny")
 
     @classmethod
     def execute(

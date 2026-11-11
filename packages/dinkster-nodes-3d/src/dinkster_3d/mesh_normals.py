@@ -17,8 +17,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_mesh,
+    with_identity_replacement,
 )
 
 
@@ -96,7 +96,7 @@ class MeshSmoothNormals(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MeshSmoothNormals",
+            node_type="dinkster.3d.mesh_smooth_normals",
             display_name="Smooth Mesh Normals",
             category="3d/mesh",
             description=(
@@ -119,7 +119,7 @@ class MeshSmoothNormals(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MeshSmoothNormals")
 
     @classmethod
     def execute(cls, *, mesh: object, crease_angle: float) -> Mapping[str, object]:

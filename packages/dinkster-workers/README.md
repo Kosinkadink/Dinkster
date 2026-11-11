@@ -40,6 +40,12 @@ the jail changes what a hostile import can do, not what the report means.
 
 ## Use
 
+Worker-side inference adapters live here: `reservations` plans invocation
+budgets, `resident_pool` retains VAE provenance, and `device_memory` measures
+device costs. `attention` and `multigpu` configure the process-local inference
+runtime; `legacy_sources` converts weights-only checkpoints on demand. The
+host loads inference adapters lazily, so torch-free workers remain usable.
+
 Generation-layered dependency provisioning uses per-variant, hashed pack locks.
 See [Pack dependency locks](PACK-LOCK.md) for the format, opencv aliases and
 publisher/planner/provisioner interfaces.
@@ -128,6 +134,13 @@ The Linux serving sandbox is opt-in and fail-closed. Missing bubblewrap,
 blocked user namespaces, a mount-only degraded capability, or an unsafe bind
 policy refuses the pack launch instead of falling back to an ordinary child.
 It does not cover in-process packs or remote worker daemons.
+
+Unix worker endpoints refuse overlong socket paths before launching a child,
+with the encoded path length and platform limit in the error (107 bytes on
+Linux, 103 on macOS). Set `TMPDIR` to a shorter real directory before starting
+workers when this limit is exceeded. There is no automatic TCP fallback: a
+jailed worker's private network namespace cannot reach the host loopback
+listener, and changing transport must not relax the sandbox policy.
 
 The jail exposes only the worker's interpreter, pack, required Python import
 roots, a read-only system surface, and explicit policy binds. It provides a

@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     prepare_sampling_model,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -89,12 +89,13 @@ def _dual_cfg_input(name: str) -> InputSpec:
 class BasicGuider(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _guider_schema(
-                "BasicGuider",
+                "dinkster.sampling.basic_guider",
                 "Basic Guider",
                 (InputSpec("model", _MODEL), InputSpec("conditioning", _CONDITIONING)),
-            )
+            ),
+            "BasicGuider",
         )
 
     @classmethod
@@ -114,9 +115,9 @@ class BasicGuider(Node):
 class CFGGuider(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _guider_schema(
-                "CFGGuider",
+                "dinkster.sampling.cfg_guider",
                 "CFG Guider",
                 (
                     InputSpec("model", _MODEL),
@@ -124,7 +125,8 @@ class CFGGuider(Node):
                     InputSpec("negative", _CONDITIONING),
                     _cfg_input(8.0),
                 ),
-            )
+            ),
+            "CFGGuider",
         )
 
     @classmethod
@@ -141,9 +143,9 @@ class CFGGuider(Node):
 class DualCFGGuider(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _guider_schema(
-                "DualCFGGuider",
+                "dinkster.sampling.dual_cfg_guider",
                 "Dual CFG Guider",
                 (
                     InputSpec("model", _MODEL),
@@ -160,7 +162,8 @@ class DualCFGGuider(Node):
                     ),
                 ),
                 search_terms=("dual prompt guidance",),
-            )
+            ),
+            "DualCFGGuider",
         )
 
     @classmethod
@@ -256,9 +259,9 @@ class DualCFGGuider(Node):
 class DualModelGuider(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _guider_schema(
-                "DualModelGuider",
+                "dinkster.sampling.dual_model_guider",
                 "Dual Model CFG Guider",
                 (
                     InputSpec("model", _MODEL),
@@ -267,7 +270,8 @@ class DualModelGuider(Node):
                     _cfg_input(4.0),
                     InputSpec("negative", _CONDITIONING, required=False),
                 ),
-            )
+            ),
+            "DualModelGuider",
         )
 
     @classmethod
@@ -434,9 +438,9 @@ class DualModelGuider(Node):
 class CFGOverride(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CFGOverride",
+                node_type="dinkster.sampling.cfg_override",
                 display_name="CFG Override",
                 category="model/sampling/guiders",
                 description=(
@@ -460,7 +464,8 @@ class CFGOverride(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "CFGOverride",
         )
 
     @classmethod

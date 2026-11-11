@@ -13,8 +13,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -24,7 +24,7 @@ class MiniMaxH3SigmaShift(Node):
         model = TypeExpr.concrete(MODEL_TYPE)
         number = TypeExpr.concrete(CORE_FLOAT)
         schema = NodeSchema(
-            node_type="MiniMaxH3SigmaShift",
+            node_type="dinkster.minimax.mini_max_h3_sigma_shift",
             display_name="ModelSamplingMiniMaxH3",
             description="Set the video/audio flow shifts.",
             category="model/patch/minimax",
@@ -46,7 +46,7 @@ class MiniMaxH3SigmaShift(Node):
             ),
             outputs=(OutputSpec("MODEL", model),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MiniMaxH3SigmaShift")
 
     @classmethod
     def execute(cls, *, model: Any, shift_video: float, shift_audio: float) -> Mapping[str, object]:

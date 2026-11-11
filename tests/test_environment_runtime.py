@@ -103,6 +103,39 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (root / "current").write_text(f"{number}\n")
 
 
+@pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])
+def test_start_failure_preserves_exit_code_and_current_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervisor_exit: bool, output_size: int
+) -> None:
+    make_generation(tmp_path)
+    failure = (
+        f"import sys; print('x' * {output_size}, flush=True); "
+        "print('startup diagnostic', flush=True); "
+        "print('startup stderr', file=sys.stderr, flush=True); sys.exit(37)"
+    )
+    if supervisor_exit:
+        popen = subprocess.Popen
+
+        def launch(command, **kwargs):
+            return popen([sys.executable, "-c", failure], **kwargs)
+
+        monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+    else:
+        (tmp_path / "dinkster/serve.py").write_text(failure)
+    runtime = tmp_path / "runtime/1"
+    runtime.mkdir(parents=True)
+    (runtime / "main.log").write_text("old launch output must not appear\n")
+    with pytest.raises(EnvironmentError) as raised:
+        start_engine(tmp_path, 1, "main", free_port())
+    message = str(raised.value)
+    assert "exit code 37" in message
+    assert "startup diagnostic" in message
+    assert "startup stderr" in message
+    assert "old launch output" not in message
+    assert ("[earlier output truncated]" in message) is (output_size > 64 * 1024)
+    assert len(message) < 68 * 1024
+
+
 @pytest.mark.parametrize("custom_library", [False, True])
 def test_managed_generation_command_uses_local_project_options(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, custom_library: bool

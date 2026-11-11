@@ -1923,7 +1923,7 @@ def test_worker_hello_discovers_broken_runtime_without_importing_it(
 
 def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
     import torch
-    from dinkster_native.legacy_sources import discover_converted_sidecar
+    from dinkster_workers.legacy_sources import discover_converted_sidecar
     from safetensors.torch import load_file
 
     source = tmp_path / "weights.ckpt"
@@ -1991,7 +1991,7 @@ def test_worker_converter_delegates_retryable_classification_to_native(
         classify_conversion_error=classify,
         resolve_weight_source=unavailable,
     )
-    monkeypatch.setitem(sys.modules, "dinkster_native.legacy_sources", module)
+    monkeypatch.setitem(sys.modules, "dinkster_workers.legacy_sources", module)
 
     status, reason = host_module._convert_legacy_checkpoint(tmp_path / "asset", "asset.ckpt")
 

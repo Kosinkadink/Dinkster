@@ -6,7 +6,7 @@ import pytest
 
 torch = cast("Any", pytest.importorskip("torch"))
 
-from dinkster_native import attention, multigpu  # noqa: E402
+from dinkster_workers import attention, multigpu  # noqa: E402
 
 
 def test_guidance_wrapper_assigns_only_model_lanes_and_reduces_canonical_outputs(

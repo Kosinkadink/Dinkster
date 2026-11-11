@@ -6,9 +6,11 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/default-pack-admission.yml
       - scripts/check_default_pack_admission.py
+      - scripts/prepare_admission_engine.py
       - scripts/run_selected_pack_tests.py
       - scripts/_selected_pack_test_child.py
       - scripts/setup_probe_jail.sh
@@ -31,12 +33,12 @@ concurrency:
 
 jobs:
   select:
-    if: github.event_name == 'pull_request' || (github.repository == 'Kosinkadink/Dinkster' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success')
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || (github.repository == 'Kosinkadink/Dinkster' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success')
     permissions:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1
     outputs:
       engine: ${{ steps.identity.outputs.engine }}
       version: ${{ steps.identity.outputs.version }}
@@ -75,19 +77,23 @@ jobs:
               core.setOutput('version', engine.version);
             }
 
-  admission:
+  prepare:
     needs: select
     if: needs.select.outputs.engine != ''
     permissions:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 6
+    outputs:
+      groups: ${{ steps.sources.outputs.groups }}
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,22 +107,13 @@ jobs:
           path: .publication
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - name: Configure the same full Linux jail used by registry admission
-        run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - name: Install the engine under test on its published CPU base
         run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-      - name: Install the CPU software shader renderer
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libgles2 libvulkan1 mesa-vulkan-drivers
-          lvp=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-          test -n "$lvp"
-          echo "VK_ICD_FILENAMES=$lvp" >> "$GITHUB_ENV"
-          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
-      - name: Resolve defaults and run the registry scanner in process
+      - name: Resolve immutable default sources for every admission group
+        id: sources
         env:
           CANDIDATE_BASE: ${{ github.event.pull_request.base.sha }}
           PUBLISHED_VERSION: ${{ needs.select.outputs.version }}
@@ -133,5 +130,84 @@ jobs:
             arguments+=(--published-sources .publication/sources/official-packs.lock)
             version="$PUBLISHED_VERSION"
           fi
+          uv run --no-sync python -m scripts.prepare_admission_engine \
+            --output admission-runtime --store .run/environment-store \
+            --base-manifest .run/environment-base.json --engine-version "$version"
           uv run --no-sync python -m scripts.check_default_pack_admission \
-            --engine-version "$version" "${arguments[@]}"
+            --engine-version "$version" "${arguments[@]}" \
+            --runtime admission-runtime --prepare-output admission-sources | tee admission-preparation.log
+          cp -r admission-runtime/engine admission-sources/engine
+          cp admission-runtime/base-manifest.json admission-sources/base-manifest.json
+          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          result = json.loads(Path("admission-preparation.log").read_text().splitlines()[-1])
+          groups = [
+              {"group": index + 1, "packs": json.dumps(packs)}
+              for index, packs in enumerate(result["groups"])
+          ]
+          print("groups=" + json.dumps(groups))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: default-admission-sources
+          path: admission-sources
+          include-hidden-files: true
+          retention-days: 1
+
+  admission:
+    name: admission (group ${{ matrix.group }})
+    needs: [select, prepare]
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.groups) }}
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.engine }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: default-admission-sources
+          path: admission-sources
+      - name: Configure the same full Linux jail used by registry admission
+        run: bash scripts/setup_probe_jail.sh
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install the engine under test on its published CPU base
+        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+      - name: Provision the exact prepared engine on the verified pinned base
+        run: |
+          version=$(jq -j '.engineVersion' admission-sources/engine.json)
+          uv run --no-sync python -m scripts.prepare_admission_engine \
+            --output admission-runtime --store .run/environment-store \
+            --base-manifest admission-sources/base-manifest.json \
+            --engine-source admission-sources/engine --engine-version "$version"
+      - name: Install the CPU software shader renderer
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
+        timeout-minutes: 5
+      - name: Admit and test this group against the complete verified catalog
+        env:
+          TEST_PACKS: ${{ matrix.packs }}
+        run: |
+          arguments=()
+          while IFS= read -r -d '' name; do
+            arguments+=(--pack "$name")
+          done < <(jq -j '.[] + "\u0000"' <<< "$TEST_PACKS")
+          version=$(jq -j '.engineVersion' admission-sources/engine.json)
+          uv run --no-sync python -m scripts.check_default_pack_admission \
+            --engine-version "$version" --runtime admission-runtime \
+            --prepared-sources admission-sources "${arguments[@]}"

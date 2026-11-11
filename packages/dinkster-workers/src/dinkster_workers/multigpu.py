@@ -1,4 +1,4 @@
-"""Distributed execution adapters for the fork sampling engine."""
+"""Worker distributed execution adapters for the fork sampling engine."""
 
 from __future__ import annotations
 

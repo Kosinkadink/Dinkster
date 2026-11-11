@@ -19,17 +19,17 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_clip_vision_output,
+    with_identity_replacement,
 )
 
 
 class StyleModelApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="StyleModelApply",
+                node_type="dinkster.conditioning.style_model_apply",
                 display_name="Apply Style Model",
                 category="model/conditioning",
                 search_terms=("style transfer",),
@@ -51,7 +51,8 @@ class StyleModelApply(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
-            )
+            ),
+            "StyleModelApply",
         )
 
     @classmethod

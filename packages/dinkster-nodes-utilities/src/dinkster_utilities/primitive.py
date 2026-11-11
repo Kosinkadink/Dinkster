@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -25,7 +25,7 @@ class PrimitiveString(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PrimitiveString",
+            node_type="dinkster.utilities.primitive_string",
             display_name="Text",
             category="utilities/primitive",
             inputs=(
@@ -37,7 +37,7 @@ class PrimitiveString(Node):
             ),
             outputs=(OutputSpec("STRING", TypeExpr.concrete(CORE_STRING)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PrimitiveString")
 
     @classmethod
     def execute(cls, *, value: str) -> Mapping[str, object]:
@@ -48,7 +48,7 @@ class PrimitiveStringMultiline(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PrimitiveStringMultiline",
+            node_type="dinkster.utilities.primitive_string_multiline",
             display_name="Text (Multiline)",
             category="utilities/primitive",
             inputs=(
@@ -58,7 +58,7 @@ class PrimitiveStringMultiline(Node):
             ),
             outputs=(OutputSpec("STRING", TypeExpr.concrete(CORE_STRING)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PrimitiveStringMultiline")
 
     @classmethod
     def execute(cls, *, value: str) -> Mapping[str, object]:
@@ -69,7 +69,7 @@ class PrimitiveInt(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PrimitiveInt",
+            node_type="dinkster.utilities.primitive_int",
             display_name="Int",
             category="utilities/primitive",
             inputs=(
@@ -83,7 +83,7 @@ class PrimitiveInt(Node):
             ),
             outputs=(OutputSpec("INT", TypeExpr.concrete(CORE_INT)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PrimitiveInt")
 
     @classmethod
     def execute(cls, *, value: int) -> Mapping[str, object]:
@@ -94,7 +94,7 @@ class PrimitiveFloat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PrimitiveFloat",
+            node_type="dinkster.utilities.primitive_float",
             display_name="Float",
             category="utilities/primitive",
             inputs=(
@@ -106,7 +106,7 @@ class PrimitiveFloat(Node):
             ),
             outputs=(OutputSpec("FLOAT", TypeExpr.concrete(CORE_FLOAT)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PrimitiveFloat")
 
     @classmethod
     def execute(cls, *, value: float) -> Mapping[str, object]:
@@ -117,13 +117,13 @@ class PrimitiveBoolean(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PrimitiveBoolean",
+            node_type="dinkster.utilities.primitive_boolean",
             display_name="Boolean",
             category="utilities/primitive",
             inputs=(InputSpec("value", TypeExpr.concrete(CORE_BOOLEAN)),),
             outputs=(OutputSpec("BOOLEAN", TypeExpr.concrete(CORE_BOOLEAN)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PrimitiveBoolean")
 
     @classmethod
     def execute(cls, *, value: bool) -> Mapping[str, object]:

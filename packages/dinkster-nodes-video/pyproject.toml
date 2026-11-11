@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-video"
-version = "0.0.3"
+version = "0.0.4"
 description = "Dinkster video input, editing, interpolation and output nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "numpy>=1.26",
     "torch",
     "torchvision",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
 ]
 
 [build-system]

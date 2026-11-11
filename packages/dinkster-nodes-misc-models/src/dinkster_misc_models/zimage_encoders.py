@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -44,7 +44,7 @@ class TextEncodeZImageOmni(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeZImageOmni",
+            node_type="dinkster.misc.models.text_encode_z_image_omni",
             category="model/conditioning/z-image",
             inputs=(
                 InputSpec("clip", _CLIP),
@@ -65,7 +65,7 @@ class TextEncodeZImageOmni(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeZImageOmni")
 
     @classmethod
     def execute(

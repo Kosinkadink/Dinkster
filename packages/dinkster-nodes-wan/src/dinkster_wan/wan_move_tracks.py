@@ -21,10 +21,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _CATEGORY = "model/conditioning/wan/move"
@@ -80,7 +80,7 @@ class WanMoveTracksFromCoords(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanMoveTracksFromCoords",
+            node_type="dinkster.wan.wan_move_tracks_from_coords",
             category=_CATEGORY,
             inputs=(
                 InputSpec(
@@ -98,7 +98,7 @@ class WanMoveTracksFromCoords(Node):
                 OutputSpec("track_length", _INT, display_name="track_length"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanMoveTracksFromCoords")
 
     @classmethod
     def execute(
@@ -129,7 +129,7 @@ class GenerateTracks(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GenerateTracks",
+            node_type="dinkster.wan.generate_tracks",
             display_name="Generate Video Tracks",
             category=_CATEGORY,
             search_terms=("motion paths", "camera movement", "trajectory"),
@@ -224,7 +224,7 @@ class GenerateTracks(Node):
                 OutputSpec("track_length", _INT, display_name="track_length"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GenerateTracks")
 
     @classmethod
     def execute(
@@ -314,12 +314,12 @@ class WanMoveConcatTrack(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanMoveConcatTrack",
+            node_type="dinkster.wan.wan_move_concat_track",
             category=_CATEGORY,
             inputs=(InputSpec("tracks_1", _TRACKS), InputSpec("tracks_2", _TRACKS, required=False)),
             outputs=(OutputSpec("TRACKS", _TRACKS),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanMoveConcatTrack")
 
     @classmethod
     def execute(cls, *, tracks_1: object, tracks_2: object = None) -> Mapping[str, object]:
