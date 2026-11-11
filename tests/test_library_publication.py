@@ -545,7 +545,7 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         pytest.raises(
             ValueError,
             match=r"default dinkster-text@0\.0\.1 admission refused: "
-            r"probe\.dependencies-unavailable: Dependency provisioning failed\.",
+            r"probe\.launch-failed: The executable probe could not be started\.",
         )
         if sys.platform == "win32"
         else nullcontext()

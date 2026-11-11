@@ -2589,7 +2589,15 @@ def test_selected_pack_tests_refuse_incompatible_base_before_test_tool_resolutio
     )
     monkeypatch.setenv("UV_OFFLINE", "1")
     monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/forbidden")
-    with pytest.raises(ProvisionError, match="simpleeval: generation has 1.0.7, lock needs 1.0.8"):
+    with (
+        pytest.raises(
+            RuntimeError, match="selected pack admission tests require the Linux CI environment"
+        )
+        if sys.platform != "linux"
+        else pytest.raises(
+            ProvisionError, match="simpleeval: generation has 1.0.7, lock needs 1.0.8"
+        )
+    ):
         run_selected_tests(
             tmp_path,
             catalog,
