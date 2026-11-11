@@ -41,6 +41,9 @@ def publication_selection(root: Path, before: str) -> tuple[str, ...]:
             "scripts/build_release_pack_locks.py",
             "scripts/build_official_packs.py",
             "scripts/publish_official_packs.py",
+            "scripts/check_disposable_publication.py",
+            "scripts/check_publication_controls.py",
+            "scripts/stage_publication_probe_index.py",
         }
         for path in changed
     )
