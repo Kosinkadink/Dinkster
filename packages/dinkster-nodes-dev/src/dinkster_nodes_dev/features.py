@@ -96,7 +96,7 @@ class FeatureSlot(Node):
                     ),
                 ),
             ),
-            outputs=(OutputSpec("text", STRING, preview=True),),
+            outputs=(OutputSpec("text", STRING),),
         )
 
     @classmethod
@@ -118,9 +118,7 @@ class FeatureOutputCount(Node):
                 InputSpec("start", INT, default=10),
             ),
             output_families=(
-                OutputFamilySpec(
-                    "numbers", INT, 1, 8, preview=True, count=OutputCountSpec("count")
-                ),
+                OutputFamilySpec("numbers", INT, 1, 8, count=OutputCountSpec("count")),
             ),
         )
 
@@ -152,7 +150,7 @@ class FeatureConditionalWidgets(Node):
                 InputSpec("note", STRING, default="Keep this note", widget=StringWidget()),
             ),
             widget_groups=(ConditionalWidgetGroup("details", (True,), ("note",)),),
-            outputs=(OutputSpec("text", STRING, preview=True),),
+            outputs=(OutputSpec("text", STRING),),
         )
 
     @classmethod
@@ -198,7 +196,7 @@ class FeatureWidgetKinds(Node):
                 ),
                 InputSpec("items", STRINGS, default=["first", "second"], widget=StringWidget()),
             ),
-            outputs=(OutputSpec("text", STRING, preview=True),),
+            outputs=(OutputSpec("text", STRING),),
         )
 
     @classmethod
@@ -253,7 +251,7 @@ class FeatureRepresentations(Node):
                     ),
                 ),
             ),
-            outputs=(OutputSpec("text", STRING, preview=True),),
+            outputs=(OutputSpec("text", STRING),),
         )
 
     @classmethod
@@ -281,8 +279,8 @@ class FeatureOutputDescriptors(Node):
             output_descriptors=OutputDescriptorsSpec(
                 "entries",
                 (
-                    OutputSpec("integer", INT, preview=True),
-                    OutputSpec("text", STRING, preview=True),
+                    OutputSpec("integer", INT),
+                    OutputSpec("text", STRING),
                 ),
                 8,
             ),
