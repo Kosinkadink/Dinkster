@@ -704,7 +704,16 @@ def test_official_library_selection_and_build(
                 ).encode()
             else:
                 responses[f"/v1/packs/{name}/versions/0.0.1"] = json.dumps(
-                    {"packName": name, "version": "0.0.1", "state": "active"}
+                    {
+                        "packName": name,
+                        "version": "0.0.1",
+                        "state": "active",
+                        "artifact": {
+                            "digest": next(
+                                pack.artifact_digest for pack in catalog.packs if pack.pack == name
+                            )
+                        },
+                    }
                 ).encode()
         respond(handler)
 
@@ -1246,6 +1255,10 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "dependency-external",
         "dependency-rejected",
         "dependency-timeout",
+        "submitted-progress",
+        "submitted-rejected",
+        "submitted-timeout",
+        "submitted-digest",
         "published-digest",
         "published-size",
         "published-lock",
@@ -1492,7 +1505,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
     clock = [0.0]
     polls = [0]
     activation_polls: dict[str, int] = {}
-    if problem and problem.startswith("dependency-"):
+    if problem and problem.startswith(("dependency-", "submitted-")):
         monkeypatch.setenv("PUBLICATION_TEST_TOKEN", "test-token")
         monkeypatch.setattr("scripts.publish_official_packs.time.monotonic", lambda: clock[0])
 
@@ -1504,6 +1517,51 @@ def test_official_publication_requires_complete_supported_base_bindings(
     def registry_response(handler):
         if handler.command == "POST":
             submitted.append(handler.path)
+            name, version = handler.path.split("/")[3::2]
+            if not (problem and problem.startswith("submitted-")) and not (
+                problem
+                and problem.startswith("dependency-")
+                and problem != "dependency-external"
+                and name in {"second-pack", "third-pack"}
+            ):
+                pack = next(pack for pack in packs if pack.pack == name)
+                files[f"/v1/packs/{name}/versions/{version}"] = json.dumps(
+                    {
+                        "packName": name,
+                        "version": version,
+                        "state": "active",
+                        "artifact": {"digest": pack.artifact_digest},
+                    }
+                ).encode()
+        if (
+            problem
+            and problem.startswith("submitted-")
+            and handler.path.startswith("/v1/publish/")
+            and handler.command == "GET"
+        ):
+            name = handler.path.rsplit("/", 1)[1]
+            pack = next(pack for pack in packs if pack.pack == name)
+            count = activation_polls.get(name, 0)
+            activation_polls[name] = count + 1
+            state = ("queued", "scanning", "retrying", "accepted")[min(count, 3)]
+            if problem == "submitted-rejected" and name == "second-pack" and count >= 2:
+                state = "rejected"
+            files[handler.path] = json.dumps(
+                {"status": state, "reason": "probe.timeout" if state == "rejected" else None}
+            ).encode()
+            if count >= 3 and state == "accepted" and problem != "submitted-timeout":
+                files[f"/v1/packs/{name}/versions/{pack.version}"] = json.dumps(
+                    {
+                        "packName": name,
+                        "version": pack.version,
+                        "state": "active",
+                        "artifact": {
+                            "digest": "blake3:" + "f" * 64
+                            if problem == "submitted-digest" and name == "second-pack"
+                            else pack.artifact_digest
+                        },
+                    }
+                ).encode()
         if problem and problem.startswith("dependency-") and submitted:
             if handler.path in {"/v1/publish/second-pack", "/v1/publish/third-pack"}:
                 assert handler.headers.get("Authorization") == "Bearer test-token"
@@ -1527,7 +1585,16 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     name = handler.path.rsplit("/", 1)[1]
                     version = dict(versions)[name]
                     files[f"/v1/packs/{name}/versions/{version}"] = json.dumps(
-                        {"packName": name, "version": version, "state": "active"}
+                        {
+                            "packName": name,
+                            "version": version,
+                            "state": "active",
+                            "artifact": {
+                                "digest": next(
+                                    pack.artifact_digest for pack in packs if pack.pack == name
+                                )
+                            },
+                        }
                     ).encode()
             if handler.command == "POST" and "first-pack" in handler.path:
                 assert polls[0] == (
@@ -1559,7 +1626,42 @@ def test_official_publication_requires_complete_supported_base_bindings(
             "", f"http://127.0.0.1:{server.server_port}", token_env="PUBLICATION_TEST_TOKEN"
         )
         lookup_paths = [f"/v1/packs/{pack.pack}/versions/{pack.version}" for pack in packs]
-        if problem and problem.startswith("dependency-"):
+        if problem and problem.startswith("submitted-"):
+            if problem == "submitted-progress":
+                result = publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=registry,
+                    activation_timeout=20,
+                )
+                assert [row["state"] for row in result] == ["published", "published"]
+                assert set(activation_polls) == {"first-pack", "second-pack"}
+            else:
+                with pytest.raises(RegistryPublishError) as failure:
+                    publish_official_packs(
+                        tmp_path,
+                        sources,
+                        bases,
+                        locks,
+                        output,
+                        registry=registry,
+                        activation_timeout=20,
+                    )
+                message = str(failure.value)
+                assert "second-pack@7.4.0rc1" in message
+                assert "candidate second-pack" in message
+                if problem == "submitted-rejected":
+                    assert "probe.timeout" in message
+                elif problem == "submitted-timeout":
+                    assert "first-pack@1.2.3" in message
+                    assert "candidate first-pack" in message
+                    assert "timed out" in message
+                else:
+                    assert "digest" in message
+        elif problem and problem.startswith("dependency-"):
             if problem == "dependency-external":
                 result = publish_official_packs(
                     tmp_path, sources, bases, locks, output, registry=registry, activation_timeout=5
@@ -1680,12 +1782,13 @@ def test_official_publication_requires_complete_supported_base_bindings(
                         "lock": expected_locks[pack.pack, variant],
                     }
                 if problem is None:
-                    assert row["state"] == "queued" and row["candidateId"] == pack.pack
+                    assert row["state"] == "published" and row["candidateId"] == pack.pack
                 elif problem == "published-identical":
                     assert row["state"] == "published" and "candidateId" not in row
             assert [path for path, _ in requests] == (
                 lookup_paths
                 + [f"/v1/publish/{pack.pack}/versions/{pack.version}" for pack in packs]
+                + lookup_paths
                 if problem is None
                 else lookup_paths
                 if problem in {"check-published", "published-identical"}
@@ -1704,6 +1807,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
         ("raw", "queued"),
         ("locks", "queued"),
         ("locks", "scanning"),
+        ("locks", "retrying"),
         ("locks", "accepted"),
         ("missing", "queued"),
         ("refused", "queued"),

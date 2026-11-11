@@ -499,6 +499,29 @@ jobs:
           timeout --kill-after=30s 12m uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
             --output .official-publication/submitted --publish
+      - name: Summarize publication verdicts
+        if: always()
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          output = Path('.official-publication/submitted')
+          if output.exists():
+              result = output / 'result.json'
+              rows = json.loads(result.read_text()) if result.exists() else []
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write('## Official pack publication\n\n')
+                  for row in rows:
+                      summary.write(
+                          f"- {row['pack']}@{row['version']}: {row.get('state', 'unresolved')}; "
+                          f"candidate {row.get('candidateId', 'none')}; "
+                          f"{row.get('reason', 'public digest verified' if row.get('state') == 'published' else 'not observed public before the run stopped')}\n"
+                      )
+                  failure = output / 'failure.txt'
+                  if failure.exists():
+                      summary.write('\n```text\n' + failure.read_text() + '\n```\n')
       - name: Record completed natural publication inputs
         if: github.event_name == 'workflow_run'
         run: printf '%s\n' '${{ needs.select.outputs.recovery_run || github.run_id }}' > .official-publication/completed-run

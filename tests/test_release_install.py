@@ -3511,6 +3511,51 @@ def test_official_publication_submits_only_from_trusted_main(
         )
 
 
+@pytest.mark.parametrize("outcome", ["published", "refused", "interrupted"])
+def test_official_publication_summary_reports_every_submitted_version(
+    tmp_path: Path, outcome: str
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    summary = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step.get("name") == "Summarize publication verdicts"
+    )
+    assert summary["if"] == "always()"
+    output = tmp_path / ".official-publication/submitted"
+    output.mkdir(parents=True)
+    rows = [
+        {"pack": "first", "version": "1.2", "state": "published", "candidateId": "candidate-a"},
+        {
+            "pack": "second",
+            "version": "3.4",
+            "state": "published" if outcome == "published" else "queued",
+            "candidateId": "candidate-b",
+        },
+    ]
+    if outcome == "refused":
+        rows[1]["reason"] = "probe.invalid: rejected"
+        (output / "failure.txt").write_text("second@3.4 (candidate candidate-b): probe.invalid\n")
+    (output / "result.json").write_text(json.dumps(rows))
+    destination = tmp_path / "summary"
+    subprocess.run(
+        [sys.executable, "-c", summary["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_STEP_SUMMARY": str(destination)},
+        check=True,
+    )
+    rendered = destination.read_text()
+    assert "first@1.2: published; candidate candidate-a; public digest verified" in rendered
+    assert "second@3.4:" in rendered and "candidate candidate-b" in rendered
+    assert (
+        "probe.invalid: rejected"
+        if outcome == "refused"
+        else "not observed public before the run stopped"
+        if outcome == "interrupted"
+        else "second@3.4: published; candidate candidate-b; public digest verified"
+    ) in rendered
+
+
 def test_official_publication_refuses_missing_credential_before_submission(tmp_path: Path) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
     submission = next(
