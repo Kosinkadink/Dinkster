@@ -26,6 +26,34 @@ Dinkster deliberately stays out of the ComfyUI port neighborhood
 (8188/8189/8199) so a Dinkster install never collides with a running
 ComfyUI or comfy-runner allocation.
 
+## Signed security feed refresh
+
+The shared `dinkster_security.host.SecurityHost` reads independently provisioned
+trust from `<root>/security.sqlite3`. Refresh requests the complete signed
+`/v1/security/blocks` document from each trusted issuer. A local
+`<root>/security.toml` can select a mirror without changing the issuing identity:
+
+```toml
+refuse_vulnerable = false
+request_timeout_seconds = 5.0
+# maximum_feed_age_seconds = 86400
+
+[feed_urls]
+"https://registry.example.org" = "https://mirror.example.org/security/index.json"
+```
+
+Overrides require independently provisioned trust for the exact issuer. Feed
+responses cannot provision keys. Refresh failures retain the accepted checkpoint
+and decisions; downloads are limited to 32 MiB and do not send registry bearer
+credentials. Default policy has no feed-age refusal. An explicit maximum age
+uses signed `issuedAt`, not the time of the latest successful download. Explicit
+vulnerability refusal applies to retained releases too. Local policy reloads
+on refresh; malformed policy refuses rather than silently reverting to defaults.
+Installer acquisition, install, rollback and serving selection refresh before
+their policy check. This transport does not itself stop or resume any process.
+
+## Ingress
+
 An optional `[ingress]` table adds a fleet-facing port:
 
 ```toml

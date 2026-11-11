@@ -7,7 +7,10 @@ import copy
 import hashlib
 import json
 import os
+import threading
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -15,7 +18,8 @@ from uuid import UUID
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from dinkster_registry import InstallError, LockedPack, Lockfile, build_artifact
-from dinkster_security.documents import SecurityError
+from dinkster_security.documents import Release, SecurityError
+from dinkster_security.host import SecurityHost
 from dinkster_security.policy import Artifact, assess
 from dinkster_security.store import SecurityStore
 
@@ -98,6 +102,137 @@ def _store(tmp_path: Path, key: Ed25519PrivateKey) -> SecurityStore:
     store = SecurityStore(tmp_path / "security.sqlite3")
     store.provision_trust(json.dumps(_trust(key)).encode())
     return store
+
+
+@pytest.fixture
+def security_feed() -> Iterator[tuple[str, dict[str, Any]]]:
+    response: dict[str, Any] = {"status": 404, "body": b"", "requests": []}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            response["requests"].append((self.path, self.headers.get("Authorization")))
+            self.send_response(response["status"])
+            self.end_headers()
+            self.wfile.write(response["body"])
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", response
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+def test_host_refresh_uses_independent_issuer_and_preserves_blocks_on_bad_feed(
+    tmp_path: Path, security_feed: tuple[str, dict[str, Any]]
+):
+    url, response = security_feed
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    (tmp_path / "security.toml").write_text(
+        f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
+    host = SecurityHost(tmp_path)
+    response.update(status=200, body=_signed(_feed("malicious"), key))
+    host.refresh()
+    document, verified = store.cached(REGISTRY)
+    assert document is not None and verified is not None
+    bad = Artifact(REGISTRY, document.notices[0].release)
+    control = Artifact(
+        REGISTRY, bad.release.model_copy(update={"artifact_digest": "sha256:" + "b" * 64})
+    )
+    assert not host.assess((bad,)).allowed
+    assert host.assess((control,)).allowed
+    assert response["requests"] == [("/security/index.json", None)]
+    wrong_issuer = _feed("malicious")
+    wrong_issuer["registry"] = "https://another.example.test"
+    for payload in (
+        b"{}",
+        _signed(_feed(), Ed25519PrivateKey.generate()),
+        _signed(wrong_issuer, key),
+    ):
+        response["body"] = payload
+        host.refresh()
+        assert store.cached(REGISTRY) == (document, verified)
+        assert not host.assess((bad,)).allowed
+        assert host.assess((control,)).allowed
+    response["status"] = 503
+    host.refresh()
+    assert store.cached(REGISTRY) == (document, verified)
+    assert not host.assess((bad,)).allowed
+    assert host.assess((control,)).allowed
+    lifted = _feed("malicious", revision=2)
+    lifted["notices"][0].update(revision=2, previousRevision=1, status="cleared")
+    response.update(status=200, body=_signed(lifted, key))
+    host.refresh()
+    assert host.assess((bad,)).allowed
+    assert host.refresh_errors == {}
+    response["body"] = _signed(_feed("malicious"), key)
+    host.refresh()
+    assert host.assess((bad,)).allowed
+    current, _ = store.cached(REGISTRY)
+    assert current is not None and current.revision == 2
+
+
+def test_host_default_outage_continues_and_local_policy_is_explicit(
+    tmp_path: Path, security_feed: tuple[str, dict[str, Any]]
+):
+    url, response = security_feed
+    key = Ed25519PrivateKey.generate()
+    store = SecurityStore(tmp_path / "security.sqlite3")
+    trust = _trust(key)
+    trust["registry"] = url
+    store.provision_trust(json.dumps(trust).encode())
+    host = SecurityHost(tmp_path)
+    release = Artifact(url, Release.model_validate(_feed()["notices"][0]["release"]))
+    host.refresh()
+    assert host.assess((release,)).allowed
+    assert not host.assess((release,)).findings
+    assert response["requests"] == [("/v1/security/blocks", None)]
+    feed = _feed()
+    feed["registry"] = url
+    response.update(status=200, body=_signed(feed, key))
+    host.refresh()
+    assert host.assess((release,)).allowed
+    assert not host.assess((release,), installing=True).allowed
+    config = tmp_path / "security.toml"
+    config.write_text("refuse_vulnerable = true\n")
+    host.refresh()
+    assert not host.assess((release,)).allowed
+    config.write_text("maximum_feed_age_seconds = 3600\n")
+    host.refresh()
+    assert host.assess((release,)).stale_registries == (url,)
+    response["status"] = 404
+    config.write_text("")
+    host.refresh()
+    assert host.assess((release,)).allowed
+    assert host.assess((release,)).findings[0].decision == "pending"
+    store.answer(url, UUID(NOTICE), 1, approved=False)
+    assert not host.assess((release,)).allowed
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        'refuse_vulnerable = "false"\n',
+        "maximum_feed_age_seconds = 0\n",
+        "request_timeout_seconds = inf\n",
+        "misspelled_policy = true\n",
+        '[feed_urls]\n"untrusted" = "http://127.0.0.1:1/security/index.json"\n',
+    ],
+)
+def test_host_refuses_invalid_local_policy_before_transport(tmp_path: Path, config: str):
+    (tmp_path / "security.toml").write_text(config)
+    host = SecurityHost(tmp_path)
+    with pytest.raises(ValueError):
+        host.refresh()
+    assert host.store.registries() == ()
 
 
 @pytest.mark.parametrize("previous_publisher", [None, "original-publisher"])
@@ -304,7 +439,9 @@ def test_malicious_bytes_block_rehosting_and_dependencies_without_misclassifying
     assert assess(store, inventory).allowed
 
 
-def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback(tmp_path: Path):
+def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback(
+    tmp_path: Path, security_feed: tuple[str, dict[str, Any]]
+):
     from dinkster.installer import Installer
 
     installer = Installer(tmp_path / "installed", accelerator="cpu", runtime_probe=lambda _: ())
@@ -333,12 +470,20 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     key = Ed25519PrivateKey.generate()
     store = SecurityStore(installer.root / "security.sqlite3")
     store.provision_trust(json.dumps(_trust(key)).encode())
+    url, response = security_feed
+    (installer.root / "security.toml").write_text(
+        f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
     feed = _feed("malicious")
     feed["notices"][0]["release"]["artifactDigest"] = targets[0].packs[0].artifact_digest
-    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    response.update(status=200, body=_signed(feed, key))
+    assert store.cached(REGISTRY)[0] is None
     current = installer.current_number()
     with pytest.raises(InstallError, match="security malicious"):
         installer.rollback(venvs=False)
+    assert store.cached(REGISTRY)[0] is not None
+    assert response["requests"] == [("/security/index.json", None)]
+    response["status"] = 404
     assert installer.current_number() == current
     assert archives["1.2.3"].is_file()
     spec = installer.packs_for_serving()[0]
@@ -374,6 +519,16 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     )
     spec = installer.packs_for_serving()[0]
     assert spec.packs is not None and spec.packs["test-pack"].version == "3.0.0"
+    transport = f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    config = installer.root / "security.toml"
+    config.write_text("maximum_feed_age_seconds = 1\n" + transport)
+    with pytest.raises(InstallError, match="configured maximum age"):
+        installer.packs_for_serving()
+    config.write_text("refuse_vulnerable = true\n" + transport)
+    with pytest.raises(InstallError, match="security vulnerable"):
+        installer.packs_for_serving()
+    config.write_text(transport)
+    assert installer.packs_for_serving()[0].packs == spec.packs
 
 
 @pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused"])

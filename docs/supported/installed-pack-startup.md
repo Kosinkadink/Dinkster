@@ -5,7 +5,11 @@
   denied vulnerable releases refuse without deleting retained bytes or changing
   the active selection. Retained vulnerable releases remain usable while their
   decision is pending; a new vulnerable release requires exact-notice approval.
-  These checks do not fetch notices or stop an already running worker.
+  Installer operations refresh independently trusted issuers before checking,
+  including configured mirrors. Failed refresh preserves cached decisions and
+  blocks without inventing incidents. Feed age does not refuse by default;
+  explicit age limits and vulnerability refusal apply to retained releases too.
+  These checks do not stop an already running worker.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
