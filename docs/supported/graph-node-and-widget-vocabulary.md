@@ -3,8 +3,9 @@
 - The optional development pack provides CPU-only examples for dynamic slots,
   count-bound outputs, conditional rows, multi-combo, Markdown, palette, list
   and button widgets, switchable widget forms, editable output descriptors,
-  and image mirror estimates. It also supplies help, a guide, a blueprint,
-  a saved pack preference, Chinese labels, and a template. See
+  and image mirror estimates. It also supplies help, a guide, a blueprint
+  that inserts an independent boundary subgraph, a saved pack preference,
+  Chinese labels, and a separate template. See
   [Try optional node features](../dev-node-features.md).
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags

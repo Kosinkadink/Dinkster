@@ -881,14 +881,15 @@ def test_default_admission_separates_expensive_children_without_changing_selecti
     )
     groups = result["groups"]
     assert isinstance(groups, list)
-    assert len(groups) == 10
+    assert len(groups) == 13
     assert all(groups)
     assert sorted(name for group in groups for name in group) == sorted(
         entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
     )
     assert ["dinkster-3d"] in groups
-    assert ["dinkster-image", "dinkster-latent"] in groups
-    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert ["dinkster-image"] in groups
+    assert ["dinkster-video"] in groups
+    assert ["dinkster-audio"] in groups
     assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
 
 
@@ -1917,7 +1918,7 @@ def test_official_publication_declarations_match_archive_admission(
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.3",
+                "0.0.4",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
                     "dinkster-inference",
@@ -2259,6 +2260,7 @@ def test_registry_probe_refuses_degraded_isolation(
         "collection",
         "dependency",
         "teardown",
+        "library-lock-mismatch",
     ],
 )
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
@@ -2512,6 +2514,49 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     python, locks = selected_pack_runtime(catalog, artifacts)
     from dataclasses import replace
 
+    if problem in {None, "library-lock-mismatch"}:
+        helper = _wheel(tmp_path, "selected-helper", "2.4", "selected_helper", "VALUE=83")
+        helper_archive = tmp_path / helper.filename
+        helper_digest = artifact_digest(helper_archive.read_bytes())
+        from dinkster_store import pack_archive_path
+
+        pack_archive_path(artifacts, helper_digest).write_bytes(helper_archive.read_bytes())
+        catalog = Lockfile.of(
+            [*catalog.packs, LockedPack("selected-helper", "2.4", helper_digest, "dinkster", ())]
+        )
+        python, locks = selected_pack_runtime(catalog, artifacts)
+        for name, lock in locks.items():
+            locks[name] = replace(
+                lock,
+                packages=tuple(
+                    replace(
+                        package,
+                        wheels=tuple(
+                            replace(
+                                wheel,
+                                url="http://127.0.0.1:1/unpublished-helper.whl",
+                                sha256=(
+                                    "f" * 64
+                                    if problem == "library-lock-mismatch"
+                                    and name == "dinkster-image"
+                                    else wheel.sha256
+                                ),
+                            )
+                            for wheel in package.wheels
+                        ),
+                    )
+                    if package.name == "selected-helper"
+                    else package
+                    for package in lock.packages
+                ),
+            )
+        test_file = engine / "tests/test_image_nodes.py"
+        test_file.write_text(
+            test_file.read_text()
+            + "\nfrom selected_helper import VALUE as HELPER_VALUE\nassert HELPER_VALUE == 83\n"
+        )
+        subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+
     dependency = _wheel(
         tmp_path, "locked-only-dependency", "1.7", "locked_only_dependency", "VALUE=61"
     )
@@ -2546,6 +2591,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         assert "dinkster_image:NEW_NODE" in output
     elif problem == "missing":
         with pytest.raises(PackArchiveError, match="wheel.import-name"):
+            run_selected_tests(engine, catalog, artifacts, **context)
+    elif problem == "library-lock-mismatch":
+        from dinkster_workers.provision import ProvisionError
+
+        with pytest.raises(
+            ProvisionError, match="unpublished-helper.whl: download/verification failed"
+        ):
             run_selected_tests(engine, catalog, artifacts, **context)
     else:
         with pytest.raises(subprocess.CalledProcessError):

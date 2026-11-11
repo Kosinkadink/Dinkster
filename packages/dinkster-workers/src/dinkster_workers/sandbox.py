@@ -577,19 +577,30 @@ PROBE_FSIZE_LIMIT_BYTES = 64 * MEBIBYTE
 #: sys.path explicitly because the interpreter consumed its empty startup
 #: environment before the descriptor was available. sys.argv[1:] carries
 #: the original interpreter arguments
-#: (-m dinkster_workers._doctor_probe <manifest>).
+#: (-m dinkster_workers._doctor_probe <manifest>). The entry file is pinned
+#: even when a caller selects a different engine API inside this jail.
 _PROBE_RLIMIT_STUB = (
-    "import json, os, resource, sys; "
-    "from dinkster_workers import _doctor_probe as _probe; "
+    "import importlib.util, json, os, resource, sys; "
     f"_env_file = open({_PROBE_ENV_PATH!r}, encoding='utf-8'); "
     "_environment = json.load(_env_file); _env_file.close(); "
     f"os.unlink({_PROBE_ENV_PATH!r}); "
+    "_api_root = _environment.pop('DINKSTER_PROBE_API_ROOT', None); "
+    "\nif _api_root is None:\n"
+    "    from dinkster_workers import _doctor_probe as _probe\n"
     "os.environ.clear(); os.environ.update(_environment); "
     "_pythonpath = _environment.get('PYTHONPATH', ''); "
     "sys.path[1:1] = [os.path.abspath(_path or os.curdir) "
     "for _path in _pythonpath.split(os.pathsep)] if _pythonpath else []; "
     f"resource.setrlimit(resource.RLIMIT_CPU, ({PROBE_CPU_LIMIT_S},) * 2); "
     f"resource.setrlimit(resource.RLIMIT_FSIZE, ({PROBE_FSIZE_LIMIT_BYTES},) * 2); "
+    "\nif _api_root is not None:\n"
+    "    sys.path.insert(0, _api_root)\n"
+    "    _spec = importlib.util.spec_from_file_location(\n"
+    "        'dinkster_workers._doctor_probe', "
+    f"{str(Path(__file__).with_name('_doctor_probe.py'))!r})\n"
+    "    _probe = importlib.util.module_from_spec(_spec)\n"
+    "    sys.modules[_spec.name] = _probe\n"
+    "    _spec.loader.exec_module(_probe)\n"
     "sys.argv = sys.argv[2:]; _probe.main()"
 )
 

@@ -25,8 +25,8 @@ def file_shard(path: str, count: int = 2) -> int:
         # Balance whole files against case-split Linux histories and generations.
         prefix = b"dinkster-root-pytest-v2:44225:"
     if count == 8:
-        # Keep unsplit runtime files balanced against the case-split files.
-        prefix = b"dinkster-windows-runtime-v2:4621:"
+        # Balance unsplit files and the rotated case starts against native Windows durations.
+        prefix = b"dinkster-windows-runtime-v3:25508:"
     digest = hashlib.sha256(prefix + path.encode("utf-8")).digest()
     return digest[0] % count + 1
 
@@ -90,7 +90,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             f"case-shard files were not collected: {', '.join(sorted(missing))}"
         )
     case_shards = {
-        item.nodeid: position % count + 1
+        item.nodeid: (position + (file_shard(path, count) - 1 if count == 8 else 0)) % count + 1
         for path in sorted(case_files)
         for position, item in enumerate(
             sorted((item for item in items if paths[item] == path), key=lambda item: item.nodeid)
