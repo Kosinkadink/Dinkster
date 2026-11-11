@@ -382,27 +382,12 @@ def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
                     response.status == 429
                     and (await response.json())["error"] == "delegation-limit"
                 )
-            # Fill bulk persisted state without thousands of HTTP requests and commits;
-            # the final allowed slot and both refusal boundaries use the real API.
-            with sqlite3.connect(tmp_path / "principals.sqlite") as db:
-                db.executemany(
-                    "INSERT INTO delegations"
-                    " SELECT ?, ?, ?, ?, scope, session_id, display_name, created_at,"
-                    " expires_at, revoked_at FROM delegations WHERE id = ?",
-                    [
-                        (
-                            f"seed-{index}",
-                            "u_" + str(UUID(int=1000 + index // 32)),
-                            f"agent:seed-{index}",
-                            hashlib.sha256(f"seed-{index}".encode()).hexdigest(),
-                            issued[0]["id"],
-                        )
-                        for index in range(4096 - 32 - 1)
-                    ],
-                )
+                for user in range(127):
+                    human = human_headers(key, sub="u_" + str(UUID(int=user + 1000)))
+                    for _ in range(32):
+                        await mint(client, human)
             async with server(tmp_path, url) as client:
                 other = human_headers(key, sub="u_" + str(UUID(int=9999)))
-                await mint(client, other)
                 response = await client.post(
                     "/api/auth/delegations",
                     headers=other,
