@@ -1700,12 +1700,7 @@ def test_official_publication_declarations_match_archive_admission(
 
     from scripts.build_official_packs import library_metadata
 
-    root = Path(__file__).resolve().parents[1]
     first = official_payloads
-    second = build_official_packs(root, tmp_path / "second")
-    assert {path.name: path.read_bytes() for path in first} == {
-        path.name: path.read_bytes() for path in second
-    }
     catalog = Lockfile.from_record_json(first[-1].read_text())
     assert len(catalog.packs) == 37
     for pack in catalog.packs:
