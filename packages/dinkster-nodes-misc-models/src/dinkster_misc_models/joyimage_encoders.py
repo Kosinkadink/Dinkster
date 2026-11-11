@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -110,7 +110,7 @@ class TextEncodeJoyImageEdit(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeJoyImageEdit",
+            node_type="dinkster.misc.models.text_encode_joy_image_edit",
             category="model/conditioning/joyimage",
             inputs=(
                 InputSpec("clip", _CLIP),
@@ -131,7 +131,7 @@ class TextEncodeJoyImageEdit(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeJoyImageEdit")
 
     @classmethod
     def execute(

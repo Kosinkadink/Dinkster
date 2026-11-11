@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -25,7 +25,7 @@ class OpticalFlowLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="OpticalFlowLoader",
+            node_type="dinkster.video.optical_flow_loader",
             display_name="Load Optical Flow Model",
             category="model/loaders",
             inputs=(
@@ -43,7 +43,7 @@ class OpticalFlowLoader(Node):
             ),
             outputs=(OutputSpec("OPTICAL_FLOW", TypeExpr.concrete(OPTICAL_FLOW_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "OpticalFlowLoader")
 
     @classmethod
     def execute(cls, *, model_name: object) -> Mapping[str, object]:

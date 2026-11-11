@@ -1690,7 +1690,7 @@ def test_official_publication_declarations_match_archive_admission(
             / package_name
         )
         accepted = run_manifest_admission(
-            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.3.dev123"
+            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.4.dev123"
         )
         assert not accepted.blocked, accepted.findings
         for engine in ("0.0.1", "0.1"):

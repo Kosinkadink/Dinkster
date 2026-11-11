@@ -215,7 +215,7 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
-from dinkster_schema.first_party import first_party_schema
+from dinkster_schema.identity import with_identity_replacement
 from dinkster_values import (
     ARRAY_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
@@ -792,7 +792,7 @@ __all__ = [
     "schema_from_wire",
     "schema_signature",
     "schema_to_wire",
-    "first_party_schema",
+    "with_identity_replacement",
     # -- reporting and logging (dinkster-schema)
     "LOG_EVENT",
     "PREVIEW_EVENT",

@@ -25,9 +25,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     report_progress,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -206,7 +206,7 @@ class ResizeImageMaskNode(Node):
             crop,
         )
         schema = NodeSchema(
-            node_type="ResizeImageMaskNode",
+            node_type="dinkster.image.resize_image_mask_node",
             display_name="Resize Image/Mask",
             description="Resize an image or mask using various scaling methods.",
             category="image/transform",
@@ -267,7 +267,7 @@ class ResizeImageMaskNode(Node):
             outputs=(OutputSpec("resized", _RESIZE_INPUT),),
             input_order=("input", "resize_type", "scale_method"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ResizeImageMaskNode")
 
     @classmethod
     def execute(
@@ -352,7 +352,7 @@ class BatchImagesNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BatchImagesNode",
+            node_type="dinkster.image.batch_images_node",
             display_name="Batch Images",
             category="image/batch",
             input_families=(
@@ -367,7 +367,7 @@ class BatchImagesNode(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BatchImagesNode")
 
     @classmethod
     def execute(cls, *, images: Mapping[str, Any]) -> Mapping[str, object]:
@@ -378,7 +378,7 @@ class BatchMasksNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BatchMasksNode",
+            node_type="dinkster.image.batch_masks_node",
             display_name="Batch Masks",
             category="image/mask",
             input_families=(
@@ -393,7 +393,7 @@ class BatchMasksNode(Node):
             ),
             outputs=(OutputSpec("MASK", _MASK),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BatchMasksNode")
 
     @classmethod
     def execute(cls, *, masks: Mapping[str, Any]) -> Mapping[str, object]:
@@ -404,7 +404,7 @@ class ColorTransfer(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ColorTransfer",
+            node_type="dinkster.image.color_transfer",
             display_name="Transfer Color",
             description="Match the colors of one image to another using various algorithms.",
             category="image/filters",
@@ -436,7 +436,7 @@ class ColorTransfer(Node):
             outputs=(OutputSpec("image", _IMAGE),),
             input_order=("image_target", "image_ref", "method", "source_stats", "strength"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ColorTransfer")
 
     @staticmethod
     def _to_lab(images: Any, index: int, device: Any) -> Any:

@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -23,7 +23,7 @@ class EmptyMochiLatentVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyMochiLatentVideo",
+            node_type="dinkster.misc.models.empty_mochi_latent_video",
             category="model/latent/mochi",
             inputs=(
                 InputSpec(
@@ -53,7 +53,7 @@ class EmptyMochiLatentVideo(Node):
             ),
             outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyMochiLatentVideo")
 
     @classmethod
     def execute(

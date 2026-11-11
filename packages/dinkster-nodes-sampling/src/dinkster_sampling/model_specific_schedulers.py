@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -66,9 +66,9 @@ AYS_NOISE_LEVELS = {
 class AlignYourStepsScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="AlignYourStepsScheduler",
+                node_type="dinkster.sampling.align_your_steps_scheduler",
                 search_terms=("AYS scheduler",),
                 category="model/sampling/schedulers",
                 inputs=(
@@ -91,7 +91,8 @@ class AlignYourStepsScheduler(Node):
                     ),
                 ),
                 outputs=(OutputSpec("SIGMAS", TypeExpr.concrete(SIGMAS_TYPE)),),
-            )
+            ),
+            "AlignYourStepsScheduler",
         )
 
     @classmethod
@@ -3689,9 +3690,9 @@ GITS_NOISE_LEVELS = {
 class GITSScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="GITSScheduler",
+                node_type="dinkster.sampling.gits_scheduler",
                 category="model/sampling/schedulers",
                 inputs=(
                     InputSpec(
@@ -3715,7 +3716,8 @@ class GITSScheduler(Node):
                     ),
                 ),
                 outputs=(OutputSpec("SIGMAS", TypeExpr.concrete(SIGMAS_TYPE)),),
-            )
+            ),
+            "GITSScheduler",
         )
 
     @classmethod
@@ -3812,9 +3814,9 @@ OPTIMAL_STEPS_NOISE_LEVELS = {
 class OptimalStepsScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="OptimalStepsScheduler",
+                node_type="dinkster.sampling.optimal_steps_scheduler",
                 category="model/sampling/schedulers",
                 inputs=(
                     InputSpec(
@@ -3836,7 +3838,8 @@ class OptimalStepsScheduler(Node):
                     ),
                 ),
                 outputs=(OutputSpec("SIGMAS", TypeExpr.concrete(SIGMAS_TYPE)),),
-            )
+            ),
+            "OptimalStepsScheduler",
         )
 
     @classmethod

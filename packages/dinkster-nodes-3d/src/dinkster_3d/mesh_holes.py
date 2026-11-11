@@ -17,8 +17,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 from .mesh_weld import process_mesh_batch, weld_vertices
@@ -154,7 +154,7 @@ class FillHoles(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FillHoles",
+            node_type="dinkster.3d.fill_holes",
             display_name="Fill Holes",
             category="3d/mesh",
             description="Fills holes up to a max perimeter, preserving existing geometry/UVs. "
@@ -193,7 +193,7 @@ class FillHoles(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FillHoles")
 
     @classmethod
     def execute(

@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _LOGSNR_MIN = -15.0
@@ -47,7 +47,7 @@ class Ideogram4Scheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Ideogram4Scheduler",
+            node_type="dinkster.misc.models.ideogram4_scheduler",
             display_name="Ideogram 4 Scheduler",
             category="model/sampling/schedulers",
             inputs=(
@@ -84,7 +84,7 @@ class Ideogram4Scheduler(Node):
             ),
             outputs=(OutputSpec("SIGMAS", TypeExpr.concrete(SIGMAS_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Ideogram4Scheduler")
 
     @classmethod
     def execute(

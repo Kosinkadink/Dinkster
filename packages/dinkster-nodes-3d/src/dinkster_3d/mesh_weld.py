@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_mesh,
+    with_identity_replacement,
 )
 
 
@@ -59,7 +59,7 @@ class WeldVertices(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WeldVertices",
+            node_type="dinkster.3d.weld_vertices",
             display_name="Weld Vertices",
             category="3d/mesh",
             description=(
@@ -87,7 +87,7 @@ class WeldVertices(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WeldVertices")
 
     @classmethod
     def execute(

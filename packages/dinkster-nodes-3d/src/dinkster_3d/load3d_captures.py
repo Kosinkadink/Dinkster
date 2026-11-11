@@ -28,8 +28,8 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     TypeExpr,
     admit_video_source,
-    first_party_schema,
     load_file3d,
+    with_identity_replacement,
 )
 from dinkster_image.ported.image_file_tools import LoadImage
 
@@ -38,7 +38,7 @@ class Load3D(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Load3D",
+            node_type="dinkster.3d.load3_d",
             display_name="Load 3D & Animation",
             category="3d",
             inputs=(
@@ -79,7 +79,7 @@ class Load3D(Node):
                 )
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Load3D")
 
     @classmethod
     def execute(

@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _CLIP_VISION = TypeExpr.concrete(CLIP_VISION_TYPE)
@@ -62,7 +62,7 @@ class SVD_img2vid_Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SVD_img2vid_Conditioning",
+            node_type="dinkster.sd.svd_img2vid_conditioning",
             category="model/conditioning/stable video",
             inputs=(
                 InputSpec("clip_vision", _CLIP_VISION),
@@ -87,7 +87,7 @@ class SVD_img2vid_Conditioning(Node):
                 OutputSpec("latent", _LATENT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SVD_img2vid_Conditioning")
 
     @classmethod
     def execute(

@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     Node,
     NodeSchema,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.video_latent import empty_video_latent as _empty_video_latent
 from dinkster_pack_helpers.video_latent import video_latent_schema as _schema
@@ -15,7 +15,7 @@ class EmptyCosmosLatentVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyCosmosLatentVideo",
+            "dinkster.cosmos.empty_cosmos_latent_video",
             "Empty Cosmos Latent Video",
             "model/latent/cosmos",
             width=1280,
@@ -23,7 +23,7 @@ class EmptyCosmosLatentVideo(Node):
             length=121,
             temporal_step=8,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyCosmosLatentVideo")
 
     @classmethod
     def execute(

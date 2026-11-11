@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -107,9 +107,9 @@ def _load_patch(path: str, strength: float) -> _HypernetworkPatch | None:
 class HypernetworkLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="HypernetworkLoader",
+                node_type="dinkster.models.hypernetwork_loader",
                 display_name="Load Hypernetwork",
                 category="model/loaders",
                 inputs=(
@@ -129,7 +129,8 @@ class HypernetworkLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
-            )
+            ),
+            "HypernetworkLoader",
         )
 
     @classmethod

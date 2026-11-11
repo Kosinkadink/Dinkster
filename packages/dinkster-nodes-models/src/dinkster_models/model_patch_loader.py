@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -198,14 +198,15 @@ def _multi_talk_patch(multitalk: Any, operations: Any) -> type[Any]:
 class ModelPatchLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ModelPatchLoader",
+                node_type="dinkster.models.model_patch_loader",
                 display_name="Load Model Patch",
                 category="model/loaders",
                 inputs=(InputSpec("name", _ASSET, widget=AssetWidget(kind="model/patch")),),
                 outputs=(OutputSpec("MODEL_PATCH", _MODEL_PATCH),),
-            )
+            ),
+            "ModelPatchLoader",
         )
 
     @classmethod

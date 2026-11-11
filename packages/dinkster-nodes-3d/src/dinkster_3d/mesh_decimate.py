@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     report_progress,
+    with_identity_replacement,
 )
 
 from .mesh_weld import process_mesh_batch
@@ -31,7 +31,7 @@ class DecimateMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="DecimateMesh",
+            node_type="dinkster.3d.decimate_mesh",
             display_name="Decimate Mesh",
             category="3d/mesh",
             description=(
@@ -98,7 +98,7 @@ class DecimateMesh(Node):
             input_order=("mesh", "target_face_count", "placement_mode"),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "DecimateMesh")
 
     @classmethod
     def execute(

@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -72,9 +72,9 @@ def _hunyuan_1080p_config(state_dict: Mapping[str, Any]) -> dict[str, object]:
 class LatentUpscaleModelLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentUpscaleModelLoader",
+                node_type="dinkster.models.latent_upscale_model_loader",
                 display_name="Load Latent Upscale Model",
                 category="model/loaders",
                 inputs=(
@@ -87,7 +87,8 @@ class LatentUpscaleModelLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT_UPSCALE_MODEL", _LATENT_UPSCALE_MODEL),),
-            )
+            ),
+            "LatentUpscaleModelLoader",
         )
 
     @classmethod

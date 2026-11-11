@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _VIEW_AZIMUTHS = {"front": 0.0, "left": 90.0, "back": 180.0, "right": 270.0}
@@ -182,7 +182,7 @@ class Pixal3DConditioning(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="Pixal3DConditioning",
+            node_type="dinkster.3d.models.pixal3_d_conditioning",
             display_name="Pixal3D Conditioning",
             category="model/conditioning/trellis",
             inputs=(
@@ -211,7 +211,7 @@ class Pixal3DConditioning(Node):
             ),
             outputs=(OutputSpec("positive", conditioning), OutputSpec("negative", conditioning)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Pixal3DConditioning")
 
     @classmethod
     def execute(
@@ -239,7 +239,7 @@ class Pixal3DMultiViewConditioning(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="Pixal3DMultiViewConditioning",
+            node_type="dinkster.3d.models.pixal3_d_multi_view_conditioning",
             display_name="Pixal3D Multi-View Conditioning",
             category="model/conditioning/trellis",
             inputs=(
@@ -277,7 +277,7 @@ class Pixal3DMultiViewConditioning(Node):
             ),
             outputs=(OutputSpec("positive", conditioning), OutputSpec("negative", conditioning)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Pixal3DMultiViewConditioning")
 
     @classmethod
     def execute(

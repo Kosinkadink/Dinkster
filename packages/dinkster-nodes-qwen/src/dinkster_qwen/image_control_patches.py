@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -540,7 +540,7 @@ class QwenImageDiffsynthControlnet(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="QwenImageDiffsynthControlnet",
+            node_type="dinkster.qwen.qwen_image_diffsynth_controlnet",
             display_name="Apply Qwen Image DiffSynth ControlNet",
             category="model/patch/qwen",
             inputs=(
@@ -559,7 +559,7 @@ class QwenImageDiffsynthControlnet(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "QwenImageDiffsynthControlnet")
 
     @classmethod
     def execute(

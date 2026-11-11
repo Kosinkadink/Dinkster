@@ -20,11 +20,11 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
     materialize_shape_subdivides,
     materialize_voxel,
+    with_identity_replacement,
 )
 
 from .trellis import flatten_sparse_samples
@@ -35,7 +35,7 @@ class Trellis2ShapeStage(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="Trellis2ShapeStage",
+            node_type="dinkster.3d.models.trellis2_shape_stage",
             display_name="Trellis2 Shape Stage",
             category="model/conditioning/trellis",
             inputs=(
@@ -53,7 +53,7 @@ class Trellis2ShapeStage(Node):
                 OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Trellis2ShapeStage")
 
     @classmethod
     def execute(cls, *, positive: Any, negative: Any, voxel: Any) -> Mapping[str, object]:
@@ -124,7 +124,7 @@ class VaeDecodeShapeTrellis(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VaeDecodeShapeTrellis",
+            node_type="dinkster.3d.models.vae_decode_shape_trellis",
             display_name="Trellis2 VAE Decode Shape",
             category="model/latent/trellis",
             inputs=(
@@ -136,7 +136,7 @@ class VaeDecodeShapeTrellis(Node):
                 OutputSpec("shape_subdivides", TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VaeDecodeShapeTrellis")
 
     @classmethod
     def execute(cls, *, samples: object, vae: Any) -> Mapping[str, object]:

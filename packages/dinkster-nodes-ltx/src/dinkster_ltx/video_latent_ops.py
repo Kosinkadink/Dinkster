@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -22,13 +22,13 @@ class LTXVFreezeLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVFreezeLatent",
+            node_type="dinkster.ltx.ltxv_freeze_latent",
             display_name="LTXV Freeze Latent",
             category="model/latent/ltxv",
             inputs=(InputSpec("latent", _LATENT),),
             outputs=(OutputSpec("latent", _LATENT),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVFreezeLatent")
 
     @classmethod
     def execute(cls, *, latent: dict[str, Any]) -> Mapping[str, object]:

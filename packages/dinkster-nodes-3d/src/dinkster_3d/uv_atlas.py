@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_mesh,
+    with_identity_replacement,
 )
 
 
@@ -174,7 +174,7 @@ class RenderUVAtlas(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RenderUVAtlas",
+            node_type="dinkster.3d.render_uv_atlas",
             display_name="Render UV Atlas",
             category="3d/texturing",
             description="Renders a mesh's UV layout as an image.",
@@ -189,7 +189,7 @@ class RenderUVAtlas(Node):
             ),
             outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RenderUVAtlas")
 
     @classmethod
     def execute(cls, *, mesh: object, resolution: int) -> Mapping[str, object]:

@@ -93,6 +93,14 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+def test_manifest_ignores_unrecognized_pack_metadata(tmp_path: Path) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    expected = load_manifest(path)
+    with path.open("a") as output:
+        output.write('\n[pack.custom_metadata]\nimports = ["example"]\nrevision = "1"\n')
+    assert load_manifest(path) == expected
+
+
 @pytest.mark.parametrize(
     "path",
     sorted(Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml"))

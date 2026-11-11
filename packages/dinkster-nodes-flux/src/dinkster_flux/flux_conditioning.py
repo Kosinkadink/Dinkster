@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -29,7 +29,7 @@ class CLIPTextEncodeFlux(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeFlux",
+            node_type="dinkster.flux.clip_text_encode_flux",
             category="model/conditioning/flux",
             inputs=(
                 InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
@@ -52,7 +52,7 @@ class CLIPTextEncodeFlux(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeFlux")
 
     @classmethod
     def execute(
@@ -69,7 +69,7 @@ class FluxGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FluxGuidance",
+            node_type="dinkster.flux.flux_guidance",
             category="model/conditioning/flux",
             inputs=(
                 InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
@@ -82,7 +82,7 @@ class FluxGuidance(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FluxGuidance")
 
     @classmethod
     def execute(cls, *, conditioning: Any, guidance: float) -> Mapping[str, object]:
@@ -95,7 +95,7 @@ class FluxDisableGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FluxDisableGuidance",
+            node_type="dinkster.flux.flux_disable_guidance",
             category="model/conditioning/flux",
             description=(
                 "This node completely disables the guidance embed on Flux and Flux like models"
@@ -103,7 +103,7 @@ class FluxDisableGuidance(Node):
             inputs=(InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FluxDisableGuidance")
 
     @classmethod
     def execute(cls, *, conditioning: Any) -> Mapping[str, object]:
@@ -114,7 +114,7 @@ class FluxKontextMultiReferenceLatentMethod(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FluxKontextMultiReferenceLatentMethod",
+            node_type="dinkster.flux.flux_kontext_multi_reference_latent_method",
             display_name="Edit Model Reference Method",
             category="model/conditioning/flux",
             inputs=(
@@ -140,7 +140,7 @@ class FluxKontextMultiReferenceLatentMethod(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FluxKontextMultiReferenceLatentMethod")
 
     @classmethod
     def execute(cls, *, conditioning: Any, reference_latents_method: str) -> Mapping[str, object]:

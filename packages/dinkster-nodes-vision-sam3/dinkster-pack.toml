@@ -1,15 +1,11 @@
 [pack]
 name = "dinkster-vision-sam3"
-version = "0.0.2"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.3"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.sam3"]
 type-namespaces = ["SAM3_TRACK_DATA"]
 requires = ["torch", "dinkster-inference==0.1.1", "av>=14"]
-
-[pack.inference]
-imports = ["ldm.sam3.tracker", "model_management", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true

@@ -24,10 +24,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_vision_packet,
+    with_identity_replacement,
 )
 
 
@@ -77,7 +77,7 @@ class SAM3DBody_Render(Node):
             ),
         )
         schema = NodeSchema(
-            "SAM3DBody_Render",
+            "dinkster.vision.sam3d.body.sam3_d_body_render",
             display_name="Render 3D Body Pose",
             category="image/detection",
             search_terms=("Render SAM3D Body", "sam3d render", "kimodo render"),
@@ -189,7 +189,7 @@ class SAM3DBody_Render(Node):
             ),
             outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3DBody_Render")
 
     @classmethod
     def execute(

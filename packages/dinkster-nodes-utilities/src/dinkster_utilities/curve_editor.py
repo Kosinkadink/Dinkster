@@ -14,8 +14,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     report_event,
+    with_identity_replacement,
 )
 
 
@@ -23,7 +23,7 @@ class CurveEditor(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CurveEditor",
+            node_type="dinkster.utilities.curve_editor",
             display_name="Curve Editor",
             category="utilities",
             editor_role="curve",
@@ -42,7 +42,7 @@ class CurveEditor(Node):
             outputs=(OutputSpec("curve", TypeExpr.concrete(CURVE_TYPE)),),
             emits_previews=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CurveEditor")
 
     @classmethod
     def execute(

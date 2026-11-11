@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 from .hook_scheduling import retain_hook_weights
@@ -85,7 +85,10 @@ def _ram_bytes(weights: tuple[Any, Any]) -> int:
 class CreateHookModelAsLora(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema("CreateHookModelAsLora", model_only=False))
+        return with_identity_replacement(
+            _schema("dinkster.models.create_hook_model_as_lora", model_only=False),
+            "CreateHookModelAsLora",
+        )
 
     @classmethod
     def execute(
@@ -139,7 +142,10 @@ class CreateHookModelAsLora(Node):
 class CreateHookModelAsLoraModelOnly(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema("CreateHookModelAsLoraModelOnly", model_only=True))
+        return with_identity_replacement(
+            _schema("dinkster.models.create_hook_model_as_lora_model_only", model_only=True),
+            "CreateHookModelAsLoraModelOnly",
+        )
 
     @classmethod
     def execute(

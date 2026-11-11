@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -53,9 +53,9 @@ def _context_windows() -> Any:
 class ContextWindowsManual(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ContextWindowsManual",
+                node_type="dinkster.models.context_windows_manual",
                 display_name="Context Windows (Manual)",
                 category="model/patch",
                 description="Manually set context windows.",
@@ -92,7 +92,8 @@ class ContextWindowsManual(Node):
                     InputSpec("causal_window_fix", _BOOLEAN, default=True),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "ContextWindowsManual",
         )
 
     @classmethod

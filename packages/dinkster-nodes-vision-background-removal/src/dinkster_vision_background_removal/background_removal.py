@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -29,7 +29,7 @@ class LoadBackgroundRemovalModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadBackgroundRemovalModel",
+            node_type="dinkster.vision.background.removal.load_background_removal_model",
             display_name="Load Background Removal Model",
             category="model/loaders",
             inputs=(
@@ -42,7 +42,7 @@ class LoadBackgroundRemovalModel(Node):
             ),
             outputs=(OutputSpec("bg_model", TypeExpr.concrete(BACKGROUND_REMOVAL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadBackgroundRemovalModel")
 
     @classmethod
     def execute(cls, *, bg_removal_name: object) -> Mapping[str, object]:
@@ -64,7 +64,7 @@ class RemoveBackground(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RemoveBackground",
+            node_type="dinkster.vision.background.removal.remove_background",
             display_name="Remove Background",
             category="image/background removal",
             description=(
@@ -87,7 +87,7 @@ class RemoveBackground(Node):
                 OutputSpec("mask", TypeExpr.concrete(MASK_TYPE), doc="Generated foreground mask"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RemoveBackground")
 
     @classmethod
     def execute(cls, *, bg_removal_model: Any, image: Any) -> Mapping[str, object]:

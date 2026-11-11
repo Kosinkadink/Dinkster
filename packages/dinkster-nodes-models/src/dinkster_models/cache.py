@@ -17,8 +17,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -478,15 +478,17 @@ def easycache_sample_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 class _CacheNode(Node):
+    node_type: str
+    source_type: str
     holder_type: type[_CacheHolder]
     wrapper_names: tuple[str, ...]
     description: str
 
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type=cls.__name__,
+                node_type=cls.node_type,
                 display_name=cls.__name__,
                 category="advanced/debug",
                 description=cls.description,
@@ -522,7 +524,8 @@ class _CacheNode(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL, doc=f"The model with {cls.__name__}."),),
-            )
+            ),
+            cls.source_type,
         )
 
     @classmethod
@@ -571,12 +574,16 @@ class _CacheNode(Node):
 
 
 class EasyCache(_CacheNode):
+    node_type = "dinkster.models.easy_cache"
+    source_type = "EasyCache"
     holder_type = EasyCacheHolder
     wrapper_names = ("easycache", "easycache")
     description = "Native EasyCache implementation."
 
 
 class LazyCache(_CacheNode):
+    node_type = "dinkster.models.lazy_cache"
+    source_type = "LazyCache"
     holder_type = LazyCacheHolder
     wrapper_names = ("lazycache", "lazycache")
     description = (

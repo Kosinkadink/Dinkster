@@ -30,10 +30,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_vision_packet,
+    with_identity_replacement,
 )
 
 
@@ -41,7 +41,7 @@ class LoadDA3Model(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadDA3Model",
+            node_type="dinkster.vision.depth.anything.3.load_da3_model",
             display_name="Load Depth Anything 3",
             category="model/loaders",
             inputs=(
@@ -61,7 +61,7 @@ class LoadDA3Model(Node):
             ),
             outputs=(OutputSpec("DA3_MODEL", TypeExpr.concrete(DA3_MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadDA3Model")
 
     @classmethod
     def execute(cls, *, model_name: object, weight_dtype: str) -> Mapping[str, object]:
@@ -85,7 +85,7 @@ class DA3Inference(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="DA3Inference",
+            node_type="dinkster.vision.depth.anything.3.da3_inference",
             display_name="Run Depth Anything 3",
             category="image/geometry estimation",
             description="Run Depth Anything 3 on an image. In multi-view mode each image is "
@@ -150,7 +150,7 @@ class DA3Inference(Node):
             input_order=("da3_model", "image", "resolution", "resize_method", "mode"),
             outputs=(OutputSpec("da3_geometry", TypeExpr.concrete(DA3_GEOMETRY_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "DA3Inference")
 
     @classmethod
     def execute(
@@ -268,7 +268,7 @@ class DA3Render(Node):
         )
         colored = (InputSpec("colored", TypeExpr.concrete(CORE_BOOLEAN), default=False),)
         schema = NodeSchema(
-            node_type="DA3Render",
+            node_type="dinkster.vision.depth.anything.3.da3_render",
             display_name="Render Depth Anything 3",
             category="image/geometry estimation",
             description="Render a depth map, confidence map, or sky mask from "
@@ -288,7 +288,7 @@ class DA3Render(Node):
             input_order=("da3_geometry", "output"),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "DA3Render")
 
     @classmethod
     def execute(
@@ -351,7 +351,7 @@ class DA3GeometryToMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="DA3GeometryToMesh",
+            node_type="dinkster.vision.depth.anything.3.da3_geometry_to_mesh",
             display_name="Convert DA3 Geometry to Mesh",
             description="Convert a depth map into a triangulated 3D mesh.",
             category="image/geometry estimation",
@@ -387,7 +387,7 @@ class DA3GeometryToMesh(Node):
             ),
             outputs=(OutputSpec("MESH", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "DA3GeometryToMesh")
 
     @classmethod
     def execute(

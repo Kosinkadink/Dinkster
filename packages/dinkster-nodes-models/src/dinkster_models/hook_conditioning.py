@@ -22,9 +22,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 from .hook_scheduling import retain_hook_weights
@@ -114,14 +114,15 @@ def _properties(
 class ConditioningSetProperties(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ConditioningSetProperties",
+                node_type="dinkster.models.conditioning_set_properties",
                 display_name="Cond Set Props",
                 category=f"{_CATEGORY}/cond single",
                 inputs=_properties_inputs(InputSpec("cond_NEW", _CONDITIONING)),
                 outputs=(OutputSpec("conditioning", _CONDITIONING),),
-            )
+            ),
+            "ConditioningSetProperties",
         )
 
     @classmethod
@@ -143,16 +144,17 @@ class ConditioningSetProperties(Node):
 class ConditioningSetPropertiesAndCombine(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ConditioningSetPropertiesAndCombine",
+                node_type="dinkster.models.conditioning_set_properties_and_combine",
                 display_name="Cond Set Props Combine",
                 category=f"{_CATEGORY}/cond single",
                 inputs=_properties_inputs(
                     InputSpec("cond", _CONDITIONING), InputSpec("cond_NEW", _CONDITIONING)
                 ),
                 outputs=(OutputSpec("conditioning", _CONDITIONING),),
-            )
+            ),
+            "ConditioningSetPropertiesAndCombine",
         )
 
     @classmethod
@@ -184,9 +186,9 @@ class ConditioningSetPropertiesAndCombine(Node):
 class PairConditioningSetProperties(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PairConditioningSetProperties",
+                node_type="dinkster.models.pair_conditioning_set_properties",
                 display_name="Cond Pair Set Props",
                 category=f"{_CATEGORY}/cond pair",
                 inputs=_properties_inputs(
@@ -197,7 +199,8 @@ class PairConditioningSetProperties(Node):
                     OutputSpec("positive", _CONDITIONING),
                     OutputSpec("negative", _CONDITIONING),
                 ),
-            )
+            ),
+            "PairConditioningSetProperties",
         )
 
     @classmethod
@@ -221,9 +224,9 @@ class PairConditioningSetProperties(Node):
 class PairConditioningSetPropertiesAndCombine(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PairConditioningSetPropertiesAndCombine",
+                node_type="dinkster.models.pair_conditioning_set_properties_and_combine",
                 display_name="Cond Pair Set Props Combine",
                 category=f"{_CATEGORY}/cond pair",
                 inputs=_properties_inputs(
@@ -236,7 +239,8 @@ class PairConditioningSetPropertiesAndCombine(Node):
                     OutputSpec("positive", _CONDITIONING),
                     OutputSpec("negative", _CONDITIONING),
                 ),
-            )
+            ),
+            "PairConditioningSetPropertiesAndCombine",
         )
 
     @classmethod
@@ -271,9 +275,9 @@ class PairConditioningSetPropertiesAndCombine(Node):
 class ConditioningSetDefaultCombine(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ConditioningSetDefaultCombine",
+                node_type="dinkster.models.conditioning_set_default_combine",
                 display_name="Cond Set Default Combine",
                 category=f"{_CATEGORY}/cond single",
                 inputs=(
@@ -282,7 +286,8 @@ class ConditioningSetDefaultCombine(Node):
                     InputSpec("hooks", _HOOKS, required=False),
                 ),
                 outputs=(OutputSpec("conditioning", _CONDITIONING),),
-            )
+            ),
+            "ConditioningSetDefaultCombine",
         )
 
     @classmethod
@@ -302,9 +307,9 @@ class ConditioningSetDefaultCombine(Node):
 class PairConditioningSetDefaultCombine(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PairConditioningSetDefaultCombine",
+                node_type="dinkster.models.pair_conditioning_set_default_combine",
                 display_name="Cond Pair Set Default Combine",
                 category=f"{_CATEGORY}/cond pair",
                 inputs=(
@@ -318,7 +323,8 @@ class PairConditioningSetDefaultCombine(Node):
                     OutputSpec("positive", _CONDITIONING),
                     OutputSpec("negative", _CONDITIONING),
                 ),
-            )
+            ),
+            "PairConditioningSetDefaultCombine",
         )
 
     @classmethod
@@ -343,9 +349,9 @@ class PairConditioningSetDefaultCombine(Node):
 class PairConditioningCombine(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PairConditioningCombine",
+                node_type="dinkster.models.pair_conditioning_combine",
                 display_name="Cond Pair Combine",
                 category=f"{_CATEGORY}/cond pair",
                 inputs=(
@@ -358,7 +364,8 @@ class PairConditioningCombine(Node):
                     OutputSpec("positive", _CONDITIONING),
                     OutputSpec("negative", _CONDITIONING),
                 ),
-            )
+            ),
+            "PairConditioningCombine",
         )
 
     @classmethod
@@ -379,9 +386,9 @@ class PairConditioningCombine(Node):
 class SetClipHooks(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SetClipHooks",
+                node_type="dinkster.models.set_clip_hooks",
                 display_name="Set CLIP Hooks",
                 category=f"{_CATEGORY}/clip",
                 inputs=(
@@ -392,7 +399,8 @@ class SetClipHooks(Node):
                 ),
                 outputs=(OutputSpec("clip", _CLIP),),
                 occupies=("gpu",),
-            )
+            ),
+            "SetClipHooks",
         )
 
     @classmethod
@@ -424,9 +432,9 @@ class SetClipHooks(Node):
 class ConditioningTimestepsRange(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ConditioningTimestepsRange",
+                node_type="dinkster.models.conditioning_timesteps_range",
                 display_name="Timesteps Range",
                 category=_CATEGORY,
                 inputs=(
@@ -448,7 +456,8 @@ class ConditioningTimestepsRange(Node):
                     OutputSpec("BEFORE_RANGE", _TIMESTEPS_RANGE),
                     OutputSpec("AFTER_RANGE", _TIMESTEPS_RANGE),
                 ),
-            )
+            ),
+            "ConditioningTimestepsRange",
         )
 
     @classmethod

@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -102,9 +102,9 @@ def composite(
 class LatentCompositeMasked(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LatentCompositeMasked",
+                node_type="dinkster.latent.latent_composite_masked",
                 display_name="Latent Composite Masked",
                 category="model/latent",
                 inputs=(
@@ -116,7 +116,8 @@ class LatentCompositeMasked(Node):
                     InputSpec("mask", _MASK, required=False),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "LatentCompositeMasked",
         )
 
     @classmethod

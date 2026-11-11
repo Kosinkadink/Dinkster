@@ -13,9 +13,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -39,7 +39,7 @@ class LTXVConcatAVLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVConcatAVLatent",
+            node_type="dinkster.ltx.ltxv_concat_av_latent",
             display_name="Concat AV Latent",
             description=(
                 "Merge a video latent and an audio latent into a joint AV latent "
@@ -52,7 +52,7 @@ class LTXVConcatAVLatent(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT, display_name="latent"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVConcatAVLatent")
 
     @staticmethod
     def fit_audio(
@@ -124,7 +124,7 @@ class LTXVSeparateAVLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVSeparateAVLatent",
+            node_type="dinkster.ltx.ltxv_separate_av_latent",
             display_name="Separate AV Latent",
             description=(
                 "Split a joint AV latent into its video and audio latents "
@@ -137,7 +137,7 @@ class LTXVSeparateAVLatent(Node):
                 OutputSpec("AUDIO_LATENT", _LATENT, display_name="audio_latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVSeparateAVLatent")
 
     @classmethod
     def execute(cls, *, av_latent: object) -> Mapping[str, object]:

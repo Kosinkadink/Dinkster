@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -28,7 +28,7 @@ class BuildJsonPromptIdeogram(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BuildJsonPromptIdeogram",
+            node_type="dinkster.misc.models.build_json_prompt_ideogram",
             display_name="Build JSON Prompt (Ideogram)",
             category="text",
             description="Build a JSON prompt for the Ideogram 4 model.",
@@ -88,7 +88,7 @@ class BuildJsonPromptIdeogram(Node):
             ),
             outputs=(OutputSpec("prompt", TypeExpr.concrete(DICT_TYPE), display_name="prompt"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BuildJsonPromptIdeogram")
 
     @classmethod
     def execute(

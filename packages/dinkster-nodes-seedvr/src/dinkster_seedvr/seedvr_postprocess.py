@@ -13,9 +13,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -122,7 +122,7 @@ class SeedVR2PostProcessing(Node):
     def define_schema(cls) -> NodeSchema:
         image = TypeExpr.concrete(IMAGE_TYPE)
         schema = NodeSchema(
-            node_type="SeedVR2PostProcessing",
+            node_type="dinkster.seedvr.seed_vr2_post_processing",
             display_name="Post-Process SeedVR2 Output",
             category="image/post-processors",
             description=(
@@ -154,7 +154,7 @@ class SeedVR2PostProcessing(Node):
             ),
             outputs=(OutputSpec("images", image, doc="The aligned, color-corrected image."),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SeedVR2PostProcessing")
 
     @classmethod
     def execute(

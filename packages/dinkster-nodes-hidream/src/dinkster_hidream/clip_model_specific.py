@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -23,7 +23,7 @@ class CLIPTextEncodeHiDream(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeHiDream",
+            node_type="dinkster.hidream.clip_text_encode_hi_dream",
             display_name="CLIP Text Encode (HiDream)",
             category="model/conditioning/hidream",
             search_terms=("hidream prompt",),
@@ -40,7 +40,7 @@ class CLIPTextEncodeHiDream(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeHiDream")
 
     @classmethod
     def execute(
