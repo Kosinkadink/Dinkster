@@ -535,14 +535,10 @@ def test_packs_for_serving_reads_the_immutable_store(tmp_path: Path) -> None:
     assert info.source.startswith("local:")
     assert info.publisher == "local"
     assert info.version == ""
-    # A published (registry) entry surfaces its real release version.
     registry_entry = replace(entry, version="1.2.3", publisher="alice", source="registry")
-    installer.apply(Lockfile.of([registry_entry]))
-    served = installer.packs_for_serving()[0].packs["demo"]  # type: ignore[index]
-    assert served.version == "1.2.3"
-    assert served.publisher == "alice"
-    assert served.source == "registry"
-    assert served.artifact_digest == entry.artifact_digest
+    with pytest.raises(InstallError, match="registry.managed-generation-required"):
+        installer.apply(Lockfile.of([registry_entry]))
+    assert installer.current_lockfile() == Lockfile.of([entry])
 
 
 @pytest.mark.parametrize(
@@ -565,6 +561,13 @@ def test_reserved_trust_requires_registry_publisher(
     installed = installer.current_lockfile()
     assert installed is not None
     entry = replace(installed.packs[0], source=source, publisher=publisher)
+    if source == "registry" or source.startswith("registry:"):
+        with pytest.raises(InstallError, match="registry.managed-generation-required"):
+            installer.apply(Lockfile.of([entry]))
+        (installer.root / "generations/1.json").write_text(Lockfile.of([entry]).record_json())
+        with pytest.raises(InstallError, match="registry.managed-generation-required"):
+            installer.packs_for_serving()
+        return
     installer.apply(Lockfile.of([entry]))
     assert installer.packs_for_serving()[0].trust_reserved is trusted
 
@@ -868,7 +871,7 @@ def test_install_doctor_override_warns_and_activates(
     assert "WARNING: allowing doctor findings" in capsys.readouterr().out
 
 
-def test_git_sources_are_gated_and_registry_sources_are_exempt(
+def test_git_sources_are_gated_and_registry_sources_require_managed_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     installer = make_installer(tmp_path)
@@ -891,9 +894,10 @@ def test_git_sources_are_gated_and_registry_sources_are_exempt(
 
     seen.clear()
     registry_entry = replace(local, source="registry:public", publisher="alice")
-    number, _ = installer.apply(Lockfile.of([registry_entry]), venvs=False)
-    assert number == 1
-    assert seen == [sys.executable]
+    with pytest.raises(InstallError, match="registry.managed-generation-required"):
+        installer.apply(Lockfile.of([registry_entry]), venvs=False)
+    assert installer.current_number() is None
+    assert seen == []
 
 
 def test_doctor_gate_uses_staged_or_fallback_interpreter(
@@ -1881,11 +1885,10 @@ def test_cli_restore_reacquires_missing_artifacts_from_provenance(
     err = capsys.readouterr().err
     assert "refusing to substitute different bytes" in err
 
-    # a source nothing can re-fetch (registry downloads not built):
-    # refused up front, before any plan chatter
+    # Unknown provenance refuses before any acquisition.
     document = json.loads(snap.read_text())
     for entry in document["lockfile"]["packs"]:
-        entry["source"] = "registry"
+        entry["source"] = "unavailable:fixture"
     snap.write_text(json.dumps(document))
     with pytest.raises(SystemExit):
         run_cli("--root", str(tmp_path / "root3"), "restore", "--no-venv", "--yes", str(snap))
@@ -2283,7 +2286,7 @@ def test_cli_reproduce_refuses_bad_stamps(
     # unavailable bytes with un-refetchable provenance
     ghost = _stamped_workflow(
         tmp_path / "ghost.json",
-        {"ghost": {"artifactDigest": "blake3:" + "0" * 64, "source": "registry"}},
+        {"ghost": {"artifactDigest": "blake3:" + "0" * 64, "source": "unavailable:fixture"}},
     )
     with pytest.raises(SystemExit):
         run_cli("--root", root, "reproduce", "--no-venv", "--yes", str(ghost))
@@ -3070,14 +3073,10 @@ def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malforme
         server.shutdown()
 
 
-def test_cli_restore_downloads_registry_sources(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("route", ["restore", "apply", "reproduce", "rollback"])
+def test_cli_published_restore_routes_require_managed_generation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], route: str
 ) -> None:
-    """End to end: a snapshot whose entries record a registry source
-    restores on a machine without the bytes by downloading them from
-    --registry (digest-verified into the artifact store). Without an
-    endpoint the plan refuses up front naming the fix; a server serving
-    different bytes refuses at acquisition and activates nothing."""
     source_root = tmp_path / "source-root"
     demo = write_pack(tmp_path / "demo", "demo")
     snap = tmp_path / "env.snapshot.json"
@@ -3088,68 +3087,32 @@ def test_cli_restore_downloads_registry_sources(
     [entry_record] = document["lockfile"]["packs"]
     entry_record["source"] = "registry"
     snap.write_text(json.dumps(document))
-    data = pack_archive_path(source_root / "artifacts", entry_record["artifactDigest"]).read_bytes()
-
-    # no endpoint configured: refused up front, naming the way forward
+    target = Lockfile.from_record_json(json.dumps(document["lockfile"]))
+    installer = Installer(source_root)
+    current = installer.current_lockfile()
+    assert current is not None
+    if route == "apply":
+        saved = tmp_path / "plan.json"
+        saved.write_text(
+            PlanRecord(target, current.record_digest(), venvs=False, acquire=True).record_json()
+        )
+        command = ("apply", str(saved))
+    elif route == "reproduce":
+        workflow = tmp_path / "workflow.json"
+        workflow.write_text(json.dumps({"environment": {"packs": {"demo": entry_record}}}))
+        command = ("reproduce", str(workflow), "--no-venv", "--yes")
+    elif route == "rollback":
+        (source_root / "generations/1.json").write_text(target.record_json())
+        (source_root / "generations/2.json").write_text(current.record_json())
+        (source_root / "current").write_text("2\n")
+        command = ("rollback", "--no-venv", "--yes")
+    else:
+        command = ("restore", str(snap), "--no-venv", "--yes")
+    before = {p: p.read_bytes() for p in source_root.rglob("*") if p.is_file()}
     with pytest.raises(SystemExit):
-        run_cli("--root", str(tmp_path / "nowhere"), "restore", "--no-venv", "--yes", str(snap))
-    err = capsys.readouterr().err
-    assert "cannot be re-acquired" in err and "--registry" in err
-
-    requests: list[tuple[str, str | None]] = []
-    locked = Lockfile.from_record_json(json.dumps(document["lockfile"])).packs[0]
-    record = _static_release(locked, data)
-    index_path = "/static/packs/index.json"
-    index_data = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
-    wheel = cast("list[dict[str, object]]", record["wheels"])[0]
-    artifact_path = f"/static/{wheel['url']}"
-    server = _serve_artifacts({index_path: index_data, artifact_path: data}, requests)
-    try:
-        endpoint = f"http://127.0.0.1:{server.server_port}"
-        fresh = tmp_path / "fresh-root"
-        run_cli(
-            "--root",
-            str(fresh),
-            "--registry",
-            endpoint,
-            "restore",
-            "--no-venv",
-            "--yes",
-            str(snap),
-        )
-        out = capsys.readouterr().out
-        assert "re-acquire demo from registry" in out
-        assert "re-acquired demo: digest verified" in out
-        assert "activated generation 1" in out
-        assert requests == [(index_path, None), (artifact_path, None)]
-
-        # a lying server: different bytes refuse, nothing activates
-        lying = _serve_artifacts(
-            {
-                index_path: index_data,
-                artifact_path: b"x" * len(data),
-            },
-            [],
-        )
-        try:
-            bad_root = tmp_path / "bad-root"
-            with pytest.raises(SystemExit):
-                run_cli(
-                    "--root",
-                    str(bad_root),
-                    "--registry",
-                    f"http://127.0.0.1:{lying.server_port}",
-                    "restore",
-                    "--no-venv",
-                    "--yes",
-                    str(snap),
-                )
-            assert "wheel.hash-mismatch" in capsys.readouterr().err
-            assert Installer(bad_root).current_lockfile() is None
-        finally:
-            lying.shutdown()
-    finally:
-        server.shutdown()
+        run_cli("--root", str(source_root), "--registry", "http://127.0.0.1:1", *command)
+    assert "registry.managed-generation-required" in capsys.readouterr().err
+    assert {p: p.read_bytes() for p in source_root.rglob("*") if p.is_file()} == before
 
 
 def test_cli_git_install_and_update(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

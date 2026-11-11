@@ -34,8 +34,10 @@
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
   approve an approximate restore. Shared tools are recorded, never replaced.
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
-  not newer releases. Interrupted software restores retain a failed-attempt receipt
-  while leaving successful history unchanged.
+  not newer releases. Acquisition collects unavailable or mismatched sources
+  before copying any of the set into the retained cache, without provisioning
+  or activating a standalone installation. Interrupted software restores retain
+  a failed-attempt receipt while leaving successful history unchanged.
 - Restore can recover selected source archives retained by another engine release
   when the recorded source cache was pruned. Retained bytes must match the locked
   BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
@@ -140,6 +142,12 @@
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
   or selection metadata; successful application activates a fresh generation.
   Local/git selections require explicit development rather than mixed installation.
+- Standalone pack installation and serving are development-only. Registry-bearing
+  saved plans, snapshots, workflow stamps and rollback targets refuse instead of
+  provisioning published dependencies without reviewed base/variant locks.
+  Published source acquisition remains available to managed software restore;
+  catalog preparation cannot fall back to range resolution outside a labelled
+  development session.
 - Managed setup and update can require a reviewed published engine and base
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying

@@ -94,6 +94,7 @@ from .installer import (
     VenvSpec,
     lock_git_pack,
     lock_local_pack,
+    require_development_sources,
 )
 from .pack_archive import PackArchiveError, build_pack_archive
 from .registries import (
@@ -304,10 +305,8 @@ def _finish(
     hosting_runtime_pins: Mapping[str, str] | None = None,
     generation_topology: bool = False,
 ) -> None:
-    """The shared plan/apply tail of every mutating command. Entries
-    whose bytes are not local yet (registry-resolved pins carry only the
-    digest) are acquired between confirmation and apply, digest-verified;
-    unacquirable ones refuse at plan time, naming the fix."""
+    """Review and apply development sources; published sources require a managed generation."""
+    require_development_sources(target)
     current = installer.current_lockfile()
     steps = plan(current if current is not None else Lockfile(), target)
     venvs = not args.no_venv
@@ -678,6 +677,7 @@ def _cmd_apply(args: argparse.Namespace) -> None:
         _apply_managed_pack_plan(args, document)
         return
     record = PlanRecord.from_record_json(path.read_text())
+    require_development_sources(record.target)
     installer = _installer(args, accelerator=record.accelerator or None)
     current = installer.current_lockfile()
     if not record.matches_base(current):
@@ -814,6 +814,7 @@ def _cmd_restore(args: argparse.Namespace) -> None:
     if not path.is_file():
         raise InstallError(f"no snapshot file at {path}")
     record = SnapshotRecord.from_record_json(path.read_text())
+    require_development_sources(record.lockfile)
     replay_groups = _matching_restore_groups(installer, record.lockfile, record.venv_groups)
     host = f"{sys.platform}-{platform.machine()}"
     mismatches: list[str] = []
@@ -1098,6 +1099,7 @@ def _cmd_reproduce(args: argparse.Namespace) -> None:
         )
     if not provisional:
         raise InstallError("the environment stamp pins no packs; nothing to reproduce")
+    require_development_sources(Lockfile.of(provisional))
     missing = [entry for entry in provisional if not installer.artifact_available(entry)]
     stuck = sorted(entry.pack for entry in missing if not installer.acquirable(entry))
     if stuck:
@@ -1530,6 +1532,8 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
     specs = default_pack_specs() if args.defaults else _installer(args).packs_for_serving()
+    if args.defaults and specs:
+        print("development: checkout defaults are not reproducible from dependency ranges")
     default_count = len(specs)
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
@@ -1543,6 +1547,7 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
                 spec,
                 venv_root=_default_pack_venv_root(args.library_root),
                 accelerator=resolve_accelerator(args.accelerator),
+                development=True,
             )
         yield spec
 

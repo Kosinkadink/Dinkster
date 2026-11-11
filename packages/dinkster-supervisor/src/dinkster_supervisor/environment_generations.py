@@ -330,10 +330,43 @@ def retained_pack_archive(store: Path, identity: str, artifacts: Path | None = N
     return None
 
 
+ACQUIRE_PACK_SOURCES = """
+import json, os, sys
+from pathlib import Path
+from dinkster.installer import Installer
+from dinkster.registries import (
+    RegistryConfig, load_registries, routing_registry_fetcher, select_registry,
+)
+from dinkster_registry import Lockfile
+project = Path(sys.argv[1])
+config_path = project / 'registries.toml'
+if config_path.is_file():
+    config = load_registries(config_path)
+elif os.environ.get('DINKSTER_REGISTRIES'):
+    config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
+else:
+    config = RegistryConfig()
+selector = os.environ.get('DINKSTER_REGISTRY', '')
+if not selector and not config_path.is_file() and not os.environ.get('DINKSTER_REGISTRIES'):
+    selector = 'https://registry.dinkster.org'
+selected = select_registry(config, selector) if selector else None
+installer = Installer(
+    Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
+)
+missing = {}
+for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
+    try:
+        installer.acquire(entry)
+    except Exception as exc:
+        missing[entry.artifact_digest] = str(exc)
+print(json.dumps(missing))
+"""
+
+
 def restore_pack_sources(
     generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path, store: Path
 ) -> None:
-    """Use the target's exact-pin restore in scratch, never the live pack install."""
+    """Acquire exact source bytes in scratch without provisioning or activating packs."""
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
         scratch = Path(directory)
         cache = scratch / "artifacts"
@@ -347,31 +380,10 @@ def restore_pack_sources(
             if archive is not None:
                 # Older target engines still consume flat digest-named archives.
                 shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
-        snapshot = scratch / "snapshot.json"
-        write_document(
-            snapshot,
-            {
-                "format": "dinkster.snapshot/1",
-                "lockfile": json.loads(catalog_lock.read_bytes()),
-                "venvs": {},
-            },
-        )
-        command = [
-            str(interpreter(generation)),
-            "-I",
-            "-B",
-            "-m",
-            "dinkster.manager",
-            "--root",
-            str(scratch),
-        ]
-        registries = project / "registries.toml"
-        if registries.is_file():
-            command.extend(["--registries", str(registries)])
-        elif not os.environ.get("DINKSTER_REGISTRIES") and not os.environ.get("DINKSTER_REGISTRY"):
-            command.extend(["--registry", "https://registry.dinkster.org"])
         completed = subprocess.run(
-            [*command, "restore", str(snapshot), "--no-venv", "--yes"],
+            [str(interpreter(generation)), "-I", "-B", "-c", ACQUIRE_PACK_SOURCES, str(project)],
+            cwd=scratch,
+            input=json.dumps(lock),
             capture_output=True,
             text=True,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DINKSTER_SHARED_STORE": ""},
@@ -380,6 +392,23 @@ def restore_pack_sources(
             raise EnvironmentError(
                 "target exact source restore refused: "
                 + (completed.stderr.strip() or completed.stdout.strip())
+            )
+        try:
+            missing: object = json.loads(completed.stdout)
+            if not isinstance(missing, dict) or any(
+                not isinstance(identity, str) or not isinstance(reason, str)
+                for identity, reason in cast("dict[object, object]", missing).items()
+            ):
+                raise ValueError("expected source identities and errors")
+        except ValueError as exc:
+            raise EnvironmentError(f"invalid source acquisition result: {exc}") from exc
+        if missing:
+            raise EnvironmentError(
+                "target exact source restore refused:\n"
+                + "\n".join(
+                    f"{identity}: {reason}"
+                    for identity, reason in cast("dict[str, str]", missing).items()
+                )
             )
         for row in cast("list[dict[str, object]]", lock["packs"]):
             identity = cast("str", row["artifactDigest"])

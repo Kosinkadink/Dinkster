@@ -165,6 +165,15 @@ def _is_registry_source(source: str) -> bool:
     return source == "registry" or source.startswith("registry:")
 
 
+def require_development_sources(target: Lockfile) -> None:
+    published = sorted(entry.pack for entry in target.packs if _is_registry_source(entry.source))
+    if published:
+        raise InstallError(
+            "registry.managed-generation-required: published packs require reviewed "
+            "base/variant locks and managed generation plan/apply: " + ", ".join(published)
+        )
+
+
 def read_registry_response(
     request: urllib.request.Request, *, timeout: float, limit: int | None = None
 ) -> tuple[bytes, str]:
@@ -1285,7 +1294,7 @@ class Installer:
                 self._serving_interpreter if entry.pack in in_process else sys.executable,
             )
             report = diagnose(manifests[entry.pack].path, interpreter=interpreter)
-            if report.ok or not entry.source.startswith(("local:", "git:")):
+            if report.ok:
                 continue
             rendered = render_text(report)
             if not allow_doctor_findings:
@@ -1359,6 +1368,7 @@ class Installer:
         applies produce one generation, not two. A nonempty expected_base
         pins a reviewed lockfile digest; None requires an empty root. The
         default empty string leaves ordinary unreviewed callers unchanged."""
+        require_development_sources(target)
         with self._locked():
             current = self.current_lockfile()
             if (
@@ -1591,16 +1601,14 @@ class Installer:
         the immutable store, interpreters from the per-artifact venvs
         (host interpreter where no venv was staged).
 
-        Each spec carries its own packs-table entry so the lockfile's
-        provenance (the digest pin, install source, publisher, and - for
-        registry releases - the version) reaches /api/nodes. Unpublished
-        installs (local/git) omit the version rather than surface the
-        ``0.0.0`` sentinel: they have no release identity, the digest is
-        the real pin, and wire omission MEANS unpinned."""
+        Development specs carry their locked source and publisher but omit
+        the release version: local/git content has no reviewed release identity.
+        Published sources must use the managed generation inventory instead."""
         number = self.current_number()
         if number is None:
             return []
         lockfile = self.lockfile_of(number)
+        require_development_sources(lockfile)
         topology = self._hosting_of(number)
         groups = topology.groups
         in_process = set(topology.in_process)
@@ -1629,7 +1637,7 @@ class Installer:
             python = _venv_python(venv_dir) if venv_dir is not None else None
             info = replace(
                 pack_info_from_manifest(manifest),
-                version=entry.version if entry.publisher != LOCAL_PUBLISHER else "",
+                version="",
                 artifact_digest=entry.artifact_digest,
                 source=entry.source,
                 publisher=entry.publisher,
@@ -1646,8 +1654,7 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
-                    trust_reserved=_is_registry_source(entry.source)
-                    and entry.publisher == "dinkster",
+                    trust_reserved=False,
                     packs={manifest.name: info},
                     worker_group=group[0] if group is not None else None,
                     group_manifests=(
@@ -1678,4 +1685,5 @@ __all__ = [
     "http_registry_fetcher",
     "lock_git_pack",
     "lock_local_pack",
+    "require_development_sources",
 ]

@@ -294,6 +294,11 @@ and not reproducible from ranges. Serve that selection explicitly with
 `python -m dinkster.serve --no-default-packs --install-root ROOT`; the terminal
 and node catalog carry the development label. A published registry spec is
 refused on the standalone install route, never silently resolved as development.
+Published entries in standalone saved plans, snapshots, workflow stamps and
+rollback targets also refuse, as does serving a standalone published inventory.
+Use the managed project's pack install/update and software history instead;
+there is no automatic conversion of a standalone root. Catalog preparation
+cannot range-resolve a published pack missing its generation interpreter.
 
 Use the explicit development command when an engine, pack or helper library has
 not been published. The source engine must be a Dinkster checkout. Select a new

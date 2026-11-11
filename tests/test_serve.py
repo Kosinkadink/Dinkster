@@ -309,6 +309,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         spec,
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cuda",
+        development=True,
     )
 
     assert prepared.python == str(selected_python)
@@ -344,8 +345,16 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     def unexpected(*_args: object, **_kwargs: object) -> Path:
         raise AssertionError("configured serving interpreter must not provision")
 
-    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
+    monkeypatch.delenv("DINKSTER_SERVING_PYTHON")
     monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
+    with pytest.raises(serve.CompositionError, match="prepared generation interpreter"):
+        serve._prepare_default_pack(
+            default_pack_spec("dinkster-vision-depth-anything-3"),
+            venv_root=tmp_path / "runtime-venvs",
+            accelerator="cpu",
+        )
+    assert not (tmp_path / "runtime-venvs").exists()
+    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
     prepared = serve._prepare_default_pack(
         default_pack_spec("dinkster-vision-depth-anything-3"),
         venv_root=tmp_path / "runtime-venvs",
@@ -402,6 +411,7 @@ def test_bundled_standard_pack_exposes_its_artifact_module(
         ),
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cpu",
+        development=True,
     )
 
     assert prepared.python == str(selected_python)

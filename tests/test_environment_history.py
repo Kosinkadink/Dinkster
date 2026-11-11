@@ -116,16 +116,12 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             }
         },
     }
-    server = _serve_artifacts(
-        {
-            "/static/packs/index.json": json.dumps(
-                {"schemaVersion": 1, "items": [release]}
-            ).encode(),
-            "/static/" + lock_url: lock,
-            "/static/" + release["wheels"][0]["url"]: payload,
-        },
-        [],
-    )
+    registry_files = {
+        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        "/static/" + lock_url: lock,
+        "/static/" + release["wheels"][0]["url"]: payload,
+    }
+    server = _serve_artifacts(registry_files, [])
     try:
         setup = fixture["commands"]["setup"]
         code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
@@ -240,6 +236,34 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             snapshots[2]["metadata"]["packs/healthy/pack-lock.json"].encode("utf-8")
             == (root / "generations/3/packs/healthy/pack-lock.json").read_bytes()
         )
+        if pack_route == "command":
+            from dinkster_supervisor.environment_generations import restore_pack_sources
+
+            transport = tmp_path / "restored-archives"
+            restore_pack_sources(
+                root / "generations/3",
+                catalog_lock=root / "generations/3/dinkster.lock",
+                artifacts=transport,
+                project=root,
+                store=tmp_path / "empty-store",
+            )
+            assert pack_archive_path(transport, entry.artifact_digest).read_bytes() == payload
+            registry_files["/static/" + release["wheels"][0]["url"]] = b"x" * len(payload)
+            unavailable = replace(entry, pack="missing-pack", artifact_digest="blake3:" + "a" * 64)
+            failed_lock = tmp_path / "missing-sources.lock"
+            failed_lock.write_text(Lockfile.of([entry, unavailable]).record_json())
+            with pytest.raises(EnvironmentError) as missing_sources:
+                restore_pack_sources(
+                    root / "generations/3",
+                    catalog_lock=failed_lock,
+                    artifacts=tmp_path / "failed-archives",
+                    project=root,
+                    store=tmp_path / "empty-store",
+                )
+            assert entry.artifact_digest in str(missing_sources.value)
+            assert unavailable.artifact_digest in str(missing_sources.value)
+            assert not (tmp_path / "failed-archives").exists()
+            registry_files["/static/" + release["wheels"][0]["url"]] = payload
         assert "packs/healthy/pack-lock.json" not in snapshots[0]["metadata"]
         code, shown = _run(root, "history", "show", "2")
         assert code == 0 and shown["entry"] == records[1], shown
