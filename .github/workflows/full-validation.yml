@@ -427,7 +427,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Measured Windows phase totals balance to 445-531s before job setup.
+        # Case-split expensive environment modules without adding jobs.
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
@@ -468,6 +468,7 @@ jobs:
           $caseShardArgs = @(
             '--case-shard-file', 'tests/test_environment_artifacts.py',
             '--case-shard-file', 'tests/test_environment_cli.py',
+            '--case-shard-file', 'tests/test_environment_collection.py',
             '--case-shard-file', 'tests/test_environment_generations.py',
             '--case-shard-file', 'tests/test_environment_history.py',
             '--case-shard-file', 'tests/test_environment_transactions.py'
