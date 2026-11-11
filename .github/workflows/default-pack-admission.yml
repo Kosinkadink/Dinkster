@@ -1,5 +1,6 @@
 name: Registry default pack admission
 
+# Gate entry before runner allocation so drafts do not consume hosted capacity.
 on:
   workflow_run:
     workflows: ["Independent official pack publication"]

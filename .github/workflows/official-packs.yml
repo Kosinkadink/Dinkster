@@ -1,5 +1,6 @@
 name: Independent official pack publication
 
+# Gate entry before runner allocation so drafts do not consume hosted capacity.
 on:
   workflow_dispatch:
     inputs:

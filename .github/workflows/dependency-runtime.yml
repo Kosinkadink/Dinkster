@@ -1,5 +1,6 @@
 name: Dependency runtime checks
 
+# Gate entry before runner allocation so drafts do not consume hosted capacity.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

@@ -1,5 +1,6 @@
 name: Supervisor tools publication
 
+# Gate entry before runner allocation so drafts do not consume hosted capacity.
 on:
   push:
     branches: [main]
