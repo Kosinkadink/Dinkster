@@ -1,0 +1,16 @@
+[pack]
+name = "example-tally"
+version = "0.0.1"
+engine = ">=0.0.2.dev0,<0.1"
+publisher = "example"
+requires = []
+
+[pack.sandbox]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "example_tally:NODES"
+types = "example_tally:register_types"

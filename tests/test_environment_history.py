@@ -15,6 +15,7 @@ import pytest
 from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor.environment_history import (
     activation_entries,
+    generation_history_coverage,
     history,
     import_generation,
     prepare_entry,
@@ -361,6 +362,7 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
     try:
         legacy_snapshot = history(root)[0]["snapshot"]
         assert _run(root, "stop", "--yes")[0] == 0
+        assert _run(root, "cleanup", "--automatic", "off", "--yes")[0] == 0
         setup_journal = next((root / "journal").glob("*.json"))
         replace(Journal.read(setup_journal), history_entry=None).write(setup_journal)
         (root / "history/00000000000000000001.json").unlink()
@@ -392,6 +394,7 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
         assert imported["id"] == 3 and imported["kind"] == "import"
         assert (root / "current").read_text() == "3\n"
         assert all(path.read_bytes() == payload for path, payload in preserved.items())
+        assert _run(root, "cleanup", "--automatic", "on", "--yes")[0] == 0
         code, result = _run(root, "rollback", "--yes")
         assert code == 0 and result["current"] == 4, result
         assert history(root)[-1]["restoredFrom"] == 1
@@ -413,7 +416,7 @@ def test_imported_software_restores_after_pruning_without_becoming_rollback_pred
             candidate["snapshot"] == imported["snapshot"]
             for candidate in proposal["restorePlan"]["alternatives"]
         )
-        shutil.rmtree(root / "generations/1")
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["3", "4"]
         code, shown = _run(root, "history", "show", "3")
         assert code == 0 and shown["entry"] == imported
         journal_bytes = setup_journal.read_bytes()
@@ -1367,7 +1370,13 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     root, store = Path(fixture["root"]), Path(fixture["store"])
     setup = fixture["commands"]["setup"]
     code, result = _run(root, *setup[setup.index("setup") : -1])
-    assert code == 0, result
+    assert code == 0, (
+        result,
+        {
+            str(path.relative_to(root)): path.read_text(encoding="utf-8", errors="replace")
+            for path in (root / "runtime").glob("*/*.log")
+        },
+    )
     assert _run(root, "stop", "--yes")[0] == 0
     source = wheel(tmp_path, "required_extra", "1.0", 73)
     payload = source.read_bytes()
@@ -1814,6 +1823,9 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
     try:
         first = history(root)[0]
         preserved = (root / "history/00000000000000000001.json").read_bytes()
+        code, preference = _run(root, "cleanup", "--automatic", "off", "--yes")
+        assert code == 0 and preference["cleanup"]["policy"]["automatic"] is False, preference
+        cleanup_policy = (root / "cleanup.json").read_bytes()
         for name in ("workflows", "models", "outputs"):
             directory = root / name
             directory.mkdir(exist_ok=True)
@@ -1846,6 +1858,8 @@ environment.main()
             code, result = _run(root, "update", "--yes")
             assert code == 0 and result["current"] == 2, result
         second = (root / "history/00000000000000000002.json").read_bytes()
+        assert generation_history_coverage(root, 1) == 1
+        assert generation_history_coverage(root, 2) == 2
         parked_port = free_port()
         assert (
             _run(root, "start", "--engine", "parked", "--port", str(parked_port), "--yes")[0] == 0
@@ -1867,6 +1881,7 @@ environment.main()
         assert entries[-1]["reason"] == operation
         assert entries[-1]["snapshot"] == first["snapshot"]
         assert entries[-1]["recordedTools"] == cast("dict", first["snapshot"])["tools"]
+        assert generation_history_coverage(root, 3) == 3
         assert engine_status(root)[1] == {
             "name": "parked",
             "generation": 3,
@@ -1876,6 +1891,9 @@ environment.main()
         assert (root / "history/00000000000000000001.json").read_bytes() == preserved
         assert (root / "history/00000000000000000002.json").read_bytes() == second
         assert (root / "project.json").read_bytes() == settings
+        assert (root / "cleanup.json").read_bytes() == cleanup_policy
+        code, status = _run(root, "status")
+        assert code == 0 and status["cleanup"]["policy"]["automatic"] is False, status
         monkeypatch.setenv("DINKSTER_FIXTURE_REGISTRY_PROBLEM", "refuse")
         code, failed = _run(root, *command, "--yes")
         assert code == 1 and "recorded by tools" in failed["error"], failed

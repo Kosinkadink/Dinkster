@@ -19,11 +19,15 @@ from dinkster_store import object_path, pack_archive_path
 from .environment_adoption import dependency_comparison, standalone_inputs
 from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
 from .environment_collection import (
+    automatic_generation_collection,
     cleanup_collection,
     collect_generations,
     collection_plan,
+    collection_policy,
+    collection_preview,
     recover_collection,
     recover_store_collection,
+    retry_generation_collection,
     store_collection_plan,
 )
 from .environment_custom import (
@@ -171,6 +175,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             variant=settings["variant"] if settings else None,
             engines=list(engine_status(root)),
         )
+        if current is not None:
+            try:
+                result["cleanup"] = collection_preview(root)
+            except (OSError, ValueError) as exc:
+                result["cleanup"] = {"warnings": [str(exc)], "generations": [], "quarantine": []}
     elif args.operation == "doctor":
         if current is None:
             raise EnvironmentError("project has no active generation")
@@ -212,10 +221,14 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
 def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
     if args.yes:
         return True
-    if not args.plan and not args.json and sys.stdin.isatty():
-        print("\n".join(plan), file=sys.stderr)
-        return input("Apply this plan? [y/N] ").strip().lower() in {"y", "yes"}
-    return False
+    if args.plan or args.json:
+        return False
+    if not sys.stdin.isatty():
+        raise EnvironmentError(
+            "confirmation requires a terminal; use --yes to apply or --plan to inspect"
+        )
+    print("\n".join(plan), file=sys.stderr)
+    return input("Apply this plan? [y/N] ").strip().lower() in {"y", "yes"}
 
 
 def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
@@ -423,7 +436,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             "build a local generation, check health, then activate; no published bundle is used",
         ]
     else:
-        catalog = discover(mirrors, channel)
+        catalog = discover(mirrors, channel, store=store)
         if adoption is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -474,6 +487,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
+        if catalog.cached_channel:
+            plan.append("use the last acquired channel selection; release metadata is unavailable")
         if selection is not None:
             plan.append(
                 f"build user-defined base with torch {selection['torch']} from "
@@ -1060,6 +1075,55 @@ def _restore(
     return 0
 
 
+def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    if args.keep_previous is not None and not 1 <= args.keep_previous <= 100:
+        raise EnvironmentError("previous generation count must be an integer from 1 to 100")
+    changing_policy = args.automatic is not None or args.keep_previous is not None
+    if not changing_policy and args.yes:
+        attempt = retry_generation_collection(root)
+        result.update(cleanupAttempt=attempt, status=attempt["status"], current=read_current(root))
+        result["cleanup"] = collection_preview(root)
+        return 0
+    preview = collection_preview(root)
+    plan = [
+        f"generation {row['generation']}: {row['status']}: "
+        + "; ".join(cast("list[str]", row["reasons"]))
+        for row in cast("list[dict[str, object]]", preview["generations"])
+    ] + cast("list[str]", preview["warnings"])
+    result.update(cleanup=preview, current=preview["current"], status="planned", plan=plan)
+    if not changing_policy:
+        return 0
+    requested = dict(cast("dict[str, object]", preview["policy"]))
+    if args.automatic is not None:
+        requested["automatic"] = args.automatic == "on"
+        plan.append(f"set automatic generation cleanup {args.automatic}; do not collect now")
+        result["requestedAutomaticCleanup"] = requested["automatic"]
+    if args.keep_previous is not None:
+        requested["previousSuccessfulActivations"] = args.keep_previous
+        plan.append(
+            f"keep {args.keep_previous} previous successful generations; do not collect now"
+        )
+        result["requestedPreviousSuccessfulActivations"] = args.keep_previous
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(root):
+        policy = collection_policy(root)
+        if policy != preview["policy"]:
+            raise EnvironmentError("cleanup policy changed after planning; request a new plan")
+        write_document(
+            root / "cleanup.json",
+            {
+                "format": "dinkster.cleanup/1",
+                "automatic": requested["automatic"],
+                "previousSuccessfulActivations": requested["previousSuccessfulActivations"],
+            },
+        )
+        result["cleanup"] = collection_preview(root)
+    result["status"] = "applied"
+    return 0
+
+
 def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     if args.yes:
@@ -1181,7 +1245,7 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, required=True, help="absolute prospective project root"
@@ -1255,6 +1319,15 @@ def main() -> None:
     for command in (rollback, restore):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
+    cleanup = commands.add_parser("cleanup", help="preview generation retention or set its policy")
+    cleanup.add_argument(
+        "--automatic", choices=("on", "off"), help="persist automatic cleanup preference"
+    )
+    cleanup.add_argument(
+        "--keep-previous",
+        type=int,
+        help="keep 1-100 previous generations besides current (default 1)",
+    )
     move = commands.add_parser("move", help="relocate a project and validate retained generations")
     move.add_argument("destination", type=Path)
     move.add_argument("--data", type=Path)
@@ -1271,6 +1344,7 @@ def main() -> None:
         restore,
         legacy_import,
         gc,
+        cleanup,
         move,
     ):
         confirmation = command.add_mutually_exclusive_group()
@@ -1291,10 +1365,11 @@ def main() -> None:
         restore,
         legacy_import,
         gc,
+        cleanup,
         move,
     ):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.root.is_absolute():
         parser.error("--root must be absolute")
     result: dict[str, object] = {
@@ -1345,6 +1420,8 @@ def main() -> None:
             code = _import(args, result)
         elif args.operation == "gc":
             code = _gc(args, result)
+        elif args.operation == "cleanup":
+            code = _cleanup(args, result)
         elif args.operation == "move":
             code = _move(args, result)
         elif args.operation in {"start", "stop"}:
@@ -1354,6 +1431,21 @@ def main() -> None:
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
+    if (
+        code == 0
+        and result["status"] == "applied"
+        and args.operation
+        in {
+            "setup",
+            "update",
+            "doctor",
+            "rollback",
+            "restore",
+            "start",
+            "stop",
+        }
+    ):
+        result["cleanupAttempt"] = automatic_generation_collection(args.root)
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
@@ -1370,6 +1462,13 @@ def main() -> None:
             print(f"Engine: {engine['version']} ({engine['release']})")
             if engine["label"] is not None:
                 print(f"Engine label: {engine['label']}")
+        cleanup = cast("dict[str, object]", result.get("cleanup", {}))
+        if "policy" in cleanup:
+            policy = cast("dict[str, object]", cleanup["policy"])
+            print(
+                f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
+                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+            )
         for step in cast("list[str]", result["plan"]):
             print(step)
         for change in cast("list[str]", result.get("changes", [])):
