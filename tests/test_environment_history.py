@@ -15,6 +15,7 @@ import pytest
 from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor.environment_history import (
     activation_entries,
+    capture_software,
     generation_history_coverage,
     history,
     import_generation,
@@ -177,6 +178,19 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             snapshots[2]["metadata"]["packs/healthy/pack-lock.json"].encode("utf-8")
             == (root / "generations/3/packs/healthy/pack-lock.json").read_bytes()
         )
+        receipt_name = "packs/healthy/installed-wheels.json"
+        assert (
+            snapshots[2]["metadata"][receipt_name].encode("utf-8")
+            == (root / "generations/3" / receipt_name).read_bytes()
+        )
+        generation = Generation.read(root / "generations/3/generation.json")
+        receipt = root / "generations/3" / receipt_name
+        assert dict(generation.files)[receipt_name] == content_digest(receipt)
+        original_receipt = receipt.read_bytes()
+        receipt.write_bytes(b"{}\n")
+        with pytest.raises(EnvironmentError, match="intact software metadata"):
+            capture_software(receipt.parent.parent.parent, inspect_wheel_tags=False)
+        receipt.write_bytes(original_receipt)
         assert "packs/healthy/pack-lock.json" not in snapshots[0]["metadata"]
         code, shown = _run(root, "history", "show", "2")
         assert code == 0 and shown["entry"] == records[1], shown
@@ -1572,6 +1586,29 @@ def test_missing_base_offers_minimal_compatible_replacements(
         chosen = alternatives[0]
         assert chosen["snapshot"]["engine"] == expected_engine
         assert chosen["snapshot"]["base"]["id"] == replacement_id
+        expected_wheels = []
+        base_manifest = json.loads(chosen["snapshot"]["metadata"]["base-manifest.json"])
+        expected_wheels.extend(
+            {key: row[key] for key in ("filename", "size", "sha256")}
+            for row in base_manifest["wheels"]
+        )
+        release = mirror / "engine" / expected_engine["release"][7:]
+        for path in release.glob("*.whl"):
+            expected_wheels.append(
+                {
+                    "filename": path.name,
+                    "size": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+        expected_receipt = {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": sorted(expected_wheels, key=lambda row: row["filename"]),
+            "inherited": [],
+        }
+        assert (
+            json.loads(chosen["snapshot"]["metadata"]["installed-wheels.json"]) == expected_receipt
+        )
         base_change = {
             "field": "base",
             "before": base_record,
@@ -1601,6 +1638,10 @@ def test_missing_base_offers_minimal_compatible_replacements(
         restored = history(root)[-1]
         assert cast("dict", restored["snapshot"])["engine"] == expected_engine
         assert cast("dict", restored["snapshot"])["base"]["id"] == replacement_id
+        assert (
+            json.loads(cast("dict", restored["snapshot"])["metadata"]["installed-wheels.json"])
+            == expected_receipt
+        )
         assert restored["substitutions"] == chosen["substitutions"]
         assert {
             path.name: path.read_bytes()

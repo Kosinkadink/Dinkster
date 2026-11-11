@@ -12,8 +12,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
-import packaging
-
+from .environment_constraints import wheel_compatibility
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -37,10 +36,11 @@ def is_software_metadata(name: str) -> bool:
         "engine-manifest.json",
         "artifact-sources.json",
         "dinkster.lock",
+        "installed-wheels.json",
     } or (
         len(parts) == 3
         and (
-            (parts[0] == "packs" and parts[2] == "pack-lock.json")
+            (parts[0] == "packs" and parts[2] in {"pack-lock.json", "installed-wheels.json"})
             or (parts[0] == "pack-sources" and parts[2] == "dinkster-pack.toml")
         )
     )
@@ -84,28 +84,14 @@ def capture_software(generation: Path, *, inspect_wheel_tags: bool = True) -> di
         "machine": platform.machine(),
         "python": platform.python_version(),
     }
-    if inspect_wheel_tags and any(name.startswith("packs/") for name in metadata):
+    if inspect_wheel_tags and (
+        "installed-wheels.json" in metadata or any(name.startswith("packs/") for name in metadata)
+    ):
         try:
-            result = subprocess.run(
-                [
-                    str(interpreter(generation)),
-                    "-I",
-                    "-B",
-                    "-c",
-                    "import json, sys; sys.path.insert(0, sys.argv[1]); "
-                    "from packaging.tags import sys_tags; "
-                    "print(json.dumps([str(tag) for tag in sys_tags()]))",
-                    str(Path(packaging.__file__).parent.parent),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+            compatibility = wheel_compatibility(interpreter(generation))
         except subprocess.TimeoutExpired as exc:
             raise EnvironmentError("snapshot wheel compatibility inspection timed out") from exc
-        if result.returncode:
-            raise EnvironmentError("snapshot cannot inspect the generation's wheel compatibility")
-        tags: object = json.loads(result.stdout)
+        tags = compatibility["tags"]
         if (
             not isinstance(tags, list)
             or not tags
@@ -113,6 +99,7 @@ def capture_software(generation: Path, *, inspect_wheel_tags: bool = True) -> di
         ):
             raise EnvironmentError("snapshot requires the generation's wheel compatibility tags")
         host["wheelTags"] = tags
+        host["markers"] = compatibility["markers"]
     return {
         **snapshot,
         "tools": {"version": version("dinkster-supervisor")},

@@ -6,6 +6,7 @@ import base64
 import copy
 import hashlib
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -373,3 +374,101 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     )
     spec = installer.packs_for_serving()[0]
     assert spec.packs is not None and spec.packs["test-pack"].version == "3.0.0"
+
+
+@pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused"])
+def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: Path, cause: str):
+    from dinkster.compose import CompositionError
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
+
+    generation = tmp_path / "generations/1"
+    generation.mkdir(parents=True)
+    entries = []
+    archives = {}
+    for name in ("alpha-consumer", "z-provider"):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\n[pack.entry]\nnodes="nodes:NODES"\n'
+            + ('[pack.dependencies]\nz-provider=">=1"\n' if name == "alpha-consumer" else "")
+        )
+        (source / "nodes.py").write_text("NODES = []\n")
+        archive = tmp_path / f"{name}.zip"
+        identity = build_artifact(source, archive)
+        entries.append(
+            LockedPack(name, "1.2.3", identity, "publisher", (name,), "registry:" + REGISTRY)
+        )
+        archives[name] = archive
+    stage_generation_packs(generation, Lockfile.of(entries), archives)
+    python = (
+        generation
+        / "packs/alpha-consumer"
+        / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    )
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"interpreter not launched by selection")
+    bad = {"filename": "bad_library-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
+    receipts = {
+        "installed-wheels.json": {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [],
+            "inherited": [],
+        },
+        "packs/alpha-consumer/installed-wheels.json": {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [],
+            "inherited": [],
+        },
+        "packs/z-provider/installed-wheels.json": {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [],
+            "inherited": [],
+        },
+    }
+    if cause in {"root", "shared", "isolated"}:
+        name = {
+            "root": "installed-wheels.json",
+            "shared": "packs/z-provider/installed-wheels.json",
+            "isolated": "packs/alpha-consumer/installed-wheels.json",
+        }[cause]
+        receipts[name]["wheels"] = [bad]
+    for name, receipt in receipts.items():
+        path = generation / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(receipt))
+    unused = generation / "packs/alpha-consumer/pack-lock.json"
+    unused.write_text(json.dumps({"unusedCandidate": bad}))
+    files = {
+        path.relative_to(generation).as_posix(): "sha256:"
+        + hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in generation.rglob("*")
+        if path.is_file()
+    }
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "inProcessPacks": ["z-provider"],
+                "files": files,
+            }
+        )
+    )
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    assert len(load_generation_packs(generation)[1]) == 2
+    feed = _feed("malicious")
+    if cause == "source":
+        feed["notices"][0]["release"].update(
+            pack="z-provider", artifactDigest=entries[1].artifact_digest
+        )
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    if cause == "unused":
+        assert len(load_generation_packs(generation)[1]) == 2
+    else:
+        with pytest.raises(CompositionError, match="security affected: alpha-consumer"):
+            load_generation_packs(generation)
+    receipt_path = generation / "packs/alpha-consumer/installed-wheels.json"
+    receipt_path.write_text("{}\n")
+    with pytest.raises(SecurityError, match="sealed provenance"):
+        load_generation_packs(generation)

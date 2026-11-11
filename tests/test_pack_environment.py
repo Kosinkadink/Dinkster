@@ -203,6 +203,11 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         "fixture_extra",
         "import torch, cv2\ndef node(): return torch.value + cv2.value\n",
     )
+    alternative_source = tmp_path / "alternative"
+    alternative_source.mkdir()
+    alternative = _wheel(
+        alternative_source, "fixture-extra", "1.2", "fixture_extra", "def node(): return -999\n"
+    )
     lock = PackLock(
         "example",
         "linux-cpu",
@@ -214,7 +219,9 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         ),
         (),
         tuple(
-            LockedDistribution(name, version, (wheel,))
+            LockedDistribution(
+                name, version, (wheel, alternative) if name == "fixture-extra" else (wheel,)
+            )
             for name, version, wheel in (
                 ("torch", "2.14.1", torch),
                 ("opencv-contrib-python-headless", "5.0", cv),
@@ -261,21 +268,36 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
             [
                 str(python),
                 "-c",
-                "import fixture_extra, torch, cv2, json; "
-                "print(json.dumps([fixture_extra.node(), torch.__file__, cv2.__file__]))",
+                "import fixture_extra, torch, cv2, json, importlib.metadata as m; "
+                "print(json.dumps([fixture_extra.node(), torch.__file__, cv2.__file__, "
+                "json.loads(m.distribution('fixture-extra').read_text('direct_url.json'))]))",
             ],
             capture_output=True,
             text=True,
             check=True,
         )
-        value, torch_file, cv_file = json.loads(result.stdout)
+        value, torch_file, cv_file, origin = json.loads(result.stdout)
         assert value == 58
+        with urllib.request.urlopen(origin["url"]) as installed_wheel:
+            assert hashlib.sha256(installed_wheel.read()).hexdigest() == extra.sha256
         assert Path(torch_file).is_relative_to(generation)
         assert Path(cv_file).is_relative_to(generation)
         assert not Path(torch_file).is_relative_to(generation / "packs")
         assert not Path(cv_file).is_relative_to(generation / "packs")
         assert pack_drift(python, lock, facts) == ()
         assert PackLock.read(generation / "packs/example/pack-lock.json") == lock
+        receipt = json.loads((generation / "packs/example/installed-wheels.json").read_text())
+        assert receipt == {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [
+                {
+                    "filename": extra.filename,
+                    "sha256": extra.sha256,
+                    "size": extra.size,
+                }
+            ],
+            "inherited": ["opencv-contrib-python-headless", "torch"],
+        }
         assert [path.name for path in store.rglob("*.whl")] == [extra.filename]
         assert not list((generation / "packs").rglob("torch*"))
 
@@ -893,9 +915,24 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     seal.unlink()
     rebuild_generation(context, plans)
     for name in context.in_process_packs:
-        assert list((target / "packs" / name).iterdir()) == [
-            target / "packs" / name / "pack-lock.json"
+        assert {path.name for path in (target / "packs" / name).iterdir()} == {
+            "pack-lock.json",
+            "installed-wheels.json",
+        }
+    first_receipt = json.loads((target / "packs/in-process/installed-wheels.json").read_text())
+    shared_receipt = json.loads((target / "packs/shared/installed-wheels.json").read_text())
+    isolated_receipt = json.loads((target / "packs/isolated/installed-wheels.json").read_text())
+    assert [wheel["sha256"] for wheel in first_receipt["wheels"]] == [extra.sha256]
+    assert first_receipt["inherited"] == ["dinkster-api"]
+    assert shared_receipt["wheels"] == isolated_receipt["wheels"] == []
+    assert (
+        shared_receipt["inherited"]
+        == isolated_receipt["inherited"]
+        == [
+            "dinkster-api",
+            "fixture-extra",
         ]
+    )
     isolated = venv_python(target / "packs/isolated")
     result = subprocess.check_output(
         [
