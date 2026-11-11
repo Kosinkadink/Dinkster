@@ -4,6 +4,7 @@ import builtins
 import json
 import urllib.error
 from pathlib import Path
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -55,7 +56,18 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
 
 
 @pytest.mark.parametrize(
-    "mode", ["json", "text", "missing-locks", "no-defaults", "offline", "corrupt-cache"]
+    "mode",
+    [
+        "json",
+        "text",
+        "missing-locks",
+        "no-defaults",
+        "offline",
+        "corrupt-cache",
+        "decline",
+        "nonterminal",
+        "changed-lock",
+    ],
 )
 def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_payloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, mode: str
@@ -168,6 +180,18 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
             "--registries",
             str(registry_file),
         ]
+        if mode in {"decline", "nonterminal", "changed-lock"}:
+            arguments.remove("--plan")
+            monkeypatch.setattr("sys.stdin.isatty", lambda: mode != "nonterminal")
+
+            def answer(_prompt: str) -> str:
+                if mode == "changed-lock":
+                    for path in list(files):
+                        if "/locks/" in path:
+                            files[path] = b"changed lock metadata"
+                return "n" if mode == "decline" else "y"
+
+            monkeypatch.setattr(builtins, "input", answer)
         if mode != "text":
             arguments.append("--json")
         if mode == "offline":
@@ -181,6 +205,14 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         elif mode == "missing-locks":
             assert code == 1
             assert "example-pack@1.2.3" in captured.err and "other-pack@1.2.3" in captured.err
+        elif mode in {"decline", "nonterminal", "changed-lock"}:
+            assert code == (0 if mode == "decline" else 1)
+            assert "Engine binding:" in captured.err
+            assert "Dependency lock:" in captured.err
+            if mode == "nonterminal":
+                assert "--yes" in captured.err and "requires a terminal" in captured.err
+            if mode == "changed-lock":
+                assert "refused" in captured.err
         else:
             assert code == 0, captured.err
             if mode == "text":
@@ -209,6 +241,156 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         assert {p: p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
         assert not root.exists()
     finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd
+) -> None:
+    import hashlib
+    import os
+    import subprocess
+    import sys
+
+    from dinkster_registry import LockedPack, artifact_digest
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_wheel import build_pack_archive
+    from test_environment_runtime import free_port
+    from test_installer import _serve_artifacts, _static_release
+    from test_pack_wheel import wheel_pack
+
+    from tests.fixtures.environments import build as publisher
+
+    original_tree, original_wheel = publisher.standalone_tree, publisher.wheel
+    encode = publisher.canonical_json
+
+    def standalone(root: Path) -> None:
+        original_tree(root)
+        python = root / ("python.exe" if os.name == "nt" else "bin/python3")
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+        )
+        site.mkdir(parents=True, exist_ok=True)
+        (site / "fixture.pth").write_text(
+            "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+        )
+
+    def canonical_json(document: dict) -> bytes:
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    def wheel(*args, **kwargs):
+        if kwargs.get("engine"):
+            kwargs["pack_tools"] = True
+        return original_wheel(*args, **kwargs)
+
+    monkeypatch.setattr(publisher, "standalone_tree", standalone)
+    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
+    monkeypatch.setattr(publisher, "wheel", wheel)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA", "DINKSTER_HOME"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    port = free_port()
+    fixture = publisher.build(tmp_path / "release", "fixture-cpu", port)
+    mirror, root, store = (Path(fixture[key]) for key in ("mirror", "root", "store"))
+    channel_path = mirror / "channels/main.json"
+    channel = json.loads(channel_path.read_bytes())
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    engine = json.loads((release / "release-manifest.json").read_bytes())
+    engine["defaultPacks"] = {"demo-nodes": "1.2.3"}
+    data = canonical_json(engine)
+    identity = hashlib.sha256(data).hexdigest()
+    (release / "release-manifest.json").write_bytes(data)
+    release.rename(release.parent / identity)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
+    channel_path.write_bytes(canonical_json(channel))
+    source = wheel_pack(tmp_path / "pack")
+    (source / "locales/en.json").write_text("{}\n")
+    manifest = source / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text().replace('requires = ["demo-core>=2"]', "requires = []")
+    )
+    build_pack_archive(source, tmp_path / "pack-wheels")
+    pack = tmp_path / "pack-wheels/demo_nodes-1.2.3-py3-none-any.whl"
+    payload = pack.read_bytes()
+    entry = LockedPack("demo-nodes", "1.2.3", artifact_digest(payload), "demo", ())
+    row = _static_release(entry, payload)
+    row["engine"] = ">=0.0.2"
+    lock = PackLock("demo-nodes", "fixture-cpu", ">=3.12", (), (), ())
+    lock_bytes = lock.to_json().encode()
+    lock_digest = artifact_digest(lock_bytes)
+    lock_path = "locks/" + lock_digest.replace(":", "/") + ".json"
+    base = json.loads(Path(fixture["baseManifest"]).read_bytes())
+    row["installLocks"] = {
+        "fixture-cpu": {
+            "baseId": base["id"],
+            "artifactDigest": entry.artifact_digest,
+            "digest": lock_digest,
+            "size": len(lock_bytes),
+            "url": lock_path,
+        }
+    }
+    wheel_path = "/static/" + cast("list[dict[str, str]]", row["wheels"])[0]["url"]
+    files = {
+        "/static/packs/index.json": canonical_json({"schemaVersion": 1, "items": [row]}),
+        "/static/" + lock_path: lock_bytes,
+        wheel_path: payload,
+    }
+    requests = []
+    server = _serve_artifacts(files, requests)
+    try:
+        assert (
+            cli_main(
+                [
+                    "setup",
+                    "--root",
+                    str(root),
+                    "--data",
+                    str(store),
+                    "--variant",
+                    "fixture-cpu",
+                    "--channel",
+                    "main",
+                    "--mirror",
+                    str(mirror),
+                    "--registry",
+                    f"http://127.0.0.1:{server.server_port}",
+                    "--port",
+                    str(port),
+                    "--yes",
+                    "--json",
+                ]
+            )
+            == 0
+        ), json.loads(capfd.readouterr().out).get("error")
+        assert (root / "current").read_text().strip() == "1"
+        selected = json.loads((root / "generations/1/dinkster.lock").read_text())
+        assert selected["packs"][0]["artifactDigest"] == entry.artifact_digest
+        retained = PackLock.read(root / "generations/1/packs/demo-nodes/pack-lock.json")
+        assert retained.pack == "demo-nodes"
+        assert retained.packages[-1].wheels[0].sha256 == hashlib.sha256(payload).hexdigest()
+        assert any(path == wheel_path for path, _ in requests)
+    finally:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(root),
+                "stop",
+                "--yes",
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+        )
         server.shutdown()
         server.server_close()
 
