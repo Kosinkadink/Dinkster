@@ -92,6 +92,7 @@ from dinkster_server import (
 )
 from dinkster_server.app import handle_submit
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
+from dinkster_utilities.math import ComfyMathExpression
 from dinkster_values import (
     CURVE_TYPE,
     PNG_CONTAINER_VERSION,
@@ -1780,6 +1781,38 @@ def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[s
     }
     body.update(overrides)
     return body
+
+
+def test_math_expression_serves_connection_only_numeric_family() -> None:
+    nodes = [ComfyMathExpression]
+    schemas = build_schemas(nodes)
+
+    def make_engine(on_event: EventListener | None = None) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        async with TestClient(TestServer(create_app(make_engine, schemas))) as client:
+            response = await client.get("/api/nodes")
+            assert response.status == 200
+            catalog = await response.json()
+            interface = catalog["nodes"]["dinkster.utilities.comfy_math_expression"]["interface"]
+            family = next(entry for entry in interface if entry["id"] == "values")
+            template = family["template"][0]
+            assert template.get("forceInput") is True
+            assert template["type"] == {"kind": "union", "types": ["FLOAT", "INT", "BOOLEAN"]}
+            assert "widget" not in template
+            expression = next(entry for entry in interface if entry["id"] == "expression")
+            assert expression["widget"] == {"type": "STRING", "multiline": True}
+
+    run_scenario(scenario())
 
 
 def test_nodes_endpoint_serves_native_schema_wire() -> None:
