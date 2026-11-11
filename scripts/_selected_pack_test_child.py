@@ -111,6 +111,7 @@ def main() -> int:
         print(f"Selected module {module}: {spec.origin}", flush=True)
     if len(sys.argv) > 2 and sys.argv[2] == "--check-only":
         return 0
+    nodeid = sys.argv[3] if len(sys.argv) > 2 and sys.argv[2] == "--nodeid" else None
     identity = config.get("testPack", "selected-tests")
     with admission_timing(identity, "child-provenance"):
         subprocess.run(
@@ -128,7 +129,7 @@ def main() -> int:
 
     from dinkster.compose import default_pack_spec
 
-    for name in config["packs"]:
+    for name in () if nodeid else config["packs"]:
         with admission_timing(identity, f"catalog:{name}"):
             spec = default_pack_spec(name)
             report = prepare_catalog(
@@ -144,6 +145,39 @@ def main() -> int:
 
     class RequireExecutedTests:
         passed: set[str] = set()
+
+        def pytest_configure(self, config: pytest.Config) -> None:
+            config.addinivalue_line(
+                "markers", "pack_runtime(name): execute a cross-pack case in its locked runtime"
+            )
+
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_pyfunc_call(self, pyfuncitem: pytest.Function) -> bool | None:
+            marker = pyfuncitem.get_closest_marker("pack_runtime")
+            if marker is None:
+                return None
+            [pack] = marker.args
+            python = config["runtimes"][pack]
+            if Path(python).absolute() == Path(sys.executable).absolute():
+                return None
+            if nodeid is not None:
+                raise RuntimeError(f"cross-pack test runtime differs from selected {pack}")
+            result = subprocess.run(
+                [
+                    python,
+                    "-I",
+                    "-B",
+                    str(Path(__file__).resolve()),
+                    str(config_path),
+                    "--nodeid",
+                    pyfuncitem.nodeid,
+                ],
+                check=False,
+            )
+            if result.returncode == pytest.ExitCode.NO_TESTS_COLLECTED:
+                pytest.skip(f"selected cross-pack case did not execute in {pack}")
+            result.check_returncode()
+            return True
 
         @pytest.hookimpl(wrapper=True)
         def pytest_collection(self, session: pytest.Session) -> Generator[None, object, object]:
@@ -193,14 +227,20 @@ def main() -> int:
                 print(f"Selected test skipped {report.nodeid}: {report.longrepr}", flush=True)
 
         def pytest_sessionfinish(self, session: pytest.Session) -> None:
-            if not self.passed:
+            if not self.passed and (nodeid is None or session.exitstatus == pytest.ExitCode.OK):
                 session.exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
 
     with admission_timing(identity, "pytest"):
         return int(
             pytest.main(
                 # The inline plugin owns per-test unavailable-export state in this process.
-                ["-q", "-n", "0", "--import-mode=importlib", *config["tests"]],
+                [
+                    "-q",
+                    "-n",
+                    "0",
+                    "--import-mode=importlib",
+                    *([nodeid] if nodeid else config["tests"]),
+                ],
                 plugins=[RequireExecutedTests()],
             )
         )

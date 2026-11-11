@@ -29,6 +29,9 @@ os.environ["DINKSTER_REMOTE_GATEWAY_BASE"] = ""
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "network(*hosts): requires outbound HTTPS to named hosts")
+    config.addinivalue_line(
+        "markers", "pack_runtime(name): execute a cross-pack case in its locked runtime"
+    )
 
 
 @pytest.hookimpl(wrapper=True)
@@ -153,12 +156,9 @@ def installed_default_catalogs() -> None:
 
 @pytest.fixture(scope="session")
 def selected_pack_generation(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    from dinkster_workers.pack_environment import fetch_pack_wheels, provision_pack
-    from dinkster_workers.pack_lock import GenerationPackages, plan_pack
     from test_pack_environment import _generation
 
     from scripts.build_release import PUBLISHED_PROJECTS
-    from scripts.run_selected_pack_tests import selected_test_tools
 
     root = Path(__file__).resolve().parents[1]
     work = tmp_path_factory.mktemp("selected-engine")
@@ -178,7 +178,6 @@ def selected_pack_generation(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "--frozen",
             "--package",
             "dinkster",
-            "--no-dev",
             "--no-emit-workspace",
             "--format",
             "pylock.toml",
@@ -199,6 +198,7 @@ def selected_pack_generation(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "--break-system-packages",
             "--no-deps",
             "--require-hashes",
+            "--offline",
             "--only-binary",
             ":all:",
             "-r",
@@ -218,20 +218,6 @@ def selected_pack_generation(tmp_path_factory: pytest.TempPathFactory) -> Path:
             *map(str, sorted(wheels.glob("*.whl"))),
         ],
         check=True,
-    )
-    facts = GenerationPackages.inspect(python)
-    tools = selected_test_tools(root, facts, variant="linux-cpu")
-    plan = plan_pack(tools, facts, variant="linux-cpu", own_environment_size=0)
-    fetch_pack_wheels(plan, wheels)
-    provision_pack(
-        plan,
-        generation_python=python,
-        packs=work / "generation/packs",
-        wheel_store=wheels,
-        uv_cache=work / "uv-cache",
-        variant="linux-cpu",
-        in_process=True,
-        offline=True,
     )
     return python
 
