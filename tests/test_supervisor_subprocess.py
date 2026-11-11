@@ -251,6 +251,39 @@ def test_isolated_probe_lifecycle_preserves_command_and_output(
                 assert messages.read(9) == b"completed"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows process handle state")
+def test_exited_probe_retains_windows_exit_code_259(tmp_path: Path, expire_after_ready) -> None:
+    parent = (
+        "import ctypes, subprocess, threading\n"
+        "from ctypes import wintypes\n"
+        "from pathlib import Path\n"
+        f"probe = subprocess.Popen([{str(vars(sys)['_base_executable'])!r}, "
+        "'-I', '-B', '-c', 'import sys; sys.exit(259)'], "
+        "stdout=subprocess.PIPE, stderr=subprocess.PIPE)\n"
+        "kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+        "kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]\n"
+        "kernel32.WaitForSingleObject.restype = wintypes.DWORD\n"
+        "assert kernel32.WaitForSingleObject(int(probe._handle), 30000) == 0\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        "(root / 'pid').write_text(str(probe.pid))\n"
+        "(root / 'ready').touch()\n"
+        "threading.Event().wait(90)\n"
+    )
+    # Keep the probe's handle open without populating the Popen observer's exit record.
+    expire_after_ready(lambda process: wait_until((tmp_path / "ready").exists))
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        run([str(vars(sys)["_base_executable"]), "-c", parent])
+    notes = "\n".join(raised.value.__notes__)
+    assert (
+        f"Unwrapped interpreter probe pid={(tmp_path / 'pid').read_text()}, "
+        "state before cleanup=exited, returncode before cleanup=259"
+    ) in notes
+    lifecycle = json.loads(
+        notes.split("Probe lifecycle (seconds since launch started): ", 1)[1].splitlines()[0]
+    )
+    assert "observed_exit" not in lifecycle
+
+
 @pytest.mark.parametrize(
     ("module_name", "blocked", "late", "entry"),
     [

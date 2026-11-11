@@ -131,16 +131,24 @@ def _process_state(pid: int) -> tuple[str, int | None]:
         kernel32.OpenProcess.restype = wintypes.HANDLE
         kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
         kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
-        handle = kernel32.OpenProcess(0x1000, False, pid)
+        handle = kernel32.OpenProcess(0x1000 | 0x100000, False, pid)
         if not handle:
             return "unavailable", None
         try:
+            # An exited process may legitimately return STILL_ACTIVE (259).
+            state = kernel32.WaitForSingleObject(handle, 0)
+            if state == 258:
+                return "alive", None
+            if state != 0:
+                return "unavailable", None
             code = wintypes.DWORD()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return "unavailable", None
-            return ("alive", None) if code.value == 259 else ("exited", code.value)
+            return "exited", code.value
         finally:
             kernel32.CloseHandle(handle)
     try:
