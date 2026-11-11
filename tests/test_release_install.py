@@ -2497,8 +2497,14 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
     docker = tmp_path / "docker"
     docker.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="ascii")
     docker.chmod(0o755)
+    service_build = next(
+        step["run"]
+        for step in job["steps"]
+        if "docker build --tag" in step.get("run", "")
+        and ".disposable-registry-source" in step["run"]
+    )
     build = subprocess.run(
-        ["bash", "-c", job["steps"][-1]["run"]],
+        ["bash", "-c", service_build],
         env={"PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]},
         capture_output=True,
         text=True,
