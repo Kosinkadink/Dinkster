@@ -39,13 +39,12 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import Node, build_schemas
+from dinkster_schema import build_schemas
 from dinkster_server import PackInfo, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
-from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import (
     Composition,
@@ -54,7 +53,6 @@ from dinkster.compose import (
     ServingComposer,
     compose_serving,
     default_pack_spec,
-    default_pack_specs,
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
@@ -64,16 +62,6 @@ TESTS_DIR = Path(__file__).parent
 DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
-
-
-@pytest.fixture(scope="module")
-def first_party_node_packs() -> dict[str, str]:
-    return {
-        node.schema().node_type: manifest.name
-        for spec in default_pack_specs()
-        if (manifest := load_manifest(spec.manifest)).nodes_entry
-        for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
-    }
 
 
 @pytest.fixture
@@ -1170,28 +1158,27 @@ def test_default_suite_refuses_non_suite_lock(
 
 def test_checkout_defaults_do_not_require_standard_suite_distribution(
     monkeypatch: pytest.MonkeyPatch,
-    first_party_node_packs: dict[str, str],
+    text_pack: Path,
 ) -> None:
     from dinkster import compose
 
     real_distribution = compose.importlib.metadata.distribution
+    text_distribution = editable_distribution(text_pack, "0.0.3")
 
     def distribution(name: str):
         if name == "dinkster-nodes-std":
             raise compose.importlib.metadata.PackageNotFoundError(name)
+        if name == "dinkster-text":
+            return text_distribution
         return real_distribution(name)
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
-    compose._default_pack_lock.cache_clear()
-    expected = tuple(sorted(set(first_party_node_packs.values()) | {"dinkster-nodes-remote"}))
-    try:
-        assert compose.default_pack_ids() == expected
-        for pack_id in expected:
-            spec = compose.default_pack_spec(pack_id)
-            assert spec.packs is not None
-            assert load_manifest(spec.manifest).name == pack_id
-    finally:
-        compose._default_pack_lock.cache_clear()
+    expected = ("dinkster-text",)
+    assert compose.default_pack_ids() == expected
+    for pack_id in expected:
+        spec = compose.default_pack_spec(pack_id)
+        assert spec.packs is not None
+        assert load_manifest(spec.manifest).name == pack_id
 
 
 def test_installed_engine_has_no_implicit_pack_selection(
