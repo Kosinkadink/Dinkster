@@ -2421,11 +2421,10 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
 def test_selected_pack_tests_refuse_incompatible_base_before_test_tool_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from test_pack_environment import _generation, _wheel
-
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_workers.pack_lock import LockedDistribution, PackLock
     from dinkster_workers.provision import ProvisionError
+    from test_pack_environment import _generation, _wheel
 
     from scripts.run_selected_pack_tests import run_selected_tests
 
