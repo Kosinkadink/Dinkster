@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import sys
@@ -175,6 +176,79 @@ def test_child_output_and_timeout_diagnostics(
     assert "active_child" in notes
     assert (str(module) if entry == "module" else "<string>") in notes
     assert "Requested timeout snapshot" in notes
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_isolated_probe_lifecycle_preserves_command_and_output(
+    tmp_path: Path, blocked: bool, expire_after_ready
+) -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(30)
+        probe = (
+            "import os, socket, sys\n"
+            "from pathlib import Path\n"
+            "assert sys.flags.isolated and sys.dont_write_bytecode\n"
+            "assert sys.argv == ['-c', 'unchanged argument']\n"
+            f"root = Path({str(tmp_path)!r})\n"
+            "(root / 'pid').write_text(str(os.getpid()))\n"
+            f"connection = socket.create_connection({listener.getsockname()!r}, timeout=30)\n"
+            "connection.settimeout(None)\n"
+            "connection.sendall(b'ready')\n"
+            f"if {blocked!r}:\n"
+            "    (root / 'ready').touch()\n"
+            "    assert connection.recv(1) == b'x'\n"
+            "connection.sendall(b'completed')\n"
+            "connection.close()\n"
+            "print('probe stdout')\n"
+            "print('probe stderr', file=sys.stderr)\n"
+            "sys.exit(7)\n"
+        )
+        parent = (
+            "import subprocess, threading\n"
+            f"result = subprocess.run([{str(vars(sys)['_base_executable'])!r}, "
+            f"'-I', '-B', '-c', {probe!r}, 'unchanged argument'], "
+            "capture_output=True, text=True, timeout=60)\n"
+            "assert (result.returncode, result.stdout, result.stderr) == "
+            "(7, 'probe stdout\\n', 'probe stderr\\n'), result\n"
+            f"__import__('pathlib').Path({str(tmp_path / 'checked')!r}).touch()\n"
+            "threading.Event().wait(90)\n"
+        )
+
+        def ready(process: subprocess.Popen[str]) -> None:
+            wait_until((tmp_path / ("ready" if blocked else "checked")).exists)
+
+        expire_after_ready(ready)
+        try:
+            with pytest.raises(subprocess.TimeoutExpired) as raised:
+                run([str(vars(sys)["_base_executable"]), "-c", parent])
+            notes = "\n".join(raised.value.__notes__)
+            assert f"Unwrapped interpreter probe pid={(tmp_path / 'pid').read_text()}," in notes
+            assert (
+                "state before cleanup=alive, returncode before cleanup=None"
+                if blocked
+                else "state before cleanup=exited, returncode before cleanup=7"
+            ) in notes.split("Unwrapped interpreter probe", 1)[1]
+            lifecycle = json.loads(
+                notes.split("Probe lifecycle (seconds since launch started): ", 1)[1].splitlines()[
+                    0
+                ]
+            )
+            assert lifecycle["spawned"] >= 0
+            if blocked:
+                assert "observed_exit" not in lifecycle
+            else:
+                assert lifecycle["observed_exit"] >= lifecycle["spawned"]
+                assert (tmp_path / "checked").exists()
+        finally:
+            connection, _ = listener.accept()
+            with connection, connection.makefile("rb") as messages:
+                connection.settimeout(30)
+                assert messages.read(5) == b"ready"
+                if blocked:
+                    connection.sendall(b"x")
+                assert messages.read(9) == b"completed"
 
 
 @pytest.mark.parametrize(

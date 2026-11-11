@@ -183,6 +183,28 @@ def _nested_diagnostics(directory: Path) -> str:
             f"Nested child stack before cleanup:\n"
             f"{saved or '(no nested child stack recorded)'}"
         )
+    for path in sorted(directory.glob("probe-*.json")):
+        record = json.loads(path.read_text())
+        pid = record.get("pid")
+        code = record.get("returncode")
+        state, code = (
+            ("exited", code)
+            if code is not None
+            else ("starting", None)
+            if pid is None
+            else _process_state(pid)
+        )
+        lifecycle = {
+            key: record[key] - record["started"]
+            for key in ("spawned", "observed_exit")
+            if key in record
+        }
+        rows.append(
+            f"Unwrapped interpreter probe pid={pid}, "
+            f"state before cleanup={state}, returncode before cleanup={code}\n"
+            f"Probe lifecycle (seconds since launch started): {json.dumps(lifecycle)}\n"
+            f"Probe observed after {time.monotonic() - record['started']:.6f}s"
+        )
     return "\n".join(rows)
 
 
@@ -289,7 +311,14 @@ def _trace_nested_commands(directory: Path) -> None:
     class TracedPopen(subprocess.Popen):
         def __init__(self, args, *positional, **keywords):
             self.trace_path: Path | None = None
+            self.probe_path: Path | None = None
+            self.probe_record: dict[str, Any] = {}
             module = None
+            if isinstance(args, (list, tuple)) and tuple(args[1:4]) == ("-I", "-B", "-c"):
+                # Keep the actual interpreter and inline source untouched.
+                self.probe_path = directory / f"probe-{uuid4().hex}.json"
+                self.probe_record = {"started": time.monotonic()}
+                self._save_probe()
             if isinstance(args, (list, tuple)) and "-m" in args:
                 index = args.index("-m")
                 module = args[index + 1]
@@ -314,12 +343,25 @@ def _trace_nested_commands(directory: Path) -> None:
                 temporary.write_text(json.dumps({"module": module}))
                 temporary.replace(self.trace_path)
             super().__init__(args, *positional, **keywords)
+            if self.probe_path is not None:
+                self.probe_record.update(pid=self.pid, spawned=time.monotonic())
+                self._save_probe()
             if self.trace_path is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
                 temporary.write_text(str(self.pid))
                 temporary.replace(self.trace_path.with_suffix(".launcher"))
 
+        def _save_probe(self):
+            if self.probe_path is not None:
+                temporary = self.probe_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(self.probe_record))
+                temporary.replace(self.probe_path)
+
         def _record_exit(self, code):
+            if self.probe_path is not None and code is not None:
+                self.probe_record.update(returncode=code, observed_exit=time.monotonic())
+                self._save_probe()
+                self.probe_path = None
             if self.trace_path is not None and code is not None:
                 temporary = self.trace_path.with_suffix(".tmp")
                 temporary.write_text(str(code))
