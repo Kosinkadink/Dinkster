@@ -89,6 +89,30 @@ class StageResult:
         return any(finding.effect == "review" for finding in self.findings)
 
 
+@contextmanager
+def admission_timing(identity: str, stage: str) -> Generator[None]:
+    """Log stage identity and elapsed time without changing admission decisions."""
+    started = time.perf_counter()
+    status = "failed"
+    print(json.dumps({"admissionTiming": "start", "pack": identity, "stage": stage}), flush=True)
+    try:
+        yield
+        status = "completed"
+    finally:
+        print(
+            json.dumps(
+                {
+                    "admissionTiming": "end",
+                    "pack": identity,
+                    "stage": stage,
+                    "status": status,
+                    "elapsedSeconds": time.perf_counter() - started,
+                }
+            ),
+            flush=True,
+        )
+
+
 def _block(code: str, message: str) -> AdmissionFinding:
     return AdmissionFinding(code, "error", "block", message)
 
@@ -535,7 +559,8 @@ def run_executable_probe(
             )
         )
     if not requirements and not dependency_wheels:
-        return _run_executable_probe(root, configured, require_isolation)
+        with admission_timing(manifest.name, "probe-execution"):
+            return _run_executable_probe(root, configured, require_isolation)
     installer = shutil.which("uv")
     if installer is None:
         return StageResult(
@@ -566,11 +591,12 @@ def run_executable_probe(
             *[str(wheel.resolve()) for wheel in dependency_wheels],
         ]
         try:
-            completed = _run_probe_process(
-                command,
-                timeout_seconds=configured.probe_dependency_timeout_seconds,
-                output_limit_bytes=configured.probe_output_limit_bytes,
-            )
+            with admission_timing(manifest.name, "probe-dependency-install"):
+                completed = _run_probe_process(
+                    command,
+                    timeout_seconds=configured.probe_dependency_timeout_seconds,
+                    output_limit_bytes=configured.probe_output_limit_bytes,
+                )
         except OSError:
             return StageResult(
                 (_block("probe.dependencies-unavailable", "Dependency provisioning failed."),)
@@ -592,7 +618,8 @@ def run_executable_probe(
                 operator_details=operator_details,
             )
         # Dependency .pth files must not run before the trusted harness.
-        return _run_executable_probe(root, configured, require_isolation, dependencies)
+        with admission_timing(manifest.name, "probe-execution"):
+            return _run_executable_probe(root, configured, require_isolation, dependencies)
 
 
 def _run_executable_probe(

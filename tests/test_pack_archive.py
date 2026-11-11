@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -846,6 +847,12 @@ def test_official_publication_selects_only_changed_committed_packs(
         ("candidate", None),
         ("candidate", "manifest"),
         ("candidate", "security"),
+        ("prepared", None),
+        ("prepared", "security"),
+        ("prepared", "engine-version"),
+        ("prepared", "incomplete-catalog"),
+        ("prepared", "corrupt-artifact"),
+        ("prepared", "unknown-pack"),
         ("published", None),
         ("published", "promotion"),
         ("published", "timeout"),
@@ -854,12 +861,17 @@ def test_official_publication_selects_only_changed_committed_packs(
     ],
 )
 def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, problem: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    problem: str | None,
 ) -> None:
     from dataclasses import replace
 
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_registry.archive_admission import StageResult
+    from dinkster_store import pack_archive_path, pack_label
     from dinkster_workers import load_manifest
     from dinkster_workers.pack_wheel import wheel_filename
 
@@ -908,15 +920,18 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         # The candidate has no registry release: requesting it would fail here.
         assert minimums == {"unchanged": "1.0"}
         entry = entries["unchanged"]
-        (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
-            archives["unchanged"]
+        archive = pack_archive_path(
+            artifacts, entry.artifact_digest, label=pack_label(entry.pack, entry.version)
         )
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(archives["unchanged"])
         return Lockfile.of([entry]), {}
 
     observed = []
 
-    def engine_tests(root, catalog, artifacts):
+    def engine_tests(root, catalog, artifacts, *, test_packs=()):
         assert root == Path(admission.__file__).resolve().parents[1]
+        assert test_packs == (("candidate",) if mode == "prepared" else ())
         observed.extend((pack.pack, pack.version) for pack in catalog.packs)
 
     monkeypatch.setattr(
@@ -927,6 +942,56 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
     monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
     monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
+    prepared = None
+    if mode == "prepared":
+        prepared = tmp_path / "prepared"
+        output = admission.check_defaults(
+            admission.NamedRegistry("", "https://registry.example"),
+            engine_version="0.2",
+            candidate_base="b" * 40,
+            prepare_output=prepared,
+        )
+        groups = output["groups"]
+        assert isinstance(groups, list)
+        assert sorted(name for group in groups for name in group) == [
+            "candidate",
+            "unchanged",
+        ]
+        assert not observed
+        import yaml
+
+        workflow = yaml.safe_load(
+            (
+                Path(admission.__file__).resolve().parents[1]
+                / ".github/workflows/default-pack-admission.yml"
+            ).read_text()
+        )
+        upload = next(
+            step["with"]
+            for step in workflow["jobs"]["prepare"]["steps"]
+            if step.get("uses") == "actions/upload-artifact@v4"
+        )
+        transferred = tmp_path / "transferred"
+        shutil.copytree(
+            prepared,
+            transferred,
+            ignore=None
+            if upload.get("include-hidden-files", False)
+            else shutil.ignore_patterns(".*"),
+        )
+        prepared = transferred
+        if problem == "engine-version":
+            metadata = json.loads((prepared / "engine.json").read_text())
+            metadata["engineVersion"] = "0.3"
+            (prepared / "engine.json").write_text(json.dumps(metadata))
+        elif problem == "incomplete-catalog":
+            (prepared / "catalog.lock").write_text(
+                Lockfile.of([entries["candidate"]]).record_json()
+            )
+        elif problem == "corrupt-artifact":
+            digest = entries["candidate"].artifact_digest.removeprefix("blake3:")
+            with zipfile.ZipFile(prepared / "artifacts" / f"{digest}.zip", "a") as wheel:
+                wheel.writestr("changed.txt", "digest drift")
     publication = None
     if mode == "published":
         publication = tmp_path / "official-packs.lock"
@@ -964,6 +1029,10 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "digest": "digest mismatch",
         "head": "do not match the engine checkout",
         "timeout": "not active yet",
+        "engine-version": "do not match the engine checkout and version",
+        "incomplete-catalog": "prepared sources omit defaults",
+        "corrupt-artifact": "candidate@7.2 admission refused",
+        "unknown-pack": "requested admission packs are not in the catalog",
     }.get(problem or "")
     if expected_error:
         with pytest.raises((ValueError, admission.InstallError), match=expected_error):
@@ -972,6 +1041,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                 engine_version="0.2",
                 candidate_base="b" * 40 if mode == "candidate" else None,
                 published_sources=publication,
+                prepared_sources=prepared,
+                test_packs=("unknown",)
+                if problem == "unknown-pack"
+                else ("candidate",)
+                if mode == "prepared"
+                else (),
             )
         assert not observed
     else:
@@ -980,6 +1055,8 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             engine_version="0.2",
             candidate_base="b" * 40 if mode == "candidate" else None,
             published_sources=publication,
+            prepared_sources=prepared,
+            test_packs=("candidate",) if mode == "prepared" else (),
         )
         assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
         assert result == {
@@ -990,9 +1067,22 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                     "version": entries[name].version,
                     "artifactDigest": entries[name].artifact_digest,
                 }
-                for name in ("candidate", "unchanged")
+                for name in (("candidate",) if mode == "prepared" else ("candidate", "unchanged"))
             ],
         }
+    if problem in {"manifest", "security"}:
+        stage = "manifest-admission" if problem == "manifest" else "fast-security"
+        timings = [
+            json.loads(line)
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith('{"admissionTiming":')
+        ]
+        assert any(
+            record["pack"] == "candidate@7.2"
+            and record["stage"] == stage
+            and record.get("status") == "failed"
+            for record in timings
+        )
 
 
 @pytest.mark.parametrize(
@@ -2169,6 +2259,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         output = capfd.readouterr().out
         assert "3 passed" in output
         assert "2 skipped" in output
+        assert '"admissionTests": "collected"' in output
+        assert '"pack": "dinkster-image@1.2.3"' in output
+        assert '"nodeid": "tests/test_image_nodes.py::test_selected_value"' in output
+        assert '"outcome": "passed"' in output
+        assert '"outcome": "skipped"' in output
         assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
         assert (
             "Selected test skipped tests/test_image_nodes.py::TestUnpublished::test_node" in output
