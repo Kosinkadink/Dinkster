@@ -49,6 +49,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_environment_cli.py::test_custom_cli_setup_retains_base_on_update_without_definition \
   tests/test_environment_history.py \
   tests/test_environment_runtime.py::test_start_status_idempotence_and_stop \
+  tests/test_environment_runtime.py::test_start_failure_preserves_exit_code_and_current_output \
   'tests/test_environment_transactions.py::test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation[crlf-None]' \
   tests/test_environment_transactions.py::test_completed_activation_recovers_history_publication_once_after_process_exit \
   tests/test_workflow_requirements.py \
