@@ -26,7 +26,7 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore
+from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_engine import EngineEvent
@@ -40,7 +40,7 @@ from dinkster_memory import (
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import Node, build_schemas
-from dinkster_server import PackInfo, ServerLibrary, create_app
+from dinkster_server import PackInfo, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
@@ -737,70 +737,40 @@ def test_unpinned_pack_records_development_mode_when_production_was_requested(
 
 def test_compose_defaults_only(
     tmp_path: Path,
-    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
-    first_party_node_packs: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Installed defaults provide the standard surface through independent packs."""
-    runner, defaults = shared_default_composition
+    """Implicit selection uses the configured defaults without adding other packs."""
+    spec = PackSpec(write_iso_manifest(tmp_path))
+    monkeypatch.setattr("dinkster.compose.default_pack_specs", lambda: (spec,))
 
     async def scenario() -> None:
-        async with defaults as composition:
-            assert set(composition.schemas) == set(first_party_node_packs)
-            assert not any(t.startswith("dev.") for t in composition.schemas)
-            assert set(composition.packs) == (
-                set(first_party_node_packs.values()) | {"dinkster-nodes-remote"}
-            )
-            assert composition.node_packs == first_party_node_packs
-            locked = default_pack_specs()
-            assert {
-                next(iter(spec.packs))
-                for spec in locked
-                if spec.packs is not None and not spec.in_process
-            } == set(composition.packs)
-            expected_digests = {
-                pack_id: info.artifact_digest
-                for spec in locked
-                if spec.packs is not None
-                for pack_id, info in spec.packs.items()
-            }
-            assert {
-                pack.pack: pack.artifact_digest for pack in composition.generation.packs
-            } == expected_digests
-            engine = composition.make_engine(lambda event: None)
-            graph = Graph(
-                nodes={
-                    "g": GraphNode(
-                        "dinkster.text.string_concatenate",
-                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                    )
-                }
-            )
-            result = await engine.run(graph, ["g"])
-            assert result.outputs["g"]["STRING"].resolve() == "left:right"
+        composition = await compose_serving(worker_env=WORKER_ENV)
+        try:
+            from tests.isopack_nodes import NODES
 
-            library = ServerLibrary(
-                vault=AssetVault(tmp_path / "vault"),
-                store=LibraryStore(tmp_path / "library.sqlite"),
-                pack_assets=composition.asset_catalog,
+            expected = set(build_schemas(NODES))
+            assert set(composition.schemas) == expected
+            assert set(composition.packs) == {"isopack"}
+            assert composition.node_packs == dict.fromkeys(expected, "isopack")
+            engine = composition.make_engine(lambda event: None)
+            result = await engine.run(
+                Graph(nodes={"g": GraphNode("iso.chatty", {"value": "left:right"})}), ["g"]
             )
-            app = create_app(
-                composition.make_engine,
-                composition.schemas,
-                choices=composition.choices,
-                lazy_choices=composition.lazy_choices,
-                library=library,
-            )
+            assert result.outputs["g"]["value"].resolve() == "LEFT:RIGHT"
+            app = create_app(composition.make_engine, composition.schemas)
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
                 response = await client.get("/api/nodes")
                 payload = await response.json()
                 assert response.status == 200, payload
-                assert set(payload["nodes"]) == set(first_party_node_packs)
+                assert set(payload["nodes"]) == expected
             finally:
                 await client.close()
+        finally:
+            await composition.close()
 
-    runner.run(scenario())
+    run_scenario(scenario())
 
 
 def test_compose_serving_default_resolution_is_atomic(
