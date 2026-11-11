@@ -322,12 +322,19 @@
   as an upper bound across all locked wheel alternatives, not a target-selected
   download promise. `--offline --plan` reads retained release and registry metadata
   only; it does not fetch or repair missing metadata or wheel payloads.
-- `dinkster setup --root PATH --variant VARIANT` prints the published input plan
+- `dinkster setup --variant VARIANT` prints the published input plan
   and asks `Apply this plan? [y/N]`. Declining changes nothing; non-terminal use
   requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
   acquires their verified pack archives, and builds and activates a managed
   generation. `--yes` skips the prompt, not the plan or identity checks.
   Offline application is refused; `--offline --plan` remains read-only.
+- Public setup, serve, stop, update, rollback and bare launch use the managed
+  project at `$DINKSTER_HOME/project` (default `~/.dinkster/project`) or an
+  explicit `--root`. Starting without setup refuses without acquiring software.
+  Bare launch opens the ready engine URL unless `--no-browser` is selected;
+  `serve` and `dinkster-serve` do not open a browser. The engine continues under
+  the supervisor until stopped. Update and rollback retain their plan/consent
+  flow and software-history protections.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU

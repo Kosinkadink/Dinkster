@@ -1,20 +1,4 @@
-"""The umbrella `dinkster` CLI: one entry point fronting every console script.
-
-DESIGN 5 (doctor exposure plan): `dinkster doctor` is the main-CLI spelling
-of the publish gate. Every subcommand here fronts a standalone
-`dinkster-*` console script, and every standalone script stays installed
-as an alias - same modules, same flags, same exit codes, two doors.
-The dispatcher adds NO behavior of its own: it resolves a name to the
-script's existing main() and gets out of the way, so nothing can drift
-between the `dinkster foo` and `dinkster-foo` spellings.
-
-Subcommand modules import lazily: `dinkster doctor` must not pay for (or
-fail on) the server stack, and vice versa. Two delegation shapes exist
-because the underlying mains do: argv-style mains (doctor, setup) take
-an argument list and return an exit code; the rest parse sys.argv
-internally, so the dispatcher rebinds sys.argv around the call with
-`dinkster <name>` as argv[0] (argparse derives usage prose from it).
-"""
+"""Lazy public commands, with generation lifecycle operations owned by launch."""
 
 from __future__ import annotations
 
@@ -42,14 +26,17 @@ _COMMANDS: dict[str, _Command] = {
         summary="validate a pack: the publish gate (alias: dinkster-doctor)",
     ),
     "serve": _Command(
-        "dinkster.serve",
-        passes_argv=False,
-        summary="run a Dinkster server (alias: dinkster-serve)",
+        "dinkster.launch",
+        passes_argv=True,
+        summary="start the active managed generation (alias: dinkster-serve)",
     ),
+    "stop": _Command("dinkster.launch", True, "stop the active generation's engine"),
+    "update": _Command("dinkster.launch", True, "plan and apply a generation update"),
+    "rollback": _Command("dinkster.launch", True, "restore the previous software snapshot"),
     "setup": _Command(
         "dinkster.setup",
         passes_argv=True,
-        summary="prepare the local installation used by the default launcher",
+        summary="plan and build a locked managed generation",
     ),
     "pack": _Command(
         "dinkster.manager",
@@ -105,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"dinkster: unknown command {head!r}\n\n{_usage()}", file=sys.stderr)
         return 2
     entry = importlib.import_module(command.module).main
+    if command.module == "dinkster.launch":
+        return int(entry(args))
     if command.passes_argv:
         return int(entry(tail))
     saved = sys.argv
