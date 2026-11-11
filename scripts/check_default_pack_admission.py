@@ -224,7 +224,7 @@ def prepare_library_sources(
     resolved = resolve(entries)
     if resolved is None:
         raise ValueError(failure)
-    return Lockfile.of(resolved.values())
+    return Lockfile.of(tuple(resolved.values()))
 
 
 def check_defaults(
