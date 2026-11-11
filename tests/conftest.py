@@ -4,16 +4,21 @@ import asyncio
 import os
 import socket
 import ssl
+import subprocess
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractAsyncContextManager, nullcontext
 from multiprocessing.shared_memory import SharedMemory
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
+    from dinkster_registry import Lockfile
+    from dinkster_workers.pack_lock import PackLock
+
     from dinkster.compose import Composition
 
 # Tests opt in to an isolated fake gateway explicitly. Collection and ordinary
@@ -144,6 +149,134 @@ def installed_default_catalogs() -> None:
             spec.manifest, environment={**(spec.env or {}), "CUDA_VISIBLE_DEVICES": ""}
         )
         assert read_catalog(load_manifest(spec.manifest)) is not None, report
+
+
+@pytest.fixture(scope="session")
+def selected_pack_generation(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    from dinkster_workers.pack_environment import fetch_pack_wheels, provision_pack
+    from dinkster_workers.pack_lock import GenerationPackages, plan_pack
+    from test_pack_environment import _generation
+
+    from scripts.build_release import PUBLISHED_PROJECTS
+    from scripts.run_selected_pack_tests import selected_test_tools
+
+    root = Path(__file__).resolve().parents[1]
+    work = tmp_path_factory.mktemp("selected-engine")
+    python = _generation(work / "generation/python", [])
+    wheels = work / "wheels"
+    for project in PUBLISHED_PROJECTS:
+        subprocess.run(
+            ["uv", "build", "--wheel", "--package", project, "--out-dir", str(wheels)],
+            cwd=root,
+            check=True,
+        )
+    requirements = work / "requirements.txt"
+    subprocess.run(
+        [
+            "uv",
+            "export",
+            "--locked",
+            "--package",
+            "dinkster",
+            "--no-dev",
+            "--no-emit-workspace",
+            "--output-file",
+            str(requirements),
+        ],
+        cwd=root,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--break-system-packages",
+            "--no-deps",
+            "--require-hashes",
+            "--only-binary",
+            ":all:",
+            "-r",
+            str(requirements),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--break-system-packages",
+            "--no-deps",
+            *map(str, sorted(wheels.glob("*.whl"))),
+        ],
+        check=True,
+    )
+    facts = GenerationPackages.inspect(python)
+    tools = selected_test_tools(root, facts, variant="linux-cpu")
+    plan = plan_pack(tools, facts, variant="linux-cpu", own_environment_size=0)
+    fetch_pack_wheels(plan, wheels)
+    provision_pack(
+        plan,
+        generation_python=python,
+        packs=work / "generation/packs",
+        wheel_store=wheels,
+        uv_cache=work / "uv-cache",
+        variant="linux-cpu",
+        in_process=True,
+        offline=True,
+    )
+    return python
+
+
+@pytest.fixture
+def selected_pack_runtime(
+    selected_pack_generation: Path, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[Lockfile, Path], tuple[Path, dict[str, PackLock]]]:
+    import hashlib
+
+    from dinkster_store import pack_archive_path
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from scripts import run_selected_pack_tests as selected
+
+    root = Path(__file__).resolve().parents[1]
+    tools = selected.selected_test_tools
+    monkeypatch.setattr(
+        selected,
+        "selected_test_tools",
+        lambda fixture_root, facts, *, variant: tools(root, facts, variant=variant),
+    )
+
+    def inputs(catalog: Lockfile, artifacts: Path) -> tuple[Path, dict[str, PackLock]]:
+        packages = []
+        for entry in catalog.packs:
+            archive = pack_archive_path(artifacts, entry.artifact_digest)
+            packages.append(
+                LockedDistribution(
+                    entry.pack,
+                    entry.version,
+                    (
+                        LockedWheel(
+                            f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl",
+                            archive.stat().st_size,
+                            hashlib.sha256(archive.read_bytes()).hexdigest(),
+                            archive.as_uri(),
+                        ),
+                    ),
+                )
+            )
+        return selected_pack_generation, {
+            entry.pack: PackLock(entry.pack, "linux-cpu", ">=3.12", (), (), tuple(packages))
+            for entry in catalog.packs
+        }
+
+    return inputs
 
 
 @pytest.fixture(scope="session")

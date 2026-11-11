@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -21,8 +22,10 @@ from urllib.parse import unquote, urlsplit
 from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
 from dinkster_registry.archive_admission import (
     ARCHIVE_LIMIT,
+    ENTRY_LIMIT,
+    EXPANDED_LIMIT,
+    FILE_LIMIT,
     admission_timing,
-    run_ingest_integrity,
 )
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
@@ -129,7 +132,7 @@ def selected_test_tools(root: Path, generation: GenerationPackages, *, variant: 
         [
             "uv",
             "export",
-            "--locked",
+            "--frozen",
             "--only-group",
             "dev",
             "--no-emit-workspace",
@@ -235,6 +238,22 @@ def run_selected_tests(
         if lock.pack != pack.pack:
             raise ValueError(f"selected test dependency lock names {lock.pack}, not {pack.pack}")
         plan_pack(lock, generation, variant=variant, own_environment_size=0).require_layering()
+        archive = pack_archive_path(artifacts, pack.artifact_digest)
+        outer = next((package for package in lock.packages if package.name == pack.pack), None)
+        filename = f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        identity = (
+            filename,
+            archive.stat().st_size,
+            hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        if (
+            outer is None
+            or outer.version != pack.version
+            or not any(
+                (wheel.filename, wheel.size, wheel.sha256) == identity for wheel in outer.wheels
+            )
+        ):
+            raise ValueError(f"selected {pack.pack} dependency lock differs from its archive")
     tools = selected_test_tools(root, generation, variant=variant)
     directories = set(_PACK_DIRECTORIES.values())
     directories.update(
@@ -272,12 +291,23 @@ def run_selected_tests(
             for name, archive in libraries.items():
                 entry = catalog.get(name)
                 assert entry is not None
-                data = archive.read_bytes()
-                integrity = run_ingest_integrity(data, len(data), entry.artifact_digest)
-                if integrity.blocked:
-                    raise ValueError(f"selected library {name} failed archive integrity")
                 library_root = work / "libraries" / name
                 with zipfile.ZipFile(archive) as wheel:
+                    infos = wheel.infolist()
+                    if (
+                        len(infos) > ENTRY_LIMIT
+                        or len({item.filename for item in infos}) != len(infos)
+                        or sum(item.file_size for item in infos) > EXPANDED_LIMIT
+                        or any(
+                            item.file_size > FILE_LIMIT
+                            or not (library_root / item.filename)
+                            .resolve()
+                            .is_relative_to(library_root.resolve())
+                            or "\\" in item.filename
+                            for item in infos
+                        )
+                    ):
+                        raise ValueError(f"selected library {name} has unsafe archive entries")
                     wheel.extractall(library_root)
                     for member in wheel.namelist():
                         if member.endswith(".py") and ".dist-info/" not in member:
