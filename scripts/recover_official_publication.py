@@ -122,8 +122,19 @@ def recovery_inputs(
                     target = work / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(inputs.read(matches[0]))
+            engine_head = json.loads((work / "engine/release-manifest.json").read_bytes())["commit"]
+            if (
+                re.fullmatch(r"[0-9a-f]{40}", engine_head) is None
+                or subprocess.run(
+                    ["git", "-C", str(root), "merge-base", "--is-ancestor", engine_head, head],
+                    check=False,
+                ).returncode
+            ):
+                raise ValueError(
+                    "recovered engine commit must belong to the publication run's main"
+                )
             try:
-                validate_recovered_sources(root, work, head)
+                validate_recovered_sources(root, work, engine_head)
             except SupersededPublication as error:
                 print(f"publication run {run['id']}: continuation skipped; {error}")
                 continue
@@ -139,7 +150,7 @@ def recovery_inputs(
                     continue
         return {
             "recovery_run": str(run["id"]),
-            "recovery_head": head,
+            "recovery_head": engine_head,
             "recovery_artifact": str(source_artifact),
             "recovery_locks": ",".join(
                 str(a["id"]) for a in selected if a["name"].startswith("publication-locks-")

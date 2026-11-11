@@ -3024,6 +3024,8 @@ def test_official_publication_recovery_reuses_inputs_without_resolving_locks(
         "missing-artifact",
         "artifact-head",
         "invalid-head",
+        "invalid-engine-head",
+        "engine-ancestor",
         "foreign-branch",
         "foreign-path",
         "foreign-event",
@@ -3037,10 +3039,13 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     from scripts import recover_official_publication
     from scripts.recover_official_publication import recovery_inputs
 
+    engine_head = {"invalid-engine-head": "main", "engine-ancestor": "b" * 40}.get(
+        problem or "", "a" * 40
+    )
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as inputs:
         inputs.writestr("sources/official-packs.lock", "{}")
-        inputs.writestr("engine/release-manifest.json", "{}")
+        inputs.writestr("engine/release-manifest.json", json.dumps({"commit": engine_head}))
     monkeypatch.setattr(
         recover_official_publication, "validate_recovered_sources", lambda *args: None
     )
@@ -3125,7 +3130,12 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: subprocess.CompletedProcess(a, 1 if problem == "ancestor" else 0),
+        lambda command, **kw: subprocess.CompletedProcess(
+            command,
+            1
+            if problem == "ancestor" or (problem == "engine-ancestor" and command[-2] == "b" * 40)
+            else 0,
+        ),
     )
     if problem in {"completed", "foreign-run", "foreign-branch", "foreign-path", "foreign-event"}:
         assert recovery_inputs(tmp_path, 90) == {}
@@ -3149,6 +3159,8 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
                 "missing-artifact": "unexpired and unique",
                 "invalid-head": "source commit must belong to main",
                 "ancestor": "source commit must belong to main",
+                "invalid-engine-head": "engine commit must belong",
+                "engine-ancestor": "engine commit must belong",
             }[problem],
         ):
             recovery_inputs(tmp_path, 90)
@@ -3162,7 +3174,18 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
 
 
 @pytest.mark.parametrize(
-    "change", [None, "code", "older-valid", "pack-tests", "removed", "engine", "catalog", "bases"]
+    "change",
+    [
+        None,
+        "code",
+        "older-valid",
+        "pack-tests",
+        "removed",
+        "engine",
+        "catalog",
+        "bases",
+        "workflow-head",
+    ],
 )
 def test_publication_continuation_requires_unchanged_selected_git_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, change: str | None
@@ -3228,7 +3251,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
             }
         )
     )
-    if change in {None, "pack-tests"}:
+    if change in {None, "pack-tests", "workflow-head"}:
         validate_recovered_sources(root, work, head)
     else:
         assert change is not None
@@ -3274,8 +3297,14 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
     jobs = [{"name": "sources", "conclusion": "success"}] + [
         {"name": f"locks ({v}, runner)", "conclusion": "success"} for v in variants
     ]
+    workflow_head = after if change == "workflow-head" else head
     artifacts = [
-        {"id": i, "name": name, "expired": False, "workflow_run": {"id": 70, "head_sha": head}}
+        {
+            "id": i,
+            "name": name,
+            "expired": False,
+            "workflow_run": {"id": 70, "head_sha": workflow_head},
+        }
         for i, name in enumerate(
             ["official-publication-inputs", *(f"publication-locks-{v}" for v in variants)], 100
         )
@@ -3297,7 +3326,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
                     "workflow_runs": [
                         {
                             "id": 70,
-                            "head_sha": head,
+                            "head_sha": workflow_head,
                             "head_branch": "main",
                             "head_repository": {"full_name": "Kosinkadink/Dinkster"},
                             "path": ".github/workflows/official-packs.yml",
@@ -3334,8 +3363,9 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
 
     monkeypatch.setattr(subprocess, "check_output", read)
     monkeypatch.setattr(subprocess, "run", run)
-    if change in {None, "pack-tests"}:
+    if change in {None, "pack-tests", "workflow-head"}:
         assert recovery_inputs(root, 90)["recovery_run"] == "70"
+        assert recovery_inputs(root, 90)["recovery_head"] == head
         assert (
             recovery_inputs(root, 90, packs=["dinkster-nodes-foundation"])["recovery_run"] == "70"
         )
