@@ -11,24 +11,19 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_3d import register_types
-from dinkster_3d.load3d import Load3DAdvanced
-from dinkster_3d.preview3d import (
-    Preview3DAdvanced,
-    PreviewGaussianSplat,
-    PreviewPointCloud,
-)
-from dinkster_3d.save3d import Save3DAdvanced, SaveGaussianSplat, SavePointCloud
 from dinkster_api.v1 import (
+    ASSET_TYPE,
     CORE_STRING,
     FILE_3D_GLB_TYPE,
     FILE_3D_GLTF_TYPE,
     FILE_3D_TYPE,
     LOAD_3D_TYPE,
+    AssetWidget,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
+    SourceFilenameSpec,
     TypeExpr,
 )
 from dinkster_assets import (
@@ -53,7 +48,6 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_schema import build_node_types, build_schemas
-from dinkster_server import PackInfo
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -62,155 +56,18 @@ from tests.async_scenarios import run_scenario
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
-
-@pytest.mark.parametrize(
-    "selection,viewport", [(None, {}), ("", None), ("none", {"model_3d_info": None})]
-)
-def test_native_advanced_loader_empty_selection_and_viewport_fallback(
-    selection: str | None, viewport: object
-) -> None:
-    from dinkster_3d.load3d import Load3DAdvanced
-
-    result = Load3DAdvanced.execute(
-        model_file=selection, viewport_state=viewport, width=37, height=91
-    )
-    assert result == {
-        "model_3d": None,
-        "model_3d_info": None if viewport == {"model_3d_info": None} else [],
-        "camera_info": None,
-        "width": 37,
-        "height": 91,
-    }
-
-
-def test_native_advanced_loader_preserves_original_files_and_viewport(tmp_path: Path) -> None:
-    from dinkster_3d.load3d import Load3DAdvanced
-
-    root = tmp_path / "input"
-    root.mkdir()
-    source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"nested/mesh.bin"}]}'
-    (root / "scene.gltf").write_bytes(source)
-    (root / "nested").mkdir()
-    (root / "nested/mesh.bin").write_bytes(b"asymmetric buffer bytes")
-    (root / "opaque.fbx").write_bytes(b"opaque original bytes")
-    table = MountTable(tmp_path / "mounts.json")
-    table.add(MountDef("models", root, kind="media/model3d"))
-    viewport = {"camera_info": {"zoom": 2.25}, "model_3d_info": [{"scale": [2, 3, 5]}]}
-    for name, expected in (("scene.gltf", source), ("opaque.fbx", b"opaque original bytes")):
-        ref = table.bind_name(name, "media/model3d")
-        assert isinstance(ref, LocalAssetRef)
-        result = Load3DAdvanced.execute(
-            model_file=ref, viewport_state=viewport, width=37, height=91
-        )
-        packet = cast(dict[str, object], result["model_3d"])
-        assert packet["source"] is ref
-        assert ref.read_bytes() == expected
-        resources = cast(dict[str, LocalAssetRef], packet["resources"])
-        assert {key: value.read_bytes() for key, value in resources.items()} == (
-            {"nested/mesh.bin": b"asymmetric buffer bytes"} if name.endswith("gltf") else {}
-        )
-        assert result["camera_info"] is viewport["camera_info"]
-        assert result["model_3d_info"] is viewport["model_3d_info"]
-        assert (result["width"], result["height"]) == (37, 91)
-
-
-@pytest.mark.parametrize("in_process", [True, False])
-@pytest.mark.parametrize("selection", ["nested/scene.gltf", "none"])
-def test_native_advanced_loader_runs_after_common_source_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, selection: str
-) -> None:
-    from dinkster_3d.load3d import Load3DAdvanced
-    from dinkster_server.library import ServerLibrary
-    from dinkster_server.preflight import bind_model_names
-
-    root = tmp_path / "input"
-    (root / "nested").mkdir(parents=True)
-    source = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin"}]}'
-    (root / "nested/scene.gltf").write_bytes(source)
-    (root / "nested/mesh.bin").write_bytes(b"distinct companion bytes")
-    snapshot = tmp_path / "mounts.json"
-    mounts = MountTable(snapshot)
-    mounts.add(MountDef("models", root, kind="media/model3d"))
-    vault = AssetVault(tmp_path / "vault")
-    library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"), resolver=mounts)
-    environment = {
-        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
-        "DINKSTER_ASSET_VAULT": str(tmp_path / "vault"),
-        "DINKSTER_ACCELERATOR": "cpu",
-    }
-    for key, value in environment.items():
-        monkeypatch.setenv(key, value)
-    viewport = {
-        "model_3d_info": [],
-        "camera_info": {
-            "position": {"x": 3.0, "y": -2.0, "z": 7.0},
-            "target": {"x": -1.0, "y": 4.0, "z": 0.0},
-            "zoom": 1.75,
-            "cameraType": "perspective",
-        },
-    }
-    schema = Load3DAdvanced.define_schema()
-    graph, missing = bind_model_names(
-        Graph(
-            {
-                "load": GraphNode(
-                    schema.node_type,
-                    {
-                        "model_file": selection,
-                        "viewport_state": TypedLiteral(LOAD_3D_TYPE, viewport),
-                        "width": 37,
-                        "height": 91,
-                    },
-                )
-            }
+FILE_SOURCE_SCHEMA = NodeSchema(
+    "fixture.file3d-source",
+    inputs=(
+        InputSpec(
+            "model_file",
+            TypeExpr.concrete(ASSET_TYPE),
+            default="none",
+            widget=AssetWidget(kind="media/model3d", allow_upload=True),
+            source_filename=SourceFilenameSpec("media/model3d", "input"),
         ),
-        {schema.node_type: schema},
-        library,
-    )
-    assert not missing
-
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        register_asset_type(registry, mounts)
-        register_types(registry)
-        composer = ServingComposer(registry=registry, worker_env=environment)
-        try:
-            manifest = (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-3d/dinkster-pack.toml"
-            )
-            await composer.add_pack(
-                PackSpec(
-                    manifest=manifest.parent.parent / "dinkster-nodes-image/dinkster-pack.toml",
-                    in_process=in_process,
-                    trust_reserved=True,
-                    packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")},
-                )
-            )
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                graph, ["load"]
-            )
-            outputs = result.outputs["load"]
-            packet = outputs["model_3d"].resolve()
-            if selection == "none":
-                assert packet is None
-            else:
-                packet = cast(dict[str, object], packet)
-                assert cast(LocalAssetRef, packet["source"]).read_bytes() == source
-                resources = cast(dict[str, LocalAssetRef], packet["resources"])
-                assert resources["mesh.bin"].read_bytes() == b"distinct companion bytes"
-            assert outputs["model_3d_info"].resolve() == []
-            assert outputs["camera_info"].resolve() == viewport["camera_info"]
-            assert (outputs["width"].resolve(), outputs["height"].resolve()) == (37, 91)
-            assert not result.artifacts
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
+    ),
+)
 
 
 def test_load_file3d_binds_only_declared_adjacent_files_and_roundtrips(
@@ -347,7 +204,7 @@ def test_file3d_source_preflight_grants_declared_unindexed_resources(
     table.add(MountDef("models", root, kind="media/model3d"))
     source = table.bind_name("nested/scene.gltf", "media/model3d")
     assert isinstance(source, LocalAssetRef)
-    schema = Load3DAdvanced.define_schema()
+    schema = FILE_SOURCE_SCHEMA
     input_name = "model" if preview_union else "model_file"
     selection: object = source.to_wire() if bound_identity else "nested/scene.gltf"
     if preview_union:
@@ -413,7 +270,7 @@ def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
 ) -> None:
     from dinkster_server.preflight import bind_model_names
 
-    schema = Load3DAdvanced.define_schema()
+    schema = FILE_SOURCE_SCHEMA
     input_name = "model" if preview_union else "model_file"
     if preview_union:
         schema = NodeSchema(
@@ -505,7 +362,7 @@ def test_file3d_submission_rejects_missing_companions_as_client_error(
     )
     table = MountTable(tmp_path / "mounts.json")
     table.add(MountDef("models", root, kind="media/model3d"))
-    schema = Load3DAdvanced.define_schema()
+    schema = FILE_SOURCE_SCHEMA
     input_name = "model" if preview_union else "model_file"
     if preview_union:
         schema = NodeSchema(
@@ -773,518 +630,6 @@ def test_load_file3d_empty_and_self_contained_binary_sources(tmp_path: Path) -> 
         )
         assert load_file3d(source) == {"format": format_id, "source": source, "resources": {}}
         assert source.read_bytes() == payload
-
-
-@pytest.mark.parametrize("node", [Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud])
-def test_file3d_preview_metadata_precedence_and_original_identity(
-    node: type[Preview3DAdvanced | PreviewGaussianSplat | PreviewPointCloud],
-) -> None:
-    source = {"format": "gltf", "source": object(), "resources": {"mesh.bin": object()}}
-    camera = {"zoom": 2.5}
-    placement = [{"position": {"x": 3.0}}]
-    state = {"camera_info": camera, "model_3d_info": placement}
-    for viewport, explicit_camera, explicit_placement, expected_camera, expected_placement in (
-        (state, None, None, camera, placement),
-        (state, {}, [], {}, []),
-        ({"model_3d_info": None}, None, None, None, None),
-        (None, None, None, None, []),
-    ):
-        result = node.execute(
-            model_3d=source,
-            viewport_state=viewport,
-            width=371,
-            height=209,
-            camera_info=explicit_camera,
-            model_3d_info=explicit_placement,
-        )
-        assert result["model_3d"] is source
-        assert result["camera_info"] == expected_camera
-        assert result["model_3d_info"] == expected_placement
-        assert (result["width"], result["height"]) == (371, 209)
-
-
-class Preview3DFileSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "preview-3d-source.make",
-            outputs=tuple(
-                OutputSpec(node.__name__, TypeExpr.concrete(node.output_type))
-                for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud)
-            )
-            + (OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
-        )
-
-    @classmethod
-    def execute(cls) -> Mapping[str, object]:
-        vault = produced_output_scratch()
-        assert vault is not None
-        refs = []
-        for name, data in (
-            ("original.ply", b"original point bytes"),
-            ("sidecar.bin", b"sidecar bytes"),
-        ):
-            digest = digest_bytes(data)
-            with vault.writer(digest) as writer:
-                writer.write(data)
-                writer.commit()
-            refs.append(
-                AssetRef(digest, name, len(data), "application/octet-stream", resolver=vault)
-            )
-        value = {"format": "ply", "source": refs[0], "resources": {"sidecar.bin": refs[1]}}
-        return cls.outputs(
-            **{
-                node.__name__: value
-                for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud)
-            },
-            viewport={
-                "camera_info": {
-                    "position": {"x": 1.0, "y": 2.0, "z": -3.0},
-                    "target": {"x": 0.0, "y": 1.0, "z": 0.0},
-                    "zoom": 2.5,
-                    "cameraType": "perspective",
-                },
-                "model_3d_info": [],
-            },
-        )
-
-
-@pytest.mark.parametrize("in_process", [True, False])
-def test_file3d_previews_keep_original_assets_through_ordinary_hosts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
-) -> None:
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-    module = f"preview_3d_source_{in_process}"
-    (tmp_path / f"{module}.py").write_text(
-        "from test_model3d_io import Preview3DFileSource\n"
-        "from dinkster_3d import register_types\nNODES=(Preview3DFileSource,)\n",
-        encoding="ascii",
-    )
-    manifest = tmp_path / "source.toml"
-    manifest.write_text(
-        '[pack]\nname="preview-3d-source"\npublisher="dinkster"\n'
-        'namespaces=["preview-3d-source"]\n[pack.entry]\n'
-        f'nodes="{module}:NODES"\ntypes="{module}:register_types"\n',
-        encoding="ascii",
-    )
-
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        register_types(registry)
-        composer = ServingComposer(
-            registry=registry,
-            worker_env={
-                "DINKSTER_ASSET_VAULT": str(tmp_path / "vault"),
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
-                ),
-            },
-        )
-        try:
-            for path in (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-image/dinkster-pack.toml",
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-3d/dinkster-pack.toml",
-                manifest,
-            ):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=path,
-                        in_process=in_process,
-                        trust_reserved=path != manifest,
-                        packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-nodes-image"
-                        else None,
-                    )
-                )
-            nodes = {"source": GraphNode("preview-3d-source.make")}
-            for node in (Preview3DAdvanced, PreviewGaussianSplat, PreviewPointCloud):
-                nodes[node.__name__] = GraphNode(
-                    node.schema().node_type,
-                    {
-                        "model_3d": Link("source", node.__name__),
-                        "viewport_state": Link("source", "viewport"),
-                        "width": 371,
-                        "height": 209,
-                    },
-                )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(Graph(nodes), list(nodes)[1:])
-                assert not result.artifacts
-                for name in list(nodes)[1:]:
-                    out = result.outputs[name]
-                    value = cast("dict[str, object]", out["model_3d"].resolve())
-                    assert value["format"] == "ply"
-                    with cast("AssetRef", value["source"]).open() as stream:
-                        assert stream.read() == b"original point bytes"
-                    resources = cast("dict[str, AssetRef]", value["resources"])
-                    with resources["sidecar.bin"].open() as stream:
-                        assert stream.read() == b"sidecar bytes"
-                    assert out["camera_info"].resolve() == {
-                        "position": {"x": 1.0, "y": 2.0, "z": -3.0},
-                        "target": {"x": 0.0, "y": 1.0, "z": 0.0},
-                        "zoom": 2.5,
-                        "cameraType": "perspective",
-                    }
-                    assert out["model_3d_info"].resolve() == []
-                    assert (out["width"].resolve(), out["height"].resolve()) == (371, 209)
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "out"
-    root.mkdir()
-    index = root / ".dinkster-asset-index.json"
-    index.write_text("{}", "utf-8")
-    snapshot = tmp_path / "mounts.json"
-    snapshot.write_text(
-        json.dumps(
-            {
-                "mounts": [
-                    {
-                        "id": "comfy-output",
-                        "root": str(root),
-                        "index": str(index),
-                        "mode": "readwrite",
-                    }
-                ]
-            }
-        ),
-        "utf-8",
-    )
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    return root, snapshot
-
-
-@pytest.mark.parametrize("node", [Save3DAdvanced, SaveGaussianSplat, SavePointCloud])
-@pytest.mark.parametrize("override", [False, True])
-def test_advanced_3d_saves_preserve_file_and_viewport_precedence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    node: type[Save3DAdvanced | SaveGaussianSplat | SavePointCloud],
-    override: bool,
-) -> None:
-    from dinkster_schema.reporting import capture_saved_artifacts
-
-    output, _ = _mount(tmp_path, monkeypatch)
-    payload = b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
-    digest = digest_bytes(payload)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(payload)
-        writer.commit()
-    source = AssetRef(digest, "original.ply", len(payload), "application/ply", resolver=vault)
-    model = {"format": "ply", "source": source}
-    camera = {
-        "position": {"x": 1.0, "y": 2.0, "z": -3.0},
-        "target": {"x": 0.0, "y": 1.0, "z": 0.0},
-        "zoom": 2.5,
-        "cameraType": "perspective",
-    }
-    placement = [
-        {
-            "position": {"x": 3.0, "y": -2.0, "z": 1.0},
-            "quaternion": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-            "scale": {"x": 1.0, "y": 2.0, "z": 0.5},
-        }
-    ]
-    viewport = {"camera_info": camera, "model_3d_info": placement}
-    unchanged_viewport = json.loads(json.dumps(viewport))
-    explicit_camera = {**camera, "zoom": 0.75}
-    with capture_saved_artifacts() as claims:
-        result = node.execute(
-            model_3d=model,
-            viewport_state=viewport,
-            filename_prefix="scene/model",
-            mount="comfy-output",
-            width=789,
-            height=321,
-            camera_info=explicit_camera if override else None,
-            model_3d_info=[] if override else None,
-        )
-    assert result == {
-        "model_3d": model,
-        "camera_info": explicit_camera if override else viewport["camera_info"],
-        "model_3d_info": [] if override else viewport["model_3d_info"],
-        "width": 789,
-        "height": 321,
-    }
-    assert result["model_3d"] is model
-    assert (output / "scene/model_00001.ply").read_bytes() == payload
-    assert len(claims) == 1 and claims[0]["digest"] == digest
-    assert viewport == unchanged_viewport
-
-
-@pytest.mark.parametrize("format", ["gltf", "obj"])
-def test_native_save_exports_original_named_sidecars_without_collisions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format: str
-) -> None:
-    from dinkster_schema.reporting import capture_saved_artifacts
-
-    output, snapshot = _mount(tmp_path, monkeypatch)
-    vault = AssetVault(tmp_path / "vault")
-    files = (
-        {
-            "source.gltf": (
-                b'{"asset":{"version":"2.0"},"buffers":[{"uri":"data/mesh.bin"}],'
-                b'"images":[{"uri":"textures/color%20map.png"}]}'
-            ),
-            "data/mesh.bin": b"\x01\x03\x09",
-            "textures/color map.png": b"distinct texture bytes",
-        }
-        if format == "gltf"
-        else {
-            "source.obj": b"mtllib materials/scene.mtl\nv 0 1 2\n",
-            "materials/scene.mtl": b"newmtl surface\nmap_Kd ../textures/color map.png\n",
-            "textures/color map.png": b"different OBJ texture bytes",
-        }
-    )
-    refs = {}
-    for name, data in files.items():
-        digest = digest_bytes(data)
-        with vault.writer(digest) as writer:
-            writer.write(data)
-            writer.commit()
-        refs[name] = AssetRef(digest, Path(name).name, len(data), resolver=vault)
-    primary = f"source.{format}"
-    resources = {name: ref for name, ref in refs.items() if name != primary}
-    packet = {"format": format, "source": refs[primary], "resources": resources}
-    occupied = output / "nested/export_00001"
-    occupied.mkdir(parents=True)
-    (occupied / primary).write_bytes(b"existing unrelated export")
-    for counter in (2, 3):
-        with capture_saved_artifacts() as claims:
-            saved = Save3DAdvanced.execute(
-                model_3d=packet,
-                viewport_state={},
-                filename_prefix="nested/export",
-                mount="comfy-output",
-            )
-        assert saved["model_3d"] is packet
-        assert len(claims) == len(files)
-        for name, expected in files.items():
-            assert (output / f"nested/export_{counter:05d}" / name).read_bytes() == expected
-        resolver = MountSnapshotResolver(snapshot)
-        assert {claim["digest"] for claim in claims} == {ref.digest for ref in refs.values()}
-        for claim in claims:
-            assert AssetRef.from_wire(claim, resolver).read_bytes() in files.values()
-    assert (occupied / primary).read_bytes() == b"existing unrelated export"
-    grants = json.loads(snapshot.read_text())
-    grants["mounts"][0]["mode"] = "read"
-    snapshot.write_text(json.dumps(grants))
-    with pytest.raises(AssetError, match="read-only"):
-        Save3DAdvanced.execute(
-            model_3d=packet,
-            viewport_state={},
-            filename_prefix="nested/export",
-            mount="comfy-output",
-        )
-    assert not (output / "nested/export_00004").exists()
-
-
-@pytest.mark.parametrize("resource_name", ["source.gltf", "SOURCE.gltf", "source.gltf/buffer"])
-def test_native_save_rejects_primary_resource_name_collisions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resource_name: str
-) -> None:
-    output, _ = _mount(tmp_path, monkeypatch)
-    vault = AssetVault(tmp_path / "vault")
-    data = b"distinct model bytes"
-    digest = digest_bytes(data)
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        writer.commit()
-    ref = AssetRef(digest, "source.gltf", len(data), resolver=vault)
-    with pytest.raises(AssetError, match="collision"):
-        Save3DAdvanced.execute(
-            model_3d={"format": "gltf", "source": ref, "resources": {resource_name: ref}},
-            viewport_state={},
-            mount="comfy-output",
-        )
-    assert not (output / "3d").exists()
-
-
-class Advanced3DFileSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "advanced-3d-source.make",
-            inputs=(InputSpec("case", TypeExpr.concrete(CORE_STRING), default="viewport"),),
-            outputs=(
-                OutputSpec("file", TypeExpr.concrete(FILE_3D_TYPE)),
-                OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),
-            ),
-        )
-
-    @classmethod
-    def execute(cls, *, case: str = "viewport") -> Mapping[str, object]:
-        vault = produced_output_scratch()
-        assert vault is not None
-        if case == "sidecars":
-            refs = {}
-            for name, data in {
-                "scene.gltf": (
-                    b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin"}],'
-                    b'"images":[{"uri":"textures/color%20map.png"}]}'
-                ),
-                "mesh.bin": b"asymmetric buffer bytes",
-                "textures/color map.png": b"different texture bytes",
-            }.items():
-                digest = digest_bytes(data)
-                with vault.writer(digest) as writer:
-                    writer.write(data)
-                    writer.commit()
-                refs[name] = AssetRef(digest, Path(name).name, len(data), resolver=vault)
-            primary = refs.pop("scene.gltf")
-            return cls.outputs(
-                file={"format": "gltf", "source": primary, "resources": refs}, viewport={}
-            )
-        payload = b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
-        digest = digest_bytes(payload)
-        with vault.writer(digest) as writer:
-            writer.write(payload)
-            writer.commit()
-        ref = AssetRef(digest, "source.ply", len(payload), "application/ply", resolver=vault)
-        if case != "viewport":
-            return cls.outputs(
-                file={"format": "ply", "source": ref},
-                viewport={"model_3d_info": None} if case == "null_placement" else {},
-            )
-        return cls.outputs(
-            file={"format": "ply", "source": ref},
-            viewport={
-                "camera_info": {
-                    "position": {"x": 1.0, "y": 2.0, "z": -3.0},
-                    "target": {"x": 0.0, "y": 1.0, "z": 0.0},
-                    "zoom": 2.5,
-                    "cameraType": "perspective",
-                },
-                "model_3d_info": [],
-            },
-        )
-
-
-@pytest.mark.parametrize("in_process", [True, False])
-@pytest.mark.parametrize("case", ["viewport", "empty", "null_placement", "sidecars"])
-def test_advanced_3d_save_ordinary_hosts_twice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, case: str
-) -> None:
-    output = tmp_path / "out"
-    output.mkdir()
-    mounts = tmp_path / "mounts.json"
-    table = MountTable(mounts, index_root=tmp_path / "index")
-    table.add(MountDef("output", output, mode="readwrite"))
-    table.scan("output")
-    table.select_output_mount("output")
-    vault = tmp_path / "vault"
-    environment = {
-        "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
-        "DINKSTER_ASSET_VAULT": str(vault),
-        "DINKSTER_ACCELERATOR": "cpu",
-        "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
-    }
-    for key, value in environment.items():
-        monkeypatch.setenv(key, value)
-    module = f"advanced_source_{case}"
-    (tmp_path / f"{module}.py").write_text(
-        "from test_model3d_io import Advanced3DFileSource\n"
-        "from dinkster_3d import register_types\n"
-        "NODES=(Advanced3DFileSource,)\n",
-        encoding="ascii",
-    )
-    manifest = tmp_path / "source.toml"
-    manifest.write_text(
-        '[pack]\nname="advanced-3d-source"\npublisher="dinkster"\n'
-        'namespaces=["advanced-3d-source"]\n[pack.entry]\n'
-        f'nodes="{module}:NODES"\ntypes="{module}:register_types"\n',
-        encoding="ascii",
-    )
-
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        register_types(registry)
-        composer = ServingComposer(registry=registry, worker_env=environment)
-        try:
-            for path in (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-image/dinkster-pack.toml",
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-3d/dinkster-pack.toml",
-                manifest,
-            ):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=path,
-                        in_process=in_process,
-                        trust_reserved=path != manifest,
-                        packs={"dinkster-image": PackInfo("dinkster-image", version="0.0.1")}
-                        if path.parent.name == "dinkster-nodes-image"
-                        else None,
-                    )
-                )
-            graph = Graph(
-                {
-                    "source": GraphNode("advanced-3d-source.make", {"case": case}),
-                    "preview": GraphNode(
-                        Preview3DAdvanced.schema().node_type,
-                        {
-                            "model_3d": Link("source", "file"),
-                            "viewport_state": Link("source", "viewport"),
-                        },
-                    ),
-                    "save": GraphNode(
-                        Save3DAdvanced.schema().node_type,
-                        {
-                            "model_3d": Link("preview", "model_3d"),
-                            "viewport_state": Link("source", "viewport"),
-                        },
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for attempt in (1, 2):
-                result = await engine.run(graph, ["save"])
-                assert "save" in result.executed
-                if case == "sidecars":
-                    assert len(result.artifacts) == 3
-                    folder = output / f"3d/ComfyUI_{attempt:05d}"
-                    packet = cast(
-                        "Mapping[str, object]", result.outputs["save"]["model_3d"].resolve()
-                    )
-                    original = cast(AssetRef, packet["source"]).read_bytes()
-                    assert (folder / "scene.gltf").read_bytes() == original
-                    assert json.loads(original)["images"][0]["uri"] == "textures/color%20map.png"
-                    resources = cast("Mapping[str, AssetRef]", packet["resources"])
-                    assert {name: ref.read_bytes() for name, ref in resources.items()} == {
-                        "mesh.bin": b"asymmetric buffer bytes",
-                        "textures/color map.png": b"different texture bytes",
-                    }
-                    for name, ref in resources.items():
-                        assert (folder / name).read_bytes() == ref.read_bytes()
-                else:
-                    assert len(result.artifacts) == 1
-                    file = output / f"3d/ComfyUI_{attempt:05d}.ply"
-                    assert file.read_bytes() == (
-                        b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n1 2 -7\n"
-                    )
-                camera = result.outputs["save"]["camera_info"].resolve()
-                if case == "viewport":
-                    assert cast(dict[str, object], camera)["zoom"] == 2.5
-                else:
-                    assert camera is None
-                assert result.outputs["save"]["model_3d_info"].resolve() == (
-                    None if case == "null_placement" else []
-                )
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
 
 
 def test_file3d_null_roundtrip_preserves_type_and_declares_no_assets() -> None:
@@ -1693,22 +1038,6 @@ def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
             assert vault.has(source.digest) and vault.has(sidecar.digest)
 
     run_scenario(scenario())
-
-
-def test_schemas_declare_upload_save_and_preview_intent() -> None:
-    load = Load3DAdvanced.define_schema()
-    model_input = load.input("model_file")
-    assert model_input is not None
-    assert model_input.source_filename is not None
-    assert model_input.source_filename.kind == "media/model3d"
-    load_output = load.output("model_3d")
-    assert load_output is not None and load_output.preview
-    save = Save3DAdvanced.define_schema()
-    assert save.output_node and not save.idempotent
-    preview = Preview3DAdvanced.define_schema()
-    assert preview.output_node
-    preview_output = preview.output("model_3d")
-    assert preview_output is not None and preview_output.preview
 
 
 def test_authored_viewport_captures_rebind_without_granting_paths(tmp_path: Path) -> None:
