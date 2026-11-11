@@ -1563,6 +1563,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
             'dependencies = ["dinkster-engine==1.2.3"]\n'
+            '[project.optional-dependencies]\ninference = ["dinkster-inference==0.1.1"]\n'
             "[tool.uv.workspace]\n"
             'members = ["packages/dinkster-api", "packages/dinkster-engine", '
             '"packages/dinkster-supervisor"]\n'

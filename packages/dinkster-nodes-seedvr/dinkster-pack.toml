@@ -4,7 +4,7 @@ version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.seedvr"]
-requires = ["torch", "dinkster-inference==0.1.1", "numpy"]
+requires = ["torch", "dinkster-inference", "numpy"]
 
 [pack.inference]
 imports = ["ldm.seedvr.color_fix", "ldm.seedvr.constants", "model_management"]

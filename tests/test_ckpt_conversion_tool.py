@@ -8,7 +8,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from dinkster_native.legacy_sources import LegacyConversionResult
+from dinkster_workers.legacy_sources import LegacyConversionResult
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOL_PATH = REPO_ROOT / "tools" / "convert_ckpt_to_safetensors.py"
@@ -53,7 +53,7 @@ def test_ckpt_conversion_tool_delegates_to_canonical_converter(
 def test_ckpt_conversion_tool_contains_no_conversion_logic() -> None:
     source = inspect.getsource(_tool())
 
-    assert "from dinkster_native.legacy_sources import convert_legacy_checkpoint" in source
+    assert "from dinkster_workers.legacy_sources import convert_legacy_checkpoint" in source
     assert "torch.load" not in source
     assert "save_file" not in source
     assert "weights_only" not in source

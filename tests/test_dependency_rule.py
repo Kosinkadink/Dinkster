@@ -83,6 +83,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_memory",
         "dinkster_assets",
         "dinkster_caches",
+        "dinkster_inference_wire",
     },
     "dinkster_memory": {"dinkster_values"},
     # dinkster_assets is allowed so DiskCAS reuses the canonical blake3 digest
@@ -94,18 +95,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_assets",
     },
     "dinkster_assets": {"dinkster_values"},
-    "dinkster_native": {
-        "dinkster_image_document",
-        "dinkster_schema",
-        "dinkster_values",
-        "dinkster_video_runtime",
-        "dinkster_assets",
-        "dinkster_memory",
-        "dinkster_graph",
-        "dinkster_inference_wire",
-        "dinkster_protocol",
-        "dinkster_workers",
-    },
     # Shared materialization consumes portable values, never packs or the scheduler.
     "dinkster_video_runtime": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},

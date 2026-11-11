@@ -5,7 +5,7 @@ description = "Dinkster flux nodes"
 requires-python = ">=3.12"
 dependencies = [
     "dinkster-api",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
     "torch",
     "dinkster-pack-helpers>=0.0.2,<1",
 ]

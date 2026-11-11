@@ -4,7 +4,7 @@ version = "0.0.2"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.moge"]
-requires = ["torch", "dinkster-inference==0.1.1"]
+requires = ["torch", "dinkster-inference"]
 
 [pack.inference]
 imports = ["ldm.colormap", "ldm.moge.geometry", "ldm.moge.model", "ldm.moge.panorama", "model_management", "utils"]

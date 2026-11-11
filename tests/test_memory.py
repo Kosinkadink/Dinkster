@@ -956,7 +956,7 @@ def test_peak_tracks_raw_driver_usage_and_reset_keeps_current_value() -> None:
 def test_native_usage_probe_measures_worker_and_matches_nvml_by_uuid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_native.devices import _nvml_device, torch_vram_telemetry
+    from dinkster_workers.device_memory import _nvml_device, torch_vram_telemetry
 
     _nvml_device.cache_clear()
     handles: list[str] = []

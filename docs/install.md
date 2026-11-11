@@ -18,6 +18,13 @@ for platform artifacts and the unsigned Apple Silicon installation procedure.
 
 ## Inspect a wheel release
 
+The `dinkster` wheel does not require torch or `dinkster-inference` by default.
+For trusted torch nodes hosted in the serving process, install `dinkster[inference]`
+from the same release. The extra pins the inference runtime; it does not change
+isolated pack provisioning. A plain pip installation keeps each isolated pack's
+own dependencies. Managed setup and Desktop instead install the extra into the
+generation, where packs share its inference and torch distributions.
+
 Each `vX.Y.Z` release contains:
 
 - the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, with the

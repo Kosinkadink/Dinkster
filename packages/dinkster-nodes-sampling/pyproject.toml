@@ -8,7 +8,7 @@ dependencies = [
     "torch",
     "numpy",
     "tqdm",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
     "dinkster-pack-helpers>=0.0.2,<1",
 ]
 

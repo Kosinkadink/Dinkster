@@ -29,13 +29,6 @@ from dinkster_memory import (
     PressureSignal,
     ReservationRequest,
 )
-from dinkster_native.memory import (
-    CHECKPOINT_RAM_FACTOR,
-    NATIVE_CHECKPOINT_RAM_FACTOR,
-    ReservationPlanError,
-    plan_reservations,
-)
-from dinkster_native.pool import ResidentPool
 from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import (
     CORE_FLOAT,
@@ -55,6 +48,13 @@ from dinkster_workers import (
     load_manifest,
 )
 from dinkster_workers.boundary import ValueCodec
+from dinkster_workers.reservations import (
+    CHECKPOINT_RAM_FACTOR,
+    NATIVE_CHECKPOINT_RAM_FACTOR,
+    ReservationPlanError,
+    plan_reservations,
+)
+from dinkster_workers.resident_pool import ResidentPool
 from dinkster_workers.session import BoundarySession, WorkerDied
 
 from tests.async_scenarios import run_scenario
@@ -760,7 +760,7 @@ def test_checkpoint_planner_reserves_unloaded_and_unknown_residents(
     pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"vram:cuda:0": 100, "ram": 50}})
     rid = pool.rid_for(object())
     run_scenario(pool.shed(PressureSignal(device="vram:cuda:0", bytes_needed=100)))
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: pool)
+    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: pool)
     invocation = invocation_with_inputs(
         known=resident_input(f"resident:{rid}", {"vram:cuda:0": 100, "ram": 50}),
         unknown=resident_input("resident:old-worker", {"vram:cuda:1": 200}),
@@ -776,7 +776,7 @@ def test_checkpoint_planner_skips_loaded_residents(
 ) -> None:
     pool = ResidentPool(cost_of=lambda obj: {COST_META_KEY: {"vram:cuda:0": 100}})
     rid = pool.rid_for(object())
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: pool)
+    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: pool)
     invocation = invocation_with_inputs(
         model=resident_input(f"resident:{rid}", {"vram:cuda:0": 100})
     )
@@ -786,7 +786,7 @@ def test_checkpoint_planner_skips_loaded_residents(
 def test_checkpoint_planner_deduplicates_resident_ids_and_walks_nested_lists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: ResidentPool())
+    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: ResidentPool())
     child = resident_input("resident:shared", {"vram:cuda:0": 100})
     inner = make_list_value("test.resident", (child, child))
     outer = make_list_value("list<test.resident>", (inner,))
@@ -797,7 +797,7 @@ def test_checkpoint_planner_deduplicates_resident_ids_and_walks_nested_lists(
 def test_checkpoint_planner_reserves_anonymous_vram_costs_without_deduplication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: ResidentPool())
+    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: ResidentPool())
     invocation = invocation_with_inputs(
         first=resident_input(None, {"vram:cuda:0": 75}),
         second=resident_input(None, {"vram:cuda:0": 75}),
@@ -811,7 +811,7 @@ def test_checkpoint_planner_reserves_anonymous_vram_costs_without_deduplication(
 def test_checkpoint_ram_policy_composes_with_input_vram(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dinkster_native.memory.default_pool", lambda: ResidentPool())
+    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: ResidentPool())
     base = asset_invocation(1_000)
     invocation = Invocation(
         invocation_id=base.invocation_id,

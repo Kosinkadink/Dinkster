@@ -5,7 +5,7 @@ engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.upscale"]
 type-namespaces = ["UPSCALE_MODEL"]
-requires = ["torch", "spandrel", "dinkster-inference==0.1.1"]
+requires = ["torch", "spandrel", "dinkster-inference"]
 
 [pack.inference]
 imports = ["model_management", "model_patcher", "storage", "utils"]

@@ -7,7 +7,7 @@ dependencies = [
     "dinkster-api",
     "torch",
     "safetensors",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
 ]
 
 [build-system]

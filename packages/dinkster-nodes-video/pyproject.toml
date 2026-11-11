@@ -9,7 +9,7 @@ dependencies = [
     "numpy>=1.26",
     "torch",
     "torchvision",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
 ]
 
 [build-system]
