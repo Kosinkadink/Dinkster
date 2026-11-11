@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
+import venv
 import zipfile
 from pathlib import Path
 from typing import Literal
 
+import packaging
 import pytest
 from dinkster_registry import artifact_digest
 from dinkster_registry.archive_admission import (
@@ -17,13 +20,82 @@ from dinkster_registry.archive_admission import (
     run_executable_probe,
     run_fast_security,
     run_ingest_integrity,
+    run_locked_probe,
     run_manifest_admission,
 )
 from dinkster_schema import PackCompatibility
 from dinkster_workers import ManifestError, load_manifest
+from dinkster_workers.pack_environment import provision_pack, venv_python
+from dinkster_workers.pack_lock import GenerationPackages, LockedDistribution, PackLock, plan_pack
 from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
+from dinkster_workers.provision import ProvisionError
 
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
+
+
+def test_locked_admission_refuses_the_same_base_conflict_as_user_install(tmp_path: Path) -> None:
+    generation = tmp_path / "generation"
+    venv.EnvBuilder(with_pip=False).create(generation)
+    python = venv_python(generation)
+    site = Path(
+        subprocess.check_output(
+            [str(python), "-I", "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+            text=True,
+        ).strip()
+    )
+    shutil.copytree(Path(packaging.__file__).parent, site / "packaging")
+    metadata = site / "simpleeval-1.0.7.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Name: simpleeval\nVersion: 1.0.7\n")
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text().replace(
+            'name = "color-tools"',
+            'name = "dinkster-utilities"\nrequires = ["simpleeval==1.0.8"]',
+        )
+    )
+    lock = PackLock(
+        "dinkster-utilities",
+        "linux-cpu",
+        ">=3.12",
+        ("simpleeval==1.0.8",),
+        (),
+        (LockedDistribution("simpleeval", "1.0.8", ()),),
+    )
+    plan = plan_pack(
+        lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=0
+    )
+    assert plan.conflicts == ("simpleeval: generation has 1.0.7, lock needs 1.0.8",)
+    with pytest.raises(ProvisionError, match="generation has 1.0.7, lock needs 1.0.8") as refused:
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=generation / "packs",
+            wheel_store=tmp_path / "wheels",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+            offline=True,
+        )
+    result = run_locked_probe(
+        root,
+        lock,
+        generation_python=python,
+        packs=generation / "packs",
+        wheel_store=tmp_path / "wheels",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+        offline=True,
+        require_isolation=False,
+    )
+    assert result.blocked and not result.review
+    assert [(finding.code, finding.message) for finding in result.findings] == [
+        ("probe.dependencies-incompatible", str(refused.value))
+    ]
+    assert not (generation / "packs").exists()
+    assert not (tmp_path / "wheels").exists()
+    assert not (tmp_path / "cache").exists()
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])

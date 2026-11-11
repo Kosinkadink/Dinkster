@@ -41,7 +41,10 @@ from dinkster_workers.doctor import (
     diagnose_static,
 )
 from dinkster_workers.manifest import ManifestError, PackManifest, load_manifest
+from dinkster_workers.pack_environment import provision_pack
+from dinkster_workers.pack_lock import GenerationPackages, PackLock, plan_pack
 from dinkster_workers.pack_wheel import pack_manifest_path, validate_pack_wheel
+from dinkster_workers.provision import ProvisionError
 from dinkster_workers.sandbox import SandboxError, detect_probe_jail
 from packaging.licenses import InvalidLicenseExpression, canonicalize_license_expression
 from packaging.requirements import InvalidRequirement, Requirement
@@ -534,6 +537,48 @@ def _probe_failure_message(stdout: bytes) -> str:
     return "Executable probe failed with a pack error."
 
 
+def run_locked_probe(
+    root: Path,
+    lock: PackLock,
+    *,
+    generation_python: Path,
+    packs: Path,
+    wheel_store: Path,
+    uv_cache: Path,
+    variant: str,
+    settings: ProbeSettings | None = None,
+    require_isolation: bool = True,
+    offline: bool = False,
+) -> StageResult:
+    """Probe verified archive bytes with the user's locked pack provisioner."""
+    try:
+        manifest = load_manifest(root / MANIFEST_FILENAME)
+        if lock.pack != manifest.name:
+            raise ProvisionError("dependency lock pack differs from the archive")
+        with admission_timing(manifest.name, "probe-dependency-install"):
+            plan = plan_pack(
+                lock,
+                GenerationPackages.inspect(generation_python),
+                variant=variant,
+                own_environment_size=0,
+            )
+            python = provision_pack(
+                plan,
+                generation_python=generation_python,
+                packs=packs,
+                wheel_store=wheel_store,
+                uv_cache=uv_cache,
+                variant=variant,
+                offline=offline,
+            )
+    except (ManifestError, ProvisionError) as exc:
+        return StageResult((_block("probe.dependencies-incompatible", str(exc)),))
+    with admission_timing(manifest.name, "probe-execution"):
+        return _run_executable_probe(
+            root, settings or ProbeSettings(), require_isolation, python=python
+        )
+
+
 def run_executable_probe(
     root: Path,
     *,
@@ -627,6 +672,8 @@ def _run_executable_probe(
     configured: ProbeSettings,
     require_isolation: bool,
     dependencies: Path | None = None,
+    *,
+    python: Path | None = None,
 ) -> StageResult:
     manifest_path = root / MANIFEST_FILENAME
     jail = None
@@ -648,7 +695,8 @@ def _run_executable_probe(
     probe_module = (
         "dinkster_registry._archive_probe" if jail is None else "dinkster_workers._doctor_probe"
     )
-    command = [sys.executable, "-m", probe_module, str(manifest_path)]
+    executable = str(python) if python is not None else sys.executable
+    command = [executable, "-m", probe_module, str(manifest_path)]
     environment = _probe_environment()
     if dependencies is not None:
         # Trusted bootstrap imports the harness before adding dependency paths.
@@ -656,7 +704,7 @@ def _run_executable_probe(
         environment["PYTHONPATH"] = os.pathsep.join([*paths, str(dependencies)])
         if jail is None:
             command = [
-                sys.executable,
+                executable,
                 "-c",
                 "import runpy, sys; "
                 f"sys.path.extend([{str(dependencies)!r}]); "
