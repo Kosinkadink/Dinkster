@@ -6,9 +6,19 @@ Only single-pack submission is available. A submission is not a publication unti
 the scanner accepts it and its release is `active`.
 
 Use Python 3.12+, [uv](https://docs.astral.sh/uv/), and a POSIX shell.
-Ask your registry operator to register your publisher and issue a token scoped to
-your pack. For this example, ask for a **disposable registry**, its origin URL,
-and a token for `maple-text`. Do not submit example packs to production.
+Open [publisher accounts](https://id.dinkster.org/registry), sign in with your
+Dinkster account, select your account or an organization you own or administer,
+and choose **Claim publisher**. The name is your Dinkster handle or organization
+slug, bound to its immutable id, not proof of a matching GitHub name. Existing
+registry names and `dinkster` are reserved. A claim grants no official tier.
+Choose an expiry at most 90 days away and your pack name for single-pack scope,
+then **Create token**. Save its one-time value in a secret manager. Refresh lists
+metadata only; **Revoke token** refuses subsequent publishing requests. No server
+access or operator command is needed to register or obtain a publish credential.
+
+For this example, use a **disposable registry**, its origin URL, and its identity
+service's `/registry` page to obtain a token scoped to `maple-text`. Do not submit
+example packs to production. The registry service and scanner must already run.
 Set `DINKSTER_REGISTRY_URL` and `DINKSTER_REGISTRY_TOKEN` privately in your shell.
 Never commit tokens, pass them as command arguments, or paste them into support reports.
 The operator runs the service and its scanner; no private engine source is needed
@@ -259,5 +269,6 @@ retry the operator's index rebuild, not the yank.
 
 For help, open a [Dinkster issue](https://github.com/Kosinkadink/Dinkster/issues)
 with your pack name/version, candidate id, finding codes/messages and doctor output.
-For token access, ownership, isolation or storage problems, contact the registry
-operator. Include no token, environment dump or secret-bearing log.
+For a disputed or reserved publisher name, isolation or storage problems, contact
+registry support. Create, replace and revoke your own publish tokens on the
+identity service's publisher page. Include no token, environment dump or secret-bearing log.
