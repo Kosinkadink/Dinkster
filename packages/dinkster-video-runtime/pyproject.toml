@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-video-runtime"
-version = "0.0.2"
+version = "0.0.3"
 description = "Bounded VIDEO materialization shared by native and compatibility nodes"
 requires-python = ">=3.12"
 dependencies = [
