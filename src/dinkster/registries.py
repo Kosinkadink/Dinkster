@@ -196,7 +196,7 @@ def publish_release(
         candidate_id = document["candidateId"]
         if (
             not isinstance(state, str)
-            or state not in {"queued", "scanning", "accepted"}
+            or state not in {"queued", "scanning", "retrying", "accepted"}
             or not isinstance(candidate_id, str)
         ):
             raise TypeError

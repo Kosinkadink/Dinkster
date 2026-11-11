@@ -1807,6 +1807,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
         ("raw", "queued"),
         ("locks", "queued"),
         ("locks", "scanning"),
+        ("locks", "retrying"),
         ("locks", "accepted"),
         ("missing", "queued"),
         ("refused", "queued"),
