@@ -144,7 +144,9 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         cached = None
         if mode in {"offline", "corrupt-cache"}:
             cached = (
-                object_path(store / "wheels", "sha256:" + hashlib.sha256(b"example-pack").hexdigest())
+                object_path(
+                    store / "wheels", "sha256:" + hashlib.sha256(b"example-pack").hexdigest()
+                )
                 / "example_pack-1.2.3-py3-none-any.whl"
             )
             cached.parent.mkdir(parents=True, exist_ok=True)
