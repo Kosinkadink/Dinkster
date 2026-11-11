@@ -386,6 +386,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
         (REPO_ROOT / "packages/dinkster-inference-wire/pyproject.toml").read_text()
     )["project"]
     assert root_project["optional-dependencies"] == {
+        "inference": ["dinkster-inference==0.1.1"],
         "default": [
             "dinkster-supervisor",
         ],
@@ -408,6 +409,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
     inference_locked = packages["dinkster-inference-wire"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
+        "inference": [{"name": "dinkster-inference"}],
         "default": [
             {"name": "dinkster-supervisor"},
         ],

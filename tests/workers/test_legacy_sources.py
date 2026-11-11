@@ -1,4 +1,4 @@
-"""Legacy checkpoint conversion at the compat boundary."""
+"""Legacy checkpoint conversion at the worker boundary."""
 
 from __future__ import annotations
 

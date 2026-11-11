@@ -1560,6 +1560,18 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     frontend = tmp_path / "frontend.zip"
     frontend_payload, frontend_pin = artifact()
     frontend.write_bytes(frontend_payload)
+    inference_wheel = tmp_path / "dinkster_inference-0.1.1-py3-none-any.whl"
+    with zipfile.ZipFile(inference_wheel, "w") as wheel:
+        metadata = "dinkster_inference-0.1.1.dist-info"
+        wheel.writestr(
+            f"{metadata}/METADATA",
+            "Metadata-Version: 2.1\nName: dinkster-inference\nVersion: 0.1.1\n",
+        )
+        wheel.writestr(
+            f"{metadata}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        )
+        wheel.writestr(f"{metadata}/RECORD", "")
+    monkeypatch.setenv("UV_FIND_LINKS", str(tmp_path))
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
