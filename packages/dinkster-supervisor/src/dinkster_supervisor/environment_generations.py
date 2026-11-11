@@ -339,15 +339,19 @@ from dinkster.registries import (
 )
 from dinkster_registry import Lockfile
 project = Path(sys.argv[1])
+arguments = dict(zip(sys.argv[2::2], sys.argv[3::2], strict=True))
 config_path = project / 'registries.toml'
-if config_path.is_file():
+if '--registries' in arguments:
+    config = load_registries(Path(arguments['--registries']))
+elif config_path.is_file():
     config = load_registries(config_path)
 elif os.environ.get('DINKSTER_REGISTRIES'):
     config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
 else:
     config = RegistryConfig()
-selector = os.environ.get('DINKSTER_REGISTRY', '')
-if not selector and not config_path.is_file() and not os.environ.get('DINKSTER_REGISTRIES'):
+selector = arguments.get('--registry', os.environ.get('DINKSTER_REGISTRY', ''))
+if (not selector and not config_path.is_file()
+        and not os.environ.get('DINKSTER_REGISTRIES') and '--registries' not in arguments):
     selector = 'https://registry.dinkster.org'
 selected = select_registry(config, selector) if selector else None
 installer = Installer(
@@ -364,7 +368,13 @@ print(json.dumps(missing))
 
 
 def restore_pack_sources(
-    generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path, store: Path
+    generation: Path,
+    *,
+    catalog_lock: Path,
+    artifacts: Path,
+    project: Path,
+    store: Path,
+    registry_arguments: tuple[str, ...] = (),
 ) -> None:
     """Acquire exact source bytes in scratch without provisioning or activating packs."""
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
@@ -381,7 +391,15 @@ def restore_pack_sources(
                 # Older target engines still consume flat digest-named archives.
                 shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
         completed = subprocess.run(
-            [str(interpreter(generation)), "-I", "-B", "-c", ACQUIRE_PACK_SOURCES, str(project)],
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-c",
+                ACQUIRE_PACK_SOURCES,
+                str(project),
+                *registry_arguments,
+            ],
             cwd=scratch,
             input=json.dumps(lock),
             capture_output=True,
@@ -512,6 +530,7 @@ def prepare_engine_interpreter(
     constraints: Path,
     uv: str = "uv",
     refresh_cache: bool = False,
+    uv_cache: Path | None = None,
 ) -> Path:
     """Prepare acquired engine inputs in a new caller-owned, unsealed directory.
 
@@ -589,7 +608,7 @@ def prepare_engine_interpreter(
     )
     environment = {
         **os.environ,
-        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_CACHE_DIR": str(uv_cache if uv_cache is not None else store / "uv-cache"),
         "UV_OFFLINE": "1",
         "UV_NO_INDEX": "1",
         "UV_PYTHON_DOWNLOADS": "never",

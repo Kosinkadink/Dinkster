@@ -117,6 +117,8 @@ from .registries import (
     resolve_release,
     routing_registry_fetcher,
     select_registry,
+    static_pack_release,
+    static_release_wheel,
 )
 
 GIT_PREFIX = "git+"
@@ -491,13 +493,35 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
     except (OSError, ValueError) as exc:
         raise InstallError(str(exc)) from exc
     metadata = cast("dict[str, object]", review["metadata"])
-    print(f"Project: {root}\nStore: {review['store']}\nCurrent generation: {review['current']}")
+    print(
+        f"Project: {root}\nStore: {review['store']}\n"
+        f"Current generation: {review['current']} -> proposed generation: {review['next']}"
+    )
     print(
         f"Retain engine {metadata['engineVersion']} ({metadata['engineRelease']}); "
         f"base {metadata['baseId']}; variant {metadata['variant']}"
     )
     for line in cast("list[str]", metadata["plan"]):
         print(line)
+    previous = Lockfile.from_record_json(json.dumps(metadata["previousSources"]))
+    proposed = Lockfile.from_record_json(json.dumps(metadata["sources"]))
+    for entry in proposed.packs:
+        old = previous.get(entry.pack)
+        print(
+            f"{entry.pack}: {old.version if old else 'absent'} -> {entry.version}; "
+            f"{old.artifact_digest if old else 'absent'} -> {entry.artifact_digest}; "
+            f"registry/source {old.source if old else 'absent'} -> {entry.source}"
+        )
+    for row in cast("list[dict[str, object]]", metadata["sourceCosts"]):
+        print(
+            f"Source {row['pack']}: {'verified cached' if row['cached'] else 'download required'}; "
+            f"{row['bytes'] if row['bytes'] is not None else 'unknown upper bound'} bytes"
+        )
+    for row in cast("list[dict[str, object]]", metadata["dependencyCosts"]):
+        print(
+            f"Dependency wheel upper bound: {row['filename']}; sha256:{row['sha256']}; "
+            f"{row['size']} bytes; {'verified cached' if row['cached'] else 'download if selected'}"
+        )
     for name, lock in cast("dict[str, object]", metadata["dependencyLocks"]).items():
         identity = hashlib.sha256(json.dumps(lock, sort_keys=True).encode("ascii")).hexdigest()
         print(f"Dependency lock: {name}; sha256:{identity}")
@@ -1286,6 +1310,7 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     config = _registry_config(args)
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
     index = StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True)
+    installed = Lockfile()
     if args.installed_lock is not None:
         try:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
@@ -1320,6 +1345,23 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
         for package in lock.packages
         for wheel in package.wheels
     }
+    source_wheels: dict[str, object] = {}
+    selected_registry = select_registry(config, args.registry) if args.registry else None
+    for entry in sources.packs:
+        if entry.pack not in {lock.pack for lock in locks}:
+            continue
+        registry = config.registry_for(entry, selected_registry)
+        wheel, identity = static_release_wheel(
+            registry, static_pack_release(registry, entry.pack, entry.version, index=index)
+        )
+        if identity != entry.artifact_digest:
+            raise InstallError(f"{entry.pack}: published source identity changed")
+        source_wheels[entry.pack] = {
+            "filename": wheel.filename,
+            "size": wheel.size,
+            "sha256": wheel.sha256,
+            "url": wheel.url,
+        }
     print(
         json.dumps(
             {
@@ -1328,6 +1370,10 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                 "variant": args.variant,
                 "baseId": args.base_id,
                 "sources": json.loads(sources.record_json()),
+                "previousSources": json.loads(installed.record_json())
+                if args.installed_lock is not None
+                else {"packs": []},
+                "sourceWheels": source_wheels,
                 "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
                 "maximumPackPayloadBytes": sum(payloads.values()),
                 "plan": [

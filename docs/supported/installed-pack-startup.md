@@ -155,8 +155,9 @@
   and do not downgrade; missing releases and invalid published locks are reported
   together without acquiring pack payloads or changing the project.
 - Published pack install/update commands on an active managed project display
-  the retained engine/base/variant, exact selected identities, published locks,
-  payload upper bound and worker cost before confirmation. Non-terminal use
+  the retained engine/base/variant, old/new identities, proposed generation,
+  published locks, verified cached versus downloadable payloads, wheel-byte
+  upper bounds and worker cost before confirmation. Non-terminal use
   requires `--yes` or a saved plan. Declining leaves the project and store
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
   or selection metadata; successful application activates a fresh generation.

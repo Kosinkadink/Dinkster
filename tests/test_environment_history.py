@@ -163,6 +163,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 refusal = capsys.readouterr()
                 assert "--yes" in refusal.err
                 assert "Pack payload upper bound:" in refusal.out
+                assert "proposed generation: 3" in refusal.out
+                assert "healthy: absent -> 1.0.0" in refusal.out
+                assert "Source healthy: download required" in refusal.out
                 terminal.setattr(sys.stdin, "isatty", lambda: True)
                 terminal.setattr("builtins.input", lambda _: "no")
                 run_cli(*command)

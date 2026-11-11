@@ -142,6 +142,8 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
     tmp_path: Path, failure: str
 ) -> None:
     wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
+    other = _wheel(tmp_path, "another-extra", "2.3", "another_extra", "value = 47\n")
+    (tmp_path / other.filename).unlink()
     source = tmp_path / wheel.filename
     if failure == "missing":
         source.unlink()
@@ -160,7 +162,10 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
         ">=3.12",
         ("fixture-extra==1.2",),
         (),
-        (LockedDistribution("fixture-extra", "1.2", (wheel,)),),
+        (
+            LockedDistribution("fixture-extra", "1.2", (wheel,)),
+            LockedDistribution("another-extra", "2.3", (other,)),
+        ),
     )
     generation = tmp_path / "generations/1"
     python = _generation(generation / "python", [])
@@ -179,6 +184,7 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
         )
     message = str(error.value)
     assert f"pack example: {wheel.url}: download/verification failed:" in message
+    assert f"pack example: {other.url}: download/verification failed:" in message
     assert {
         "missing": "urlopen error",
         "hash": "wheel hash or size mismatch",

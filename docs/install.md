@@ -119,8 +119,9 @@ no pack archives and does not create a generation or write a cache.
 For an active managed project, `dinkster pack --root PROJECT install PACK@VERSION`
 reviews published pack additions or replacements against its retained engine,
 base and variant. `update [PACK ...]` reviews compatible installed registry
-updates. The terminal displays the selection, published dependency-lock identities,
-payload upper bound and worker cost before confirmation. Use `--yes` for unattended
+updates. The terminal displays old/new source identities, the proposed generation,
+published dependency-lock identities, verified cached versus downloadable payloads,
+wheel-byte upper bounds and worker cost before confirmation. Use `--yes` for unattended
 application, or `--plan FILE` to save the review outside the project and store.
 `dinkster pack --root PROJECT apply FILE` rechecks that review before using the
 shared generation builder and activation. Saved reviews expire after 15 minutes;
