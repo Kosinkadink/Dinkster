@@ -54,7 +54,7 @@ import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from dinkster_registry import (
     ArtifactError,
@@ -84,7 +84,7 @@ from dinkster_workers.doctor import diagnose, prepare_catalog, render_text
 from dinkster_workers.pack_wheel import wheel_filename
 
 from . import __version__ as dinkster_version
-from .compose import CompositionError, PackSpec, resolve_manifest_path
+from .composition_error import CompositionError
 from .installer import (
     LOCAL_PUBLISHER,
     LOCAL_VERSION,
@@ -114,6 +114,9 @@ from .registries import (
     routing_registry_fetcher,
     select_registry,
 )
+
+if TYPE_CHECKING:
+    from .compose import PackSpec
 
 GIT_PREFIX = "git+"
 
@@ -378,6 +381,8 @@ def _finish(
 
 
 def _cmd_install(args: argparse.Namespace) -> None:
+    from .compose import resolve_manifest_path
+
     installer = _installer(args)
     current = installer.current_lockfile()
     entries = {entry.pack: entry for entry in (current.packs if current is not None else ())}
@@ -441,6 +446,8 @@ def _cmd_update(args: argparse.Namespace) -> None:
 
 def _cmd_publish(args: argparse.Namespace) -> None:
     """Preflight, archive, upload, and submit one pack for admission."""
+    from .compose import resolve_manifest_path
+
     problem = validate_version(args.version)
     if problem is not None:
         raise RegistryPublishError(f"version {args.version!r} {problem}")

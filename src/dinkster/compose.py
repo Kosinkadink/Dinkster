@@ -246,6 +246,7 @@ from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
 from packaging.requirements import Requirement
 
+from .composition_error import CompositionError
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
 from .native_policy import NativeDispatchPolicy, select_resident_producer
@@ -305,11 +306,6 @@ _MODEL_PACK_IDS: tuple[str, ...] = ()
 def _trusted_reserved_claims_can_overlap(first: str, second: str) -> bool:
     root = reserved_root(first)
     return root is not None and reserved_root(second) == root
-
-
-class CompositionError(Exception):
-    """Pack composition is misconfigured: reserved/duplicate pack names or
-    node-type collisions. Raised at startup, never mid-workflow."""
 
 
 class UnknownPackError(CompositionError):
