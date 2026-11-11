@@ -1,5 +1,9 @@
 # ComfyUI translation coverage baseline
 
+This is a historical measurement, not the current import contract. Current
+ComfyUI import uses schema-declared replacement rules from the registry's
+static replacements index; the mapping counts below do not describe it.
+
 Pinned workflow templates: `d3b4a9e89573162b005961865164c18c8ae2206b`. Canonical per-workflow translation data: [comfy-translation-coverage.json](comfy-translation-coverage.json). Historical pre-retirement capability evidence: [`tools/data/comfy_capability_evidence.inactive.json`](../tools/data/comfy_capability_evidence.inactive.json).
 The previous 580-workflow denominator remains in [the historical baseline](research/comfy-translation-coverage-aa3661d9.md).
 

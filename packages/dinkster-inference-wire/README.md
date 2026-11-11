@@ -63,8 +63,10 @@ retain their shapes, dtypes, bytes, and optional-key presence. Supported extra
 metadata also round-trips; mapping insertion order does not affect identity.
 The fingerprint includes the geometry type, and encoded tensor records are
 validated without loading Torch. Existing registration authority is preserved.
-`BOUNDING_BOXES`, `IMAGECOMPARE`, and `COMPOSITOR` retain ordinary structured
-state, including pixel coordinates, metadata, and authored list order. `LAYERS`
+`BOUNDING_BOXES` and `IMAGECOMPARE` retain ordinary structured state, including
+pixel coordinates, metadata, and authored list order. The image pack alone
+registers `COMPOSITOR` with its delta codec; inference-wire leaves that type
+unregistered so pack hook order cannot change its encoding. `LAYERS`
 uses the structural tensor codec without requiring `samples`: nested raster
 images and masks, layer order, canvas tuples, optional transforms, and supported
 extra metadata round-trip without geometry conversion or invented defaults.

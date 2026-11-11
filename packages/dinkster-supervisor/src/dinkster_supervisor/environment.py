@@ -500,7 +500,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 ]
             )
     else:
-        catalog = discover(mirrors, channel)
+        catalog = discover(mirrors, channel, store=store)
         if adoption is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -551,6 +551,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
+        if catalog.cached_channel:
+            plan.append("use the last acquired channel selection; release metadata is unavailable")
         if selection is not None:
             plan.append(
                 f"build user-defined base with torch {selection['torch']} from "
