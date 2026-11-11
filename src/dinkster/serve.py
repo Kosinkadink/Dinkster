@@ -1306,6 +1306,13 @@ def main(argv: list[str] | None = None) -> None:
         if args.install_root or args.pack or args.watch_packs:
             parser.error("--generation cannot be combined with other pack sources or --watch-packs")
         args.no_default_packs = True
+    development = (
+        args.watch_packs
+        or bool(args.pack)
+        or (
+            args.generation is not None and (args.generation / "development-sources.json").is_file()
+        )
+    )
     if args.allow_pack_install and args.generation is None:
         parser.error("--allow-pack-install requires --generation")
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
@@ -1731,7 +1738,19 @@ def main(argv: list[str] | None = None) -> None:
         # dev additions. Any name collision fails composition loudly.
         installer = Installer(Path(args.install_root))
         specs.extend(installer.packs_for_serving())
+        installed = installer.current_lockfile()
+        development = development or bool(
+            installed
+            and any(entry.source.startswith(("local:", "git:")) for entry in installed.packs)
+        )
     specs.extend(args.pack)
+    development_description = (
+        "development: not reviewed by the registry; not reproducible from dependency ranges"
+        if development
+        else None
+    )
+    if development_description is not None:
+        print(development_description, flush=True)
     default_pack_venv_root = _default_pack_venv_root(args.library_root)
     default_pack_accelerator = resolve_accelerator()
 
@@ -1860,7 +1879,7 @@ def main(argv: list[str] | None = None) -> None:
             cache_memory_entries=args.execution_cache_memory_entries,
             cache_dir=cache_dir,
             cache_disk_budget=args.execution_cache_disk_budget,
-            composition_mode="development" if args.watch_packs else "production",
+            composition_mode="development" if development else "production",
         )
         specs[:resolved_default_pack_count] = list(
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
@@ -2011,6 +2030,7 @@ def main(argv: list[str] | None = None) -> None:
                 frontend_module_read=composer.read_frontend_module,
                 max_running_jobs=max_running_jobs,
                 governor=governor,
+                development_description=development_description,
                 packs=composition.packs,
                 node_packs=composition.node_packs,
                 execution_arms=composition.execution_arms,

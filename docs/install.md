@@ -149,11 +149,15 @@ cd ../Dinkster-Frontend
 pnpm install --frozen-lockfile
 pnpm --filter @dinkster/app build
 cd ../Dinkster
-uv run --no-sync dinkster setup
-uv run --no-sync dinkster
+uv run --no-sync python -m dinkster.serve --watch-packs --library-root .run/library --allow-mount-changes --prepare-stale-catalogs --frontend-root ../Dinkster-Frontend/packages/app/dist
 ```
 
-The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
+Open `http://127.0.0.1:3639` in the browser. This explicitly selects live checkout
+development, not published setup: the terminal and served catalog label it as
+unreviewed and not reproducible from dependency ranges. Changes reload from the
+selected source folders. For a captured development generation instead, use
+[`dinkster develop`](#development-packs-from-local-folders).
+Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
@@ -258,6 +262,35 @@ explains how to rebuild the custom base. Editing `variants.toml` alone does
 not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
+
+### Development packs from local folders
+
+The standalone local/git path is development-only. `dinkster pack --root ROOT
+install --yes ./pack` and `dinkster pack --root ROOT install --yes
+git+https://host/pack.git@REF` retain plan/consent and resolve dependency ranges
+without requiring a published lock. The plan labels these sources as unreviewed
+and not reproducible from ranges. Serve that selection explicitly with
+`python -m dinkster.serve --no-default-packs --install-root ROOT`; the terminal
+and node catalog carry the development label. A published registry spec is
+refused on the standalone install route, never silently resolved as development.
+
+Use the explicit development command when an engine, pack or helper library has
+not been published. The source engine must be a Dinkster checkout. Select a new
+project outside those folders and the base variant for the host:
+
+```sh
+dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --plan
+dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --yes
+```
+
+Repeat `--pack-source` and `--library-source` for additional local folders; omit
+the library option when none is needed. The command shows its plan before
+confirmation. `--yes` confirms unattended builds. Dependency ranges resolve at
+build time, without a published lock. Command output and the served catalog label
+this as development, not reproducible from ranges. Captured runtime artifacts
+can still be restored exactly. Published setup never selects development mode
+automatically. See [development generations](supported/installed-pack-startup.md#development-generations-from-local-folders)
+for rebuilding, starting, inspecting and restoring the captured runtime.
 
 ### Explicit from-scratch development setup
 

@@ -30,6 +30,9 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
+- A development generation's node catalog carries `dinkster.development` with
+  `mode: development`, `reproducible: false` and an explanation. Captured runtime
+  artifacts remain restorable; resolving source ranges again is not reproducible.
 - Graph admission rejects primitive literals that do not match their declared
   input types, including boolean values on INT/FLOAT inputs and strings on
   FLOAT inputs. Integer values remain valid on FLOAT inputs. The same checks

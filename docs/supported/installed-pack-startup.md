@@ -484,6 +484,10 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
+- Source run scripts explicitly select watched checkout development without
+  invoking published setup or loading a standalone installed-pack root. The
+  terminal and node catalog label the source session as unreviewed and not
+  reproducible from dependency ranges; the browser opens after health succeeds.
 - A pip-installed engine has no implicit official pack selection. Managed
   generations serve their admitted registry sources. Checkout development
   selects verified local sources with each pack's declared version, without
@@ -643,11 +647,19 @@
 
 ### Development generations from local folders
 
+Standalone local-folder and `git+URL[@REF]` pack installs remain available as
+development inputs without a published dependency lock. Their plans report
+range resolution and lack of registry review. Serving an installed local/git
+selection, or an explicit local pack, labels both command output and the node
+catalog as development and not reproducible from ranges. A registry-only
+selection does not gain that label, and standalone install refuses a registry
+version rather than resolving it as development.
+
 Select local software explicitly; nothing needs publishing first:
 
 ```sh
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
 dinkster-env --root /absolute/project status
 dinkster-env --root /absolute/project doctor
 dinkster-env --root /absolute/project start --yes
