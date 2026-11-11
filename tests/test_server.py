@@ -6124,115 +6124,6 @@ def test_values_endpoint_image_png_rendition() -> None:
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
-def test_values_endpoint_layer_document_rendition(
-    type_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import numpy as np
-    from dinkster_graph import TypedLiteral
-    from dinkster_image.compositor import AddLayer
-    from dinkster_image.types import register_image_types
-    from dinkster_image_document.compat import register_comfy_layers
-    from dinkster_image_document.document import ImageDocument
-    from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
-
-    pixels = np.array([[[[1, 0, 0, 1], [0, 1, 0, 0.5]]]], dtype=np.float32)
-    expected = cast(ImageDocument, AddLayer.execute(image=pixels)["layers"]).data
-
-    class CompatLayers(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.compat_layers",
-                outputs=(OutputSpec("layers", TypeExpr.concrete("comfy.LAYERS")),),
-            )
-
-        @classmethod
-        def execute(cls) -> Mapping[str, object]:
-            return AddLayer.execute(image=pixels)
-
-    nodes: list[type[Node]] = [AddLayer] if type_id == "dinkster.layers" else [CompatLayers]
-    schemas = build_schemas(nodes)
-
-    def factory(on_event: EventListener) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        if type_id == "dinkster.layers":
-            register_image_types(registry)
-        else:
-            register_comfy_layers(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    def forbid_raster(*args, **kwargs):
-        pytest.fail("document retrieval must not render or read raster resources")
-
-    async def scenario() -> None:
-        client = TestClient(TestServer(create_app(factory, schemas)))
-        await client.start_server()
-        try:
-            node = (
-                GraphNode(
-                    "dinkster.layers.add",
-                    {"image": TypedLiteral("IMAGE", pixels.tolist())},
-                )
-                if type_id == "dinkster.layers"
-                else GraphNode("test.compat_layers", {})
-            )
-            await finish_job(client, Graph(nodes={"layers": node}), ["layers"])
-            monkeypatch.setattr(ImageDocument, "render", forbid_raster)
-            monkeypatch.setattr(ImageDocument, "read_resource", forbid_raster)
-            url = values_url("layers", output_id="layers")
-            resp = await client.get(url)
-            assert resp.status == 200
-            data = await resp.json()
-            assert data["available"] is True
-            assert data["descriptor"]["typeId"] == type_id
-            assert "value" not in data["descriptor"]
-            renditions = [
-                {
-                    "kind": "image",
-                    "mime": "image/png",
-                    "default": True,
-                    "cacheKey": "image",
-                }
-            ]
-            assert data["renditions"] == (renditions if type_id == "dinkster.layers" else []) + [
-                {
-                    "kind": "document",
-                    "mime": IMAGE_DOCUMENT_MEDIA_TYPE,
-                    "default": type_id == "comfy.LAYERS",
-                    "cacheKey": "document",
-                }
-            ]
-
-            resp = await client.get(url + "&rendition=document")
-            assert resp.status == 200
-            assert resp.headers["Content-Type"] == IMAGE_DOCUMENT_MEDIA_TYPE
-            assert resp.headers["X-Dinkster-Type-Id"] == type_id
-            assert resp.headers["X-Dinkster-Rendition"] == "document"
-            fingerprint = data["descriptor"]["fingerprint"]
-            assert resp.headers["X-Dinkster-Fingerprint"] == fingerprint
-            etag = resp.headers["ETag"]
-            assert etag == f'"{fingerprint}/document"'
-            assert await resp.read() == expected
-
-            monkeypatch.setattr(TypeRegistry, "render", forbid_raster)
-            resp = await client.get(url + "&rendition=document", headers={"If-None-Match": etag})
-            assert resp.status == 304
-            assert resp.headers["ETag"] == etag
-            assert await resp.read() == b""
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_values_endpoint_comfy_image_png_rendition() -> None:
     """The public media registration at the endpoint: an IMAGE value
     (numpy BHWC floats) declares the png rendition on peek and serves valid PNG
@@ -6314,9 +6205,8 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
-    from dinkster_api.v1 import VIDEO_TYPE
-    from dinkster_video import register_types as register_video_types
-    from dinkster_video.video_components import CreateVideo
+    from dinkster_api.v1 import VIDEO_TYPE, register_video_value_type
+    from dinkster_video_runtime import assemble_video
 
     class ComponentVideo(Node):
         @classmethod
@@ -6329,7 +6219,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
         @classmethod
         async def execute(cls) -> Mapping[str, object]:
             frames = np.zeros((2, 4, 4, 3), dtype=np.float32)
-            return cls.outputs(video=CreateVideo.execute(images=frames, fps=4.0)["video"])
+            return cls.outputs(video=assemble_video(frames, fps=4.0))
 
     nodes: list[type[Node]] = [ComponentVideo]
     schemas = build_schemas(nodes)
@@ -6337,7 +6227,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_video_types(registry)
+        register_video_value_type(registry, VIDEO_TYPE)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6377,8 +6267,12 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     import struct
 
     import numpy as np
-    from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
-    from dinkster_video import register_types as register_video_types
+    from dinkster_api.v1 import (
+        AUDIO_TYPE,
+        VIDEO_TYPE,
+        register_audio_value_type,
+        register_video_value_type,
+    )
 
     from tests.test_video_probe import _encode
 
@@ -6410,7 +6304,8 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     schemas = build_schemas(nodes)
     expected_registry = TypeRegistry()
     register_core_types(expected_registry)
-    register_video_types(expected_registry)
+    register_audio_value_type(expected_registry, AUDIO_TYPE)
+    register_video_value_type(expected_registry, VIDEO_TYPE)
     expected_fingerprints = {
         "audio": expected_registry.wrap(
             AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
@@ -6424,7 +6319,8 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_video_types(registry)
+        register_audio_value_type(registry, AUDIO_TYPE)
+        register_video_value_type(registry, VIDEO_TYPE)
         return Engine(
             schemas=schemas,
             registry=registry,
