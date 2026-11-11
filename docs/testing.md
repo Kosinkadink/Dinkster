@@ -85,6 +85,8 @@ root shards print every setup, call and teardown duration with
 `test-timings-linux-N` and `test-timings-windows-N` JUnit artifacts, including
 when pytest fails. Use each platform's timings to balance its shards instead
 of counting files.
+The eight Windows runtime shards rotate each case-split file's sorted cases
+from its file-assigned shard, so expensive prefixes do not all start in shard one.
 
 ## Platform golden evidence
 
