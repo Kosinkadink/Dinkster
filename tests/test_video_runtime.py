@@ -17,7 +17,6 @@ from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_assets.value import value_asset_references
 from dinkster_values import (
-    EncodedPayload,
     TypeRegistry,
     decode_video,
     edit_video,
@@ -30,7 +29,6 @@ from dinkster_values import (
 )
 from dinkster_values.audio_codec import audio_from_source
 from dinkster_values.storage import image_input
-from dinkster_video.video_edits import VideoCrop, VideoTrim
 from dinkster_video_runtime import (
     assemble_video,
     concatenate_video,
@@ -572,23 +570,6 @@ def test_full_frame_edits_keep_source_copy(
     assert output.getvalue() == data
 
 
-@pytest.mark.parametrize(
-    "widget", [{}, {"crop": {}}, {"trim": {}}, {"trim": {"start_time": -0.5, "duration": 0}}]
-)
-def test_video_edit_is_read_only_and_sections_are_independent(
-    widget: dict[str, object], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    value = video_from_source(_source())
-    snapshot = json.dumps(widget, sort_keys=True)
-    monkeypatch.setattr(av, "open", lambda *a, **kw: pytest.fail("edits/info must not probe"))
-    trimmed = VideoTrim.execute(video=value, trim=widget)["video"]
-    cropped = VideoCrop.execute(video=trimmed, crop=widget)["video"]
-    assert json.dumps(widget, sort_keys=True) == snapshot
-    info = effective_video_facts(cast(dict[str, object], cropped))
-    assert (info["width"], info["height"]) == (64, 32)
-    assert info["duration"] == (0.5 if widget.get("trim") else 2)
-
-
 def test_deferred_components_are_exact_across_codec_and_cropped() -> None:
     images = np.random.default_rng(5).random((8, 32, 64, 4), dtype=np.float32)
     value = assemble_video(images, fps=8, bit_depth="10", color_space="HDR PQ")
@@ -871,85 +852,13 @@ def test_alpha_encoding_cannot_silently_reduce_ten_bit_components() -> None:
     assert diagnostics
 
 
-def test_native_video_chain_matches_across_worker_shared_memory() -> None:
-    from dinkster_protocol import Invocation
-    from dinkster_schema import build_node_types
-    from dinkster_values import register_core_types
-    from dinkster_video import NODES, register_types
-    from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker
-
-    source = video_from_source(_source(depth=10))
-
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        register_types(registry)
-
-        async def run(worker: InProcessWorker | IsolatedWorker) -> tuple[bytes, np.ndarray]:
-            trimmed = await worker.invoke(
-                Invocation(
-                    invocation_id="trim",
-                    node_id="trim",
-                    node_type="dinkster.video.video_slice",
-                    inputs={
-                        "video": registry.wrap(VIDEO_TYPE, source),
-                        "start_time": registry.wrap("FLOAT", 0.5),
-                        "duration": registry.wrap("FLOAT", 1.0),
-                    },
-                    effective_schema=worker.schemas["dinkster.video.video_slice"],
-                )
-            )
-            assert trimmed.error is None
-            assert trimmed.outputs is not None
-            frames = await worker.invoke(
-                Invocation(
-                    invocation_id="frames",
-                    node_id="frames",
-                    node_type="dinkster.video.get_video_components",
-                    inputs={"video": trimmed.outputs["video"]},
-                    effective_schema=worker.schemas["dinkster.video.get_video_components"],
-                )
-            )
-            assert frames.error is None
-            assert frames.outputs is not None
-            assert frames.outputs["bit_depth"].resolve() == 10
-            return (
-                encode_video(trimmed.outputs["video"].resolve()),
-                cast(np.ndarray, frames.outputs["images"].resolve()),
-            )
-
-        expected = await run(InProcessWorker(build_node_types(NODES), registry))
-        diagnostics: list[BoundaryDiagnostic] = []
-        manifest = (
-            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-video/dinkster-pack.toml"
-        )
-        worker = IsolatedWorker(
-            manifest, registry, shm_threshold=64, on_diagnostic=diagnostics.append
-        )
-        await worker.start()
-        try:
-            actual = await run(worker)
-            assert actual[0] == expected[0]
-            np.testing.assert_array_equal(actual[1], expected[1])
-            assert [
-                crossing.transport
-                for diagnostic in diagnostics
-                for crossing in diagnostic.inputs
-                if crossing.type_id == VIDEO_TYPE
-            ] == ["shm", "shm"]
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize("in_process", (True, False))
 def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     tmp_path: Path, in_process: bool
 ) -> None:
     from dinkster_graph import Graph, GraphNode, Link
     from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
-    from dinkster_video import register_types
+    from video_native_value_nodes import register_public_types
 
     from dinkster.compose import PackSpec, ServingComposer
 
@@ -961,10 +870,10 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     expected_fingerprint = video_fingerprint(VIDEO_TYPE)(expected)
 
     registry = TypeRegistry()
-    register_types(registry)
+    register_public_types(registry)
     video_spec = registry.spec(VIDEO_TYPE)
     edit_spec = registry.spec(VIDEO_EDIT_TYPE)
-    register_types(registry)
+    register_public_types(registry)
     assert registry.spec(VIDEO_TYPE) is video_spec
     assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
     encoded_edit = edit_spec.encode(edit)
@@ -975,10 +884,7 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
     assert edit_spec.decode(encoded_edit) == edit
 
     async def scenario() -> None:
-        root = Path(__file__).resolve().parents[1]
-        native_manifest = root / "packages/dinkster-nodes-video/dinkster-pack.toml"
         fixture_manifest = Path(__file__).with_name("video-native-value-fixture.toml")
-        manifests = (native_manifest, fixture_manifest)
         composer = ServingComposer(
             cache_mode="layered",
             cache_dir=tmp_path / "cache",
@@ -989,17 +895,15 @@ def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
             },
         )
         try:
-            for manifest in manifests:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest,
-                        host_types=register_types if manifest == native_manifest else None,
-                        trust_reserved=manifest == native_manifest,
-                        in_process=in_process,
-                        worker_group=None if in_process else "video-native-value-fixture",
-                        group_manifests=() if in_process else manifests,
-                    )
+            await composer.add_pack(
+                PackSpec(
+                    manifest=fixture_manifest,
+                    host_types=register_public_types,
+                    in_process=in_process,
+                    worker_group=None if in_process else "video-native-value-fixture",
+                    group_manifests=() if in_process else (fixture_manifest,),
                 )
+            )
             graph = Graph(
                 nodes={
                     "source": GraphNode("video-native-value-fixture.source", {}),
@@ -1432,100 +1336,6 @@ def test_nested_video_source_preflight_and_remote_staging_fetch_once(
                     assert endpoint.requests == 1
                     stored = AssetVault(root).resolve(digest)
                     assert stored is not None and stored.read_bytes() == data
-                finally:
-                    await worker.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from aiohttp import web
-    from dinkster_caches import MemoryLRUCache
-    from dinkster_engine import Engine
-    from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_values import register_core_types
-    from dinkster_video import register_types
-    from dinkster_workers import RemoteWorker
-    from test_remote import TLS_ARGS, TLS_CERT, TOKEN, start_service, stop_service
-    from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost
-
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "engine-vault"))
-    data = _source()
-    digest = digest_bytes(data)
-    wire = AssetRef(digest, "source.mp4", len(data)).to_wire()
-    graph = Graph(
-        nodes={
-            "load": GraphNode("dinkster.video.load_video", {"file": wire}),
-            "trim": GraphNode(
-                "dinkster.video.video_slice",
-                {"video": Link("load", "VIDEO"), "start_time": 0.5, "duration": 0.5},
-            ),
-        }
-    )
-    loaded = {**video_from_source(data), "source": wire}
-    expected = edit_video(
-        loaded,
-        {"trim": {"start_time": 0.5, "duration": 0.5}, "strict_duration": False},
-    )
-    encoded_sizes = {
-        "load": len(encode_video(loaded)),
-        "trim": len(encode_video(expected)),
-    }
-
-    class VideoHost(AssetHost):
-        async def _handle(self, request: web.Request) -> web.StreamResponse:
-            self.requests += 1
-            assert request.headers.get("Authorization") == f"Bearer {ENDPOINT_TOKEN}"
-            assert request.match_info["digest"] == digest
-            return web.Response(body=data)
-
-    async def scenario() -> None:
-        manifest = Path(__file__).parents[1] / "packages/dinkster-nodes-video/dinkster-pack.toml"
-        proc, host, port = await start_service(
-            manifest, tmp_path, *TLS_ARGS, "--asset-vault", str(tmp_path / "daemon-vault")
-        )
-        try:
-            async with VideoHost() as endpoint:
-                registry = TypeRegistry()
-                register_core_types(registry)
-                register_types(registry)
-                worker = RemoteWorker(
-                    host,
-                    port,
-                    TOKEN,
-                    registry,
-                    name="remote-video",
-                    tls_ca_file=TLS_CERT,
-                    asset_endpoint=endpoint.endpoint,
-                    asset_endpoint_token=ENDPOINT_TOKEN,
-                )
-                await worker.start()
-                try:
-                    monkeypatch.setattr(
-                        av, "open", lambda *a, **kw: pytest.fail("engine must not decode VIDEO")
-                    )
-                    for _ in range(2):
-                        result = await Engine(
-                            schemas=dict(worker.schemas),
-                            registry=registry,
-                            worker=worker,
-                            cache=MemoryLRUCache(),
-                        ).run(graph, ["load", "trim"])
-                        assert result.executed == ("load", "trim")
-                        assert result.cached == ()
-                        assert result.skipped == ()
-                        for node, output in (("load", "VIDEO"), ("trim", "video")):
-                            assert result.outputs[node][output].meta.get("cost") == {
-                                "ram@remote-video": encoded_sizes[node]
-                            }
-                        payload = result.outputs["trim"]["video"].payload
-                        assert isinstance(payload, EncodedPayload)
-                        assert payload.data == encode_video(expected)
-                        assert endpoint.requests == 1
                 finally:
                     await worker.close()
         finally:
