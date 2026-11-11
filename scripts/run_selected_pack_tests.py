@@ -358,7 +358,13 @@ def run_selected_tests(
         (checkout / "src/dinkster/checkout-packs.lock").write_text(
             Lockfile.of(checkout_packs).record_json(), encoding="utf-8"
         )
-        paths = [str(checkout), str(checkout / "src"), *module_roots]
+        # Dev nodes are engine-owned test scaffolding, not a published pack.
+        paths = [
+            str(checkout),
+            str(checkout / "src"),
+            str(checkout / "packages/dinkster-nodes-dev/src"),
+            *module_roots,
+        ]
         runtimes: dict[str, str] = {}
         for pack in catalog.packs:
             if pack.pack in libraries:

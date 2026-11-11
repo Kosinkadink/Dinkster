@@ -170,16 +170,18 @@ def selected_pack_generation(tmp_path_factory: pytest.TempPathFactory) -> Path:
             cwd=root,
             check=True,
         )
-    requirements = work / "requirements.txt"
+    requirements = work / "pylock.toml"
     subprocess.run(
         [
             "uv",
             "export",
-            "--locked",
+            "--frozen",
             "--package",
             "dinkster",
             "--no-dev",
             "--no-emit-workspace",
+            "--format",
+            "pylock.toml",
             "--output-file",
             str(requirements),
         ],

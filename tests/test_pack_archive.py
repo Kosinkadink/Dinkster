@@ -2188,10 +2188,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         '[project]\nname = "dinkster-image"\n'
     )
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
+    dev_module = engine / "packages/dinkster-nodes-dev/src/dinkster_nodes_dev"
+    dev_module.mkdir(parents=True)
+    (dev_module / "__init__.py").write_text("VALUE = 73\n")
     (tests / "test_image_nodes.py").write_text(
         "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
         "import tomllib\n"
-        "from pathlib import Path\nimport dinkster_image\n"
+        "from pathlib import Path\nimport dinkster_image\nimport dinkster_nodes_dev\n"
         "from dinkster_image import VALUE, NEW_NODE as Unpublished\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + (
@@ -2209,6 +2212,9 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             else "def test_selected_value():\n"
         )
         + "    assert VALUE == 47\n"
+        "    assert dinkster_nodes_dev.VALUE == 73\n"
+        "    assert Path(dinkster_nodes_dev.__file__).resolve().is_relative_to(\n"
+        "        Path.cwd() / 'packages/dinkster-nodes-dev/src')\n"
         "    from locked_only_dependency import VALUE as LOCKED_VALUE\n"
         "    assert LOCKED_VALUE == 61\n"
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
