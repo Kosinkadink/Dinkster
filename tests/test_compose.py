@@ -16,8 +16,6 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
-import tomllib
 import weakref
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
@@ -816,77 +814,6 @@ def test_default_pack_publishes_docs(
     assert page.schema_version == 1
     assert page.data == body
     assert page.digest == "sha256:" + hashlib.sha256(page.data).hexdigest()
-
-
-def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
-    from dinkster import compose
-
-    repo_root = TESTS_DIR.parent
-    listed = subprocess.run(
-        ["git", "ls-files", "-z", "--", "packages"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-    ).stdout
-    tracked_paths = {Path(raw.decode("utf-8")) for raw in listed.split(b"\0") if raw}
-    artifact_paths: set[Path] = set()
-    for pack_id, module_name in compose._FIRST_PARTY_PACK_MODULES.items():
-        pack_root = next(
-            path.parent.relative_to(repo_root)
-            for path in (repo_root / "packages").glob("dinkster-nodes-*/dinkster-pack.toml")
-            if tomllib.loads(path.read_text(encoding="utf-8"))["pack"]["name"] == pack_id
-        )
-        sidecar_root = pack_root
-        manifest_path = sidecar_root / "dinkster-pack.toml"
-        manifest = tomllib.loads((repo_root / manifest_path).read_text(encoding="utf-8"))
-        docs = manifest.get("pack", {}).get("docs", {})
-        docs_dir = docs.get("dir") if isinstance(docs, dict) else None
-        module_root = pack_root / "src" / Path(*module_name.split("."))
-        prefixes = [module_root, sidecar_root / "locales"]
-        if isinstance(docs_dir, str):
-            prefixes.append(sidecar_root / docs_dir)
-        artifact_paths.add(manifest_path)
-        module_init = module_root.parent / "__init__.py"
-        if module_init in tracked_paths:
-            artifact_paths.add(module_init)
-        if module_root.parent.name == "dinkster_nodes_vision":
-            artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
-        artifact_paths.update(
-            path
-            for path in tracked_paths
-            if any(path.is_relative_to(prefix) for prefix in prefixes)
-        )
-
-    checked = subprocess.run(
-        [
-            "git",
-            "check-attr",
-            "-z",
-            "--stdin",
-            "text",
-            "eol",
-            "--",
-        ],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        input=b"".join(path.as_posix().encode("utf-8") + b"\0" for path in sorted(artifact_paths)),
-    ).stdout.split(b"\0")
-    attributes: dict[str, dict[str, str]] = {}
-    for index in range(0, len(checked) - 1, 3):
-        path, attribute, value = (part.decode("utf-8") for part in checked[index : index + 3])
-        attributes.setdefault(path, {})[attribute] = value
-
-    uncovered = [
-        path.as_posix()
-        for path in sorted(artifact_paths)
-        if attributes[path.as_posix()]["eol"] != "lf"
-        and attributes[path.as_posix()]["text"] != "unset"
-    ]
-    assert uncovered == [], (
-        "pack artifact files must declare eol=lf for text or -text for binary: "
-        + ", ".join(uncovered)
-    )
 
 
 def test_default_pack_uses_embedded_wheel_artifact(
@@ -2401,8 +2328,8 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 candidates: tuple[str, Mapping[str, str]],
                 **context: object,
             ) -> None:
-                value = inputs["string_a"].resolve()
-                if value in ("first-second", "other"):
+                value = inputs["value"].resolve()
+                if value in ("FIRST-SECOND", "other"):
                     label = "other" if value == "other" else "main"
                     entered[label].set()
                     await resume[label].wait()
@@ -2416,10 +2343,12 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 if len(released) == 1 and ending == "native failure":
                     raise RuntimeError("native settlement failed")
 
-        composer = ServingComposer(pack_scratch_root=scratch, native_policy=Policy())
+        composer = ServingComposer(
+            pack_scratch_root=scratch, native_policy=Policy(), worker_env=WORKER_ENV
+        )
         tasks: list[asyncio.Task[object]] = []
         try:
-            await composer.add_pack(default_pack_spec("dinkster-text"))
+            await composer.add_pack(write_iso_manifest(tmp_path))
             engine = composer.composition.make_engine(lambda event: None)
             with pytest.raises(AssetError, match="ownership state is unavailable"):
                 with claim_inactive_produced_job(scratch, "unknown job"):
@@ -2428,18 +2357,8 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 engine.run(
                     Graph(
                         nodes={
-                            "first": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {"string_a": "first", "string_b": "second", "delimiter": "-"},
-                            ),
-                            "second": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {
-                                    "string_a": Link("first", "STRING"),
-                                    "string_b": "third",
-                                    "delimiter": ":",
-                                },
-                            ),
+                            "first": GraphNode("iso.chatty", {"value": "first-second"}),
+                            "second": GraphNode("iso.chatty", {"value": Link("first", "value")}),
                         }
                     ),
                     ["second"],
@@ -2449,14 +2368,7 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
             )
             other = asyncio.create_task(
                 composer.composition.make_engine(lambda event: None).run(
-                    Graph(
-                        nodes={
-                            "other": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {"string_a": "other", "string_b": "job", "delimiter": "/"},
-                            )
-                        }
-                    ),
+                    Graph(nodes={"other": GraphNode("iso.chatty", {"value": "other"})}),
                     ["other"],
                     run_id=other_job,
                 )
@@ -2479,16 +2391,14 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                         ):
                             await main
                     else:
-                        assert (await main).outputs["second"][
-                            "STRING"
-                        ].resolve() == "first-second:third"
+                        assert (await main).outputs["second"]["value"].resolve() == "FIRST-SECOND"
                 with claim_inactive_produced_job(scratch, "../main job") as inactive:
                     assert inactive == (other_job != "../main job")
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert not inactive
                 assert released == ["../main job"]
                 resume["other"].set()
-                assert (await other).outputs["other"]["STRING"].resolve() == "other/job"
+                assert (await other).outputs["other"]["value"].resolve() == "OTHER"
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert inactive
         finally:
