@@ -1,5 +1,6 @@
 name: ci
 
+# Keep reusable callers independent of direct pull request draft gating.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
