@@ -5,8 +5,9 @@ summary = "Open the Node Feature Examples template and try one control at a time
 
 # Try the node features
 
-Open **Node Feature Examples** from the template gallery. The same document
-is available as a pack blueprint.
+Open **Node Feature Examples** from the template gallery. The pack blueprint
+inserts the examples as an independent subgraph node, including their image
+link, without changing the template workflow.
 
 The examples cover dynamic slot specialization, output count, conditional
 rows, five widget kinds, switchable widget forms, output descriptors, and
