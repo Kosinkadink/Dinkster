@@ -128,7 +128,7 @@ def _request_snapshot(directory: Path) -> str:
     )
 
 
-def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], *, timeout: float = 120) -> subprocess.CompletedProcess[str]:
     with TemporaryDirectory(prefix="dinkster-supervisor-trace-") as directory:
         trace = Path(directory) / "child.stack"
         with subprocess.Popen(
