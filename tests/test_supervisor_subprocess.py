@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import venv
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -182,7 +183,7 @@ def test_child_output_and_timeout_diagnostics(
 @pytest.mark.parametrize("blocked", [False, True])
 @pytest.mark.parametrize("kind", ["probe", "manager", "manager-help"])
 def test_unwrapped_child_lifecycle_preserves_command_and_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked: bool, kind: str, expire_after_ready
+    tmp_path: Path, blocked: bool, kind: str, expire_after_ready
 ) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -202,7 +203,7 @@ def test_unwrapped_child_lifecycle_preserves_command_and_output(
         probe = (
             "import os, socket, sys\n"
             "from pathlib import Path\n"
-            f"assert bool(sys.flags.isolated) == {kind == 'probe'!r}\n"
+            "assert sys.flags.isolated\n"
             "assert sys.dont_write_bytecode\n"
             f"assert sys.argv[1:] == {arguments!r}\n"
             f"root = Path({str(tmp_path)!r})\n"
@@ -224,12 +225,20 @@ def test_unwrapped_child_lifecycle_preserves_command_and_output(
             command = [python, "-I", "-B", "-c", probe, *arguments]
             category = "interpreter probe"
         else:
-            package = tmp_path / "dinkster"
+            environment = tmp_path / "interpreter"
+            venv.EnvBuilder(with_pip=False).create(environment)
+            python = str(
+                environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+            )
+            site = subprocess.check_output(
+                [python, "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+            package = Path(site) / "dinkster"
             package.mkdir()
             (package / "__init__.py").write_text("")
             (package / "manager.py").write_text(probe)
-            monkeypatch.setenv("PYTHONPATH", str(tmp_path))
-            command = [python, "-B", "-m", "dinkster.manager", *arguments]
+            command = [python, "-I", "-B", "-m", "dinkster.manager", *arguments]
             category = (
                 "manager source help" if kind == "manager-help" else "manager source preparation"
             )
