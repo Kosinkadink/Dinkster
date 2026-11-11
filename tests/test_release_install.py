@@ -611,7 +611,11 @@ def test_default_admission_workflow_selects_publication_candidates(
         echo development-engine
       elif [ "$4" = "-" ]; then
         "$TEST_PYTHON" -
+      elif [ "$5" = "scripts.prepare_admission_engine" ]; then
+        mkdir -p admission-runtime/engine
+        echo '{}' > admission-runtime/base-manifest.json
       else
+        mkdir -p admission-sources
         printf '%s\\0' "$@" > admission-arguments
         echo '{"groups": [["dinkster-image"], ["dinkster-audio", "dinkster-video"]]}'
       fi
@@ -647,6 +651,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         ("0" * 40 if all_candidates else base)
         if pull_request
         else ".publication/sources/official-packs.lock",
+        "--runtime",
+        "admission-runtime",
         "--prepare-output",
         "admission-sources",
     ]
@@ -656,7 +662,6 @@ def test_default_admission_workflow_selects_publication_candidates(
         {"group": 2, "packs": '["dinkster-audio", "dinkster-video"]'},
     ]
     prepared = tmp_path / "admission-sources"
-    prepared.mkdir()
     (prepared / "engine.json").write_text('{"engineVersion": "prepared-engine"}')
     command = workflow["jobs"]["admission"]["steps"][-1]["run"]
     subprocess.run(
@@ -673,6 +678,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         "scripts.check_default_pack_admission",
         "--engine-version",
         "prepared-engine",
+        "--runtime",
+        "admission-runtime",
         "--prepared-sources",
         "admission-sources",
         "--pack",
