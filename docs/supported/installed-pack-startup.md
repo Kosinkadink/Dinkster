@@ -304,6 +304,15 @@
   are separate from that runtime subtotal. Runtime acquisition also supports
   cache-only operation: missing or corrupt runtime inputs are reported together
   before cache mutation, without contacting mirrors or a package index.
+- `dinkster setup --plan --variant VARIANT` inspects the selected release's
+  declared default packs and exact-base registry dependency locks alongside its
+  runtime inputs. It shows project/store paths, engine binding, exact source
+  identities, lock hashes, wheel hashes/sizes and verified cache reuse without
+  acquiring payloads or creating installation state. `--json` retains the source
+  catalog and dependency-lock documents in its output. Pack bytes are labelled
+  as an upper bound across all locked wheel alternatives, not a target-selected
+  download promise. `--offline --plan` reads retained release and registry metadata
+  only; it does not fetch or repair missing metadata or wheel payloads.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
