@@ -140,6 +140,13 @@ def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(tmp_
     assert result["status"] == "planned"
     assert any("last acquired channel selection" in line for line in result["plan"])
     assert any(base["id"] in line and engine["version"] in line for line in result["plan"])
+    assert result["runtimeDownloadBytes"] == 0
+    assert all(row["cached"] for row in result["runtimeInputs"])
+    assert {Path(row["path"]).name for row in result["runtimeInputs"]} == {
+        "fixture_base-1.0-py3-none-any.whl",
+        "fixture_engine-2.0-py3-none-any.whl",
+        "constraints.txt",
+    }
     assert not root.exists()
     assert {
         path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()

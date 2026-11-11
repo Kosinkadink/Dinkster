@@ -17,7 +17,13 @@ from typing import cast
 from dinkster_store import object_path, pack_archive_path
 
 from .environment_adoption import dependency_comparison, standalone_inputs
-from .environment_artifacts import acquire, acquire_pack_locks, discover, validate_manifest
+from .environment_artifacts import (
+    acquire,
+    acquire_pack_locks,
+    discover,
+    runtime_inputs,
+    validate_manifest,
+)
 from .environment_collection import (
     automatic_generation_collection,
     cleanup_collection,
@@ -493,6 +499,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
+        if custom is None and selection is None:
+            inputs = runtime_inputs(catalog, variant, store)
+            missing_bytes = sum(cast("int", row["size"]) for row in inputs if not row["cached"])
+            result["runtimeInputs"] = inputs
+            result["runtimeDownloadBytes"] = missing_bytes
+            plan.append(f"runtime cache: {missing_bytes} bytes missing; pack payloads are separate")
+            plan.extend(
+                f"runtime input {row['path']}: sha256:{row['sha256']} "
+                f"({row['size']} bytes; {'cached' if row['cached'] else 'not cached'})"
+                for row in inputs
+            )
         if catalog.cached_channel:
             plan.append("use the last acquired channel selection; release metadata is unavailable")
         if selection is not None:

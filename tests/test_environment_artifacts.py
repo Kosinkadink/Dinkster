@@ -18,6 +18,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from platform import machine
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 import zstandard
@@ -29,6 +30,7 @@ from dinkster_supervisor.environment_artifacts import (
     acquire_pack_locks,
     acquire_sources,
     discover,
+    runtime_inputs,
 )
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_custom import custom_selection, variant_file
@@ -384,6 +386,72 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
     } == before
 
 
+@pytest.mark.parametrize("cache", ["empty", "warm", "corrupt", "archive-only"])
+def test_offline_runtime_acquisition_reports_all_missing_inputs_without_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cache: str
+):
+    from dinkster_supervisor import environment_downloads
+
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    base, engine, _ = _mirror(mirror)
+    catalog = discover((str(mirror),), "main")
+    if cache != "empty":
+        acquire(catalog, "fixture-cpu", store)
+    if cache == "corrupt":
+        base_wheel = (
+            object_path(store / "bases", base["id"]) / "wheels" / base["wheels"][0]["filename"]
+        )
+        engine_wheel = (
+            object_path(store / "wheels", "sha256:" + engine["artifacts"][1]["sha256"])
+            / engine["artifacts"][1]["name"]
+        )
+        base_wheel.write_bytes(b"damaged base")
+        engine_wheel.write_bytes(b"damaged engine")
+    elif cache == "archive-only":
+        shutil.rmtree(object_path(store / "bases", base["id"]))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("offline runtime acquisition must not contact a remote source")
+
+    monkeypatch.setattr(environment_downloads, "build_opener", forbidden)
+    monkeypatch.setattr(environment_artifacts, "dependency_source", forbidden)
+    mirror.rename(tmp_path / "disconnected")
+    before = {path: path.read_bytes() if path.is_file() else None for path in store.rglob("*")}
+    inputs = runtime_inputs(catalog, "fixture-cpu", store)
+    assert {
+        path: path.read_bytes() if path.is_file() else None for path in store.rglob("*")
+    } == before
+    if cache in {"warm", "archive-only"}:
+        assert all(row["cached"] for row in inputs)
+        constraints = acquire(catalog, "fixture-cpu", store, offline=True)
+        assert "fixture-engine==2.0" in constraints.read_text()
+        assert "fixture-base==1.0" in constraints.read_text()
+        assert (
+            object_path(store / "bases", base["id"]) / "wheels" / base["wheels"][0]["filename"]
+        ).is_file()
+    else:
+        with pytest.raises(
+            EnvironmentError, match="offline runtime inputs missing or corrupt"
+        ) as error:
+            acquire(catalog, "fixture-cpu", store, offline=True)
+        expected = (
+            (
+                "base.tar.zst.001",
+                "base.tar.zst.002",
+                "constraints.txt",
+                "fixture_engine-2.0-py3-none-any.whl",
+            )
+            if cache == "empty"
+            else ("fixture_base-1.0-py3-none-any.whl", "fixture_engine-2.0-py3-none-any.whl")
+        )
+        assert all(name in str(error.value) for name in expected)
+        assert {
+            path: path.read_bytes() if path.is_file() else None for path in store.rglob("*")
+        } == before
+        if cache == "empty":
+            assert not store.exists()
+
+
 def test_acquisition_retains_published_base_metadata_without_replacing_custom_provenance(
     tmp_path: Path,
 ):
@@ -537,6 +605,22 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         (mirror / "channels/main.json").write_bytes(_json(channel))
         catalog = discover((str(mirror),), "main")
         package_index = origin + "/simple" if source == "index" else None
+        if failure is None:
+            inspected = runtime_inputs(catalog, "fixture-cpu", store)
+            assert not store.exists()
+            assert requests == []
+            assert sum(cast("int", row["size"]) for row in inspected) == (
+                sum(row["size"] for row in base["archive"]["parts"])
+                + sum(row["size"] for row in engine["artifacts"])
+                + len(payload)
+            )
+            with pytest.raises(EnvironmentError) as refused:
+                acquire(catalog, "fixture-cpu", store, package_index=package_index, offline=True)
+            assert filename in str(refused.value)
+            assert "base.tar.zst.001" in str(refused.value)
+            assert "fixture_engine-2.0-py3-none-any.whl" in str(refused.value)
+            assert not store.exists()
+            assert requests == []
         if failure == "hash":
             (packages / filename).write_bytes(b"X" * len(payload))
         elif failure == "size":
@@ -571,7 +655,10 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         requested = list(requests)
         (packages / filename).unlink()
         (index / "index.html").unlink()
-        assert acquire(catalog, "fixture-cpu", store, package_index=package_index) == constraints
+        assert (
+            acquire(catalog, "fixture-cpu", store, package_index=package_index, offline=True)
+            == constraints
+        )
         assert requests == requested
     finally:
         server.shutdown()

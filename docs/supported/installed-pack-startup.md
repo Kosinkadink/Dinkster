@@ -299,6 +299,11 @@
   the plan labels use of the last acquired channel selection. Cached channels are
   specific to the configured mirrors, and cached manifests must still match their
   recorded identities. Planning does not create or repair cache files.
+- Published runtime plans list exact engine/base payload paths, sizes and hashes,
+  verified cache reuse and missing runtime bytes before confirmation. Pack payloads
+  are separate from that runtime subtotal. Runtime acquisition also supports
+  cache-only operation: missing or corrupt runtime inputs are reported together
+  before cache mutation, without contacting mirrors or a package index.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
