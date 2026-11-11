@@ -250,6 +250,117 @@ def test_pack_compositor_codec_is_independent_of_registration_order() -> None:
             spec.validate_encoded(b'{"version":2,"documentDigest":null,"commands":{}}', {})
 
 
+def test_pack_compositor_executes_tensor_layers_through_separate_worker() -> None:
+    from pathlib import Path
+
+    from dinkster_caches import MemoryLRUCache
+    from dinkster_engine import Engine
+    from dinkster_graph import Graph, GraphNode, Link
+    from dinkster_image import register_types
+    from dinkster_inference_wire import register_inference_types
+    from dinkster_protocol import Invocation
+    from dinkster_values import EncodedPayload, Value, ValueMeta, register_core_types
+    from dinkster_workers import IsolatedWorker
+
+    from tests.async_scenarios import run_scenario
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_inference_types(registry)
+        register_types(registry)
+        worker = IsolatedWorker(
+            Path(__file__).resolve().parents[1]
+            / "packages/dinkster-nodes-image/dinkster-pack.toml",
+            registry,
+        )
+        await worker.start()
+        try:
+            for compositor, width in (
+                ({"version": 2, "documentDigest": None, "commands": []}, 7),
+                ({}, 7),
+                (
+                    {
+                        "version": 2,
+                        "documentDigest": None,
+                        "commands": [{"op": "canvas", "changes": {"width": 5}}],
+                    },
+                    5,
+                ),
+            ):
+                graph = Graph(
+                    nodes={
+                        "source": GraphNode(
+                            "dinkster.image.empty_image",
+                            {"width": 7, "height": 3, "batch_size": 1, "color": 0xFF0000},
+                        ),
+                        "layer": GraphNode(
+                            "dinkster.image.add_layer",
+                            {"image": Link("source", "IMAGE"), "name": "Red"},
+                        ),
+                        "create": GraphNode(
+                            "dinkster.image.image_compositor",
+                            {"layers": Link("layer", "LAYERS"), "compositor": compositor},
+                        ),
+                    }
+                )
+                engine = Engine(
+                    schemas=dict(worker.schemas),
+                    registry=registry,
+                    worker=worker,
+                    cache=MemoryLRUCache(),
+                )
+                result = await engine.run(graph, ["create"])
+                image = result.outputs["create"]["IMAGE"].resolve()
+                np.testing.assert_array_equal(image, _solid((1.0, 0.0, 0.0), width=width, height=3))
+                np.testing.assert_array_equal(
+                    result.outputs["create"]["MASK"].resolve(), np.zeros((1, 3, width))
+                )
+
+            schema = worker.schemas["dinkster.image.image_compositor"]
+            for index, (data, reason) in enumerate(
+                (
+                    (
+                        b'{"version":2,"documentDigest":null,"commands":{}}',
+                        "compositor commands must be an array",
+                    ),
+                    (
+                        b'{"version":2,"documentDigest":"bad","commands":[]}',
+                        "invalid compositor document digest",
+                    ),
+                )
+            ):
+                refused = await worker.invoke(
+                    Invocation(
+                        f"invalid-{index}",
+                        "create",
+                        schema.node_type,
+                        {
+                            "layers": registry.wrap(
+                                "LAYERS", {"version": 1, "canvas": [7, 3], "layers": []}
+                            ),
+                            "compositor": Value(
+                                "COMPOSITOR",
+                                f"invalid-{index}",
+                                ValueMeta(),
+                                EncodedPayload("COMPOSITOR", data, None),
+                            ),
+                        },
+                        schema,
+                    )
+                )
+                assert refused.error is not None
+                assert (
+                    "encoded payload validation failed for type 'COMPOSITOR'"
+                    in refused.error.message
+                )
+                assert reason in refused.error.message
+        finally:
+            await worker.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("image_first", [False, True])
 def test_document_types_remain_distinct_from_core_editor_types(image_first: bool) -> None:
     from dinkster_api.v1 import COMPOSITOR_TYPE as CORE_COMPOSITOR_TYPE
