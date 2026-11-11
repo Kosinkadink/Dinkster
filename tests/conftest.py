@@ -4,6 +4,7 @@ import asyncio
 import os
 import socket
 import ssl
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -27,10 +28,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item, call):
-    from supervisor_subprocess import operation_reports
-
     report = yield
-    if operation_reports:
+    helper = sys.modules.get("supervisor_subprocess")
+    if helper is not None and (operation_reports := helper.operation_reports):
         report.sections.append(("Supervisor child operation timings", "\n".join(operation_reports)))
         operation_reports.clear()
     return report
