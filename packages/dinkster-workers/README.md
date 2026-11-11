@@ -129,6 +129,13 @@ blocked user namespaces, a mount-only degraded capability, or an unsafe bind
 policy refuses the pack launch instead of falling back to an ordinary child.
 It does not cover in-process packs or remote worker daemons.
 
+Unix worker endpoints refuse overlong socket paths before launching a child,
+with the encoded path length and platform limit in the error (107 bytes on
+Linux, 103 on macOS). Set `TMPDIR` to a shorter real directory before starting
+workers when this limit is exceeded. There is no automatic TCP fallback: a
+jailed worker's private network namespace cannot reach the host loopback
+listener, and changing transport must not relax the sandbox policy.
+
 The jail exposes only the worker's interpreter, pack, required Python import
 roots, a read-only system surface, and explicit policy binds. It provides a
 private `/tmp` plus fresh `/proc` and `/dev`; points `HOME` and `TMPDIR` at
