@@ -59,7 +59,7 @@ from dinkster_workers.session import BoundarySession, WorkerDied
 
 from tests.async_scenarios import run_scenario
 
-TESTS_DIR = Path(__file__).parent
+TESTS_DIR = Path(__file__).parents[1]
 
 DIGEST = "blake3:" + "ab" * 32
 

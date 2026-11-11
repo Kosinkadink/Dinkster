@@ -60,9 +60,9 @@ from dinkster_workers.produced_assets import (
 )
 from produced_video_nodes import ProduceAudio, ProduceVideo
 from test_remote import TOKEN, start_service, stop_service
-from test_reservations import core_registry, make_invocation
 
 from tests.async_scenarios import run_scenario
+from tests.workers.test_reservations import core_registry, make_invocation
 
 
 @pytest.fixture
