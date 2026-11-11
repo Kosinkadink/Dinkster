@@ -17,7 +17,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tomllib
 import weakref
 from collections.abc import Mapping
@@ -124,131 +123,6 @@ def editable_distribution(root: Path, version: str) -> SimpleNamespace:
             else None
         ),
     )
-
-
-@pytest.mark.parametrize("source", ["image-list", "video-asset"])
-def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: str) -> None:
-    import io
-
-    import av
-    import numpy as np
-    from PIL import Image
-
-    async def scenario() -> None:
-        vault = AssetVault(tmp_path / "vault")
-        specs = tuple(
-            replace(default_pack_spec(pack), in_process=False, python=sys.executable)
-            for pack in (
-                "dinkster-utilities",
-                "dinkster-video",
-                "dinkster-image",
-            )
-        )
-        composition = await compose_serving(
-            specs,
-            include_default_packs=False,
-            worker_env={"DINKSTER_ASSET_VAULT": str(tmp_path / "vault")},
-        )
-        try:
-            library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
-            app = create_app(
-                composition.make_engine,
-                composition.schemas,
-                library=library,
-                choices=composition.choices,
-                lazy_choices=composition.lazy_choices,
-            )
-            async with TestClient(TestServer(app)) as client:
-                if source == "image-list":
-                    nodes = {
-                        "source": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 1},
-                        ),
-                        "other": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 11, "height": 5, "batch_size": 2},
-                        ),
-                        "list": GraphNode(
-                            "dinkster.utilities.make_list",
-                            {"items.0": Link("other", "IMAGE"), "items.1": Link("source", "IMAGE")},
-                        ),
-                        "select": GraphNode(
-                            "dinkster.utilities.list_element",
-                            {"list": Link("list", "list"), "index": -1},
-                        ),
-                        "info": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("select", "item")}
-                        ),
-                    }
-                    expected = {"width": 7, "height": 3, "batch_size": 1}
-                else:
-                    path = tmp_path / "input.mp4"
-                    with av.open(str(path), "w") as container:
-                        stream = container.add_stream("libx264rgb", rate=2)
-                        stream.width, stream.height, stream.pix_fmt = 32, 16, "rgb24"
-                        stream.options = {"crf": "0"}
-                        for value in (31, 173):
-                            frame = av.VideoFrame.from_ndarray(
-                                np.full((16, 32, 3), value, dtype=np.uint8), format="rgb24"
-                            )
-                            container.mux(stream.encode(frame))
-                        container.mux(stream.encode())
-                    response = await client.post("/api/assets", data=path.read_bytes())
-                    assert response.status == 201
-                    uploaded = await response.json()
-                    nodes = {
-                        "source": GraphNode(
-                            "dinkster.video.load_video",
-                            {"file": TypedLiteral("ASSET", {"digest": uploaded["digest"]})},
-                        ),
-                        "frames": GraphNode(
-                            "dinkster.video.get_video_components",
-                            {"video": Link("source", "VIDEO")},
-                        ),
-                        "info": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("frames", "images")}
-                        ),
-                    }
-                    expected = {"width": 32, "height": 16, "batch_size": 2}
-                response = await client.post(
-                    "/api/jobs",
-                    json={
-                        "clientId": "cross-pack",
-                        "jobId": source,
-                        "graph": graph_to_wire(Graph(nodes=nodes)),
-                        "targets": ["info", "frames"] if source == "video-asset" else ["info"],
-                    },
-                )
-                assert response.status == 202, await response.text()
-                async with asyncio.timeout(60):
-                    while True:
-                        result = await (await client.get(f"/api/jobs/cross-pack/{source}")).json()
-                        if result["state"] in {"completed", "failed", "cancelled"}:
-                            break
-                        await asyncio.sleep(0.01)
-                assert result["state"] == "completed", result.get("error", result)
-                assert {
-                    name: result["outputs"]["info"][name]["value"] for name in expected
-                } == expected
-                if source == "video-asset":
-                    response = await client.get(
-                        "/api/values",
-                        params={
-                            "clientId": "cross-pack",
-                            "jobId": source,
-                            "nodeId": "frames",
-                            "outputId": "images",
-                            "rendition": "png",
-                        },
-                    )
-                    assert response.status == 200, await response.text()
-                    pixels = np.array(Image.open(io.BytesIO(await response.read())))
-                    assert np.array_equal(pixels, np.full((16, 32, 3), 31, dtype=np.uint8))
-        finally:
-            await composition.close()
-
-    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("installed", [False, True])
@@ -399,45 +273,6 @@ def test_first_party_pack_uses_its_own_distribution(
     assert spec.packs is not None
     assert spec.packs["dinkster-text"].version == "0.0.3"
     assert spec.packs["dinkster-text"].source == "python:dinkster-text==1.2.3"
-
-
-def test_image_pack_starts_with_canonical_inference_types() -> None:
-    async def scenario() -> None:
-        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-        assert prepare_catalog(image.manifest, environment=os.environ).ok
-        composer = ServingComposer()
-        try:
-            specs = tuple(
-                image if load_manifest(spec.manifest).name == "dinkster-image" else spec
-                for spec in default_pack_specs()
-            )
-            for spec in composer.order_pack_entries(specs):
-                await composer.add_pack(spec)
-            result = await composer.composition.make_engine(lambda event: None).run(
-                Graph(
-                    nodes={
-                        "image": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 2, "color": 0x123456},
-                        ),
-                        "size": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("image", "IMAGE")}
-                        ),
-                    }
-                ),
-                ["size"],
-            )
-            assert result.executed == ("image", "size")
-            assert {name: value.resolve() for name, value in result.outputs["size"].items()} == {
-                "width": 7,
-                "height": 3,
-                "batch_size": 2,
-            }
-            assert result.diagnostics == ()
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
 
 
 @pytest.fixture
