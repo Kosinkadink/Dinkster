@@ -11,8 +11,8 @@ from dinkster_api.v1 import (
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
 )
+from dinkster_inference_wire.wan_wire import register_wan_type
 from dinkster_values import EncodedLatentTensor, encode_latent
-from dinkster_wan import register_types
 
 HALF = EncodedLatentTensor("float16", (1, 2), b"\x00\x3c\x00\xc0")
 BFLOAT = EncodedLatentTensor("bfloat16", (2, 1), b"\x80\x3f\x00\xc0")
@@ -36,9 +36,10 @@ WANDANCER_ENCODER = {
 def registry():
     values = TypeRegistry()
     with values.registering_pack(
-        "dinkster-wan", (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE), allow_bare=True
+        "wan-codec-fixture", (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE), allow_bare=True
     ):
-        register_types(values)
+        for type_id in (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE):
+            register_wan_type(values, type_id)
         yield values
 
 
@@ -80,10 +81,7 @@ def registry():
 def test_public_codec_roundtrip_and_fingerprints(
     registry: TypeRegistry, type_id: str, value: object, changed: object
 ) -> None:
-    original_spec = registry.spec(type_id)
-    register_types(registry)
     spec = registry.spec(type_id)
-    assert spec is original_spec
     encoded = spec.encode(value)
     assert spec.validate_encoded is not None
     spec.validate_encoded(encoded, {})

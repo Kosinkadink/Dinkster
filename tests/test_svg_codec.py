@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import io
 import os
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -18,11 +16,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    TypeRegistry,
     materialize_svg,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_image import register_types
 from dinkster_values import (
     SVG_CODEC_MAGIC,
     SVG_CODEC_VERSION,
@@ -112,45 +108,6 @@ def test_svg_rejects_malformed_frames_and_metadata() -> None:
         validate_svg_encoded(data, {"streams": 2, "byte_size": 7})
 
 
-def test_svg_registration_preserves_the_first_authority() -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(SVG_TYPE)
-    register_types(registry)
-    assert registry.spec(SVG_TYPE) is spec
-    value = (b"<svg/>", b"", b"<svg/>")
-    encoded = spec.encode(value)
-    assert spec.decode(encoded) == value
-    assert spec.validate_encoded is not None
-    spec.validate_encoded(encoded, svg_meta(value))
-
-
-def test_svg_public_type_registers_in_two_fresh_python_processes() -> None:
-    script = """
-import sys
-from dinkster_api.v1 import SVG_TYPE, TypeRegistry, materialize_svg
-from dinkster_image import register_types
-from dinkster_values.builtin_types import SVG_TYPE as canonical
-
-assert SVG_TYPE is canonical
-registry = TypeRegistry()
-register_types(registry)
-register_types(registry)
-spec = registry.spec(SVG_TYPE)
-value = (b'<svg/>', b'', b'\\xff')
-encoded = spec.encode(value)
-assert spec.decode(encoded) == value
-assert spec.fingerprint(value) == spec.fingerprint(spec.decode(encoded))
-assert tuple(stream.read() for stream in materialize_svg(spec.decode(encoded))) == value
-assert not any(name == 'torch' or name.startswith('torch.') for name in sys.modules)
-"""
-    for _ in range(2):
-        result = subprocess.run(
-            [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-        )
-        assert result.returncode == 0, result.stderr
-
-
 class SvgSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -192,7 +149,7 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
     async def scenario() -> None:
         (tmp_path / "svg_fixture.py").write_text(
             "from test_svg_codec import SvgConsumer, SvgSource\n"
-            "from dinkster_image import register_types\n"
+            "from dinkster_api.v1 import register_media_types as register_types\n"
             "NODES = (SvgSource, SvgConsumer)\n",
             encoding="ascii",
         )

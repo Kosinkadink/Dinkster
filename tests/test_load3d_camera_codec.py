@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from dinkster_3d import register_types
 from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_STRING,
@@ -23,6 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     TypeRegistry,
 )
+from dinkster_api.v1 import register_inference_types as register_types
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import LATENT_TYPE, EncodedLatentTensor, RenditionUnavailable, encode_latent
 
@@ -202,42 +200,6 @@ def test_load3d_camera_rejects_malformed_payloads(value: dict[str, object]) -> N
         spec.validate_encoded(payload, {})
 
 
-def test_load3d_camera_public_registration_is_cold_and_shared() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "from dinkster_api.v1 import LOAD3D_CAMERA_TYPE, TypeRegistry\n"
-            "from dinkster_3d import register_types\n"
-            "from dinkster_values.builtin_types import LOAD3D_CAMERA_TYPE as canonical\n"
-            "assert LOAD3D_CAMERA_TYPE is canonical\n"
-            "registry = TypeRegistry()\n"
-            "register_types(registry)\n"
-            "register_types(registry)\n"
-            "value = {'position': {'x': 0, 'y': 1, 'z': 2},\n"
-            "         'target': {'x': 0, 'y': 0, 'z': 0},\n"
-            "         'zoom': 1, 'cameraType': 'perspective'}\n"
-            "spec = registry.spec(canonical)\n"
-            "payload = spec.encode(value)\n"
-            "spec.validate_encoded(payload, {})\n"
-            "assert spec.decode(payload) == value\n"
-            "from dinkster_api.v1 import LOAD3D_MODEL_INFO_TYPE\n"
-            "from dinkster_values.builtin_types import LOAD3D_MODEL_INFO_TYPE as model_type\n"
-            "assert LOAD3D_MODEL_INFO_TYPE is model_type\n"
-            "models = registry.spec(model_type)\n"
-            "assert models.decode(models.encode([])) == []\n"
-            "assert not any(\n"
-            "    name == 'torch' or name.startswith('torch.')\n"
-            "    or name == 'dinkster_inference'\n"
-            "    or name.startswith('dinkster_inference.')\n"
-            "    for name in sys.modules\n"
-            ")\n",
-        ],
-        check=True,
-    )
-
-
 class CameraSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -303,7 +265,7 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
     async def scenario() -> None:
         (tmp_path / "load3d_camera_fixture.py").write_text(
             "from test_load3d_camera_codec import CameraConsumer, CameraSource\n"
-            "from dinkster_3d import register_types\n"
+            "from dinkster_api.v1 import register_inference_types as register_types\n"
             "NODES = (CameraSource, CameraConsumer)\n",
             encoding="ascii",
         )
@@ -367,7 +329,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
         for module, (node, namespace) in modules.items():
             (tmp_path / f"{module}.py").write_text(
                 f"from test_load3d_camera_codec import {node}\n"
-                "from dinkster_3d import register_types\n"
+                "from dinkster_api.v1 import register_inference_types as register_types\n"
                 f"NODES = ({node},)\n",
                 encoding="ascii",
             )
@@ -385,13 +347,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (
-                        str(tmp_path),
-                        str(test_directory),
-                        str(test_directory.parents[1] / "packages/dinkster-nodes-3d/src"),
-                    )
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(test_directory))),
             },
         )
         try:

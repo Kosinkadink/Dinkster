@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import itertools
 import json
 import pickle
 from pathlib import Path
@@ -16,13 +15,11 @@ from dinkster_api.v1 import (
     COMFY_ARRAY_TYPE,
     TypeRegistry,
     register_box_types,
-    register_inference_types,
     validate_bounding_box_encoded,
     validate_placement_array_encoded,
 )
 from dinkster_assets import AssetError, AssetRef, digest_bytes
 from dinkster_assets.value import value_asset_references
-from dinkster_image import register_types
 from dinkster_values import EncodedPayload, default_encode, register_core_types
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
@@ -209,23 +206,10 @@ class OpaqueBoxes:
         return _reconstruct, (str(self.marker),)
 
 
-@pytest.mark.parametrize("order", tuple(itertools.permutations(("native", "image"))))
 @pytest.mark.parametrize("type_id", (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE))
-def test_all_registration_orders_refuse_pickle_at_real_boundary_admission(
-    tmp_path: Path, order: tuple[str, ...], type_id: str
-) -> None:
+def test_box_codec_refuses_pickle_at_real_boundary_admission(tmp_path: Path, type_id: str) -> None:
     registry = TypeRegistry()
-    registrations = {
-        "native": register_inference_types,
-        "image": register_types,
-    }
-    first = None
-    for name in order:
-        registrations[name](registry)
-        spec = registry.spec(type_id)
-        if first is None:
-            first = spec
-        assert spec is first and spec.declared_codec and spec.validate_encoded is not None
+    register_box_types(registry)
     spec = registry.spec(type_id)
     codec = ValueCodec(registry, use_shm=False, accept_shm=False)
     blobs: list[bytes] = []

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry
+from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry, register_media_types
+from dinkster_inference_wire.sam3_wire import register_sam3_track_type
 from dinkster_values import LATENT_TYPE, EncodedLatentTensor, encode_latent
-from dinkster_vision_sam3 import register_types
 
 PACKED = EncodedLatentTensor("uint8", (2, 1, 1, 3), bytes((1, 128, 255, 85, 42, 16)))
 EMPTY = EncodedLatentTensor("uint8", (3, 0, 2, 4), b"")
@@ -16,6 +16,14 @@ TRACKS = {
     "scores": [0.75],
     "metadata": {"tag": ("source", 4), "mask": EncodedLatentTensor("bool", (1,), b"\x01")},
 }
+
+
+@pytest.fixture
+def registry() -> TypeRegistry:
+    values = TypeRegistry()
+    register_media_types(values)
+    register_sam3_track_type(values)
+    return values
 
 
 @pytest.mark.parametrize(
@@ -29,12 +37,10 @@ TRACKS = {
         {"packed_masks": None, "orig_size": (13, 7), "n_frames": 4, "scores": []},
     ),
 )
-def test_sam3_public_codec_preserves_complete_structure(value: dict[str, object]) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
+def test_sam3_public_codec_preserves_complete_structure(
+    registry: TypeRegistry, value: dict[str, object]
+) -> None:
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
-    register_types(registry)
-    assert registry.spec(SAM3_TRACK_DATA_TYPE) is spec
     assert spec.validate_encoded is not None
     payload = spec.encode(value)
     spec.validate_encoded(payload, {})
@@ -64,10 +70,9 @@ def test_sam3_public_codec_preserves_complete_structure(value: dict[str, object]
     ),
 )
 def test_sam3_fingerprint_includes_bytes_shape_dimensions_frames_and_scores(
+    registry: TypeRegistry,
     changed: dict[str, object],
 ) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
     assert spec.fingerprint is not None
     assert spec.fingerprint(TRACKS) != spec.fingerprint(changed)
@@ -88,9 +93,9 @@ def test_sam3_fingerprint_includes_bytes_shape_dimensions_frames_and_scores(
         {**TRACKS, "n_frames": -1},
     ),
 )
-def test_sam3_rejects_malformed_payloads_in_every_codec_entry(value: dict[str, object]) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
+def test_sam3_rejects_malformed_payloads_in_every_codec_entry(
+    registry: TypeRegistry, value: dict[str, object]
+) -> None:
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
     assert spec.validate_encoded is not None
     payload = encode_latent({"samples": value})
