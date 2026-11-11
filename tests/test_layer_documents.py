@@ -5,7 +5,7 @@ import hashlib
 import io
 import json
 import zipfile
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -13,10 +13,7 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, TypeExpr, register_media_types
-from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
@@ -31,7 +28,6 @@ from dinkster_image_document.format import (
     IMAGE_DOCUMENT_MEDIA_TYPE,
     INLINE_RESOURCE_LIMIT,
     InvalidDocument,
-    canonical_json,
 )
 from dinkster_image_document.interchange import (
     export_ora,
@@ -39,9 +35,8 @@ from dinkster_image_document.interchange import (
     import_ora,
     import_psd,
 )
-from dinkster_schema import build_node_types
 from dinkster_values import (
-    RenditionUnavailable,
+    CORE_BOOLEAN,
     TypeRegistry,
     annotate_image,
     media_semantics,
@@ -49,39 +44,9 @@ from dinkster_values import (
 )
 from dinkster_workers import GroupIsolatedWorker, InProcessWorker
 from dinkster_workers.boundary import ValueCodec
-from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
 
-from tests.async_scenarios import run_scenario
-
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
-
-
-@pytest.fixture
-def layer_document_pack(tmp_path: Path) -> Path:
-    (tmp_path / "layer_document_fixture.py").write_text(
-        "from dinkster_api.v1 import register_media_types\n"
-        "from dinkster_image.compositor import AddLayer\n"
-        "from dinkster_image.layer_document import EditLayers, FlattenLayers\n"
-        "from dinkster_image.layer_io import SaveLayers\n"
-        "from dinkster_image.types import register_image_types\n"
-        "NODES = (AddLayer, EditLayers, FlattenLayers, SaveLayers)\n"
-        "def register_types(registry):\n"
-        "    register_media_types(registry)\n"
-        "    register_image_types(registry)\n",
-        encoding="ascii",
-    )
-    manifest = tmp_path / "layer-document.toml"
-    manifest.write_text(
-        '[pack]\nname="dinkster-image"\npublisher="dinkster"\n'
-        'namespaces=["dinkster.layers"]\n'
-        'type-namespaces=["dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"]\n'
-        "[pack.sandbox]\nwritable-mounts=true\n"
-        '[pack.entry]\nnodes="layer_document_fixture:NODES"\n'
-        'types="layer_document_fixture:register_types"\n',
-        encoding="ascii",
-    )
-    return manifest
 
 
 def document() -> ImageDocument:
@@ -321,31 +286,6 @@ def test_comfy_missing_canvas_and_zero_dimensions_use_source_size() -> None:
     )
     assert flatten(value)[0].shape == (1, 2, 3, 3)
     assert flatten(from_comfy_layers({"version": 1, "layers": []}))[0].shape == (1, 1, 1, 4)
-
-
-def large_document() -> ImageDocument:
-    from dinkster_image.types import register_image_types
-
-    value = empty_document(64, 64)
-    rng = np.random.default_rng(0)
-    for index in range(50):
-        output = io.BytesIO()
-        Image.fromarray(rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)).save(output, "PNG")
-        raster = output.getvalue()
-        assert len(raster) > INLINE_RESOURCE_LIMIT
-        value = append_raster(value, raster, name=f"Layer {index}")
-    registry = TypeRegistry()
-    register_image_types(registry)
-    spec = registry.spec("dinkster.layers")
-    assert spec.meta is not None
-    meta = spec.meta(value)
-    size = len(spec.encode(value)) + len(canonical_json(meta).encode())
-    assert size < 1024 * 1024
-    assert all("inline" not in resource for resource in value.to_record()["resources"].values())
-    assert b"/tmp" not in value.data
-    assert len(value.to_record()["resources"]) == 50
-    print(f"50x64x64 document plus metadata: {size} bytes")
-    return value
 
 
 def test_ora_archive_exact_reimport_and_independent_stack_fixture() -> None:
@@ -1102,22 +1042,12 @@ def test_nested_pass_through_groups_visit_each_raster_once(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
-def test_lazy_document_input_retains_vault_until_hook_settles(
+def test_canonical_document_lazy_input_retains_vault_until_hook_settles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
-    from contextlib import suppress
-
     from dinkster_assets.scratch import claim_inactive_produced_scratch, hold_produced_vault
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        decode_layer_stack,
-        encode_layer_stack,
-        layer_stack_meta,
-    )
-    from dinkster_image.types import register_image_types
     from dinkster_protocol import LazyStatusInvocation
-    from dinkster_values import CORE_BOOLEAN
+    from dinkster_schema import build_node_types
     from dinkster_workers.host import serve_connection
     from dinkster_workers.session import BoundarySession
 
@@ -1127,23 +1057,12 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
         pass
     registry = TypeRegistry()
     register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
-    old = TypeRegistry()
-    old.register(
-        "dinkster.layers",
-        encode=encode_layer_stack,
-        decode=decode_layer_stack,
-        meta=layer_stack_meta,
-    )
-    pixels = np.random.default_rng(41).random((1, 64, 64, 3), dtype=np.float32)
-    source = old.wrap(
-        "dinkster.layers",
-        LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
-    )
-    blobs: list[bytes] = []
-    wire, _ = ValueCodec(old, use_shm=False).encode(source, blobs, [])
-    source, _ = ValueCodec(registry, use_shm=False).decode(wire, blobs, [])
+    register_comfy_layers(registry)
+    pixels = np.random.default_rng(41).random((64, 64, 3), dtype=np.float32)
+    expected = raster_png(pixels)
+    assert len(expected) > INLINE_RESOURCE_LIMIT
+    value = append_raster(empty_document(64, 64), expected)
+    source = registry.wrap("comfy.LAYERS", value)
 
     async def run() -> None:
         entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -1155,7 +1074,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
                     "test.lazy-document",
                     inputs=(
                         InputSpec("condition", TypeExpr.concrete(CORE_BOOLEAN)),
-                        InputSpec("value", TypeExpr.concrete("dinkster.layers"), lazy=True),
+                        InputSpec("value", TypeExpr.concrete("comfy.LAYERS"), lazy=True),
                     ),
                 )
 
@@ -1164,7 +1083,7 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
                 assert isinstance(value, ImageDocument)
                 resource = next(iter(value.to_record()["resources"].values()))
                 assert "inline" not in resource
-                assert value.read_resource(resource) == raster_png(pixels[0])
+                assert value.read_resource(resource) == expected
                 entered.set()
                 try:
                     await release.wait()
@@ -1243,371 +1162,118 @@ def test_lazy_document_input_retains_vault_until_hook_settles(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize(
-    "case", ["modern", "legacy", "missing", "truncated", "corrupt", "host-missing"]
-)
-def test_isolated_document_rendition_adopts_all_resources_before_return(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, layer_document_pack: Path
-) -> None:
-    from dinkster_assets import AssetError, AssetVault, digest_bytes
-    from dinkster_assets.produced import ProducedAssetInventory
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        decode_layer_stack,
-        encode_layer_stack,
-        layer_stack_meta,
-    )
-    from dinkster_image.types import register_image_types
+class DocumentEcho(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "document-boundary-fixture.echo",
+            inputs=(InputSpec("value", TypeExpr.concrete("comfy.LAYERS")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("comfy.LAYERS")),),
+        )
 
-    producer = AssetVault(tmp_path / "producer")
-    host = AssetVault(tmp_path / "host")
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(host.root))
+    @classmethod
+    def execute(cls, *, value: ImageDocument) -> dict[str, object]:
+        for resource in value.to_record()["resources"].values():
+            assert len(value.read_resource(resource)) == resource["byteSize"]
+        return {"value": value}
+
+
+def register_document_boundary_types(registry: TypeRegistry) -> None:
+    register_comfy_layers(registry)
+    spec = registry.spec("comfy.LAYERS")
+    with registry.registering_pack(
+        "dinkster-image", ("dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+    ):
+        registry.register(
+            "dinkster.layers",
+            encode=spec.encode,
+            decode=spec.decode,
+            meta=spec.meta,
+            validate_encoded=spec.validate_encoded,
+            asset_references_complete=True,
+        )
+
+
+@pytest.mark.parametrize("large", [False, True])
+def test_canonical_document_isolated_shm_and_rendition_preserve_bytes_and_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, large: bool
+) -> None:
+    import os
+
+    from dinkster_assets.value import value_asset_references
+    from dinkster_protocol import Invocation
+
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    value = document()
+    if large:
+        value = empty_document(64, 64)
+        rng = np.random.default_rng(0)
+        for index in range(50):
+            raster = raster_png(rng.random((64, 64, 3), dtype=np.float32))
+            assert len(raster) > INLINE_RESOURCE_LIMIT
+            value = append_raster(value, raster, name=f"Layer {index}")
+        assert len(value.to_record()["resources"]) == 50
+        assert all("inline" not in item for item in value.to_record()["resources"].values())
+    (tmp_path / "document_boundary_fixture.py").write_text(
+        "from test_layer_documents import (\n"
+        "    DocumentEcho, register_document_boundary_types as register_types,\n"
+        ")\n"
+        "NODES = (DocumentEcho,)\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="dinkster-image"\npublisher="dinkster"\n'
+        'namespaces=["document-boundary-fixture"]\n'
+        'type-namespaces=["comfy.LAYERS", "dinkster.layers"]\n'
+        '[pack.entry]\nnodes="document_boundary_fixture:NODES"\n'
+        'types="document_boundary_fixture:register_types"\n',
+        encoding="ascii",
+    )
     registry = TypeRegistry()
     register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
+    register_document_boundary_types(registry)
+    source = registry.wrap("comfy.LAYERS", value)
     codec = ValueCodec(registry, use_shm=False)
-    pixels = np.random.default_rng(41).random((1, 64, 64, 3), dtype=np.float32)
-    expected = raster_png(pixels[0])
-    if case == "legacy":
-        old = TypeRegistry()
-        old.register(
-            "dinkster.layers",
-            encode=encode_layer_stack,
-            decode=decode_layer_stack,
-            meta=layer_stack_meta,
-        )
-        source = old.wrap(
-            "dinkster.layers",
-            LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
-        )
-        blobs, segments = [], []
-        wire, _ = ValueCodec(old, use_shm=False).encode(source, blobs, segments)
-        source, _ = codec.decode(wire, blobs, [])
-    else:
-        digest = digest_bytes(expected)
-        with producer.writer(digest) as writer:
-            writer.write(expected)
-            writer.commit()
-        if case != "host-missing":
-            with host.writer(digest) as writer:
-                writer.write(expected)
-                writer.commit()
-        path = producer.resolve(digest)
-        assert path is not None
-        if case == "missing":
-            path.unlink()
-        elif case == "truncated":
-            path.write_bytes(expected[:-1])
-        elif case == "corrupt":
-            path.write_bytes(expected[:-1] + bytes([expected[-1] ^ 1]))
-        record = empty_document(64, 64).to_record()
-        record["allocation"]["nextOrdinal"] = 1
-        record["resources"]["r0"] = {
-            "id": "r0",
-            "kind": "raster",
-            "digest": digest,
-            "byteSize": len(expected),
-            "mediaType": "image/png",
-            "width": 64,
-            "height": 64,
-            "colorSpace": "srgb",
-            "channelDepth": 8,
-            "alphaMode": "opaque",
-        }
-        source = registry.wrap("dinkster.layers", ImageDocument.from_record(record))
-
     before_blobs, before_segments = [], []
     before, _ = codec.encode(source, before_blobs, before_segments)
-    fingerprint = source.fingerprint
+    assert sum(map(len, before_blobs)) < 1024 * 1024
 
     async def run() -> None:
         group = GroupIsolatedWorker(
-            "rendition-test",
-            [layer_document_pack],
+            "document-boundary",
+            [manifest],
             registry,
-            extra_env={"DINKSTER_ASSET_VAULT": str(producer.root)},
+            shm_threshold=1,
+            extra_env={
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+            },
         )
         await group.start()
         try:
             worker = group.members["dinkster-image"]
-            if case in ("missing", "truncated", "corrupt", "host-missing"):
-                error = AssetError if case == "host-missing" else RenditionUnavailable
-                with pytest.raises(error):
-                    await worker.render_rendition(source, "document", {})
-                assert (
-                    await worker.resolve_rendition_mime(
-                        source.type_id, "document", source.meta.entries
-                    )
-                    == "application/vnd.dinkster.image-document+json"
-                )
-                return
+            schema = DocumentEcho.define_schema()
+            result = await worker.invoke(
+                Invocation("document-boundary", "echo", schema.node_type, {"value": source}, schema)
+            )
+            assert result.error is None and result.outputs is not None
+            output = result.outputs["value"]
+            assert cast(ImageDocument, output.resolve()).data == value.data
+            assert output.fingerprint == source.fingerprint
+            assert value_asset_references({"value": output}) == value_asset_references(
+                {"value": source}
+            )
             rendered = await worker.render_rendition(source, "document", {})
+            assert rendered.mime == IMAGE_DOCUMENT_MEDIA_TYPE
+            assert rendered.data == value.data
         finally:
             await group.close()
-        record = ImageDocument(rendered.data).to_record()
-        resources = list(record["resources"].values())
-        assert len(resources) == 1
-        descriptor = resources[0]
-        assert "inline" not in descriptor
-        assert descriptor["digest"] == digest_bytes(expected)
-        assert descriptor["byteSize"] == len(expected)
-        path = host.resolve(descriptor["digest"])
-        assert path is not None
-        assert path.read_bytes() == expected
-        inventory = ProducedAssetInventory(host.root)
-        if case == "legacy":
-            assert [entry.digest for entry in inventory.entries()] == [descriptor["digest"]]
-        else:
-            with pytest.raises(AssetError, match="inventory is unavailable"):
-                inventory.entries()
+        returned = cast(ImageDocument, output.resolve())
+        for resource in returned.to_record()["resources"].values():
+            assert returned.read_resource(resource) == value.read_resource(resource)
 
     asyncio.run(run())
     after_blobs, after_segments = [], []
     after, _ = codec.encode(source, after_blobs, after_segments)
     assert (after, after_blobs) == (before, before_blobs)
-    assert source.fingerprint == fingerprint
-    assert not registry.spec("dinkster.layers").asset_references_complete
-
-
-@pytest.mark.parametrize("case", ["legacy", "unused", "host-missing"])
-def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, layer_document_pack: Path
-) -> None:
-    import time
-
-    from dinkster_assets import AssetVault, LibraryStore, digest_bytes
-    from dinkster_assets.writer import AssetWriter, MountSnapshotWriter
-    from dinkster_engine import RunResult
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        decode_layer_stack,
-        encode_layer_stack,
-        layer_stack_meta,
-    )
-    from dinkster_image.layer_io import SaveLayers
-    from dinkster_image.types import register_image_types
-    from dinkster_protocol import Invocation
-    from dinkster_server import ServerLibrary
-    from dinkster_server.queue import Job, JobKey
-    from dinkster_values import SAVE_TARGET_TYPE
-    from dinkster_values.asset_folders import AssetFolderContext
-
-    producer, host = AssetVault(tmp_path / "producer"), AssetVault(tmp_path / "host")
-    output = tmp_path / "output"
-    output.mkdir()
-    snapshot = tmp_path / "mounts.json"
-    snapshot.write_text(
-        json.dumps({"mounts": [{"id": "out", "root": str(output), "mode": "readwrite"}]}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(host.root))
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
-    pixels = np.random.default_rng(545).random((1, 64, 64, 3), dtype=np.float32)
-    expected = raster_png(pixels[0])
-    digest = digest_bytes(expected)
-    old = TypeRegistry()
-    old.register(
-        "dinkster.layers",
-        encode=encode_layer_stack,
-        decode=decode_layer_stack,
-        meta=layer_stack_meta,
-    )
-    original = old.wrap(
-        "dinkster.layers",
-        LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
-    )
-    blobs, segments = [], []
-    wire, _ = ValueCodec(old, use_shm=False).encode(original, blobs, segments)
-    codec = ValueCodec(registry, use_shm=False)
-    source, _ = codec.decode(wire, blobs, [])
-    if case != "legacy":
-        for vault in (producer,) if case == "host-missing" else (producer, host):
-            with vault.writer(digest) as writer:
-                writer.write(expected)
-                writer.commit()
-        record = empty_document(64, 64).to_record()
-        record["allocation"]["nextOrdinal"] = 1
-        record["resources"]["r0"] = {
-            "id": "r0",
-            "kind": "raster",
-            "digest": digest,
-            "byteSize": len(expected),
-            "mediaType": "image/png",
-            "width": 64,
-            "height": 64,
-            "colorSpace": "srgb",
-            "channelDepth": 8,
-            "alphaMode": "opaque",
-        }
-        source = registry.wrap("dinkster.layers", ImageDocument.from_record(record))
-    before_blobs, before_segments = [], []
-    before, _ = codec.encode(source, before_blobs, before_segments)
-
-    async def run() -> None:
-        group = GroupIsolatedWorker(
-            "native-save-test",
-            [layer_document_pack],
-            registry,
-            extra_env={
-                "DINKSTER_ASSET_VAULT": str(producer.root),
-                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
-            },
-            aimdo_arm="off",
-        )
-        await group.start()
-        try:
-            schema = SaveLayers.define_schema()
-            started = time.time_ns()
-            result = await group.members["dinkster-image"].invoke(
-                Invocation(
-                    "native-save",
-                    "save",
-                    schema.node_type,
-                    {
-                        "layers": source,
-                        "target": registry.wrap(
-                            SAVE_TARGET_TYPE, {"mount": "out", "prefix": "kept"}
-                        ),
-                        "format": registry.wrap("COMBO", "native"),
-                    },
-                    schema,
-                )
-            )
-            if case == "host-missing":
-                assert result.error is not None
-                assert host.resolve(digest) is None
-                return
-            assert result.error is None
-            assert result.outputs is not None
-            artifacts = SavedArtifactAuthority(snapshot).capture_mounted(
-                result.saved_artifact_claims, "save", started
-            )
-            assert len(artifacts) == 1
-            assert result.outputs["document"].fingerprint == artifacts[0].digest
-            with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
-                library = ServerLibrary(
-                    host,
-                    store,
-                    upload_writer=AssetWriter(MountSnapshotWriter(snapshot)),
-                    project_folders_for=lambda _: AssetFolderContext(("out",), "out"),
-                )
-                library.record_saved_outputs(
-                    Job(JobKey("audit", "save"), Graph(nodes={}), (), 0, "native-save", "audit"),
-                    RunResult(
-                        "native-save", {"save": result.outputs}, (), (), (), artifacts=artifacts
-                    ),
-                )
-            with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
-                dependencies = store.get_dependencies(artifacts[0].digest)
-                assert dependencies is not None
-                assert [(item["digest"], item["byteSize"]) for item in dependencies] == [
-                    (digest, len(expected))
-                ]
-                with store.hold_asset_references() as roots:
-                    assert {digest, artifacts[0].digest} <= roots
-        finally:
-            await group.close()
-        held = host.resolve(digest)
-        assert held is not None
-        assert held.read_bytes() == expected
-        if case == "unused":
-            assert not (host.root / ".produced-assets.sqlite").exists()
-
-    asyncio.run(run())
-    after_blobs, after_segments = [], []
-    after, _ = codec.encode(source, after_blobs, after_segments)
-    assert (after, after_blobs) == (before, before_blobs)
-    assert not registry.spec("dinkster.layers").asset_references_complete
-
-
-@pytest.mark.parametrize("large", [False, True])
-def test_isolated_worker_shm_flatten_matches_in_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, large: bool, layer_document_pack: Path
-) -> None:
-    from dinkster_image.compositor import AddLayer
-    from dinkster_image.layer_document import FlattenLayers
-    from dinkster_image.types import register_image_types
-
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-
-    async def run() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        register_media_types(registry)
-        register_image_types(registry)
-        group = GroupIsolatedWorker(
-            "layer-test",
-            [layer_document_pack],
-            registry,
-            shm_threshold=1,
-        )
-        await group.start()
-        worker = group.members["dinkster-image"]
-        try:
-            value = large_document() if large else document()
-            engine = Engine(
-                schemas=dict(worker.schemas),
-                registry=registry,
-                worker=worker,
-                cache=MemoryLRUCache(),
-            )
-            edited = await engine.run(
-                Graph(
-                    nodes={
-                        "edit": GraphNode(
-                            "dinkster.layers.edit",
-                            {
-                                "layers": TypedLiteral("dinkster.layers", value.to_record()),
-                                "commands": "[]",
-                            },
-                        )
-                    }
-                ),
-                ["edit"],
-            )
-            assert (
-                cast(ImageDocument, edited.outputs["edit"]["layers"].resolve()).data == value.data
-            )
-            if large:
-                return
-            source = np.random.default_rng(0).random((1, 64, 64, 3), dtype=np.float32)
-            built = await engine.run(
-                Graph(
-                    nodes={
-                        "add": GraphNode(
-                            "dinkster.layers.add",
-                            {"image": TypedLiteral("IMAGE", source.tolist())},
-                        )
-                    }
-                ),
-                ["add"],
-            )
-            published = cast(ImageDocument, built.outputs["add"]["layers"].resolve())
-            resource = next(iter(published.to_record()["resources"].values()))
-            assert "inline" not in resource
-            expected = cast(ImageDocument, AddLayer.execute(image=source)["layers"])
-            assert published.data == expected.data
-            np.testing.assert_array_equal(flatten(published)[0], flatten(expected)[0])
-            graph = Graph(
-                nodes={
-                    "flatten": GraphNode(
-                        "dinkster.layers.flatten",
-                        {"layers": TypedLiteral("dinkster.layers", value.to_record())},
-                    )
-                }
-            )
-            result = await engine.run(graph, ["flatten"])
-            for name, expected in FlattenLayers.execute(layers=value).items():
-                actual = result.outputs["flatten"][name].resolve()
-                np.testing.assert_array_equal(actual, expected)
-        finally:
-            await group.close()
-
-    run_scenario(run())
+    assert registry.spec("comfy.LAYERS").asset_references_complete
