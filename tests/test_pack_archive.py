@@ -853,6 +853,10 @@ def test_official_publication_selects_only_changed_committed_packs(
         ("prepared", "incomplete-catalog"),
         ("prepared", "corrupt-artifact"),
         ("prepared", "unknown-pack"),
+        ("locked-prepared", None),
+        ("locked-prepared", "lock-base"),
+        ("locked-prepared", "lock-artifact"),
+        ("locked-prepared", "missing-lock"),
         ("published", None),
         ("published", "promotion"),
         ("published", "timeout"),
@@ -873,6 +877,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     from dinkster_registry.archive_admission import StageResult
     from dinkster_store import pack_archive_path, pack_label
     from dinkster_workers import load_manifest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from dinkster_workers.pack_wheel import wheel_filename
 
     from scripts import check_default_pack_admission as admission
@@ -908,13 +913,54 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
         )
 
-    def build_candidate(root, output, *, packs):
+    locked = mode == "locked-prepared"
+    is_prepared = mode in {"prepared", "locked-prepared"}
+    generation = tmp_path / "generation-python"
+    generation.touch()
+    constraints = tmp_path / "constraints.txt"
+    constraints.touch()
+    context = (
+        {
+            "generation_python": generation,
+            "base_id": "sha256:" + "f" * 64,
+            "constraints": constraints,
+        }
+        if locked
+        else {}
+    )
+
+    def dependency_lock(name):
+        return PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            (),
+            (),
+            (
+                LockedDistribution(
+                    name,
+                    entries[name].version,
+                    (
+                        LockedWheel(
+                            f"{name}-{entries[name].version}-py3-none-any.whl",
+                            len(archives[name]),
+                            hashlib.sha256(archives[name]).hexdigest(),
+                            "https://registry.example/pack.whl",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def build_candidate(root, output, *, packs, **kwargs):
         assert packs == ("candidate",)
         output.mkdir()
         (output / "candidate-7.2-py3-none-any.whl").write_bytes(archives["candidate"])
         (output / "official-packs.lock").write_text(
             Lockfile.of([entries["candidate"]]).record_json()
         )
+        if locked:
+            dependency_lock("candidate").write(output / "candidate-7.2-linux-cpu.pack-lock.json")
 
     def registry_defaults(registry, minimums, artifacts, *, engine_version):
         # The candidate has no registry release: requesting it would fail here.
@@ -931,7 +977,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
 
     def engine_tests(root, catalog, artifacts, *, test_packs=()):
         assert root == Path(admission.__file__).resolve().parents[1]
-        assert test_packs == (("candidate",) if mode == "prepared" else ())
+        assert test_packs == (("candidate",) if is_prepared else ())
         observed.extend((pack.pack, pack.version) for pack in catalog.packs)
 
     monkeypatch.setattr(
@@ -941,15 +987,22 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     monkeypatch.setattr(admission, "build", build_candidate)
     monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
     monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
+    monkeypatch.setattr(
+        admission,
+        "read_registry_pack_locks",
+        lambda config, catalog, **kwargs: tuple(dependency_lock(p.pack) for p in catalog.packs),
+    )
+    monkeypatch.setattr(admission, "run_locked_probe", lambda root, lock, **kwargs: StageResult())
     monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
     prepared = None
-    if mode == "prepared":
+    if is_prepared:
         prepared = tmp_path / "prepared"
         output = admission.check_defaults(
             admission.NamedRegistry("", "https://registry.example"),
             engine_version="0.2",
             candidate_base="b" * 40,
             prepare_output=prepared,
+            **context,
         )
         groups = output["groups"]
         assert isinstance(groups, list)
@@ -992,6 +1045,14 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             digest = entries["candidate"].artifact_digest.removeprefix("blake3:")
             with zipfile.ZipFile(prepared / "artifacts" / f"{digest}.zip", "a") as wheel:
                 wheel.writestr("changed.txt", "digest drift")
+        elif problem == "lock-base":
+            metadata = json.loads((prepared / "engine.json").read_text())
+            metadata["baseId"] = "sha256:" + "e" * 64
+            (prepared / "engine.json").write_text(json.dumps(metadata))
+        elif problem == "lock-artifact":
+            dependency_lock("unchanged").write(prepared / "pack-locks/candidate.json")
+        elif problem == "missing-lock":
+            (prepared / "pack-locks/candidate.json").unlink()
     publication = None
     if mode == "published":
         publication = tmp_path / "official-packs.lock"
@@ -1033,9 +1094,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "incomplete-catalog": "prepared sources omit defaults",
         "corrupt-artifact": "candidate@7.2 admission refused",
         "unknown-pack": "requested admission packs are not in the catalog",
+        "lock-base": "do not match the engine checkout and version",
+        "lock-artifact": "dependency lock identity differs",
+        "missing-lock": "candidate.json",
     }.get(problem or "")
     if expected_error:
-        with pytest.raises((ValueError, admission.InstallError), match=expected_error):
+        with pytest.raises((ValueError, OSError, admission.InstallError), match=expected_error):
             admission.check_defaults(
                 admission.NamedRegistry("", "https://registry.example"),
                 engine_version="0.2",
@@ -1045,8 +1109,9 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                 test_packs=("unknown",)
                 if problem == "unknown-pack"
                 else ("candidate",)
-                if mode == "prepared"
+                if is_prepared
                 else (),
+                **context,
             )
         assert not observed
     else:
@@ -1056,7 +1121,8 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             candidate_base="b" * 40 if mode == "candidate" else None,
             published_sources=publication,
             prepared_sources=prepared,
-            test_packs=("candidate",) if mode == "prepared" else (),
+            test_packs=("candidate",) if is_prepared else (),
+            **context,
         )
         assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
         assert result == {
@@ -1067,7 +1133,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                     "version": entries[name].version,
                     "artifactDigest": entries[name].artifact_digest,
                 }
-                for name in (("candidate",) if mode == "prepared" else ("candidate", "unchanged"))
+                for name in (("candidate",) if is_prepared else ("candidate", "unchanged"))
             ],
         }
     if problem in {"manifest", "security"}:

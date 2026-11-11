@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import tomllib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from graphlib import TopologicalSorter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,10 +27,12 @@ from dinkster_registry.archive_admission import (
     run_executable_probe,
     run_fast_security,
     run_ingest_integrity,
+    run_locked_probe,
     run_manifest_admission,
 )
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
+from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
 from dinkster_workers.pack_wheel import pack_manifest_path
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
@@ -37,9 +42,11 @@ from packaging.version import Version
 from dinkster.installer import InstallError, http_registry_fetcher
 from dinkster.registries import (
     NamedRegistry,
+    RegistryConfig,
     StaticPackIndex,
     default_pack_minimums,
     prepare_registry_sources,
+    read_registry_pack_locks,
     registry_source_lock,
     resolve_release,
 )
@@ -236,6 +243,10 @@ def check_defaults(
     prepare_output: Path | None = None,
     prepared_sources: Path | None = None,
     test_packs: tuple[str, ...] = (),
+    generation_python: Path | None = None,
+    base_id: str | None = None,
+    constraints: Path | None = None,
+    variant: str = "linux-cpu",
 ) -> dict[str, object]:
     """Run the public archive stages without service state or publication credentials."""
     if (
@@ -245,6 +256,13 @@ def check_defaults(
         raise ValueError("select candidate or published sources, not both")
     if prepare_output is not None and prepared_sources is not None:
         raise ValueError("cannot prepare sources from a prepared selection")
+    if any(value is not None for value in (generation_python, base_id, constraints)):
+        if generation_python is None or base_id is None or constraints is None:
+            raise ValueError("locked admission requires generation_python, base_id and constraints")
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", base_id) is None:
+            raise ValueError("locked admission requires an exact sha256 base identity")
+        if not generation_python.is_file() or not constraints.is_file():
+            raise ValueError("locked admission interpreter or constraints are missing")
     root = Path(__file__).resolve().parents[1]
     minimums = default_pack_minimums()
     with tempfile.TemporaryDirectory(prefix="default-pack-admission-") as directory:
@@ -252,15 +270,24 @@ def check_defaults(
         artifacts = work / "artifacts"
         artifacts.mkdir()
         selected = Lockfile.of(())
+        locks: dict[str, PackLock] = {}
+        engine_context: dict[str, str] = {"engineVersion": engine_version}
+        if base_id is not None:
+            engine_context.update(baseId=base_id, variant=variant)
         if prepared_sources is not None:
             metadata = json.loads((prepared_sources / "engine.json").read_text())
             head = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=root, text=True
             ).strip()
-            if metadata != {"commit": head, "engineVersion": engine_version}:
+            if metadata != {"commit": head, **engine_context}:
                 raise ValueError("prepared sources do not match the engine checkout and version")
             selected = Lockfile.from_record_json((prepared_sources / "catalog.lock").read_text())
             shutil.copytree(prepared_sources / "artifacts", artifacts, dirs_exist_ok=True)
+            if generation_python is not None:
+                locks = {
+                    pack.pack: PackLock.read(prepared_sources / "pack-locks" / f"{pack.pack}.json")
+                    for pack in selected.packs
+                }
         elif candidate_base is not None:
             candidates = tuple(
                 pack
@@ -270,13 +297,28 @@ def check_defaults(
             if candidates:
                 output = work / "candidate"
                 with admission_timing("defaults", "candidate-build"):
-                    build(root, output, packs=candidates)
+                    if generation_python is None:
+                        build(root, output, packs=candidates)
+                    else:
+                        build(
+                            root,
+                            output,
+                            packs=candidates,
+                            variant=variant,
+                            python=generation_python,
+                            constraints=constraints,
+                            accelerator="cpu",
+                        )
                 selected = Lockfile.from_record_json((output / "official-packs.lock").read_text())
                 for pack in selected.packs:
                     shutil.copyfile(
                         output / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
                         artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip",
                     )
+                    if generation_python is not None:
+                        locks[pack.pack] = PackLock.read(
+                            output / f"{pack.pack}-{pack.version}-{variant}.pack-lock.json"
+                        )
         elif published_sources is not None:
             published = Lockfile.from_record_json(published_sources.read_text())
             library_names = {
@@ -343,6 +385,49 @@ def check_defaults(
             catalog = prepare_library_sources(registry, catalog, artifacts, root)
         if not catalog.packs:
             raise ValueError("engine admission requires a nonempty default set")
+        if generation_python is not None:
+            assert base_id is not None
+            if prepared_sources is None:
+                with admission_timing("defaults", "published-dependency-locks"):
+                    published_locks = read_registry_pack_locks(
+                        RegistryConfig((registry,)),
+                        Lockfile.of([pack for pack in catalog.packs if pack.pack not in locks]),
+                        variant=variant,
+                        base_id=base_id,
+                        selected=registry,
+                    )
+                locks.update((lock.pack, lock) for lock in published_locks)
+            for pack in catalog.packs:
+                lock = locks[pack.pack]
+                if lock.pack != pack.pack or lock.variant != variant:
+                    raise ValueError(f"{pack.pack}: dependency lock identity differs")
+                archive = pack_archive_path(artifacts, pack.artifact_digest)
+                payload = archive.read_bytes()
+                outer = next((item for item in lock.packages if item.name == pack.pack), None)
+                if outer is None and prepared_sources is not None:
+                    raise ValueError(f"{pack.pack}: prepared dependency lock omits the outer wheel")
+                wheel = LockedWheel(
+                    f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
+                    len(payload),
+                    hashlib.sha256(payload).hexdigest(),
+                    archive.resolve().as_uri(),
+                )
+                if outer is not None and (
+                    outer.version != pack.version
+                    or not any(
+                        (item.filename, item.size, item.sha256)
+                        == (wheel.filename, wheel.size, wheel.sha256)
+                        for item in outer.wheels
+                    )
+                ):
+                    raise ValueError(f"{pack.pack}: locked outer wheel differs from the archive")
+                locks[pack.pack] = replace(
+                    lock,
+                    packages=(
+                        *(item for item in lock.packages if item.name != pack.pack),
+                        LockedDistribution(pack.pack, pack.version, (wheel,)),
+                    ),
+                )
         if prepare_output is not None:
             prepare_output.mkdir()
             shutil.copytree(artifacts, prepare_output / "artifacts")
@@ -351,8 +436,13 @@ def check_defaults(
                 ["git", "rev-parse", "HEAD"], cwd=root, text=True
             ).strip()
             (prepare_output / "engine.json").write_text(
-                json.dumps({"commit": head, "engineVersion": engine_version})
+                json.dumps({"commit": head, **engine_context})
             )
+            if generation_python is not None:
+                lock_output = prepare_output / "pack-locks"
+                lock_output.mkdir()
+                for lock in locks.values():
+                    lock.write(lock_output / f"{lock.pack}.json")
             libraries = selected_library_wheels(catalog, artifacts)
             names = [pack.pack for pack in catalog.packs if pack.pack not in libraries]
             heavy = ("dinkster-3d", "dinkster-image", "dinkster-video")
@@ -433,7 +523,9 @@ def check_defaults(
             sources[pack.pack] = (source, data)
         order = tuple(TopologicalSorter(graph).static_order())
         results = []
-        with library_probe_index(libraries) as settings:
+        with (
+            library_probe_index(libraries) if generation_python is None else nullcontext()
+        ) as settings:
             for name in order:
                 if test_packs and name not in test_packs:
                     continue
@@ -444,11 +536,22 @@ def check_defaults(
                     with admission_timing(identity, "doctor-static"):
                         _require_accepted(run_doctor_static(source), identity)
                     with admission_timing(identity, "executable-probe"):
-                        probe = (
-                            run_executable_probe(source, settings=settings)
-                            if settings
-                            else run_executable_probe(source)
-                        )
+                        if generation_python is None:
+                            probe = (
+                                run_executable_probe(source, settings=settings)
+                                if settings
+                                else run_executable_probe(source)
+                            )
+                        else:
+                            probe = run_locked_probe(
+                                source,
+                                locks[name],
+                                generation_python=generation_python,
+                                packs=work / "packs",
+                                wheel_store=work / "wheels",
+                                uv_cache=work / "uv-cache",
+                                variant=variant,
+                            )
                         _require_accepted(probe, identity)
                     with admission_timing(identity, "fast-security"):
                         _require_accepted(run_fast_security(data), identity)
@@ -473,6 +576,10 @@ if __name__ == "__main__":
     selection.add_argument("--prepared-sources", type=Path)
     parser.add_argument("--prepare-output", type=Path)
     parser.add_argument("--pack", action="append", default=[])
+    parser.add_argument("--generation-python", type=Path)
+    parser.add_argument("--base-id")
+    parser.add_argument("--constraints", type=Path)
+    parser.add_argument("--variant", default="linux-cpu")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -484,6 +591,10 @@ if __name__ == "__main__":
                 prepare_output=args.prepare_output,
                 prepared_sources=args.prepared_sources,
                 test_packs=tuple(args.pack),
+                generation_python=args.generation_python,
+                base_id=args.base_id,
+                constraints=args.constraints,
+                variant=args.variant,
             )
         )
     )
