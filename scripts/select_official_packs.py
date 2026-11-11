@@ -10,6 +10,8 @@ import tempfile
 import tomllib
 from pathlib import Path, PurePosixPath
 
+from dinkster_registry import validate_version
+from dinkster_schema import validate_name
 from dinkster_workers import load_manifest
 
 from scripts.build_official_packs import is_official_pack_manifest, official_library
@@ -50,12 +52,13 @@ def select_packs(
     *,
     before: str | None = None,
     tag: str | None = None,
+    unpublished_at: str | None = None,
     version_changes_only: bool = False,
     exclude_tests: bool = False,
 ) -> tuple[str, ...]:
-    """Read committed manifests only; an engine-only push selects no pack."""
-    if (before is None) == (tag is None):
-        raise ValueError("select one push base or pack tag")
+    """Select committed identities by changed source, exact tag or absent public version."""
+    if sum(value is not None for value in (before, tag, unpublished_at)) != 1:
+        raise ValueError("select one push base, pack tag or public registry")
     if version_changes_only and before is None:
         raise ValueError("version changes require a push base")
     if before is not None and re.fullmatch(r"[0-9a-f]{40}", before) is None:
@@ -100,6 +103,13 @@ def select_packs(
                 raise ValueError(f"duplicate official pack identity: {manifest.name}")
             source = vision / "src" / manifest.nodes_entry.partition(":")[0].replace(".", "/")
             packs[manifest.name] = (path.parent, source, manifest.compatibility.version)
+    if unpublished_at is not None:
+        published = published_versions(unpublished_at, set(packs))
+        return tuple(
+            sorted(
+                name for name, (_, _, version) in packs.items() if (name, version) not in published
+            )
+        )
     if tag is not None:
         selected = [
             name for name, (_, _, version) in packs.items() if tag == f"pack/{name}/v{version}"
@@ -187,6 +197,64 @@ def select_packs(
                 if old["project" if pack in libraries else "pack"].get("version") == version:
                     selected.remove(pack)
     return tuple(sorted(selected))
+
+
+def published_versions(registry: str, names: set[str]) -> set[tuple[str, str]]:
+    """Read exact public identities without credentials or downloading wheel payloads."""
+    from dinkster_supervisor.environment_downloads import read_metadata
+
+    def document(path: str) -> dict:
+        value = json.loads(read_metadata(registry, path))
+        if (
+            not isinstance(value, dict)
+            or type(value.get("schemaVersion")) is not int
+            or value["schemaVersion"] not in (1, 2)
+            or not isinstance(value.get("items"), list)
+            or any(not isinstance(row, dict) for row in value["items"])
+        ):
+            raise ValueError("publication requires a valid public static index")
+        return value
+
+    catalog = document("static/packs/index.json")
+    releases = catalog["items"]
+    if catalog["schemaVersion"] == 2:
+        releases = []
+        seen = set()
+        for row in catalog["items"]:
+            name, version = row.get("name"), row.get("latestVersion")
+            if (
+                not isinstance(name, str)
+                or validate_name(name) is not None
+                or not isinstance(version, str)
+                or validate_version(version) is not None
+                or name in seen
+                or row.get("url") != f"packs/{name}/index.json"
+            ):
+                raise ValueError("publication static catalog has invalid pack identities")
+            seen.add(name)
+            if name not in names:
+                continue
+            pack = document("static/" + row["url"])
+            if (
+                pack["schemaVersion"] != 2
+                or pack.get("name") != name
+                or any(release.get("name") != name for release in pack["items"])
+            ):
+                raise ValueError("publication static per-pack index identity differs")
+            releases.extend(pack["items"])
+    published = set()
+    for row in releases:
+        name, version = row.get("name"), row.get("version")
+        if (
+            not isinstance(name, str)
+            or validate_name(name) is not None
+            or not isinstance(version, str)
+            or validate_version(version) is not None
+            or (name, version) in published
+        ):
+            raise ValueError("publication static index has invalid release identities")
+        published.add((name, version))
+    return published
 
 
 if __name__ == "__main__":

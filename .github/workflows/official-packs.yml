@@ -132,13 +132,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
-      - name: Find validated interrupted main publication inputs
-        id: continuation
-        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && steps.engine_release.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: uv run --no-sync python -m scripts.recover_official_publication --run "${{ github.run_id }}"
+      - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
       - name: Select committed pack changes or an exact pack tag
         id: select
         env:
@@ -164,6 +158,8 @@ jobs:
               packs, applicable = select_packs(root, before='0' * 40), True
           elif tag:
               packs, applicable = select_packs(root, tag=tag), True
+          elif event == 'workflow_run':
+              packs, applicable = select_packs(root, unpublished_at='https://registry.dinkster.org'), True
           else:
               packs, applicable = publication_selection(root, before), True
           if event not in {'workflow_run', 'workflow_dispatch'}:
@@ -173,6 +169,13 @@ jobs:
               output.write('engine=' + head + '\n')
               output.write('applicable=' + str(applicable).lower() + '\n')
           PY
+      - name: Find validated interrupted main publication inputs
+        id: continuation
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && steps.engine_release.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKS: ${{ steps.select.outputs.packs }}
+        run: uv run --no-sync python -m scripts.recover_official_publication --run "${{ github.run_id }}" --packs "$PACKS"
 
   sources:
     needs: select

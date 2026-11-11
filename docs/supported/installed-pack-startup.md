@@ -159,6 +159,11 @@
   manifests. Engine-only changes select none; shared vision changes select all
   affected vision packs. Native dependency locking can consume that independent
   selected catalog without replacing its versions with the engine version.
+- After a successful same-commit engine release, natural main publication selects
+  every declared official pack and library version missing from the public index,
+  even when a predecessor never published. Older or newer public versions do not
+  mask a missing exact version. Unreadable or invalid index metadata refuses
+  selection; interrupted inputs are reused only when they cover the missing set.
 - Official publication requires dependency locks for every selected pack and
   committed supported base before preparing maps or submitting any archive.
   Wrong source/base/lock identities, incompatible Python and nonportable wheel
