@@ -466,6 +466,15 @@ def check_defaults(
             raise ValueError(f"requested admission packs are not in the catalog: {sorted(missing)}")
         entries = {pack.pack: pack for pack in catalog.packs}
         libraries = selected_library_wheels(catalog, artifacts)
+        if generation_python is not None and libraries:
+            wheel_store = work / "wheels"
+            wheel_store.mkdir()
+            # Selected libraries may not be public yet. The provisioner still
+            # verifies these bytes against each consumer's immutable lock.
+            for name, archive in libraries.items():
+                _, version, _ = library_metadata(archive)
+                filename = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
+                shutil.copyfile(archive, wheel_store / filename)
         graph: dict[str, set[str]] = {}
         sources = {}
         import_roots: dict[str, Path] = {}
