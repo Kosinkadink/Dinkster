@@ -65,6 +65,8 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
         ("packages/dinkster-supervisor/src/dinkster_supervisor/environment.py", True, True, []),
         ("tests/test_environment_history.py", True, True, []),
         ("tests/test_remote.py", True, True, []),
+        ("tests/test_durable_delegations.py", True, True, []),
+        ("tests/test_produced_video_assets.py", True, True, []),
         ("src/dinkster/setup.py", True, True, []),
         ("src/dinkster/manager.py", True, True, []),
         ("src/dinkster/cli.py", True, True, []),
@@ -168,6 +170,23 @@ def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     )
     assert result.returncode == (1 if fail_root else 0), result.stdout + result.stderr
     assert executed.read_text().splitlines() == ["image", "video", "root"]
+
+
+def test_full_validation_preserves_started_main_runs() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(
+        (evidence_paths.DINKSTER_ROOT / ".github/workflows/full-validation.yml").read_text()
+    )
+    assert workflow["concurrency"] == {
+        "group": (
+            "${{ github.workflow }}-${{ github.ref }}-"
+            "${{ github.event_name == 'push' && 'push' || 'durable' }}"
+        ),
+        "cancel-in-progress": (
+            "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
+        ),
+    }
 
 
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:

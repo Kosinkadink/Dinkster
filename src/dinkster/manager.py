@@ -45,6 +45,7 @@ them from the registry each entry's provenance records.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import platform
@@ -1090,7 +1091,9 @@ def _cmd_archive(args: argparse.Namespace) -> None:
 
 
 def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
-    from dinkster_supervisor.environment_artifacts import validate_manifest
+    validate_manifest = importlib.import_module(
+        "dinkster_supervisor.environment_artifacts"
+    ).validate_manifest
 
     try:
         engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)

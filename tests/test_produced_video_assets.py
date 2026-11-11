@@ -1335,8 +1335,6 @@ def test_produced_video_adoption_owns_source_until_finished(
 def test_buffered_result_and_eof_retain_source_until_adoption(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pressure: bool, capture_failure: bool
 ) -> None:
-    engine = AssetVault(tmp_path / "engine")
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
     store = BudgetedDiskCAS(tmp_path / "transfer", max_bytes=1)
     data = b"new producer source"
     ref = AssetRef(store.put(data), "source", len(data))
@@ -1348,6 +1346,7 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
         )
         session.enable_blob_transfer(store)
         closed = False
+        captured: list[bytes] = []
 
         class Writer:
             def close(self) -> None:
@@ -1363,11 +1362,19 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
         async def drop(*args: object) -> None:
             pass
 
-        def capture(*args: object) -> None:
-            raise AssetError("injected capture failure")
+        def capture(
+            outputs: Mapping[str, Value],
+            transferred: AssetResolver | None = None,
+            inputs: Mapping[str, Value] | None = None,
+        ) -> None:
+            # This fixture checks EOF ownership, not durable vault publication.
+            assert transferred is store
+            references = cast(list[Mapping[str, object]], outputs["source"].meta.get("asset_refs"))
+            captured.append(AssetRef.from_wire(references[0], transferred).read_bytes())
+            if capture_failure:
+                raise AssetError("injected capture failure")
 
-        if capture_failure:
-            monkeypatch.setattr(session._produced_assets, "capture", capture)
+        monkeypatch.setattr(session._produced_assets, "capture", capture)
         monkeypatch.setattr(session, "_send_unlocked", drop)
         monkeypatch.setattr(session, "_writer", Writer())
         session._alive = True
@@ -1395,10 +1402,9 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
             if capture_failure:
                 assert result.error is not None
                 assert result.error.message == "injected capture failure"
-                assert not engine.has(ref.digest)
             else:
                 assert result.error is None, result.error
-                assert replace(ref, resolver=engine).read_bytes() == data
+            assert captured == [data]
             assert not session._received_asset_pins
             assert not session._asset_adoptions
             store.put(b"pressure after finalization")
