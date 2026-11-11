@@ -6,6 +6,7 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/default-pack-admission.yml
       - scripts/check_default_pack_admission.py
@@ -31,7 +32,7 @@ concurrency:
 
 jobs:
   select:
-    if: github.event_name == 'pull_request' || (github.repository == 'Kosinkadink/Dinkster' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success')
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || (github.repository == 'Kosinkadink/Dinkster' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success')
     permissions:
       contents: read
       actions: read
