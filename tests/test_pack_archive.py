@@ -1968,9 +1968,7 @@ def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem:
         assert result.blocked
         expected = {
             "empty": "probe.no-schemas",
-            "exception": "probe.invalid-report"
-            if os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
-            else "entry.unresolvable",
+            "exception": "entry.unresolvable",
             "output": "probe.output-limit",
             "timeout": "probe.timeout",
         }[problem]
