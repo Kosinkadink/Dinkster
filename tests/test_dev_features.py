@@ -88,6 +88,15 @@ def test_dev_features_catalog_and_content() -> None:
                         document["graphs"]["root"]["nodes"]["mirror"]["type"]
                         == "dev.features.mirror"
                     )
+                    examples = document["graphs"]["root"]["nodes"]
+                    assert json.loads(examples["descriptors"]["values"]["entries"]) == {
+                        "entries": [{"id": "answer", "name": "Answer", "type": "integer"}]
+                    }
+                    assert all(
+                        nodes[example["type"]]["outputNode"]
+                        for key, example in examples.items()
+                        if key != "source"
+                    )
                 locale = await client.get(
                     f"/api/packs/dinkster-nodes-dev/locales/{pack['locales']['zh']}"
                 )

@@ -85,6 +85,7 @@ class FeatureSlot(Node):
             "dev.features.slot",
             display_name="Feature: Dynamic Slot",
             category="dev/features",
+            output_node=True,
             description="Specialize the source as text or an integer, then inspect its echo.",
             slots=(
                 DynamicSlotSpec(
@@ -110,6 +111,7 @@ class FeatureOutputCount(Node):
             "dev.features.output_count",
             display_name="Feature: Output Count",
             category="dev/features",
+            output_node=True,
             description="Change count to grow or shrink outputs containing successive integers.",
             inputs=(
                 InputSpec("count", INT, default=3, widget=NumberWidget(min=1, max=8)),
@@ -138,6 +140,7 @@ class FeatureConditionalWidgets(Node):
             "dev.features.conditional",
             display_name="Feature: Conditional Widgets",
             category="dev/features",
+            output_node=True,
             description="Toggle details to hide or show the note without discarding its value.",
             inputs=(
                 InputSpec(
@@ -164,6 +167,7 @@ class FeatureWidgetKinds(Node):
             "dev.features.widget_kinds",
             display_name="Feature: Widget Kinds",
             category="dev/features",
+            output_node=True,
             description="Edit selections, Markdown, colors and a list; open help with a button.",
             inputs=(
                 InputSpec(
@@ -228,6 +232,7 @@ class FeatureRepresentations(Node):
             "dev.features.representations",
             display_name="Feature: Widget Representations",
             category="dev/features",
+            output_node=True,
             description="Switch the same stored text between line and multiline editors.",
             inputs=(
                 InputSpec(
@@ -263,6 +268,7 @@ class FeatureOutputDescriptors(Node):
             "dev.features.output_descriptors",
             display_name="Feature: Output Descriptors",
             category="dev/features",
+            output_node=True,
             description="Edit outputs: integers return row numbers; text returns names.",
             inputs=(
                 InputSpec(
@@ -321,6 +327,7 @@ class FeatureMirror(Node):
             "dev.features.mirror",
             display_name="Feature: Mirror Estimate",
             category="dev/features",
+            output_node=True,
             description="Change gain for a browser estimate; run for authoritative pixels.",
             inputs=(
                 InputSpec("image", IMAGE),

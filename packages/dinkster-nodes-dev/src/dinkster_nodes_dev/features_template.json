@@ -13,7 +13,7 @@
         "conditional": {"id": "conditional", "type": "dev.features.conditional", "values": {}},
         "widgets": {"id": "widgets", "type": "dev.features.widget_kinds", "values": {}},
         "representations": {"id": "representations", "type": "dev.features.representations", "values": {}},
-        "descriptors": {"id": "descriptors", "type": "dev.features.output_descriptors", "values": {}},
+        "descriptors": {"id": "descriptors", "type": "dev.features.output_descriptors", "values": {"entries": "{\"entries\":[{\"id\":\"answer\",\"name\":\"Answer\",\"type\":\"integer\"}]}"}},
         "source": {"id": "source", "type": "dev.features.image_source", "values": {}},
         "mirror": {"id": "mirror", "type": "dev.features.mirror", "values": {"gain": 0.5}}
       },
