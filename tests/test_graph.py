@@ -26,6 +26,10 @@ from dinkster_schema import (
 from scaffold_nodes import SCAFFOLD_NODES
 
 SCHEMAS = build_schemas(SCAFFOLD_NODES)
+SCHEMAS["test.list_input"] = NodeSchema(
+    node_type="test.list_input",
+    inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
+)
 
 STRING = TypeExpr.concrete("STRING")
 COMBO = TypeExpr.concrete("COMBO")
@@ -167,8 +171,8 @@ def test_validation_codes() -> None:
 def test_type_mismatch_is_warning_not_error() -> None:
     graph = Graph(
         nodes={
-            "a": GraphNode("dinkster.utilities.primitive_int", {"value": 3}),
-            "i": GraphNode("dev.image.invert", {"image": Link("a", "INT")}),
+            "a": GraphNode("dev.execution.value", {"value": 3}),
+            "i": GraphNode("dev.image.invert", {"image": Link("a", "value")}),
         }
     )
     diags = validate(graph, SCHEMAS, ["i"])
@@ -373,7 +377,7 @@ def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
         nodes={
             "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
             "l": GraphNode(
-                "dinkster.utilities.list_element",
+                "test.list_input",
                 {"list": TypedLiteral("list<INT>", [1, 2, 3])},
             ),
         }
@@ -480,7 +484,7 @@ def test_typed_literal_cardinality_is_structural() -> None:
                 "dev.gallery.sockets",
                 {"union2": TypedLiteral("list<INT>", [1])},
             ),
-            "l": GraphNode("dinkster.utilities.list_element", {"list": TypedLiteral("INT", 7)}),
+            "l": GraphNode("test.list_input", {"list": TypedLiteral("INT", 7)}),
         }
     )
     codes = {d.code for d in validate(graph, SCHEMAS, ["s", "l"], known_types={"INT"})}
