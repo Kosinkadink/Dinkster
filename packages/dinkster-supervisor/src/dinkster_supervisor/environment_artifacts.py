@@ -403,7 +403,9 @@ def engine_label(engine: dict[str, object]) -> str:
     return readable_label(f"{acquisition_date(engine)}-{version}")
 
 
-def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path) -> Path:
+def acquire_base(
+    base: dict[str, object], sources: tuple[str, ...], store: Path, *, offline: bool = False
+) -> Path:
     """Acquire a validated base under a held store writer lock, without an engine release."""
     base_id = cast("str", base["id"])
     platform = cast("dict[str, object]", base["platform"])
@@ -425,7 +427,7 @@ def acquire_base(base: dict[str, object], sources: tuple[str, ...], store: Path)
             )
         downloaded = tuple(
             fetch_artifact(
-                sources,
+                (str(object_path(store / "downloads", base_id)),) if offline else sources,
                 cast("str", row["filename"]),
                 object_path(store / "downloads", base_id, label=label)
                 / cast("str", row["filename"]),
@@ -576,6 +578,63 @@ def dependency_source(row: dict[str, object], package_index: str | None) -> str:
     return matches.pop()
 
 
+def runtime_inputs(
+    catalog: EnvironmentCatalog, variant: str, store: Path
+) -> tuple[dict[str, object], ...]:
+    """Inspect exact runtime payloads without probing remote sources or writing cache files."""
+    if (
+        validate_manifest(catalog.engine_bytes, catalog.channel.engine_release, None)
+        != catalog.engine
+    ):
+        raise EnvironmentError("engine manifest differs from its verified bytes")
+    base = catalog.bases[variant]
+    base_id = cast("str", base["id"])
+    base_root = object_path(store / "bases", base_id)
+    release = object_path(store / "engines", catalog.channel.engine_release)
+    owned = set(cast("list[str]", base["replaces"]))
+    inputs: dict[Path, dict[str, object]] = {}
+
+    def record(path: Path, row: dict[str, object]) -> None:
+        sha, size = cast("str", row["sha256"]), cast("int", row["size"])
+        inputs[path] = {
+            "path": str(path),
+            "sha256": sha,
+            "size": size,
+            "cached": (
+                path.is_file()
+                and not path.is_symlink()
+                and path.stat().st_size == size
+                and content_digest(path) == "sha256:" + sha
+            ),
+        }
+
+    if base_root.exists():
+        for row in artifact_rows(base["wheels"], "filename"):
+            record(base_root / "wheels" / cast("str", row["filename"]), row)
+    else:
+        for row in artifact_rows(cast("dict[str, object]", base["archive"])["parts"], "filename"):
+            record(object_path(store / "downloads", base_id) / cast("str", row["filename"]), row)
+    for row in artifact_rows(catalog.engine["artifacts"], "name"):
+        name = cast("str", row["name"])
+        if name == "constraints.txt":
+            record(release / name, row)
+        elif name.endswith(".whl") and parse_wheel_filename(name)[0] not in owned:
+            record(
+                object_path(store / "wheels", "sha256:" + cast("str", row["sha256"])) / name, row
+            )
+    if catalog.engine.get("dependencies") is not None:
+        selection = cast("dict[str, object]", catalog.engine["dependencies"]).get(variant)
+        validate_dependency_base(selection, base)
+        for row in dependency_wheels(selection):
+            if row["name"] not in owned:
+                record(
+                    object_path(store / "wheels", "sha256:" + cast("str", row["sha256"]))
+                    / cast("str", row["filename"]),
+                    row,
+                )
+    return tuple(inputs.values())
+
+
 def acquire(
     catalog: EnvironmentCatalog,
     variant: str,
@@ -584,6 +643,7 @@ def acquire(
     package_index: str | None = None,
     base: dict[str, object] | None = None,
     base_sources: tuple[str, ...] | None = None,
+    offline: bool = False,
 ) -> Path:
     """Populate verified artifacts and merged requirements under a held store writer lock."""
     if (
@@ -591,6 +651,16 @@ def acquire(
         != catalog.engine
     ):
         raise EnvironmentError("engine manifest differs from its verified bytes")
+    if offline:
+        if base is not None or base_sources is not None:
+            raise EnvironmentError("offline runtime acquisition requires a published base")
+        missing = [
+            str(row["path"]) for row in runtime_inputs(catalog, variant, store) if not row["cached"]
+        ]
+        if missing:
+            raise EnvironmentError(
+                "offline runtime inputs missing or corrupt:\n" + "\n".join(missing)
+            )
     published_base = catalog.bases[variant]
     custom = base is not None
     if custom != (base_sources is not None):
@@ -616,7 +686,7 @@ def acquire(
         validate_dependency_base(selection, published_base)
         selected = dependency_wheels(selection)
     assert base_sources is not None
-    acquire_base(base, base_sources, store)
+    acquire_base(base, base_sources, store, offline=offline)
     release_root = object_path(
         store / "engines", catalog.channel.engine_release, label=engine_label(catalog.engine)
     )
@@ -644,7 +714,13 @@ def acquire(
             destination = release_root / name
         else:
             continue
-        fetch_artifact(catalog.engine_sources, name, destination, sha, cast("int", row["size"]))
+        fetch_artifact(
+            (str(destination.parent),) if offline else catalog.engine_sources,
+            name,
+            destination,
+            sha,
+            cast("int", row["size"]),
+        )
     requirements = (release_root / "constraints.txt").read_text(encoding="utf-8")
     if selected is not None:
         for row in selected:
@@ -663,7 +739,11 @@ def acquire(
                     or destination.stat().st_size != row["size"]
                     or content_digest(destination) != "sha256:" + sha
                 ):
-                    source = dependency_source(row, package_index)
+                    source = (
+                        str(destination.parent)
+                        if offline
+                        else dependency_source(row, package_index)
+                    )
                     fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
         requirements = engine_constraints(catalog.engine, variant)
     context = published_base if custom else None
