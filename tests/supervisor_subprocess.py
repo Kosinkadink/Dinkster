@@ -43,7 +43,7 @@ def _trace_operations(path: Path):
     operations = {
         function.__code__: f"{module.__name__}.{name}"
         for module, names in (
-            (environment_archives, ("extract_base",)),
+            (environment_archives, ("extract_base", "_verify_frame", "_validate_staging")),
             (environment_artifacts, ("acquire", "acquire_base")),
             (environment_downloads, ("fetch_artifact",)),
             (
