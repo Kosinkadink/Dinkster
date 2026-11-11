@@ -404,7 +404,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
         "supervisor": ["dinkster-supervisor"],
     }
     assert {"dinkster-api", "dinkster-supervisor"} <= {
-        dependency for dependency in root_project["dependencies"]
+        Requirement(dependency).name for dependency in root_project["dependencies"]
     }
     assert "dinkster-collab" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
