@@ -172,6 +172,23 @@ def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     assert executed.read_text().splitlines() == ["image", "video", "root"]
 
 
+def test_full_validation_preserves_started_main_runs() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(
+        (evidence_paths.DINKSTER_ROOT / ".github/workflows/full-validation.yml").read_text()
+    )
+    assert workflow["concurrency"] == {
+        "group": (
+            "${{ github.workflow }}-${{ github.ref }}-"
+            "${{ github.event_name == 'push' && 'push' || 'durable' }}"
+        ),
+        "cancel-in-progress": (
+            "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
+        ),
+    }
+
+
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     import yaml
 

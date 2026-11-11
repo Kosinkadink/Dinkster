@@ -20,10 +20,10 @@ env:
   # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
   PYTEST_ADDOPTS: "-n0"
 
-# Superseded pushes cancel; scheduled and release validation always finish.
+# Started main runs finish; only superseded pushes to other refs cancel.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 jobs:
   validation-plan:
