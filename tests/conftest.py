@@ -4,6 +4,7 @@ import asyncio
 import os
 import socket
 import ssl
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -23,6 +24,26 @@ os.environ["DINKSTER_REMOTE_GATEWAY_BASE"] = ""
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "network(*hosts): requires outbound HTTPS to named hosts")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    helper = sys.modules.get("supervisor_subprocess")
+    if helper is not None and (operation_reports := helper.operation_reports):
+        report.sections.append(("Supervisor child operation timings", "\n".join(operation_reports)))
+        operation_reports.clear()
+    return report
+
+
+def pytest_terminal_summary(terminalreporter) -> None:
+    for reports in terminalreporter.stats.values():
+        for report in reports:
+            if isinstance(report, pytest.TestReport):
+                for name, text in report.sections:
+                    if name == "Supervisor child operation timings":
+                        terminalreporter.section(name)
+                        terminalreporter.write_line(text)
 
 
 @pytest.fixture(scope="session")
