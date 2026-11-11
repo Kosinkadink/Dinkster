@@ -3,25 +3,45 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-import sysconfig
 import tempfile
 import time
 import tomllib
-import venv
 import zipfile
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
-from dinkster_registry.archive_admission import ARCHIVE_LIMIT, admission_timing
+from dinkster_registry.archive_admission import (
+    ARCHIVE_LIMIT,
+    ENTRY_LIMIT,
+    EXPANDED_LIMIT,
+    FILE_LIMIT,
+    admission_timing,
+)
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
-from dinkster_workers.pack_wheel import pack_import_name, pack_manifest_path
+from dinkster_workers.pack_environment import fetch_pack_wheels, provision_pack
+from dinkster_workers.pack_lock import (
+    GenerationPackages,
+    LockedDistribution,
+    LockedWheel,
+    PackLock,
+    plan_pack,
+)
+from dinkster_workers.pack_wheel import pack_manifest_path
+from dinkster_workers.provision import ProvisionError
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from dinkster.compose import _FIRST_PARTY_PACK_DISTRIBUTIONS, _installed_pack_digest
 from scripts.build_official_packs import library_metadata
@@ -105,8 +125,99 @@ def selected_library_wheels(catalog: Lockfile, artifacts: Path) -> dict[str, Pat
     return libraries
 
 
+def selected_test_tools(root: Path, generation: GenerationPackages, *, variant: str) -> PackLock:
+    """Select test-only wheels from the committed lock, never from the host installation."""
+    tools = ("pytest", "pytest-cov", "pytest-timeout", "pytest-xdist", "hypothesis", "pyyaml")
+    exported = subprocess.check_output(
+        [
+            "uv",
+            "export",
+            "--frozen",
+            "--only-group",
+            "dev",
+            "--no-emit-workspace",
+            "--no-header",
+            "--no-annotate",
+        ],
+        cwd=root,
+        text=True,
+    )
+    pins = {}
+    for line in exported.replace("\\\n", "").splitlines():
+        if not line.strip():
+            continue
+        requirement = Requirement(line.split(" --hash=", 1)[0].strip())
+        if requirement.marker is None or requirement.marker.evaluate(dict(generation.markers)):
+            pins[canonicalize_name(requirement.name)] = (
+                requirement,
+                set(re.findall(r"--hash=sha256:([0-9a-f]{64})", line)),
+            )
+    lock = tomllib.loads((root / "uv.lock").read_text())
+    pending = list(tools)
+    selected: dict[str, LockedDistribution] = {}
+    while pending:
+        name = canonicalize_name(pending.pop())
+        if name in selected:
+            continue
+        if name not in pins:
+            raise ValueError(f"selected test tool has no applicable locked pin: {name}")
+        requirement, hashes = pins[name]
+        candidates = [
+            package
+            for package in lock["package"]
+            if canonicalize_name(package["name"]) == name
+            and requirement.specifier.contains(package["version"], prereleases=True)
+            and (
+                not package.get("resolution-markers")
+                or any(
+                    Marker(marker).evaluate(dict(generation.markers))
+                    for marker in package["resolution-markers"]
+                )
+            )
+        ]
+        if len(candidates) != 1:
+            raise ValueError(f"selected test tool requires one locked distribution: {name}")
+        [package] = candidates
+        wheels = []
+        for wheel in package.get("wheels", []):
+            filename = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
+            if (
+                parse_wheel_filename(filename)[3] & generation.tags
+                and wheel["hash"].removeprefix("sha256:") in hashes
+            ):
+                wheels.append(
+                    LockedWheel(
+                        filename, wheel["size"], wheel["hash"].removeprefix("sha256:"), wheel["url"]
+                    )
+                )
+        if not wheels:
+            raise ValueError(f"selected test tool has no compatible locked wheel: {name}")
+        selected[name] = LockedDistribution(name, package["version"], tuple(wheels))
+        pending.extend(
+            dependency["name"]
+            for dependency in package.get("dependencies", [])
+            if "marker" not in dependency
+            or Marker(dependency["marker"]).evaluate(dict(generation.markers))
+        )
+    return PackLock(
+        "selected-test-tools",
+        variant,
+        ">=3.12",
+        tools,
+        (),
+        tuple(selected[name] for name in sorted(selected)),
+    )
+
+
 def run_selected_tests(
-    root: Path, catalog: Lockfile, artifacts: Path, *, test_packs: tuple[str, ...] = ()
+    root: Path,
+    catalog: Lockfile,
+    artifacts: Path,
+    *,
+    generation_python: Path,
+    locks: Mapping[str, PackLock],
+    variant: str,
+    test_packs: tuple[str, ...] = (),
 ) -> None:
     """Test only the scanner's verified selection through a disposable checkout layout."""
     if sys.platform != "linux":
@@ -119,13 +230,37 @@ def run_selected_tests(
         raise ValueError("selected pack tests require a nonempty catalog")
     if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
         raise ValueError(f"requested test packs are not in the selected catalog: {sorted(missing)}")
+    if missing := {pack.pack for pack in catalog.packs} - locks.keys():
+        raise ValueError(f"selected tests require dependency locks: {sorted(missing)}")
+    generation = GenerationPackages.inspect(generation_python)
+    for pack in catalog.packs:
+        lock = locks[pack.pack]
+        if lock.pack != pack.pack:
+            raise ValueError(f"selected test dependency lock names {lock.pack}, not {pack.pack}")
+        plan_pack(lock, generation, variant=variant, own_environment_size=0).require_layering()
+        archive = pack_archive_path(artifacts, pack.artifact_digest)
+        outer = next((package for package in lock.packages if package.name == pack.pack), None)
+        filename = f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        identity = (
+            filename,
+            archive.stat().st_size,
+            hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        if (
+            outer is None
+            or outer.version != pack.version
+            or not any(
+                (wheel.filename, wheel.size, wheel.sha256) == identity for wheel in outer.wheels
+            )
+        ):
+            raise ValueError(f"selected {pack.pack} dependency lock differs from its archive")
+    tools = selected_test_tools(root, generation, variant=variant)
     directories = set(_PACK_DIRECTORIES.values())
     directories.update(
         path.parent.name
         for path in (root / "packages").glob("*/pyproject.toml")
         if is_official_library(tomllib.loads(path.read_text()))
     )
-    import_packages = {pack_import_name(pack) for pack in _PACK_DIRECTORIES}
     with tempfile.TemporaryDirectory(prefix="selected-pack-tests-") as directory:
         layout_started = time.perf_counter()
         print(
@@ -153,35 +288,32 @@ def run_selected_tests(
         module_roots: list[str] = []
         modules: dict[str, str] = {}
         if libraries:
-            wheels = work / "wheels"
-            wheels.mkdir()
-            paths = []
-            for archive in libraries.values():
-                identity, version, _ = library_metadata(archive)
-                wheel_path = wheels / f"{identity.replace('-', '_')}-{version}-py3-none-any.whl"
-                shutil.copyfile(archive, wheel_path)
-                paths.append(str(wheel_path))
+            for name, archive in libraries.items():
+                entry = catalog.get(name)
+                assert entry is not None
+                library_root = work / "libraries" / name
                 with zipfile.ZipFile(archive) as wheel:
+                    infos = wheel.infolist()
+                    if (
+                        len(infos) > ENTRY_LIMIT
+                        or len({item.filename for item in infos}) != len(infos)
+                        or sum(item.file_size for item in infos) > EXPANDED_LIMIT
+                        or any(
+                            item.file_size > FILE_LIMIT
+                            or not (library_root / item.filename)
+                            .resolve()
+                            .is_relative_to(library_root.resolve())
+                            or "\\" in item.filename
+                            for item in infos
+                        )
+                    ):
+                        raise ValueError(f"selected library {name} has unsafe archive entries")
+                    wheel.extractall(library_root)
                     for member in wheel.namelist():
                         if member.endswith(".py") and ".dist-info/" not in member:
                             module = member.split("/")[0].removesuffix(".py")
-                            import_packages.add(module)
-                            modules[module] = str(work / "libraries")
-            subprocess.run(
-                [
-                    "uv",
-                    "pip",
-                    "install",
-                    "--python",
-                    sys.executable,
-                    "--no-deps",
-                    "--target",
-                    str(work / "libraries"),
-                    *paths,
-                ],
-                check=True,
-            )
-            module_roots.append(str(work / "libraries"))
+                            modules[module] = str(library_root)
+                module_roots.append(str(library_root))
         checkout_packs = []
         for pack in catalog.packs:
             if pack.pack in libraries:
@@ -226,39 +358,63 @@ def run_selected_tests(
         (checkout / "src/dinkster/checkout-packs.lock").write_text(
             Lockfile.of(checkout_packs).record_json(), encoding="utf-8"
         )
-        environment = work / "venv"
-        venv.EnvBuilder(with_pip=False).create(environment)
-        python = environment / "bin/python"
-        site = Path(
-            subprocess.check_output(
-                [str(python), "-I", "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
-                text=True,
-            ).strip()
-        )
-        inherited = Path(sysconfig.get_path("purelib"))
-        paths = [str(checkout), str(checkout / "src"), *module_roots]
-        for source in inherited.iterdir():
-            if source.suffix == ".pth":
-                for line in source.read_text(encoding="utf-8").splitlines():
-                    candidate = Path(line)
-                    if not candidate.is_absolute() or not candidate.exists():
-                        continue
-                    if candidate.is_relative_to(root):
-                        candidate = checkout / candidate.relative_to(root)
-                    elif any(part in directories for part in candidate.parts):
-                        continue
-                    if candidate.exists():
-                        paths.append(str(candidate))
+        # Dev nodes are engine-owned test scaffolding, not a published pack.
+        paths = [
+            str(checkout),
+            str(checkout / "src"),
+            str(checkout / "packages/dinkster-nodes-dev/src"),
+            *module_roots,
+        ]
+        runtimes: dict[str, str] = {}
+        for pack in catalog.packs:
+            if pack.pack in libraries:
                 continue
-            if source.name.startswith("_editable_") or any(
-                source.name == name
-                or source.name.startswith(name + "-")
-                and source.name.endswith(".dist-info")
-                for name in import_packages
-            ):
-                continue
-            (site / source.name).symlink_to(source, target_is_directory=source.is_dir())
-        (site / "selected.pth").write_text("\n".join(paths) + "\n", encoding="utf-8")
+            lock = locks[pack.pack]
+            packages = {package.name: package for package in lock.packages}
+            for tool in tools.packages:
+                if tool.name in packages:
+                    existing = packages[tool.name]
+                    if existing.version != tool.version or not (
+                        {wheel.sha256 for wheel in existing.wheels}
+                        & {wheel.sha256 for wheel in tool.wheels}
+                    ):
+                        raise ProvisionError(
+                            f"test tooling conflicts with {lock.pack}'s locked {tool.name}"
+                        )
+                else:
+                    packages[tool.name] = tool
+            test_lock = replace(
+                lock,
+                requirements=(*lock.requirements, *tools.requirements),
+                packages=tuple(packages.values()),
+            )
+            with admission_timing(f"{pack.pack}@{pack.version}", "test-dependency-install"):
+                plan = plan_pack(test_lock, generation, variant=variant, own_environment_size=0)
+                fetch_pack_wheels(plan, work / "wheels")
+                python = provision_pack(
+                    plan,
+                    generation_python=generation_python,
+                    packs=work / "packs",
+                    wheel_store=work / "wheels",
+                    uv_cache=work / "uv-cache",
+                    variant=variant,
+                    offline=True,
+                )
+            site = Path(
+                subprocess.check_output(
+                    [
+                        str(python),
+                        "-I",
+                        "-c",
+                        "import sysconfig;print(sysconfig.get_path('purelib'))",
+                    ],
+                    text=True,
+                ).strip()
+            )
+            (site / "selected.pth").write_text(
+                f"import sys; sys.path[:0] = {paths!r}\n", encoding="utf-8"
+            )
+            runtimes[pack.pack] = str(python)
         child_env = {
             key: value
             for key, value in os.environ.items()
@@ -306,6 +462,7 @@ def run_selected_tests(
                         "modules": modules,
                         "tests": tests,
                         "packs": [p.pack for p in catalog.packs if p.pack not in libraries],
+                        "runtimes": runtimes,
                         "testPack": f"{pack.pack}@{pack.version}",
                     }
                 ),
@@ -314,7 +471,7 @@ def run_selected_tests(
             with admission_timing(f"{pack.pack}@{pack.version}", "test-child"):
                 subprocess.run(
                     [
-                        str(python),
+                        runtimes[pack.pack],
                         "-I",
                         "-B",
                         str(child),
@@ -331,6 +488,9 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("catalog", type=Path)
     parser.add_argument("artifacts", type=Path)
+    parser.add_argument("--generation-python", type=Path, required=True)
+    parser.add_argument("--locks", type=Path, required=True)
+    parser.add_argument("--variant", default="linux-cpu")
     parser.add_argument(
         "--pack", action="append", default=[], help="Diagnose only this pack's suite"
     )
@@ -339,5 +499,8 @@ if __name__ == "__main__":
         args.root.resolve(),
         Lockfile.from_record_json(args.catalog.read_text(encoding="utf-8")),
         args.artifacts.resolve(),
+        generation_python=args.generation_python.absolute(),
+        locks={path.stem: PackLock.read(path) for path in args.locks.glob("*.json")},
+        variant=args.variant,
         test_packs=tuple(args.pack),
     )
