@@ -453,6 +453,72 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     )
 
 
+@pytest.mark.parametrize("problem", [None, "base", "engine", "constraints", "python", "packages"])
+def test_admission_runtime_binds_the_engine_base_and_installed_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
+    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+    from dinkster_workers.pack_lock import GenerationPackages
+    from test_environment_artifacts import _mirror
+    from test_pack_environment import _generation
+
+    from scripts import prepare_admission_engine as admission
+
+    base, engine, channel = _mirror(tmp_path / "mirror")
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: base["id"][7:]}))
+    monkeypatch.setattr(admission, "git_head", lambda root: engine["commit"])
+    runtime = tmp_path / "runtime"
+    _generation(runtime / "generation/python", [])
+    python = interpreter(runtime / "generation")
+    if not python.exists():
+        python.symlink_to("python")
+    constraints = runtime / "generation/constraints.txt"
+    constraints.write_text("locked-extra==1.2\n")
+    shutil.copyfile(
+        tmp_path / f"mirror/base/{base['variant']}/{base['id'][7:]}/manifest.json",
+        runtime / "base-manifest.json",
+    )
+    shutil.copytree(
+        tmp_path / f"mirror/engine/{channel['engine']['release'][7:]}", runtime / "engine"
+    )
+    facts = GenerationPackages.inspect(python)
+    record = {
+        "commit": engine["commit"],
+        "engineVersion": engine["version"],
+        "engineRelease": channel["engine"]["release"],
+        "baseId": base["id"],
+        "variant": base["variant"],
+        "python": str(python),
+        "constraints": str(constraints),
+        "constraintsSha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        "packages": dict(facts.versions),
+        "pythonVersion": facts.python_version,
+    }
+    if problem == "base":
+        record["baseId"] = "sha256:" + "e" * 64
+    elif problem == "engine":
+        record["engineRelease"] = "sha256:" + "e" * 64
+    elif problem == "constraints":
+        constraints.write_text("locked-extra==9\n")
+    elif problem == "python":
+        record["python"] = sys.executable
+    elif problem == "packages":
+        record["packages"] = {"uninstalled": "1.2"}
+    (runtime / "runtime.json").write_text(json.dumps(record))
+    if problem:
+        with pytest.raises((ValueError, EnvironmentError)):
+            admission.read_runtime(runtime, root, engine["version"])
+    else:
+        assert admission.read_runtime(runtime, root, engine["version"]) == (
+            python,
+            base["id"],
+            constraints,
+            base["variant"],
+        )
+
+
 def test_default_pack_admission_uses_complete_version_history() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
@@ -546,7 +612,11 @@ def test_default_admission_workflow_selects_publication_candidates(
         echo development-engine
       elif [ "$4" = "-" ]; then
         "$TEST_PYTHON" -
+      elif [ "$5" = "scripts.prepare_admission_engine" ]; then
+        mkdir -p admission-runtime/engine
+        echo '{}' > admission-runtime/base-manifest.json
       else
+        mkdir -p admission-sources
         printf '%s\\0' "$@" > admission-arguments
         echo '{"groups": [["dinkster-image"], ["dinkster-audio", "dinkster-video"]]}'
       fi
@@ -582,6 +652,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         ("0" * 40 if all_candidates else base)
         if pull_request
         else ".publication/sources/official-packs.lock",
+        "--runtime",
+        "admission-runtime",
         "--prepare-output",
         "admission-sources",
     ]
@@ -591,7 +663,6 @@ def test_default_admission_workflow_selects_publication_candidates(
         {"group": 2, "packs": '["dinkster-audio", "dinkster-video"]'},
     ]
     prepared = tmp_path / "admission-sources"
-    prepared.mkdir()
     (prepared / "engine.json").write_text('{"engineVersion": "prepared-engine"}')
     command = workflow["jobs"]["admission"]["steps"][-1]["run"]
     subprocess.run(
@@ -608,6 +679,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         "scripts.check_default_pack_admission",
         "--engine-version",
         "prepared-engine",
+        "--runtime",
+        "admission-runtime",
         "--prepared-sources",
         "admission-sources",
         "--pack",

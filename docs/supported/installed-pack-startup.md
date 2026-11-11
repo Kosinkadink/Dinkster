@@ -171,8 +171,11 @@
   Prepared maps do not imply scanner acceptance or live default availability.
 - Default-set admission checks resolve registry archives against the engine
   under test and require every pack to pass the registry scanner, including
-  the isolated executable probe. Missing defaults, rejected packs and security
-  review requirements fail the check without publishing any pack.
+  the isolated executable probe. Published defaults use their verified dependency
+  locks on the named managed base, without package-index dependency resolution.
+  A missing lock, changed artifact or incompatible base refuses admission.
+  Missing defaults, rejected packs and security review requirements fail the
+  check without publishing any pack.
 - Selected-archive behavioral tests use each first-party pack's independent
   distribution, including vision packs. They verify selected source provenance
   and refuse checkout fallbacks or replacement of engine-owned tests.

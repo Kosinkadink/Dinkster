@@ -10,6 +10,7 @@ on:
     paths:
       - .github/workflows/default-pack-admission.yml
       - scripts/check_default_pack_admission.py
+      - scripts/prepare_admission_engine.py
       - scripts/run_selected_pack_tests.py
       - scripts/_selected_pack_test_child.py
       - scripts/setup_probe_jail.sh
@@ -91,6 +92,8 @@ jobs:
       ONEDNN_MAX_CPU_ISA: AVX2
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,9 +130,14 @@ jobs:
             arguments+=(--published-sources .publication/sources/official-packs.lock)
             version="$PUBLISHED_VERSION"
           fi
+          uv run --no-sync python -m scripts.prepare_admission_engine \
+            --output admission-runtime --store .run/environment-store \
+            --base-manifest .run/environment-base.json --engine-version "$version"
           uv run --no-sync python -m scripts.check_default_pack_admission \
             --engine-version "$version" "${arguments[@]}" \
-            --prepare-output admission-sources | tee admission-preparation.log
+            --runtime admission-runtime --prepare-output admission-sources | tee admission-preparation.log
+          cp -r admission-runtime/engine admission-sources/engine
+          cp admission-runtime/base-manifest.json admission-sources/base-manifest.json
           uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           from pathlib import Path
@@ -162,6 +170,8 @@ jobs:
       ONEDNN_MAX_CPU_ISA: AVX2
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
     steps:
       - uses: actions/checkout@v4
         with:
@@ -179,6 +189,13 @@ jobs:
           python-version: "3.12"
       - name: Install the engine under test on its published CPU base
         run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+      - name: Provision the exact prepared engine on the verified pinned base
+        run: |
+          version=$(jq -j '.engineVersion' admission-sources/engine.json)
+          uv run --no-sync python -m scripts.prepare_admission_engine \
+            --output admission-runtime --store .run/environment-store \
+            --base-manifest admission-sources/base-manifest.json \
+            --engine-source admission-sources/engine --engine-version "$version"
       - name: Install the CPU software shader renderer
         uses: ./.github/actions/torch-cpu-suite/renderer-setup
         timeout-minutes: 5
@@ -192,4 +209,5 @@ jobs:
           done < <(jq -j '.[] + "\u0000"' <<< "$TEST_PACKS")
           version=$(jq -j '.engineVersion' admission-sources/engine.json)
           uv run --no-sync python -m scripts.check_default_pack_admission \
-            --engine-version "$version" --prepared-sources admission-sources "${arguments[@]}"
+            --engine-version "$version" --runtime admission-runtime \
+            --prepared-sources admission-sources "${arguments[@]}"
