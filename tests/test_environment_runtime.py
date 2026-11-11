@@ -103,13 +103,14 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (root / "current").write_text(f"{number}\n")
 
 
-@pytest.mark.parametrize("supervisor_exit", [False, True])
+@pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])
 def test_start_failure_preserves_exit_code_and_current_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervisor_exit: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervisor_exit: bool, output_size: int
 ) -> None:
     make_generation(tmp_path)
     failure = (
-        "import sys; print('x' * 70000, flush=True); print('startup diagnostic', flush=True); "
+        f"import sys; print('x' * {output_size}, flush=True); "
+        "print('startup diagnostic', flush=True); "
         "print('startup stderr', file=sys.stderr, flush=True); sys.exit(37)"
     )
     if supervisor_exit:
@@ -131,7 +132,7 @@ def test_start_failure_preserves_exit_code_and_current_output(
     assert "startup diagnostic" in message
     assert "startup stderr" in message
     assert "old launch output" not in message
-    assert "[earlier output truncated]" in message
+    assert ("[earlier output truncated]" in message) is (output_size > 64 * 1024)
     assert len(message) < 68 * 1024
 
 
