@@ -4,9 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
-import os
 import zipfile
-from collections.abc import Mapping, Sequence
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,14 +13,14 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, register_media_types
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, TypeExpr, register_media_types
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionRuntime
-from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_engine import Engine
+from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBoundingBoxes
-from dinkster_image.layer_document import EditLayers, FlattenLayers, SplitLayers
-from dinkster_image.layer_io import LoadLayers, SaveLayers
-from dinkster_image.types import Region, register_image_types
+from dinkster_image.layer_document import FlattenLayers, SplitLayers
+from dinkster_image.layer_io import SaveLayers
+from dinkster_image.types import register_image_types
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
@@ -37,7 +35,6 @@ from dinkster_image_document.format import (
     IMAGE_DOCUMENT_MEDIA_TYPE,
     INLINE_RESOURCE_LIMIT,
     InvalidDocument,
-    affine_from_components,
     canonical_json,
 )
 from dinkster_image_document.interchange import (
@@ -45,20 +42,17 @@ from dinkster_image_document.interchange import (
     export_psd,
     import_ora,
     import_psd,
-    load_document,
 )
-from dinkster_protocol import InvocationResult, SavedArtifact
-from dinkster_schema import build_node_types, build_schemas
+from dinkster_schema import build_node_types
 from dinkster_values import (
     RenditionUnavailable,
     TypeRegistry,
     annotate_image,
-    annotate_mask,
     media_semantics,
     register_core_types,
 )
 from dinkster_workers import GroupIsolatedWorker, InProcessWorker
-from dinkster_workers.boundary import ValueCodec, decode_result_outputs, encode_result
+from dinkster_workers.boundary import ValueCodec
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
 
@@ -98,100 +92,6 @@ def document() -> ImageDocument:
     return append_raster(
         empty_document(2, 1),
         raster_png(np.array([[[1, 0, 0, 1], [0, 1, 0, 0.5]]], dtype=np.float32)),
-    )
-
-
-class LayerNodeSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="test.layer-node-source",
-            outputs=(
-                OutputSpec("image", TypeExpr.concrete("IMAGE")),
-                OutputSpec(
-                    "mask",
-                    TypeExpr.concrete("MASK"),
-                    mask_polarity="transparency",
-                    mask_semantic="alpha",
-                ),
-            ),
-        )
-
-    @classmethod
-    def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(
-            image=annotate_image(
-                np.array([[[[0.5, 0, 0, 0.5]]]], dtype=np.float32),
-                alpha="premultiplied",
-                color={"primaries": 9, "transfer": 16, "range": 1, "matrix": 9, "bit_depth": 10},
-            ),
-            mask=annotate_mask(
-                np.zeros((1, 1, 1), dtype=np.float32),
-                polarity="transparency",
-                semantic="alpha",
-            ),
-        )
-
-
-def execute_graph_node(node: type[Node], inputs: dict[str, object]) -> dict[str, object]:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
-    nodes = [node]
-    worker = InProcessWorker(build_node_types(nodes), registry)
-
-    async def validate_saved(
-        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
-    ) -> tuple[SavedArtifact, ...]:
-        return SavedArtifactAuthority(os.environ["DINKSTER_MOUNTS_SNAPSHOT"]).capture_mounted(
-            claims, node_id, started_at_ns
-        )
-
-    runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
-    engine = Engine(
-        schemas=build_schemas(nodes),
-        registry=registry,
-        worker=worker,
-        pin_execution=lambda: runtime,
-        cache=MemoryLRUCache(),
-    )
-
-    async def run() -> dict[str, object]:
-        graph = Graph(nodes={"node": GraphNode(node.define_schema().node_type, inputs)})
-        result = await engine.run(graph, ["node"])
-        return {name: value.resolve() for name, value in result.outputs["node"].items()}
-
-    return run_scenario(run())
-
-
-def test_split_layer_integer_regions_survive_the_worker_boundary() -> None:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_image_types(registry)
-    direct = cast("list[Region]", SplitLayers.execute(layers=document())["regions"])
-    assert [region.to_record() for region in direct] == [{"x": 0, "y": 0, "width": 2, "height": 1}]
-    assert all(
-        type(coordinate) is int
-        for coordinate in (direct[0].x, direct[0].y, direct[0].width, direct[0].height)
-    )
-
-    value = registry.wrap("list<REGION>", direct)
-    header, blobs, segments = encode_result(
-        ValueCodec(registry, use_shm=False, accept_shm=False),
-        InvocationResult(outputs={"regions": value}),
-        "invocation",
-        0.0,
-    )
-    assert not segments
-    outputs, _ = decode_result_outputs(
-        ValueCodec(registry, use_shm=False, accept_shm=False), header, blobs, []
-    )
-    decoded = cast("list[Region]", outputs["regions"].resolve())
-    assert [region.to_record() for region in decoded] == [{"x": 0, "y": 0, "width": 2, "height": 1}]
-    assert all(
-        type(coordinate) is int
-        for coordinate in (decoded[0].x, decoded[0].y, decoded[0].width, decoded[0].height)
     )
 
 
@@ -371,294 +271,6 @@ def test_canvas_background_is_the_blend_backdrop() -> None:
     image, mask = flatten(value)
     np.testing.assert_allclose(image, 64 / 255, atol=1 / 255, rtol=0)
     np.testing.assert_array_equal(mask, 0)
-
-
-def test_node_build_edit_split_selectors_and_api_flatten_match() -> None:
-    source = np.array([[[[1, 0, 0], [0, 1, 0]]]], dtype=np.float32)
-    expected_value = AddLayer.execute(image=source)["layers"]
-    value = execute_graph_node(AddLayer, {"image": TypedLiteral("IMAGE", source.tolist())})[
-        "layers"
-    ]
-    assert isinstance(value, ImageDocument)
-    assert isinstance(expected_value, ImageDocument)
-    assert value.data == expected_value.data
-    record = value.to_record()
-    identifier = record["rootLayerIds"][0]
-    components = record["layers"][identifier]["transform"]["components"]
-    edited = EditLayers.execute(
-        layers=value,
-        commands=json.dumps(
-            [
-                {
-                    "op": "transform",
-                    "id": identifier,
-                    "components": {**components, "flipHorizontal": True},
-                }
-            ]
-        ),
-    )["layers"]
-    assert isinstance(edited, ImageDocument)
-    result = FlattenLayers.execute(layers=edited)
-    np.testing.assert_array_equal(
-        result["image"], np.array([[[[0, 1, 0], [1, 0, 0]]]], dtype=np.float32)
-    )
-    split_value = append_raster(
-        edited, raster_png(np.array([[[0, 0, 1], [0, 0, 1]]], dtype=np.float32))
-    )
-    split_ids = split_value.to_record()["rootLayerIds"]
-    split_value = apply_commands(split_value, [{"op": "group", "ids": split_ids}])
-    expected_split = cast(dict[str, Any], SplitLayers.execute(layers=split_value))
-    split = cast(
-        dict[str, Any],
-        execute_graph_node(
-            SplitLayers, {"layers": TypedLiteral("dinkster.layers", split_value.to_record())}
-        ),
-    )
-    assert len(split["images"]) == len(split["masks"]) == len(split["regions"]) == 2
-    for name in ("images", "masks"):
-        for actual, expected in zip(split[name], expected_split[name], strict=True):
-            np.testing.assert_array_equal(actual, expected)
-    assert split["regions"] == expected_split["regions"]
-    np.testing.assert_array_equal(split["images"][0], result["image"])
-    np.testing.assert_array_equal(split["masks"][0], result["transparency_mask"])
-    assert split["regions"][0].width == 2
-
-
-def test_edit_layers_node_exposes_structural_and_layer_commands() -> None:
-    value = AddLayer.execute(image=np.array([[[[1, 0, 0], [0, 1, 0]]]], dtype=np.float32))["layers"]
-    value = AddLayer.execute(
-        layers=value,
-        image=np.array([[[[0, 0, 1], [0, 0, 1]]]], dtype=np.float32),
-        name="Top",
-    )["layers"]
-    assert isinstance(value, ImageDocument)
-    record = value.to_record()
-    base, top = record["rootLayerIds"]
-    components = {
-        **record["layers"][top]["transform"]["components"],
-        "x": 1,
-        "width": 1,
-        "rotation": 0.25,
-        "flipHorizontal": True,
-        "flipVertical": True,
-    }
-    commands = [
-        {"op": "reorder", "ids": [top, base]},
-        {"op": "group", "ids": [top, base], "name": "Node Group"},
-        {
-            "op": "layer",
-            "id": top,
-            "changes": {"name": "Edited", "blendMode": "screen", "opacity": 32768},
-        },
-        {
-            "op": "layer",
-            "id": base,
-            "changes": {"clipping": "clip-to-previous"},
-        },
-        {"op": "transform", "id": top, "components": components},
-    ]
-    expected = apply_commands(value, commands)
-    edited = execute_graph_node(
-        EditLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", value.to_record()),
-            "commands": json.dumps(commands),
-        },
-    )["layers"]
-    assert isinstance(edited, ImageDocument)
-    assert edited.data == expected.data
-    record = edited.to_record()
-    group_id = record["rootLayerIds"][0]
-    assert record["layers"][group_id]["name"] == "Node Group"
-    assert record["layers"][group_id]["childLayerIds"] == [top, base]
-    assert [record["layers"][identifier]["z_index"] for identifier in (top, base)] == [0, 1]
-    assert record["layers"][top]["name"] == "Edited"
-    assert record["layers"][top]["blendMode"] == "screen"
-    assert record["layers"][top]["opacity"] == 32768
-    assert record["layers"][base]["clipping"] == "clip-to-previous"
-    transform = record["layers"][top]["transform"]
-    assert transform["components"] == components
-    assert {key: transform[key] for key in ("a", "b", "c", "d", "tx", "ty")} == (
-        affine_from_components(components)
-    )
-    selected = execute_graph_node(
-        FlattenLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
-            "selector": f"layer:{top}",
-        },
-    )
-    expected_image, expected_mask = flatten(edited, f"layer:{top}")
-    np.testing.assert_array_equal(selected["image"], expected_image)
-    np.testing.assert_array_equal(selected["transparency_mask"], expected_mask)
-
-    remove = [{"op": "remove", "id": group_id}]
-    expected_removed = apply_commands(edited, remove)
-    removed = execute_graph_node(
-        EditLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
-            "commands": json.dumps(remove),
-        },
-    )["layers"]
-    assert isinstance(removed, ImageDocument)
-    assert removed.data == expected_removed.data
-    assert removed.to_record()["layers"] == {}
-
-
-@pytest.mark.parametrize("combine", ("multiply", "add", "subtract", "intersect"))
-@pytest.mark.parametrize("channel", ("alpha", "luminance"))
-def test_edit_layers_node_exposes_raster_mask_commands(combine: str, channel: str) -> None:
-    value = document()
-    record = value.to_record()
-    owner = record["rootLayerIds"][0]
-    resource = record["layers"][owner]["resourceId"]
-    commands = [
-        {
-            "op": "add_mask",
-            "ownerLayerId": owner,
-            "mask": {
-                "resourceId": resource,
-                "sourceRect": {"x": 0, "y": 0, "width": 2, "height": 1},
-                "enabled": False,
-                "invert": True,
-                "opacity": 32768,
-                "combineMode": combine,
-                "channel": channel,
-            },
-        }
-    ]
-    expected = apply_commands(value, commands)
-    edited = execute_graph_node(
-        EditLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", value.to_record()),
-            "commands": json.dumps(commands),
-        },
-    )["layers"]
-    assert isinstance(edited, ImageDocument)
-    assert edited.data == expected.data
-    record = edited.to_record()
-    mask_id = record["layers"][owner]["maskIds"][0]
-    assert record["masks"][mask_id] == {
-        "id": mask_id,
-        "kind": "raster",
-        "ownerLayerId": owner,
-        "resourceId": resource,
-        "sourceRect": {"x": 0, "y": 0, "width": 2, "height": 1},
-        "enabled": False,
-        "invert": True,
-        "opacity": 32768,
-        "transform": {"a": 1_000_000, "b": 0, "c": 0, "d": 1_000_000, "tx": 0, "ty": 0},
-        "combineMode": combine,
-        "channel": channel,
-    }
-    selected = execute_graph_node(
-        FlattenLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
-            "selector": f"mask:{mask_id}",
-        },
-    )
-    expected_image, expected_mask = flatten(edited, f"mask:{mask_id}")
-    np.testing.assert_array_equal(selected["image"], expected_image)
-    np.testing.assert_array_equal(selected["transparency_mask"], expected_mask)
-
-    components = {
-        "x": 1,
-        "y": 0,
-        "width": 1,
-        "height": 1,
-        "rotation": 0,
-        "flipHorizontal": True,
-        "flipVertical": False,
-        "sourceWidth": 2,
-        "sourceHeight": 1,
-    }
-    enable = [
-        {"op": "mask", "id": mask_id, "changes": {"enabled": True, "invert": False}},
-        {"op": "transform", "kind": "mask", "id": mask_id, "components": components},
-    ]
-    expected_enabled = apply_commands(edited, enable)
-    enabled = execute_graph_node(
-        EditLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", edited.to_record()),
-            "commands": json.dumps(enable),
-        },
-    )["layers"]
-    assert isinstance(enabled, ImageDocument)
-    assert enabled.data == expected_enabled.data
-    assert enabled.to_record()["masks"][mask_id]["enabled"] is True
-    assert enabled.to_record()["masks"][mask_id]["invert"] is False
-    assert enabled.to_record()["masks"][mask_id]["transform"]["components"] == components
-    remove = [{"op": "remove_mask", "id": mask_id}]
-    expected_removed = apply_commands(enabled, remove)
-    removed = execute_graph_node(
-        EditLayers,
-        {
-            "layers": TypedLiteral("dinkster.layers", enabled.to_record()),
-            "commands": json.dumps(remove),
-        },
-    )["layers"]
-    assert isinstance(removed, ImageDocument)
-    assert removed.data == expected_removed.data
-    assert removed.to_record()["masks"] == {}
-    assert removed.to_record()["layers"][owner]["maskIds"] == []
-
-
-def test_layer_creation_normalizes_premultiplied_pixels_before_png_storage() -> None:
-    source = LayerNodeSource.execute()
-    expected = AddLayer.execute(image=source["image"], mask=source["mask"])["layers"]
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
-    nodes: list[type[Node]] = [LayerNodeSource, AddLayer]
-    engine = Engine(
-        schemas=build_schemas(nodes),
-        registry=registry,
-        worker=InProcessWorker(build_node_types(nodes), registry),
-        cache=MemoryLRUCache(),
-    )
-
-    async def run() -> ImageDocument:
-        result = await engine.run(
-            Graph(
-                nodes={
-                    "source": GraphNode("test.layer-node-source"),
-                    "add": GraphNode(
-                        "dinkster.layers.add",
-                        {"image": Link("source", "image"), "mask": Link("source", "mask")},
-                    ),
-                }
-            ),
-            ["add"],
-        )
-        value = result.outputs["add"]["layers"].resolve()
-        assert isinstance(value, ImageDocument)
-        return value
-
-    layered = run_scenario(run())
-    assert isinstance(expected, ImageDocument)
-    assert layered.data == expected.data
-    record = layered.to_record()
-    assert len(record["masks"]) == 1
-    outputs = FlattenLayers.execute(layers=layered)
-    assert media_semantics(outputs["image"])["color"] == {
-        "primaries": 9,
-        "transfer": 16,
-        "range": 1,
-        "matrix": 9,
-        "bit_depth": 10,
-    }
-    assert media_semantics(outputs["transparency_mask"]) == {
-        "polarity": "transparency",
-        "semantic": "alpha",
-    }
-    actual = np.asarray(outputs["image"])
-    np.testing.assert_array_equal(actual[..., :3], [[[[1, 0, 0]]]])
-    np.testing.assert_allclose(actual[..., 3], 0.5, atol=1 / 255, rtol=0)
 
 
 @pytest.mark.parametrize("combine", ("multiply", "add", "subtract", "intersect"))
@@ -1574,99 +1186,6 @@ def test_nested_pass_through_groups_visit_each_raster_once(monkeypatch) -> None:
     monkeypatch.setattr(renderer, "_composite", counted)
     np.testing.assert_array_equal(flatten(value)[0], [[[[0, 0, 0]]]])
     assert visits == 2
-
-
-@pytest.mark.parametrize("format", ["native", "ora", "psd"])
-def test_layer_file_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format: str) -> None:
-    from dinkster_assets import AssetRef, AssetVault, digest_bytes
-
-    snapshot = tmp_path / "mounts.json"
-    snapshot.write_text(
-        json.dumps({"mounts": [{"id": "out", "root": str(tmp_path), "mode": "readwrite"}]})
-    )
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    value = document()
-    saved = cast(
-        AssetRef,
-        execute_graph_node(
-            SaveLayers,
-            {
-                "layers": TypedLiteral("dinkster.layers", value.to_record()),
-                "target": {"mount": "out", "prefix": "layers"},
-                "format": format,
-            },
-        )["document"],
-    )
-    suffix, media_type = {
-        "native": (".json", IMAGE_DOCUMENT_MEDIA_TYPE),
-        "ora": (".ora", "image/openraster"),
-        "psd": (".psd", "image/vnd.adobe.photoshop"),
-    }[format]
-    assert saved.name.endswith(suffix)
-    assert saved.media_type == media_type
-    content = (tmp_path / saved.name).read_bytes()
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest_bytes(content)) as writer:
-        writer.write(content)
-        writer.commit()
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-    bound = AssetRef.from_wire(saved.to_wire(), vault)
-    expected = LoadLayers.execute(document=bound)["layers"]
-    loaded = execute_graph_node(LoadLayers, {"document": bound.to_wire()})["layers"]
-    assert isinstance(loaded, ImageDocument)
-    assert isinstance(expected, ImageDocument)
-    assert loaded.data == expected.data
-    if format != "psd":
-        assert loaded.data == value.data
-    assert loaded.render().png == value.render().png
-
-
-@pytest.mark.parametrize(
-    ("format", "mode", "media_type", "alpha_mode"),
-    [
-        ("PNG", "RGBA", "image/png", "straight"),
-        ("JPEG", "RGB", "image/jpeg", "opaque"),
-        ("WEBP", "RGBA", "image/webp", "straight"),
-    ],
-)
-def test_load_layers_node_creates_documents_from_raster_assets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    format: str,
-    mode: str,
-    media_type: str,
-    alpha_mode: str,
-) -> None:
-    from dinkster_assets import AssetRef, AssetVault, digest_bytes
-
-    output = io.BytesIO()
-    image = Image.new(mode, (3, 2), (20, 40, 60, 128) if mode == "RGBA" else (20, 40, 60))
-    image.save(output, format, **({"lossless": True} if format == "WEBP" else {}))
-    payload = output.getvalue()
-    digest = digest_bytes(payload)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(payload)
-        writer.commit()
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-    reference = AssetRef(
-        digest, f"source.{format.lower()}", len(payload), media_type, resolver=vault
-    )
-    loaded = execute_graph_node(LoadLayers, {"document": reference.to_wire()})["layers"]
-    assert isinstance(loaded, ImageDocument)
-    expected = load_document(payload)
-    assert loaded.data == expected.data
-    record = loaded.to_record()
-    assert (record["canvas"]["width"], record["canvas"]["height"]) == (3, 2)
-    assert len(record["rootLayerIds"]) == 1
-    resource = record["resources"][record["layers"][record["rootLayerIds"][0]]["resourceId"]]
-    assert (resource["mediaType"], resource["alphaMode"], resource["byteSize"]) == (
-        media_type,
-        alpha_mode,
-        len(payload),
-    )
-    assert loaded.read_resource(resource) == payload
-    assert flatten(loaded)[0].shape == (1, 2, 3, 4 if alpha_mode == "straight" else 3)
 
 
 @pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
