@@ -76,6 +76,12 @@ otherwise execution reports stale state and renders the native placements.
 Rendering supports per-layer previews, transparency masks, transforms, 20
 blend modes, and perceptual or linear-light color math.
 
+Structural tensor `LAYERS` values use the existing portable tensor materializer
+before conversion to an image document. The separate-worker transport keeper is
+`tests/test_image_compositor.py::test_pack_compositor_executes_tensor_layers_through_separate_worker`.
+It covers engine-encoded empty, default and edited compositor values, exact
+output pixels and masks, and refusal of malformed compositor payloads.
+
 The `dinkster.compositor.state` event's `documentDigest` identifies the canonical
 input document, before commands or color-space overrides. Its `document` is
 the post-edit preview. Apply sends the input digest with commands relative to
