@@ -51,6 +51,7 @@ from dinkster.registries import (
     resolve_release,
 )
 from scripts.build_official_packs import build, library_metadata, official_library
+from scripts.prepare_admission_engine import read_runtime
 from scripts.run_selected_pack_tests import run_selected_tests, selected_library_wheels
 from scripts.select_official_packs import select_packs
 
@@ -247,8 +248,16 @@ def check_defaults(
     base_id: str | None = None,
     constraints: Path | None = None,
     variant: str = "linux-cpu",
+    runtime: Path | None = None,
 ) -> dict[str, object]:
     """Run the public archive stages without service state or publication credentials."""
+    root = Path(__file__).resolve().parents[1]
+    if runtime is not None:
+        if any(value is not None for value in (generation_python, base_id, constraints)):
+            raise ValueError("select a verified runtime, not individual interpreter inputs")
+        generation_python, base_id, constraints, variant = read_runtime(
+            runtime.resolve(), root, engine_version
+        )
     if (
         sum(value is not None for value in (candidate_base, published_sources, prepared_sources))
         > 1
@@ -263,7 +272,6 @@ def check_defaults(
             raise ValueError("locked admission requires an exact sha256 base identity")
         if not generation_python.is_file() or not constraints.is_file():
             raise ValueError("locked admission interpreter or constraints are missing")
-    root = Path(__file__).resolve().parents[1]
     minimums = default_pack_minimums()
     with tempfile.TemporaryDirectory(prefix="default-pack-admission-") as directory:
         work = Path(directory)
@@ -591,6 +599,7 @@ if __name__ == "__main__":
     parser.add_argument("--base-id")
     parser.add_argument("--constraints", type=Path)
     parser.add_argument("--variant", default="linux-cpu")
+    parser.add_argument("--runtime", type=Path)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -606,6 +615,7 @@ if __name__ == "__main__":
                 base_id=args.base_id,
                 constraints=args.constraints,
                 variant=args.variant,
+                runtime=args.runtime,
             )
         )
     )

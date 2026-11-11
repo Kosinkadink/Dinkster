@@ -41,6 +41,55 @@ from dinkster_workers.provision import ProvisionError
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
 
 
+def test_locked_probe_installs_only_locked_wheels_without_index_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry.archive_admission import StageResult
+    from test_pack_environment import _generation, _wheel
+
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    wheel = _wheel(
+        tmp_path,
+        "locked-extra",
+        "1.2",
+        "locked_extra",
+        "VALUE = 37\n",
+        requires=("unresolved-transitive-control>=99",),
+    )
+    python = _generation(tmp_path / "generation/python", [])
+    lock = PackLock(
+        "color-tools",
+        "linux-cpu",
+        ">=3.12",
+        ("locked-extra>=1",),
+        ("http://127.0.0.1:1/unreachable-index",),
+        (LockedDistribution("locked-extra", "1.2", (wheel,)),),
+    )
+
+    def probe(root, settings, require_isolation, *, python, source_roots):
+        value = subprocess.check_output(
+            [str(python), "-I", "-c", "import locked_extra; print(locked_extra.VALUE)"],
+            text=True,
+        )
+        return StageResult(data={"lockedValue": int(value)})
+
+    # Exercise acquisition and the real user provisioner, independently of the jail transport.
+    monkeypatch.setattr("dinkster_registry.archive_admission._run_executable_probe", probe)
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    result = run_locked_probe(
+        root,
+        lock,
+        generation_python=python,
+        packs=tmp_path / "packs",
+        wheel_store=tmp_path / "wheels",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+    )
+    assert not result.blocked and result.data == {"lockedValue": 37}
+    assert PackLock.read(tmp_path / "packs/color-tools/pack-lock.json") == lock
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("include_dependency", [False, True])
 def test_locked_probe_imports_only_supplied_pack_sources(

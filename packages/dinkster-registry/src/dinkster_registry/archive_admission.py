@@ -41,7 +41,7 @@ from dinkster_workers.doctor import (
     diagnose_static,
 )
 from dinkster_workers.manifest import ManifestError, PackManifest, load_manifest
-from dinkster_workers.pack_environment import provision_pack
+from dinkster_workers.pack_environment import fetch_pack_wheels, provision_pack
 from dinkster_workers.pack_lock import GenerationPackages, PackLock, plan_pack
 from dinkster_workers.pack_wheel import pack_manifest_path, validate_pack_wheel
 from dinkster_workers.provision import ProvisionError
@@ -563,6 +563,7 @@ def run_locked_probe(
                 variant=variant,
                 own_environment_size=0,
             )
+            fetch_pack_wheels(plan, wheel_store, offline=offline)
             python = provision_pack(
                 plan,
                 generation_python=generation_python,
@@ -570,7 +571,7 @@ def run_locked_probe(
                 wheel_store=wheel_store,
                 uv_cache=uv_cache,
                 variant=variant,
-                offline=offline,
+                offline=True,
             )
     except (ManifestError, ProvisionError) as exc:
         return StageResult((_block("probe.dependencies-incompatible", str(exc)),))
