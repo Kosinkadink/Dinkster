@@ -6,6 +6,9 @@
   the active selection. Retained vulnerable releases remain usable while their
   decision is pending; a new vulnerable release requires exact-notice approval.
   These checks do not fetch notices or stop an already running worker.
+- Verified ownership notices accept an explicit operator-owned previous owner.
+  An omitted previous owner, empty new publisher or unchanged owner is refused
+  without losing cached release notices.
 - Static-only registry installs support both the release catalog and the split
   catalog with per-pack version files. Selection and acquisition share a snapshot
   within each operation; the next operation reads current publication state.

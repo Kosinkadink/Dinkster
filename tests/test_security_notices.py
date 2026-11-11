@@ -99,6 +99,52 @@ def _store(tmp_path: Path, key: Ed25519PrivateKey) -> SecurityStore:
     return store
 
 
+@pytest.mark.parametrize("previous_publisher", [None, "original-publisher"])
+def test_signed_ownership_change_requires_explicit_previous_publisher(
+    tmp_path: Path, previous_publisher: str | None
+):
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    original = _feed("malicious")
+    store.import_feed(REGISTRY, _signed(original, key), now=VERIFIED_AT)
+    change = {
+        "kind": "ownership_transferred",
+        "id": "636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8",
+        "revision": 2,
+        "packId": "9aa02405-70c5-4648-9bf8-01341233759a",
+        "pack": "test-pack",
+        "previousPublisher": previous_publisher,
+        "publisher": "new-publisher",
+        "actor": "test-security-role",
+        "changedAt": "2026-11-10T12:00:00Z",
+        "reason": "continue maintained releases",
+    }
+    replacement = copy.deepcopy(original)
+    replacement.update(revision=2, ownershipChanges=[change])
+    invalid = [
+        {name: value for name, value in change.items() if name != "previousPublisher"},
+        {**change, "publisher": ""},
+        {**change, "publisher": None},
+        {**change, "previousPublisher": "new-publisher"},
+    ]
+    for candidate in invalid:
+        replacement["ownershipChanges"] = [candidate]
+        with pytest.raises(SecurityError):
+            store.import_feed(REGISTRY, _signed(replacement, key))
+        cached, verified = SecurityStore(store.path).cached(REGISTRY)
+        assert cached is not None and cached.revision == 1
+        assert cached.notices[0].state == "malicious"
+        assert verified == VERIFIED_AT
+    replacement["ownershipChanges"] = [change]
+    store.import_feed(REGISTRY, _signed(replacement, key), now=VERIFIED_AT)
+    cached, verified = SecurityStore(store.path).cached(REGISTRY)
+    assert cached is not None and cached.revision == 2
+    assert cached.ownership_changes[0].previous_publisher == previous_publisher
+    assert cached.ownership_changes[0].publisher == "new-publisher"
+    assert cached.notices[0].state == "malicious"
+    assert verified == VERIFIED_AT
+
+
 def test_cached_notice_and_changeable_exact_decision_survive_restart_and_lift(tmp_path: Path):
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)

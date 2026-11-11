@@ -109,7 +109,7 @@ class OwnershipChange(_Model):
     revision: int = Field(gt=0)
     pack_id: UUID
     pack: str
-    previous_publisher: Text
+    previous_publisher: Text | None
     publisher: Text
     actor: Text
     changed_at: datetime
