@@ -158,6 +158,18 @@ def test_library_preparation_and_native_locks_preserve_exact_sources(
     native_zip_system: int,
 ) -> None:
     files = {
+        "pyproject.toml": (
+            '[project]\nname = "dinkster"\nversion = "0.0.3"\n'
+            '[tool.uv.workspace]\nmembers = ["packages/*"]\n'
+        ),
+        "src/dinkster/__init__.py": '__version__ = "0.0.3"\n',
+        "packages/dinkster-api/pyproject.toml": (
+            '[project]\nname = "dinkster-api"\nversion = "0.0.3"\n'
+            'requires-python = ">=3.12"\n'
+            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+            '[tool.hatch.build.targets.wheel]\npackages = ["src/dinkster_api"]\n'
+        ),
+        "packages/dinkster-api/src/dinkster_api/__init__.py": "",
         "packages/helpers/pyproject.toml": (
             '[project]\nname = "dinkster-test-helpers"\nversion = "0.0.1"\n'
             'requires-python = ">=3.12"\n'
