@@ -643,8 +643,8 @@
 Select local software explicitly; nothing needs publishing first:
 
 ```sh
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
 dinkster-env --root /absolute/project status
 dinkster-env --root /absolute/project doctor
 dinkster-env --root /absolute/project start --yes

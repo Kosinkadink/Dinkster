@@ -2538,9 +2538,11 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
-@pytest.mark.parametrize("failed_pack", [False, True])
+@pytest.mark.parametrize(
+    ("failed_pack", "development"), [(False, False), (True, False), (False, True)]
+)
 def test_serve_empty_generation_health_distinguishes_failed_selection(
-    tmp_path: Path, failed_pack: bool
+    tmp_path: Path, failed_pack: bool, development: bool
 ) -> None:
     from dinkster_registry import Lockfile
 
@@ -2552,6 +2554,10 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
     (generation / "generation.json").write_text(
         json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
     )
+    if development:
+        (generation / "development-sources.json").write_text(
+            json.dumps({"format": "dinkster.development-sources/1", "sources": []})
+        )
     extra = (
         ("--no-default-packs", "--pack", str(write_iso_manifest(tmp_path / "bad", name="core")))
         if failed_pack
@@ -2582,7 +2588,15 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                         assert (await response.json())["ok"] is (not failed_pack)
                     async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
                         assert response.status == 200
-                        assert (await response.json())["nodes"] == {}
+                        catalog = await response.json()
+                        assert catalog["nodes"] == {}
+                        if development:
+                            label = catalog["dinkster"]["development"]
+                            assert label["mode"] == "development"
+                            assert label["reproducible"] is False
+                            assert "not reproducible from dependency ranges" in label["description"]
+                        else:
+                            assert "development" not in catalog["dinkster"]
 
             run_scenario(check())
         except Exception as exc:
