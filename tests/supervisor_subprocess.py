@@ -166,6 +166,9 @@ def run(command: list[str], *, timeout: float = 30) -> subprocess.CompletedProce
                     cast(Any, exc).stdout, cast(Any, exc).stderr = process.communicate()
                 else:
                     process.wait()
+                final_stack = trace.read_text() if trace.exists() else "child trace file absent"
+                if final_stack != stack:
+                    exc.add_note(f"Child diagnostics collected after cleanup:\n{final_stack}")
                 raise
             except BaseException:
                 process.kill()

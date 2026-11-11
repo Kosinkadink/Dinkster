@@ -85,7 +85,7 @@ def test_child_output_and_timeout_diagnostics(
     with pytest.raises(subprocess.TimeoutExpired) as raised:
         run([*command, "blocked", 'space "quoted" value'])
     assert raised.value.timeout == 0
-    notes = "\n".join(raised.value.__notes__)
+    notes = raised.value.__notes__[0]
     assert "returncode before cleanup=None" in notes
     assert "Child stack before cleanup:" in notes
     assert "blocked_child" in notes
@@ -130,6 +130,45 @@ def test_child_snapshot_failure_is_reported(
     else:
         assert "Snapshot dump completed" in notes
         assert "Snapshot acknowledgment failed" in notes
+
+
+def test_late_child_snapshot_is_retained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_after_ready
+) -> None:
+    script = (
+        "import faulthandler, threading, time\n"
+        "from pathlib import Path\n"
+        "dump = faulthandler.dump_traceback\n"
+        "def held_dump(*args, **kwargs):\n"
+        "    deadline = time.monotonic() + 30\n"
+        f"    while not Path({str(tmp_path / 'release')!r}).exists():\n"
+        "        assert time.monotonic() < deadline, 'dump release absent'\n"
+        "        time.sleep(0.01)\n"
+        "    dump(*args, **kwargs)\n"
+        f"    Path({str(tmp_path / 'dumped')!r}).touch()\n"
+        "faulthandler.dump_traceback = held_dump\n"
+        f"Path({str(tmp_path / 'ready')!r}).touch()\n"
+        "def late_snapshot_child():\n"
+        "    threading.Event().wait(90)\n"
+        "late_snapshot_child()\n"
+    )
+    kill = subprocess.Popen.kill
+
+    def release_before_kill(process):
+        (tmp_path / "release").touch()
+        wait_until((tmp_path / "dumped").exists)
+        kill(process)
+
+    monkeypatch.setattr(subprocess.Popen, "kill", release_before_kill)
+    expire_after_ready(lambda process: wait_until((tmp_path / "ready").exists))
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        run([sys.executable, "-c", script])
+    assert raised.value.timeout == 0
+    notes = "\n".join(raised.value.__notes__)
+    assert "Timeout snapshot not acknowledged" in notes
+    assert "late_snapshot_child" not in raised.value.__notes__[0]
+    assert "Child diagnostics collected after cleanup:" in raised.value.__notes__[-1]
+    assert "late_snapshot_child" in raised.value.__notes__[-1]
 
 
 @pytest.mark.parametrize(
