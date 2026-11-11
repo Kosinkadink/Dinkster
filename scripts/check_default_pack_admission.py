@@ -600,10 +600,17 @@ def check_defaults(
                     {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
                 )
         with admission_timing("defaults", "selected-tests"):
-            if test_packs:
-                run_selected_tests(root, catalog, artifacts, test_packs=test_packs)
-            else:
-                run_selected_tests(root, catalog, artifacts)
+            if generation_python is None:
+                raise ValueError("selected tests require the managed engine and dependency locks")
+            run_selected_tests(
+                root,
+                catalog,
+                artifacts,
+                generation_python=generation_python,
+                locks=locks,
+                variant=variant,
+                test_packs=test_packs,
+            )
         return {"engineVersion": engine_version, "packs": results}
 
 
