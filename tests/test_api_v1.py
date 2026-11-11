@@ -907,9 +907,6 @@ payloads = {
                         'metadata': {'label': 'left', 'score': 0.75}},
                        {'x': -2, 'y': 5, 'width': 3, 'height': 17, 'metadata': {}}],
     'IMAGECOMPARE': {'selected': 1, 'divider': 0.375, 'labels': ['right', 'left']},
-    'COMPOSITOR': {'version': 1, 'canvas': {'width': 19, 'height': 7},
-                   'order': [4, 1], 'layers': [{'id': 4, 'opacity': 0.25}],
-                   'extension': {'enabled': False}},
     'LAYERS': {'version': 1, 'canvas': (19, 7), 'layers': []},
 }
 for type_id in payloads:

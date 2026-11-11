@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
 import time
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from dinkster_registry import artifact_digest
@@ -195,15 +197,62 @@ def test_probe_dependency_url_refuses(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("source", [None, "cpu", "index"])
+def test_probe_dependency_source_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Literal["cpu", "index"] | None
+) -> None:
+    installer = tmp_path / "uv"
+    installer.write_text(
+        f"#!{sys.executable}\nimport json, sys\n"
+        "sys.stderr.write(json.dumps(sys.argv[1:]))\nsys.exit(1)\n"
+    )
+    installer.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "example-pack"\nrequires = ["torch>=2.5"]\n'
+        '[pack.entry]\nnodes = "nodes:PACK_NODES"\n'
+    )
+    settings = ProbeSettings() if source is None else ProbeSettings(probe_dependency_source=source)
+    result = run_executable_probe(tmp_path, settings=settings)
+    assert result.blocked and result.findings[0].code == "probe.dependencies-unresolved"
+    assert result.operator_details is not None
+    command = json.loads(result.operator_details["stderrTail"])
+    assert command[:8] == [
+        "--no-config",
+        "--no-cache",
+        "--no-python-downloads",
+        "--no-progress",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+    ]
+    assert command[8] == "--target"
+    assert command[10:] == [
+        "--only-binary",
+        ":all:",
+        "--keyring-provider",
+        "disabled",
+        "--index-url",
+        "https://pypi.org/simple",
+        "--no-sources",
+        *([] if source == "index" else ["--torch-backend", "cpu"]),
+        "torch>=2.5",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
+@pytest.mark.parametrize("index_only", [False, True])
 @pytest.mark.parametrize("library_range", [None, ">=1,<10", ">=2"])
 def test_probe_installs_trusted_library_and_operator_dependencies(
-    tmp_path: Path, library_range: str | None
+    tmp_path: Path, library_range: str | None, index_only: bool
 ) -> None:
     def wheel(name: str, version: str, code: str, requires: tuple[str, ...] = ()) -> Path:
         path = tmp_path / f"{name}-{version}-py3-none-any.whl"
         dist_info = f"{name}-{version}.dist-info"
         files = {
-            f"{name}/__init__.py": code,
+            f"{'probe_operator_only' if name == 'torch' else name}/__init__.py": code,
             f"{dist_info}/METADATA": (
                 f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
                 + "".join(f"Requires-Dist: {value}\n" for value in requires)
@@ -220,17 +269,19 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
                 archive.writestr(entry, data)
         return path
 
-    operator = wheel("probe_operator_only", "1.0", "VALUE = 'operator'\n")
+    operator_name = "torch" if index_only else "probe_operator_only"
+    operator_requirement = operator_name.replace("_", "-") + "==1.0"
+    operator = wheel(operator_name, "1.0", "VALUE = 'operator'\n")
     trusted = wheel(
         "probe_registry_library",
         "1.0",
         "from probe_operator_only import VALUE\nVALUE = 'registry-' + VALUE\n",
-        ("probe-operator-only==1.0",),
+        (operator_requirement,),
     )
     competitor = wheel("probe_registry_library", "9.0", "VALUE = 'wrong-index'\n")
     index = tmp_path / "simple"
     for name, artifact in (
-        ("probe-operator-only", operator),
+        (operator_name.replace("_", "-"), operator),
         ("probe-registry-library", competitor),
     ):
         project = index / name
@@ -242,7 +293,7 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
     requirement = (
         f"probe-registry-library{library_range}"
         if library_range is not None
-        else "probe-operator-only==1.0"
+        else operator_requirement
     )
     manifest.write_text(
         manifest.read_text().replace("[pack]\n", f'[pack]\nrequires = ["{requirement}"]\n')
@@ -256,7 +307,10 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
     original = manifest.read_bytes()
     result = run_executable_probe(
         root,
-        settings=ProbeSettings(probe_package_index_url=index.as_uri()),
+        settings=ProbeSettings(
+            probe_package_index_url=index.as_uri(),
+            probe_dependency_source="index" if index_only else "cpu",
+        ),
         require_isolation=False,
         dependency_wheels=(trusted,) if library_range else (),
     )

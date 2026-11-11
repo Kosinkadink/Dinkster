@@ -1026,7 +1026,26 @@ Each `--pack` runs in its own process and attributes its nodes on
 `/api/nodes`. Add `--watch-packs` for live reload, boundary-cost diagnostics,
 and cache-miss explanations while developing.
 
-Test your nodes directly - they are plain classmethods over plain values:
+Install `dinkster-engine` and `pytest` alongside your pack, then use
+`from dinkster_engine.testing import load_pack` in a module- or session-scoped
+fixture. The context shares one real worker process and engine cache by default;
+`in_process=True` opts out without changing test calls. Run a single node or
+connect a graph in Python and assert decoded values and engine cache behavior.
+See [the engine testing guide](../packages/dinkster-engine/README.md#tests-from-pytest)
+for a complete fixture and graph example. The helper installs without Torch;
+CPU-only Torch is enough for tensor pack tests:
+
+```bash
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+pytest -m 'not accelerator'
+```
+
+Register one `accelerator` marker in your pytest configuration and mark
+accelerator-only tests with `@pytest.mark.accelerator`, independent of vendor.
+Ordinary CI runs the CPU tests; accelerator CI also runs the marked tests.
+
+Direct classmethod tests remain useful for pure logic, but do not cover the
+engine, cache, or process transport:
 
 ```python
 def test_shout():
@@ -1034,11 +1053,15 @@ def test_shout():
     assert out == {"shouted": "HEY!HEY!"}
 ```
 
-and gate CI on `uv run --no-sync dinkster-doctor .` as its own step (see the
+Gate CI on `uv run --no-sync dinkster-doctor .` as its own step (see the
 [template workflow](https://github.com/Kosinkadink/dinkster-pack-template/blob/main/.github/workflows/ci.yml)).
 Don't import the doctor from your tests: tests live in the pack
 directory, so they hold to the same one-door rule as the rest of your code,
-and `dinkster_workers` is host machinery. For golden-file testing of schema
+with `dinkster_engine.testing` the explicit testing exception;
+only `from dinkster_engine.testing import load_pack` is permitted, in `tests/`
+and not in runtime node modules.
+`dinkster_workers` remains host machinery. Doctor and the registry never run
+node bodies. For golden-file testing of schema
 wire output, encode with `schema_to_wire` (exported through
 `dinkster_api.v1`) and compare committed JSON - the wire is self-describing
 via its `schemaVersion` field.

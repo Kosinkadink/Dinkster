@@ -456,6 +456,8 @@ def _classify_import(
     own_modules: frozenset[str] = frozenset(),
     pack_modules: frozenset[str] = frozenset(),
     dependency_modules: frozenset[str] = frozenset(),
+    *,
+    test_source: bool = False,
 ) -> tuple[str, str] | None:
     """Return (code, fix) for a problematic dinkster import, else None."""
     parts = module.split(".")
@@ -474,6 +476,8 @@ def _classify_import(
                     "imports.private-module",
                     "underscore-private names carry no compatibility promise; use dinkster_api.v1",
                 )
+    if test_source and module == "dinkster_engine.testing" and names == "load_pack":
+        return None
     if root in _HOST_MACHINERY:
         return (
             "imports.host-machinery",
@@ -861,6 +865,8 @@ def _scan_sources(manifest: PackManifest, pack_names: Collection[str]) -> list[F
         pack_import_name(dependency.pack) for dependency in manifest.dependencies
     )
     for path in paths:
+        relative = path.relative_to(manifest.root)
+        test_source = "tests" in relative.parts[:-1]
         try:
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -884,7 +890,14 @@ def _scan_sources(manifest: PackManifest, pack_names: Collection[str]) -> list[F
                         (node.module, ",".join(alias.name for alias in node.names), node.lineno)
                     )
         for module, names, lineno in sorted(imports, key=lambda item: (item[2], item[0])):
-            problem = _classify_import(module, names, own_modules, pack_modules, dependency_modules)
+            problem = _classify_import(
+                module,
+                names,
+                own_modules,
+                pack_modules,
+                dependency_modules,
+                test_source=test_source,
+            )
             if problem is None:
                 continue
             code, fix = problem

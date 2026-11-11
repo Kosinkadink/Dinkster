@@ -18,7 +18,6 @@ from packaging.version import Version
 
 from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
 
-validate_evidence_revision()
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PINNED_COMFYUI_COMMIT = "b5cc8830279eae909a59de030af1e50761c36751"
 PINNED_COMFYUI_AV_REQUIREMENTS = {
@@ -250,6 +249,7 @@ def workspace_package_names(packages: Path) -> set[str]:
 def test_every_package_is_governed() -> None:
     """A package absent from ALLOWED escapes the layering rule entirely -
     every workspace package must have an explicit allowed set."""
+    validate_evidence_revision()
     on_disk = workspace_package_names(REPO_ROOT / "packages")
     assert (EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml").is_file()
     on_disk.add("dinkster_acceptance")
@@ -295,6 +295,7 @@ def test_dependency_scan_includes_ungoverned_imports(tmp_path: Path) -> None:
     reason="Known dependency edges: https://github.com/Kosinkadink/comfy-vibe-station/issues/664",
 )
 def test_one_way_dependencies() -> None:
+    validate_evidence_revision()
     violations: list[str] = []
     checked = 0
     for package, allowed in ALLOWED.items():
@@ -404,7 +405,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
         "supervisor": ["dinkster-supervisor"],
     }
     assert {"dinkster-api", "dinkster-supervisor"} <= {
-        dependency for dependency in root_project["dependencies"]
+        Requirement(dependency).name for dependency in root_project["dependencies"]
     }
     assert "dinkster-collab" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])

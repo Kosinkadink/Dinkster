@@ -320,8 +320,11 @@ class ProbeSettings:
     probe_package_index_url: str = "https://pypi.org/simple"
     probe_output_limit_bytes: int = 2 * MEBIBYTE
     probe_operator_tail_bytes: int = 8 * 1024
+    probe_dependency_source: Literal["cpu", "index"] = "cpu"
 
     def __post_init__(self) -> None:
+        if self.probe_dependency_source not in {"cpu", "index"}:
+            raise ValueError("probe_dependency_source must be cpu or index")
         bounds = (
             ("probe_timeout_seconds", self.probe_timeout_seconds, 1, 600),
             ("probe_dependency_timeout_seconds", self.probe_dependency_timeout_seconds, 1, 1800),
@@ -558,8 +561,7 @@ def run_executable_probe(
             "--index-url",
             configured.probe_package_index_url,
             "--no-sources",
-            "--torch-backend",
-            "cpu",
+            *(["--torch-backend", "cpu"] if configured.probe_dependency_source == "cpu" else []),
             *[str(requirement) for requirement in requirements],
             *[str(wheel.resolve()) for wheel in dependency_wheels],
         ]

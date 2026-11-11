@@ -112,6 +112,17 @@
 - Pack publication can submit publisher-produced per-base locks together with
   the exact source archive. The registry validates their archive and base
   bindings; submitting locks never resolves dependencies on the client.
+- Published lock preparation inspects the whole selected set before creating
+  lock output, reporting all missing or invalid bindings together. Its
+  `--offline --index-snapshot PATH` form uses retained index and lock metadata
+  without network access or dependency resolution; missing or corrupt inputs
+  refuse without creating the output or repairing the snapshot.
+- Registry source planning can inspect an exact engine release's default pack
+  declaration and published locks without acquiring archives or writing a cache.
+  Its plan includes selected versions, provenance, archive identities and an
+  upper bound for pack wheel bytes. Unavailable releases and invalid locks are
+  reported together. Offline metadata discovery reads only retained channel,
+  engine and base records and reports missing engine/base records together.
 - Prepared official source catalogs preserve dependency-owned codecs without
   claiming them as pack-owned declarations. First-party pack node IDs execute
   from these archives without rewriting their source bytes.
@@ -154,6 +165,10 @@
   from files requiring review. These checks need no private checkout, registry
   database or publication credentials. Missing or degraded probe isolation
   refuses rather than skipping executable checks.
+- Probe dependency provisioning can use a complete operator-staged CPU wheel
+  index for all requirements, including torch and torchvision, without a public
+  package-index fallback. Missing or incompatible wheels refuse admission.
+  The default CPU dependency source and all probe limits remain unchanged.
 - Registry archive inspection verifies the selected digest, safely extracts
   the manifest without importing pack code, and checks its pack id, version
   and engine range. Source publisher and namespaces describe that verified
@@ -194,10 +209,14 @@
   preparation uses these selections, retaining existing source identities and
   leaving old dependency locks to inheritance from the source generation.
 - `dinkster-env packs-plan PACK@VERSION --output PATH --json` retains an exact
-  additive software review in a new host-owned disposable directory outside the
+  software review in a new host-owned disposable directory outside the
   project and shared store. It reports source/dependency locks, retained engine,
   base and placement, wheel downloads and isolation size without a generation
-  journal or activation. Intact retained registry wheels can supply old archives
+  journal or activation. Exact selections can add or replace published packs
+  from any configured registry, not just first-party packs. Replacements use
+  recorded registry provenance unless an explicit registry is selected; unrelated
+  packs retain their source identities and dependency locks.
+  Intact retained registry wheels can supply old archives
   without contacting their release endpoints. Previously installed wheels retain
   their original archive bytes and digest when another pack is added; corrupt
   retained wheels refuse before a candidate source lock is written. Missing
@@ -206,7 +225,7 @@
 - `packs-apply --input PATH --approval DIGEST --json` applies that review once
   within 900 seconds. Changed project settings, current software or reviewed
   input files refuse before construction. Successful application seals and
-  activates an ordinary next generation and appends its software history; existing
+  activates an ordinary next generation and appends its software history; unselected
   source/dependency locks and placement are preserved. Workflows, models, outputs,
   user data and project settings remain unchanged. Hosts own review-directory
   cleanup and must authorize the caller before invoking these local commands.
@@ -272,6 +291,11 @@
   Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
   does not apply it. Explicit `--plan` and the Desktop client's `--json` preview
   remain read-only without prompting; `--json --yes` applies without prompting.
+- Confirmed release acquisition retains channel and verified engine/base metadata.
+  Setup and update can inspect those cached manifests when mirrors are unavailable;
+  the plan labels use of the last acquired channel selection. Cached channels are
+  specific to the configured mirrors, and cached manifests must still match their
+  recorded identities. Planning does not create or repair cache files.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -444,6 +468,8 @@
 - Engine release assembly records variant-specific dependency wheel identities
   without uploading third-party wheels. Finalization rejects unexpected payloads
   and enforces a 100 MB budget excluding native tools ZIPs.
+  Release metadata also records that engine's default pack IDs and minimum
+  versions, independently of the command interpreter's installed defaults.
 - Native tools builds retry transient HTTPS input failures up to three times,
   preserving exact size and SHA256 admission. Certificate errors, HTTP 4xx and
   corrupt payloads fail without retry; exhausted failures retain attempt details.

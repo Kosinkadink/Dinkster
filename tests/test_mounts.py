@@ -2345,6 +2345,143 @@ def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) 
         store.close()
 
 
+@pytest.mark.parametrize("aliases", (2, 17))
+def test_asset_locations_refresh_each_writer_mount_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aliases: int
+) -> None:
+    import dinkster_assets.library as library_module
+
+    table = MountTable()
+    for mount_id in ("first", "second"):
+        root = tmp_path / mount_id
+        root.mkdir()
+        table.add(MountDef(mount_id, root, "readwrite"))
+        table.scan(mount_id)
+    service = MountService(table)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+    writer = AssetWriter(table)
+    expected: list[dict[str, object]] = []
+    digest = digest_bytes(b"shared")
+    for index in range(aliases):
+        for mount_id in ("second", "first"):
+            ref = writer.save_bytes(
+                {"mount": mount_id, "prefix": f"alias-{index}"}, b"shared", suffix=".bin"
+            )
+            store.record_asset(
+                "local", ref, original_name=ref.name, kind="asset/file", origin={"kind": "upload"}
+            )
+            expected.append(
+                {
+                    "storage": "mount",
+                    "mount": mount_id,
+                    "virtualPath": ref.virtual_path,
+                    "path": str(tmp_path / mount_id / ref.name),
+                }
+            )
+    loads: dict[Path, int] = {}
+    original_load = library_module.load_write_records
+
+    def load(root: Path):
+        loads[root] = loads.get(root, 0) + 1
+        return original_load(root)
+
+    monkeypatch.setattr(library_module, "load_write_records", load)
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"), store=store, local_resolver=table
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/mounts/locations", params={"digest": digest})
+            assert response.status == 200
+            assert (await response.json())["locations"] == expected
+            assert loads == {tmp_path / "first": 1, tmp_path / "second": 1}
+        finally:
+            await client.close()
+
+    try:
+        run_scenario(scenario())
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("boundary", ("snapshot", "verification"))
+@pytest.mark.parametrize("change", ("revoke", "replace", "exclude", "content", "escape"))
+def test_asset_locations_refuse_changed_files_and_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str, change: str
+) -> None:
+    import dinkster_assets.library as library_module
+
+    import dinkster.mounts_api as mounts_api_module
+
+    root = tmp_path / "input"
+    seed(root, {"source.bin": b"source"})
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"source")
+    table = MountTable()
+    table.add(MountDef("input", root))
+    table.scan("input")
+    service = MountService(table)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+    ref = table.ref("mounts/input/source.bin")
+    store.record_asset(
+        "local", ref, original_name=ref.name, kind="asset/file", origin={"kind": "upload"}
+    )
+    entered, release = Event(), Event()
+    module = library_module if boundary == "snapshot" else mounts_api_module
+    name = "load_write_records" if boundary == "snapshot" else "verified_local_path"
+    original = getattr(module, name)
+
+    def held(*args):
+        entered.set()
+        assert release.wait(10)
+        return original(*args)
+
+    monkeypatch.setattr(module, name, held)
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"), store=store, local_resolver=table
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        pending = asyncio.ensure_future(
+            client.get("/api/mounts/locations", params={"digest": ref.digest})
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            if change in ("revoke", "replace"):
+                table.remove("input")
+                if change == "replace":
+                    table.add(MountDef("input", root))
+            elif change == "exclude":
+                service.projects.update("default", [], available=("input",), output=None)
+            elif change == "content":
+                (root / "source.bin").write_bytes(b"changed")
+            else:
+                (root / "source.bin").unlink()
+                symlink_or_skip(root / "source.bin", outside)
+            release.set()
+            response = await pending
+            assert response.status == 200
+            assert (await response.json())["locations"] == []
+        finally:
+            release.set()
+            await pending
+            await client.close()
+
+    try:
+        run_scenario(scenario())
+    finally:
+        store.close()
+
+
 def test_sandbox_folder_edits_preserve_live_grants_until_restart(tmp_path: Path) -> None:
     config = tmp_path / "mounts.toml"
     snapshot = tmp_path / "snapshot.json"
