@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -27,7 +27,7 @@ class VaeDecodeStructureTrellis2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VaeDecodeStructureTrellis2",
+            node_type="dinkster.3d.models.vae_decode_structure_trellis2",
             display_name="Trellis2 VAE Decode Structure",
             category="model/latent/trellis",
             inputs=(
@@ -42,7 +42,7 @@ class VaeDecodeStructureTrellis2(Node):
             ),
             outputs=(OutputSpec("voxel", TypeExpr.concrete(VOXEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VaeDecodeStructureTrellis2")
 
     @classmethod
     def execute(cls, *, samples: object, vae: Any, resolution: str = "32") -> Mapping[str, object]:

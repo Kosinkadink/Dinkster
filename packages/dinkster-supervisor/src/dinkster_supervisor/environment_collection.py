@@ -15,6 +15,7 @@ from typing import cast
 from dinkster_store import object_entries
 
 from .environment_constraints import requirement_hashes
+from .environment_development import DEVELOPMENT_DESCRIPTION
 from .environment_generations import pack_operation
 from .environment_history import (
     generation_history_coverage,
@@ -324,6 +325,7 @@ def collection_preview(root: Path) -> dict[str, object]:
         number = int(tree.name)
         present.add(number)
         reasons: list[str] = []
+        description: dict[str, object] = {}
         state = "candidate"
         if number == current:
             state, reasons = "retained", ["current activation"]
@@ -334,8 +336,11 @@ def collection_preview(root: Path) -> dict[str, object]:
         try:
             if tree.is_symlink() or tree.is_junction() or not tree.is_dir():
                 raise EnvironmentError("generation tree must be an unlinked directory")
-            if Generation.read(tree / "generation.json").number != number:
+            generation = Generation.read(tree / "generation.json")
+            if generation.number != number:
                 raise EnvironmentError("generation directory and recorded number disagree")
+            if "development-sources.json" in dict(generation.files):
+                description["sourceDescription"] = DEVELOPMENT_DESCRIPTION
             reason = generation_runtime_reason(root, number)
             if reason is not None:
                 state = "retained"
@@ -353,7 +358,7 @@ def collection_preview(root: Path) -> dict[str, object]:
             except (OSError, ValueError) as exc:
                 state = "deferred"
                 reasons.append(f"durable history coverage required: {exc}")
-        rows.append({"generation": number, "status": state, "reasons": reasons})
+        rows.append({"generation": number, "status": state, "reasons": reasons, **description})
     if current not in present or (predecessor is not None and predecessor not in present):
         raise EnvironmentError("current or previous generation tree is missing")
     result: dict[str, object] = {

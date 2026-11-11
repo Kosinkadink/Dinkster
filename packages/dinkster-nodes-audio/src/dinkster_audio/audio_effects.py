@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -30,7 +30,7 @@ class TrimAudioDuration(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TrimAudioDuration",
+            node_type="dinkster.audio.trim_audio_duration",
             display_name="Trim Audio Duration",
             description="Trim audio tensor into chosen time range.",
             category="audio",
@@ -58,7 +58,7 @@ class TrimAudioDuration(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TrimAudioDuration")
 
     @classmethod
     def execute(cls, *, audio: Any, start_index: float, duration: float) -> Mapping[str, object]:
@@ -92,7 +92,7 @@ class AudioEqualizer3Band(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="AudioEqualizer3Band",
+            node_type="dinkster.audio.audio_equalizer3_band",
             display_name="Audio Equalizer (3-Band)",
             category="audio",
             inputs=(
@@ -149,7 +149,7 @@ class AudioEqualizer3Band(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "AudioEqualizer3Band")
 
     @classmethod
     def execute(

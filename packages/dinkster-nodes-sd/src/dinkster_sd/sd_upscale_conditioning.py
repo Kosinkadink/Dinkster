@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -54,7 +54,7 @@ class SD_4XUpscale_Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SD_4XUpscale_Conditioning",
+            node_type="dinkster.sd.sd_4_x_upscale_conditioning",
             display_name="SD_4XUpscale_Conditioning",
             category="model/conditioning/stable diffusion upscaler",
             inputs=(
@@ -70,7 +70,7 @@ class SD_4XUpscale_Conditioning(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SD_4XUpscale_Conditioning")
 
     @classmethod
     def execute(

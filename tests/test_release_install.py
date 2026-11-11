@@ -32,6 +32,7 @@ from scripts.build_release import (
     select_dependency_wheels,
     validate_engine_wheels,
     versioned_sources,
+    wheel_metadata,
     workspace_projects,
     write_constraints,
 )
@@ -487,13 +488,15 @@ def test_default_pack_admission_uses_complete_version_history() -> None:
     )
     assert checkout["with"]["fetch-depth"] == 0
     assert checkout["with"]["ref"] == "${{ needs.select.outputs.engine }}"
-    for job in (selection, workflow["jobs"]["admission"]):
+    for job in (selection, workflow["jobs"]["prepare"]):
         download = next(
             step for step in job["steps"] if step.get("uses") == "actions/download-artifact@v4"
         )
         assert download["with"]["name"] == "official-publication-inputs"
         assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
-    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    command = next(
+        step["run"] for step in workflow["jobs"]["prepare"]["steps"] if step.get("id") == "sources"
+    )
     assert '--candidate-base "$CANDIDATE_BASE"' in command
     assert "--published-sources .publication/sources/official-packs.lock" in command
 
@@ -534,13 +537,18 @@ def test_default_admission_workflow_selects_publication_candidates(
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
     )
-    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    command = next(
+        step["run"] for step in workflow["jobs"]["prepare"]["steps"] if step.get("id") == "sources"
+    )
     stub = """
     uv() {
       if [ "$4" = "-c" ]; then
         echo development-engine
+      elif [ "$4" = "-" ]; then
+        "$TEST_PYTHON" -
       else
         printf '%s\\0' "$@" > admission-arguments
+        echo '{"groups": [["dinkster-image"], ["dinkster-audio", "dinkster-video"]]}'
       fi
     }
     """
@@ -550,10 +558,15 @@ def test_default_admission_workflow_selects_publication_candidates(
         else "bash"
     )
     subprocess.run(
-        [bash, "-e", "-c", stub + command],
+        [bash, "-e", "-o", "pipefail", "-c", stub + command],
         cwd=tmp_path,
         env=os.environ
-        | {"CANDIDATE_BASE": base if pull_request else "", "PUBLISHED_VERSION": "1.2.3"},
+        | {
+            "CANDIDATE_BASE": base if pull_request else "",
+            "PUBLISHED_VERSION": "1.2.3",
+            "GITHUB_OUTPUT": str(tmp_path / "outputs"),
+            "TEST_PYTHON": sys.executable,
+        },
         check=True,
     )
     arguments = (tmp_path / "admission-arguments").read_bytes().decode().split("\0")[:-1]
@@ -569,6 +582,38 @@ def test_default_admission_workflow_selects_publication_candidates(
         ("0" * 40 if all_candidates else base)
         if pull_request
         else ".publication/sources/official-packs.lock",
+        "--prepare-output",
+        "admission-sources",
+    ]
+    groups = json.loads((tmp_path / "outputs").read_text().removeprefix("groups="))
+    assert groups == [
+        {"group": 1, "packs": '["dinkster-image"]'},
+        {"group": 2, "packs": '["dinkster-audio", "dinkster-video"]'},
+    ]
+    prepared = tmp_path / "admission-sources"
+    prepared.mkdir()
+    (prepared / "engine.json").write_text('{"engineVersion": "prepared-engine"}')
+    command = workflow["jobs"]["admission"]["steps"][-1]["run"]
+    subprocess.run(
+        [bash, "-e", "-o", "pipefail", "-c", stub + command],
+        cwd=tmp_path,
+        env=os.environ | {"TEST_PACKS": groups[1]["packs"]},
+        check=True,
+    )
+    assert (tmp_path / "admission-arguments").read_bytes().decode().split("\0")[:-1] == [
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "scripts.check_default_pack_admission",
+        "--engine-version",
+        "prepared-engine",
+        "--prepared-sources",
+        "admission-sources",
+        "--pack",
+        "dinkster-audio",
+        "--pack",
+        "dinkster-video",
     ]
 
 
@@ -918,7 +963,7 @@ def test_engine_publication_ignores_only_supervisor_changes(
     assert inputs_changed(tmp_path, before, snapshot()) is expected
 
 
-def test_repository_versions_match_next_release_tag() -> None:
+def test_repository_versions_match_engine_release_tag() -> None:
     assert release_version(ROOT, "v0.0.3") == "0.0.3"
     subprocess.run(
         [
@@ -3123,7 +3168,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     engine = {
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
-        "version": "0.1" if problem == "range" else "0.0.3.dev123",
+        "version": "0.1" if problem == "range" else "0.0.4.dev123",
         "tag": "wrong" if problem == "tag" else tag,
         "commit": ("d" if problem == "commit" else "c") * 40,
         "workerProtocol": 11,
@@ -3133,19 +3178,19 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     }
     if labelled:
         del engine["tag"]
-        engine.update(label="2026-11-03-0.0.3.dev123+build", builtAt="2026-11-03T10:41:18Z")
+        engine.update(label="2026-11-03-0.0.4.dev123+build", builtAt="2026-11-03T10:41:18Z")
     engine_bytes = json.dumps(engine).encode()
     identity = hashlib.sha256(engine_bytes).hexdigest()
     indexed_digest = "f" * 64 if problem == "index-digest" else identity
     if labelled:
-        tag = f"main-2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}"
+        tag = f"main-2026-11-03-0.0.4.dev123+build-{indexed_digest[:8]}"
     entry = {
         "commit": ("e" if problem == "index-commit" else "c") * 40,
         "sha256": indexed_digest,
         "label": engine.get("label"),
         "version": engine["version"],
         "path": "engine/"
-        + (f"2026-11-03-0.0.3.dev123+build-{indexed_digest[:8]}" if labelled else indexed_digest),
+        + (f"2026-11-03-0.0.4.dev123+build-{indexed_digest[:8]}" if labelled else indexed_digest),
     }
     if problem == "index-path":
         entry["path"] = "engine/" + "a" * 64
@@ -3201,7 +3246,12 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setattr(preparation, "fetch_artifact", fetch)
     candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
     if problem == "candidate":
-        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.3.dev456")
+        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.4.dev456")
+        monkeypatch.setattr(
+            preparation,
+            "versioned_sources",
+            lambda root, version: versioned_sources(ROOT, version),
+        )
 
         def candidate_wheels(root, uv, bases):
             assert root == tmp_path and uv == "uv" and len(bases) == 2
@@ -3242,14 +3292,22 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
             if problem == "candidate":
                 manifest = json.loads((work / "engine/release-manifest.json").read_bytes())
                 assert manifest["dependencies"] == candidate_dependencies
-                assert manifest["version"] == "0.0.3.dev456"
+                assert manifest["version"] == "0.0.4.dev456"
                 assert manifest["commit"] == "c" * 40
-                assert manifest["artifacts"] == []
+                api = work / "engine/dinkster_api-0.0.4.dev456-py3-none-any.whl"
+                assert wheel_metadata(api) == ("dinkster-api", "0.0.4.dev456")
+                assert manifest["artifacts"] == [
+                    {
+                        "name": api.name,
+                        "size": api.stat().st_size,
+                        "sha256": hashlib.sha256(api.read_bytes()).hexdigest(),
+                    }
+                ]
             else:
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.3")
+                ("dinkster-image", "0.0.5")
             ]
     finally:
         server.shutdown()

@@ -19,11 +19,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -38,7 +38,7 @@ class WanDancerVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanDancerVideo",
+            node_type="dinkster.wan.wan_dancer_video",
             category="model/conditioning/wan/dancer",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -100,7 +100,7 @@ class WanDancerVideo(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanDancerVideo")
 
     @classmethod
     def execute(

@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -139,7 +139,7 @@ class WanUni3CControlnetApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanUni3CControlnetApply",
+            node_type="dinkster.wan.wan_uni3_c_controlnet_apply",
             display_name="Apply Wan Uni3C ControlNet",
             category="model/patch/wan",
             inputs=(
@@ -168,7 +168,7 @@ class WanUni3CControlnetApply(Node):
             ),
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanUni3CControlnetApply")
 
     @classmethod
     def execute(

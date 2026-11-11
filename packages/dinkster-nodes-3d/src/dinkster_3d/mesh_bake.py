@@ -19,10 +19,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_mesh,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -30,7 +30,7 @@ class BakeAmbientOcclusion(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BakeAmbientOcclusion",
+            node_type="dinkster.3d.bake_ambient_occlusion",
             display_name="Bake Ambient Occlusion",
             category="3d/texturing",
             description=(
@@ -82,7 +82,7 @@ class BakeAmbientOcclusion(Node):
             ),
             outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE), display_name="occlusion"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BakeAmbientOcclusion")
 
     @classmethod
     def execute(
@@ -167,7 +167,7 @@ class BakeNormalMapFromMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BakeNormalMapFromMesh",
+            node_type="dinkster.3d.bake_normal_map_from_mesh",
             display_name="Bake Normal Map from Mesh",
             category="3d/texturing",
             description=(
@@ -209,7 +209,7 @@ class BakeNormalMapFromMesh(Node):
                 OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE), display_name="normal_map"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BakeNormalMapFromMesh")
 
     @classmethod
     def execute(

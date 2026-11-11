@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_vision_packet,
+    with_identity_replacement,
 )
 
 
@@ -33,7 +33,7 @@ class SAM3DBody_Loader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3DBody_Loader",
+            node_type="dinkster.vision.sam3d.body.sam3_d_body_loader",
             display_name="Load SAM3D Body Model",
             category="image/detection",
             inputs=(
@@ -47,7 +47,7 @@ class SAM3DBody_Loader(Node):
             ),
             outputs=(OutputSpec("sam3d_body_model", TypeExpr.concrete(SAM3D_BODY_MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3DBody_Loader")
 
     @classmethod
     def execute(cls, *, model_file: object) -> Mapping[str, object]:
@@ -101,7 +101,7 @@ class SAM3DBody_Smooth(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3DBody_Smooth",
+            node_type="dinkster.vision.sam3d.body.sam3_d_body_smooth",
             display_name="Smooth SAM3D Body Pose Data",
             description="Reduce frame-to-frame jitter via temporal smoothing.",
             category="image/detection",
@@ -143,7 +143,7 @@ class SAM3DBody_Smooth(Node):
             ),
             outputs=(OutputSpec("mhr_pose_data", TypeExpr.concrete(MHR_POSE_DATA_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3DBody_Smooth")
 
     @classmethod
     def execute(

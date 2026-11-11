@@ -24,6 +24,15 @@ blocks rather than falling back. `require_isolation=False` is for controlled tes
 only. Public findings do not expose arbitrary probe diagnostics; bounded tails
 remain separate operator data.
 
+`ProbeSettings(probe_dependency_source="index", probe_package_index_url=...)`
+resolves every dependency, including torch and torchvision, from the configured
+index without uv's PyTorch backend override. A staged index must contain the
+complete compatible CPU wheel set, including transitive dependencies; missing
+wheels refuse rather than falling back to a public index. The default source
+`"cpu"` retains the CPU PyTorch backend and the configured index for other
+packages. Both modes keep the same environment filtering, binary-only installs,
+resource limits and probe isolation.
+
 `run_executable_probe(..., dependency_wheels=(...))` accepts local library wheels
 selected and verified by the service caller. The installer resolves these exact
 wheels together with the declared CPU requirements and their transitive

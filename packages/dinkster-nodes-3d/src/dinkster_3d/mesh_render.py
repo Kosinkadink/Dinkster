@@ -26,9 +26,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_mesh,
+    with_identity_replacement,
 )
 
 
@@ -36,7 +36,7 @@ class RenderMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RenderMesh",
+            node_type="dinkster.3d.render_mesh",
             display_name="Render Mesh",
             search_terms=("mesh to image", "render mesh", "preview textured mesh"),
             category="3d/mesh",
@@ -102,7 +102,7 @@ class RenderMesh(Node):
                 OutputSpec("MASK", TypeExpr.concrete(MASK_TYPE), display_name="mask"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RenderMesh")
 
     @classmethod
     def execute(

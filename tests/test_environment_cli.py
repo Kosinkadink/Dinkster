@@ -1872,3 +1872,130 @@ def test_public_fixture_commands_install_update_and_rollback(
         if (root / "current").exists():
             run("stop")
             assert all(row["state"] == "stopped" for row in run("status")["engines"])
+
+
+@pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
+def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
+    tmp_path: Path, problem: str | None
+):
+    source = Path(__file__).resolve().parents[1]
+    engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = engine / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
+    library.mkdir()
+    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    root, store = tmp_path / "prospective", tmp_path / "store"
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    arguments = (
+        "develop",
+        "--source",
+        str(engine),
+        "--pack-source",
+        str(pack if problem != "missing" else tmp_path / "absent"),
+        "--library-source",
+        str(library),
+        "--variant",
+        variant,
+        "--python",
+        sys.executable,
+        "--data",
+        str(store),
+    )
+    code, plan = _run(root, *arguments, "--plan")
+    if problem == "missing":
+        assert code == 1 and "source folder is missing" in plan["error"]
+    else:
+        assert code == 0, plan
+        assert any("not reviewed by the registry" in line for line in plan["plan"])
+        assert any("dependency ranges resolved at build time" in line for line in plan["plan"])
+        assert [row["kind"] for row in plan["development"]["sources"]] == [
+            "engine",
+            "pack",
+            "library",
+        ]
+        if problem is not None:
+            changed = {"engine": engine, "pack": pack, "library": library}[problem]
+            (changed / "untracked.py").write_text("VALUE = 23\n")
+            code, refused = _run(root, *arguments, "--approve", plan["sourceApproval"], "--plan")
+            assert code == 1 and "changed from the approved plan" in refused["error"]
+    assert not root.exists()
+    assert not store.exists()
+
+
+def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_path: Path):
+    generation = _generation(tmp_path, 1).parent
+    store = tmp_path / "capture"
+    base = {
+        "source": "local",
+        "variant": "linux-cpu",
+        "workerProtocol": 1,
+        "wheels": [],
+        "interpreter": {
+            "files": {"python/runtime": "sha256:" + hashlib.sha256(b"runtime").hexdigest()}
+        },
+    }
+    base_id = "sha256:" + hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
+    base["id"] = base_id
+    runtime = object_path(store / "bases", base_id) / "python/runtime"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"runtime")
+    engine = {"source": "local", "version": "0.3.1", "workerProtocol": 1, "wheels": []}
+    engine_id = "sha256:" + hashlib.sha256(json.dumps(engine, sort_keys=True).encode()).hexdigest()
+    seal = generation / "generation.json"
+    record = json.loads(seal.read_text())
+    record.update(source="local", base=base_id, engine={"version": "0.3.1", "release": engine_id})
+    metadata = {"constraints.txt": (generation / "constraints.txt").read_text()}
+    for name, document in (
+        ("base-manifest.json", base),
+        ("engine-manifest.json", engine),
+        ("development-sources.json", {"format": "dinkster.development-sources/1", "sources": []}),
+    ):
+        path = generation / name
+        path.write_text(json.dumps(document))
+        record["files"][name] = content_digest(path)
+        metadata[name] = path.read_text()
+    seal.write_text(json.dumps(record))
+    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "store").write_text(str(store))
+    (tmp_path / "history").mkdir()
+    (tmp_path / "history/00000000000000000001.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.install-history/1",
+                "id": 1,
+                "generation": 1,
+                "snapshot": {
+                    "source": "local",
+                    "metadata": metadata,
+                    "base": {"id": base_id, "variant": "linux-cpu"},
+                    "engine": {"release": engine_id, "version": "0.3.1"},
+                    "workerProtocol": 1,
+                    "inProcessPacks": [],
+                },
+            }
+        )
+    )
+    for operation in ("status", "doctor", "history"):
+        code, result = _run(tmp_path, operation)
+        assert code == 0, result
+        described = result["history"][0] if operation == "history" else result
+        assert "not reviewed by the registry" in described["sourceDescription"]
+        if operation == "doctor":
+            assert result["exactRecovery"] == {"available": True, "missing": []}
+    runtime.unlink()
+    code, missing = _run(tmp_path, "doctor")
+    assert code == 0 and missing["status"] == "clean", missing
+    assert missing["exactRecovery"]["available"] is False
+    assert missing["exactRecovery"]["missing"][0]["kind"] == "local base"
+    (generation / "python/module.py").write_text("ANSWER = 99\n")
+    code, damaged = _run(tmp_path, "doctor")
+    assert code == 1 and damaged["status"] == "drift", damaged
+    assert "built from local folders" in damaged["sourceDescription"]

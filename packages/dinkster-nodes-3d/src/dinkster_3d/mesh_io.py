@@ -43,9 +43,9 @@ from dinkster_api.v1 import (
     attach_saved_artifact,
     current_export_snapshot,
     digest_bytes,
-    first_party_schema,
     materialize_mesh,
     produced_output_scratch,
+    with_identity_replacement,
 )
 
 
@@ -53,7 +53,7 @@ class MeshToFile3D(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MeshToFile3D",
+            node_type="dinkster.3d.mesh_to_file3_d",
             display_name="Create 3D File (from Mesh)",
             search_terms=("mesh to glb", "mesh to file", "export mesh"),
             category="3d",
@@ -65,7 +65,7 @@ class MeshToFile3D(Node):
             inputs=(InputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
             outputs=(OutputSpec("model_3d", TypeExpr.concrete(FILE_3D_GLB_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MeshToFile3D")
 
     @classmethod
     def execute(cls, *, mesh: object) -> Mapping[str, object]:
@@ -94,7 +94,7 @@ class SaveGLB(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveGLB",
+            node_type="dinkster.3d.save_glb",
             display_name="Save 3D Model",
             category="3d",
             search_terms=("export 3d model", "save mesh"),
@@ -137,7 +137,7 @@ class SaveGLB(Node):
             output_node=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveGLB")
 
     @classmethod
     def execute(
@@ -275,7 +275,7 @@ class Get3DComponents(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Get3DComponents",
+            node_type="dinkster.3d.get3_d_components",
             display_name="Get 3D Components",
             category="3d",
             description=(
@@ -301,7 +301,7 @@ class Get3DComponents(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Get3DComponents")
 
     @classmethod
     def execute(cls, *, model_3d: Mapping[str, Any]) -> Mapping[str, object]:

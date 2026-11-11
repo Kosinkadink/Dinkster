@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -59,7 +59,7 @@ class EmptyHiDreamO1LatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyHiDreamO1LatentImage",
+            "dinkster.hidream.empty_hi_dream_o1_latent_image",
             "model/latent/hidream",
             (
                 _integer("width", 2048, 4096, 64, 32),
@@ -73,7 +73,7 @@ class EmptyHiDreamO1LatentImage(Node):
             "2048x2048, 2304x1728, 1728x2304, 2560x1440, 1440x2560, "
             "2496x1664, 1664x2496, 3104x1312, 1312x3104, 2304x1792, 1792x2304.",
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyHiDreamO1LatentImage")
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:

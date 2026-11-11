@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class Trellis2UpsampleStage(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="Trellis2UpsampleStage",
+            node_type="dinkster.3d.models.trellis2_upsample_stage",
             display_name="Trellis2 Upsample Stage",
             category="model/conditioning/trellis",
             inputs=(
@@ -57,7 +57,7 @@ class Trellis2UpsampleStage(Node):
                 OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Trellis2UpsampleStage")
 
     @classmethod
     def execute(

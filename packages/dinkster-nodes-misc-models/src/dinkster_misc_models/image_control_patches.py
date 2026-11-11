@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_qwen.image_control_patches import QwenImageDiffsynthControlnet
 
@@ -56,7 +56,7 @@ class ZImageFunControlnet(QwenImageDiffsynthControlnet):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ZImageFunControlnet",
+            node_type="dinkster.misc.models.z_image_fun_controlnet",
             display_name="Apply Fun ControlNet",
             category="model/patch",
             search_terms=(
@@ -82,4 +82,4 @@ class ZImageFunControlnet(QwenImageDiffsynthControlnet):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ZImageFunControlnet")

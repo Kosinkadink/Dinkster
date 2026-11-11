@@ -21,10 +21,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
     prepare_sampling_model,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.sampling_boundary import to_public, to_runtime
 
@@ -136,9 +136,9 @@ def _sample(
 class KSampler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="KSampler",
+                node_type="dinkster.sampling.k_sampler",
                 category="model/sampling",
                 description=(
                     "Uses the provided model, positive and negative conditioning "
@@ -185,7 +185,8 @@ class KSampler(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT, doc="The denoised latent."),),
-            )
+            ),
+            "KSampler",
         )
 
     @classmethod
@@ -226,9 +227,9 @@ class KSampler(Node):
 class KSamplerAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="KSamplerAdvanced",
+                node_type="dinkster.sampling.k_sampler_advanced",
                 display_name="KSampler (Advanced)",
                 category="model/sampling",
                 inputs=(
@@ -271,7 +272,8 @@ class KSamplerAdvanced(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "KSamplerAdvanced",
         )
 
     @classmethod

@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -71,15 +71,16 @@ def _schema(node_type: str, display_name: str, inputs: tuple[InputSpec, ...]) ->
 class ConditioningCombine(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningCombine",
+                "dinkster.conditioning.conditioning_combine",
                 "Conditioning (Combine)",
                 (
                     InputSpec("conditioning_1", _CONDITIONING),
                     InputSpec("conditioning_2", _CONDITIONING),
                 ),
-            )
+            ),
+            "ConditioningCombine",
         )
 
     @classmethod
@@ -92,16 +93,17 @@ class ConditioningCombine(Node):
 class ConditioningAverage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningAverage",
+                "dinkster.conditioning.conditioning_average",
                 "Conditioning (Average)",
                 (
                     InputSpec("conditioning_to", _CONDITIONING),
                     InputSpec("conditioning_from", _CONDITIONING),
                     _number("conditioning_to_strength", _FLOAT, 1.0, 0.0, 1.0, 0.01),
                 ),
-            )
+            ),
+            "ConditioningAverage",
         )
 
     @classmethod
@@ -144,15 +146,16 @@ class ConditioningAverage(Node):
 class ConditioningConcat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningConcat",
+                "dinkster.conditioning.conditioning_concat",
                 "Conditioning (Concat)",
                 (
                     InputSpec("conditioning_to", _CONDITIONING),
                     InputSpec("conditioning_from", _CONDITIONING),
                 ),
-            )
+            ),
+            "ConditioningConcat",
         )
 
     @classmethod
@@ -172,15 +175,16 @@ class ConditioningConcat(Node):
 class ConditioningMultiply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningMultiply",
+                "dinkster.conditioning.conditioning_multiply",
                 "Conditioning (Multiply)",
                 (
                     InputSpec("conditioning", _CONDITIONING),
                     _number("multiplier", _FLOAT, 1.0, -100.0, 100.0, 0.01),
                 ),
-            )
+            ),
+            "ConditioningMultiply",
         )
 
     @classmethod
@@ -200,9 +204,9 @@ class ConditioningMultiply(Node):
 class ConditioningSetArea(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningSetArea",
+                "dinkster.conditioning.conditioning_set_area",
                 "Conditioning (Set Area)",
                 (
                     InputSpec("conditioning", _CONDITIONING),
@@ -212,7 +216,8 @@ class ConditioningSetArea(Node):
                     _number("y", _INT, 0, 0, 16384, 8),
                     _number("strength", _FLOAT, 1.0, 0.0, 10.0, 0.01),
                 ),
-            )
+            ),
+            "ConditioningSetArea",
         )
 
     @classmethod
@@ -241,9 +246,9 @@ class ConditioningSetArea(Node):
 class ConditioningSetAreaPercentage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningSetAreaPercentage",
+                "dinkster.conditioning.conditioning_set_area_percentage",
                 "Conditioning (Set Area with Percentage)",
                 (
                     InputSpec("conditioning", _CONDITIONING),
@@ -253,7 +258,8 @@ class ConditioningSetAreaPercentage(Node):
                     _number("y", _FLOAT, 0.0, 0.0, 1.0, 0.01),
                     _number("strength", _FLOAT, 1.0, 0.0, 10.0, 0.01),
                 ),
-            )
+            ),
+            "ConditioningSetAreaPercentage",
         )
 
     @classmethod
@@ -282,9 +288,9 @@ class ConditioningSetAreaPercentage(Node):
 class ConditioningSetAreaPercentageVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningSetAreaPercentageVideo",
+                "dinkster.conditioning.conditioning_set_area_percentage_video",
                 "Conditioning (Set Area with Percentage for Video)",
                 (
                     InputSpec("conditioning", _CONDITIONING),
@@ -296,7 +302,8 @@ class ConditioningSetAreaPercentageVideo(Node):
                     _number("z", _FLOAT, 0.0, 0.0, 1.0, 0.01),
                     _number("strength", _FLOAT, 1.0, 0.0, 10.0, 0.01),
                 ),
-            )
+            ),
+            "ConditioningSetAreaPercentageVideo",
         )
 
     @classmethod
@@ -327,15 +334,16 @@ class ConditioningSetAreaPercentageVideo(Node):
 class ConditioningSetAreaStrength(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningSetAreaStrength",
+                "dinkster.conditioning.conditioning_set_area_strength",
                 "Conditioning (Set Area Strength)",
                 (
                     InputSpec("conditioning", _CONDITIONING),
                     _number("strength", _FLOAT, 1.0, 0.0, 10.0, 0.01),
                 ),
-            )
+            ),
+            "ConditioningSetAreaStrength",
         )
 
     @classmethod
@@ -350,9 +358,9 @@ class ConditioningSetAreaStrength(Node):
 class ConditioningSetMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningSetMask",
+                "dinkster.conditioning.conditioning_set_mask",
                 "Conditioning (Set Mask)",
                 (
                     InputSpec("conditioning", _CONDITIONING),
@@ -362,7 +370,8 @@ class ConditioningSetMask(Node):
                         "set_cond_area", _COMBO, widget=ComboWidget(("default", "mask bounds"))
                     ),
                 ),
-            )
+            ),
+            "ConditioningSetMask",
         )
 
     @classmethod
@@ -385,12 +394,13 @@ class ConditioningSetMask(Node):
 class ConditioningZeroOut(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningZeroOut",
+                "dinkster.conditioning.conditioning_zero_out",
                 "Conditioning Zero Out",
                 (InputSpec("conditioning", _CONDITIONING),),
-            )
+            ),
+            "ConditioningZeroOut",
         )
 
     @classmethod
@@ -415,16 +425,17 @@ class ConditioningZeroOut(Node):
 class ConditioningSetTimestepRange(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ConditioningSetTimestepRange",
+                "dinkster.conditioning.conditioning_set_timestep_range",
                 "",
                 (
                     InputSpec("conditioning", _CONDITIONING),
                     _number("start", _FLOAT, 0.0, 0.0, 1.0, 0.001),
                     _number("end", _FLOAT, 1.0, 0.0, 1.0, 0.001),
                 ),
-            )
+            ),
+            "ConditioningSetTimestepRange",
         )
 
     @classmethod

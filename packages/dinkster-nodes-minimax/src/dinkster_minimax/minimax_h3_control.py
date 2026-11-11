@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -246,7 +246,7 @@ class MiniMaxH3FunControlNetApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MiniMaxH3FunControlNetApply",
+            node_type="dinkster.minimax.mini_max_h3_fun_control_net_apply",
             display_name="Apply MiniMax H3 Fun ControlNet",
             category="model/patch/minimax",
             search_terms=("minimax controlnet", "h3 controlnet", "video inpaint controlnet"),
@@ -280,7 +280,7 @@ class MiniMaxH3FunControlNetApply(Node):
             ),
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MiniMaxH3FunControlNetApply")
 
     @classmethod
     def execute(

@@ -17,16 +17,16 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
 class CLIPTextEncodeControlnet(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CLIPTextEncodeControlnet",
+                node_type="dinkster.conditioning.clip_text_encode_controlnet",
                 display_name="CLIP Text Encode (Controlnet)",
                 category="model/conditioning",
                 inputs=(
@@ -39,7 +39,8 @@ class CLIPTextEncodeControlnet(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
-            )
+            ),
+            "CLIPTextEncodeControlnet",
         )
 
     @classmethod
@@ -57,9 +58,9 @@ class CLIPTextEncodeControlnet(Node):
 class T5TokenizerOptions(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="T5TokenizerOptions",
+                node_type="dinkster.conditioning.t5_tokenizer_options",
                 display_name="T5 Tokenizer Options",
                 category="model/conditioning",
                 inputs=(
@@ -75,7 +76,8 @@ class T5TokenizerOptions(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CLIP", TypeExpr.concrete(CLIP_TYPE)),),
-            )
+            ),
+            "T5TokenizerOptions",
         )
 
     @classmethod

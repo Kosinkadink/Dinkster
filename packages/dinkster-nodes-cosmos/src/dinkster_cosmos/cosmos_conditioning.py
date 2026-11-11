@@ -15,9 +15,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -57,6 +57,8 @@ def vae_encode_with_padding(
 
 
 class _CosmosImageToVideoLatent(Node):
+    node_type: str
+    source_type: str
     width_default = 1280
     height_default = 704
     length_default = 121
@@ -70,7 +72,7 @@ class _CosmosImageToVideoLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type=cls.__name__,
+            node_type=cls.node_type,
             category="model/conditioning/cosmos",
             inputs=(
                 InputSpec("vae", _VAE),
@@ -83,7 +85,7 @@ class _CosmosImageToVideoLatent(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, cls.source_type)
 
     @classmethod
     def execute(
@@ -137,10 +139,14 @@ class _CosmosImageToVideoLatent(Node):
 
 
 class CosmosImageToVideoLatent(_CosmosImageToVideoLatent):
+    node_type = "dinkster.cosmos.cosmos_image_to_video_latent"
+    source_type = "CosmosImageToVideoLatent"
     pass
 
 
 class CosmosPredict2ImageToVideoLatent(_CosmosImageToVideoLatent):
+    node_type = "dinkster.cosmos.cosmos_predict2_image_to_video_latent"
+    source_type = "CosmosPredict2ImageToVideoLatent"
     width_default = 848
     height_default = 480
     length_default = 93

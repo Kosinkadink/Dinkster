@@ -18,10 +18,10 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
     materialize_shape_subdivides,
+    with_identity_replacement,
 )
 
 
@@ -84,7 +84,7 @@ class Trellis2TextureStage(Node):
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         latent = TypeExpr.concrete(LATENT_TYPE)
         schema = NodeSchema(
-            node_type="Trellis2TextureStage",
+            node_type="dinkster.3d.models.trellis2_texture_stage",
             display_name="Trellis2 Texture Stage",
             category="model/conditioning/trellis",
             inputs=(
@@ -98,7 +98,7 @@ class Trellis2TextureStage(Node):
                 OutputSpec("LATENT", latent),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Trellis2TextureStage")
 
     @classmethod
     def execute(cls, *, positive: Any, negative: Any, shape_latent: object) -> Mapping[str, object]:
@@ -154,7 +154,7 @@ class VaeDecodeTextureTrellis(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VaeDecodeTextureTrellis",
+            node_type="dinkster.3d.models.vae_decode_texture_trellis",
             display_name="Trellis2 VAE Decode Texture",
             category="model/latent/trellis",
             inputs=(
@@ -170,7 +170,7 @@ class VaeDecodeTextureTrellis(Node):
             ),
             outputs=(OutputSpec("voxel_colors", TypeExpr.concrete(VOXEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VaeDecodeTextureTrellis")
 
     @classmethod
     def execute(cls, *, samples: Any, vae: Any, shape_subdivides: Any) -> Mapping[str, object]:

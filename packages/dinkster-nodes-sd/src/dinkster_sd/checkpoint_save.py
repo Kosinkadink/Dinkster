@@ -25,8 +25,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     TypeExpr,
     attach_saved_artifact,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -35,7 +35,7 @@ class ImageOnlyCheckpointSave(Node):
     def define_schema(cls) -> NodeSchema:
         string = TypeExpr.concrete(CORE_STRING)
         schema = NodeSchema(
-            node_type="ImageOnlyCheckpointSave",
+            node_type="dinkster.sd.image_only_checkpoint_save",
             category="model/merging",
             inputs=(
                 InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
@@ -58,7 +58,7 @@ class ImageOnlyCheckpointSave(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageOnlyCheckpointSave")
 
     @classmethod
     def execute(

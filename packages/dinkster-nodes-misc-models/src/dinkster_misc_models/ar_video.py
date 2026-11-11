@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -29,7 +29,7 @@ class SamplerARVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SamplerARVideo",
+            node_type="dinkster.misc.models.sampler_ar_video",
             display_name="Sampler AR Video",
             category="model/sampling/samplers",
             inputs=(
@@ -46,7 +46,7 @@ class SamplerARVideo(Node):
             ),
             outputs=(OutputSpec("SAMPLER", TypeExpr.concrete(SAMPLER_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SamplerARVideo")
 
     @classmethod
     def execute(cls, *, num_frame_per_block: int) -> Mapping[str, object]:
@@ -62,7 +62,7 @@ class ARVideoI2V(Node):
     def define_schema(cls) -> NodeSchema:
         integer = TypeExpr.concrete(CORE_INT)
         schema = NodeSchema(
-            node_type="ARVideoI2V",
+            node_type="dinkster.misc.models.ar_video_i2_v",
             category="model/conditioning/autoregressive",
             inputs=(
                 InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
@@ -84,7 +84,7 @@ class ARVideoI2V(Node):
                 OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ARVideoI2V")
 
     @classmethod
     def execute(

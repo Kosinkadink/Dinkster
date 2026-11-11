@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_audio,
+    with_identity_replacement,
 )
 
 _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -57,14 +57,14 @@ class JoinAudioChannels(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="JoinAudioChannels",
+            node_type="dinkster.audio.join_audio_channels",
             display_name="Join Audio Channels",
             description="Joins left and right mono audio channels into a stereo audio.",
             category="audio",
             inputs=(InputSpec("audio_left", _AUDIO), InputSpec("audio_right", _AUDIO)),
             outputs=(OutputSpec("audio", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "JoinAudioChannels")
 
     @classmethod
     def execute(
@@ -100,7 +100,7 @@ class AudioConcat(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="AudioConcat",
+            node_type="dinkster.audio.audio_concat",
             display_name="Concatenate Audio",
             description="Concatenates the audio1 to audio2 in the specified direction.",
             category="audio",
@@ -116,7 +116,7 @@ class AudioConcat(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "AudioConcat")
 
     @classmethod
     def execute(
@@ -150,7 +150,7 @@ class AudioMerge(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="AudioMerge",
+            node_type="dinkster.audio.audio_merge",
             display_name="Merge Audio",
             description="Combine two audio tracks by overlaying their waveforms.",
             category="audio",
@@ -170,7 +170,7 @@ class AudioMerge(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "AudioMerge")
 
     @classmethod
     def execute(

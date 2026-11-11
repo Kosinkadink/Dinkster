@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -24,7 +24,7 @@ class EmptyAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyAudio",
+            node_type="dinkster.audio.empty_audio",
             display_name="Empty Audio",
             category="audio",
             inputs=(
@@ -51,7 +51,7 @@ class EmptyAudio(Node):
             ),
             outputs=(OutputSpec("AUDIO", TypeExpr.concrete(AUDIO_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyAudio")
 
     @classmethod
     def execute(cls, *, duration: float, sample_rate: int, channels: int) -> Mapping[str, object]:

@@ -14,7 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -93,7 +93,7 @@ class EmptyARVideoLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyARVideoLatent",
+            "dinkster.misc.models.empty_ar_video_latent",
             "",
             "model/latent/autoregressive",
             width=832,
@@ -103,7 +103,7 @@ class EmptyARVideoLatent(Node):
             temporal_maximum=1024,
             batch_maximum=64,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyARVideoLatent")
 
     @classmethod
     def execute(

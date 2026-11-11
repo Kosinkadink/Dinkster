@@ -28,8 +28,8 @@ from dinkster_api.v1 import (
     ReplacementCase,
     ReplacementRule,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -85,9 +85,9 @@ def _schema(
 class ImageCrop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageCrop",
+                "dinkster.image.image_crop",
                 "Crop Image (DEPRECATED)",
                 "image/transform",
                 (
@@ -97,7 +97,8 @@ class ImageCrop(Node):
                     _integer("x", 0, 0, _MAX_RESOLUTION, 1),
                     _integer("y", 0, 0, _MAX_RESOLUTION, 1),
                 ),
-            )
+            ),
+            "ImageCrop",
         )
 
     @classmethod
@@ -113,13 +114,14 @@ class ImageCrop(Node):
 class RepeatImageBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "RepeatImageBatch",
+                "dinkster.image.repeat_image_batch",
                 "Repeat Image Batch",
                 "image/batch",
                 (InputSpec("image", _IMAGE), _integer("amount", 1, 1, 4096)),
-            )
+            ),
+            "RepeatImageBatch",
         )
 
     @classmethod
@@ -131,9 +133,9 @@ class RepeatImageBatch(Node):
 class ImageFromBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageFromBatch",
+                "dinkster.image.image_from_batch",
                 "Get Image from Batch",
                 "image/batch",
                 (
@@ -141,7 +143,8 @@ class ImageFromBatch(Node):
                     _integer("batch_index", 0, -_MAX_RESOLUTION, _MAX_RESOLUTION),
                     _integer("length", 1, 1, 4096),
                 ),
-            )
+            ),
+            "ImageFromBatch",
         )
 
     @classmethod
@@ -157,9 +160,9 @@ class ImageFromBatch(Node):
 class ImageAddNoise(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageAddNoise",
+                "dinkster.image.image_add_noise",
                 "Add Noise to Image",
                 "image/filters",
                 (
@@ -179,7 +182,8 @@ class ImageAddNoise(Node):
                         widget=NumberWidget(min=0.0, max=1.0, step=0.01),
                     ),
                 ),
-            )
+            ),
+            "ImageAddNoise",
         )
 
     @classmethod
@@ -201,9 +205,9 @@ class ImageAddNoise(Node):
 class ImageStitch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageStitch",
+                "dinkster.image.image_stitch",
                 "Stitch Images",
                 "image/transform",
                 (
@@ -219,7 +223,8 @@ class ImageStitch(Node):
                     ),
                     InputSpec("image2", _IMAGE, required=False),
                 ),
-            )
+            ),
+            "ImageStitch",
         )
 
     @classmethod
@@ -353,9 +358,9 @@ class ImageStitch(Node):
 class ResizeAndPadImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ResizeAndPadImage",
+                "dinkster.image.resize_and_pad_image",
                 "Resize And Pad Image",
                 "image/transform",
                 (
@@ -369,7 +374,8 @@ class ResizeAndPadImage(Node):
                         advanced=True,
                     ),
                 ),
-            )
+            ),
+            "ResizeAndPadImage",
         )
 
     @classmethod
@@ -405,16 +411,17 @@ class ResizeAndPadImage(Node):
 class ImageRotate(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageRotate",
+                "dinkster.image.image_rotate",
                 "Rotate Image",
                 "image/transform",
                 (
                     InputSpec("image", _IMAGE),
                     _combo("rotation", ("none", "90 degrees", "180 degrees", "270 degrees")),
                 ),
-            )
+            ),
+            "ImageRotate",
         )
 
     @classmethod
@@ -436,16 +443,17 @@ class ImageRotate(Node):
 class ImageFlip(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "ImageFlip",
+                "dinkster.image.image_flip",
                 "Flip Image",
                 "image/transform",
                 (
                     InputSpec("image", _IMAGE),
                     _combo("flip_method", ("x-axis: vertically", "y-axis: horizontally")),
                 ),
-            )
+            ),
+            "ImageFlip",
         )
 
     @classmethod
@@ -459,7 +467,7 @@ class ImageScaleToMaxDimension(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageScaleToMaxDimension",
+            node_type="dinkster.image.image_scale_to_max_dimension",
             display_name="Scale Image to Max Dimension",
             category="image/upscaling",
             inputs=(
@@ -472,7 +480,7 @@ class ImageScaleToMaxDimension(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        schema = first_party_schema(schema)
+        schema = with_identity_replacement(schema, "ImageScaleToMaxDimension")
         return replace(
             schema,
             replacements=(
@@ -516,7 +524,7 @@ class PadImageNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PadImageNode",
+            node_type="dinkster.image.pad_image_node",
             display_name="Pad Image",
             description="Pad an image with a solid color or a mirrored copy of its edges.",
             category="image/transform",
@@ -580,7 +588,7 @@ class PadImageNode(Node):
             ),
             outputs=(OutputSpec("image", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PadImageNode")
 
     @classmethod
     def execute(

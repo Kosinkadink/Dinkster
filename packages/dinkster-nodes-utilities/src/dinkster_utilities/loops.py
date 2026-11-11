@@ -24,8 +24,8 @@ from dinkster_api.v1 import (
     RunExecutionContext,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     report_progress,
+    with_identity_replacement,
 )
 
 INT = TypeExpr.concrete(CORE_INT)
@@ -62,7 +62,7 @@ class StartLoop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "StartLoop",
+            "dinkster.utilities.start_loop",
             display_name="Start Loop",
             category="utilities/looping",
             inputs=(
@@ -110,7 +110,7 @@ class StartLoop(Node):
             may_expand_graph=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StartLoop")
 
     @classmethod
     async def execute(
@@ -291,7 +291,7 @@ class LoopIteration(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "LoopIteration",
+            "dinkster.utilities.loop_iteration",
             category="sd",
             inputs=(
                 InputSpec("iteration_index", INT),
@@ -305,7 +305,7 @@ class LoopIteration(Node):
             outputs=_outputs(),
             execution_context=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoopIteration")
 
     @classmethod
     def execute(
@@ -318,7 +318,7 @@ class LoopProgress(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "LoopProgress",
+            "dinkster.utilities.loop_progress",
             category="sd",
             inputs=(
                 InputSpec("start_id", STRING, widget=StringWidget(multiline=False)),
@@ -331,7 +331,7 @@ class LoopProgress(Node):
             output_node=True,
             idempotent=False,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoopProgress")
 
     @classmethod
     def execute(
@@ -345,7 +345,7 @@ class LoopResult(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "LoopResult",
+            "dinkster.utilities.loop_result",
             category="sd",
             inputs=(
                 InputSpec("close_id", STRING, widget=StringWidget(multiline=False)),
@@ -358,7 +358,7 @@ class LoopResult(Node):
             idempotent=False,
             execution_context=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoopResult")
 
     @classmethod
     async def execute(
@@ -374,7 +374,7 @@ class EndLoop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "EndLoop",
+            "dinkster.utilities.end_loop",
             display_name="End Loop",
             category="utilities/looping",
             inputs=(
@@ -394,7 +394,7 @@ class EndLoop(Node):
             outputs=(OutputSpec("outputs", TypeExpr.list_of(OUTPUT), optional=True),),
             execution_context=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EndLoop")
 
     @classmethod
     async def execute(

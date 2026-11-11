@@ -23,7 +23,6 @@ import weakref
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -43,19 +42,19 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
+from dinkster_schema import Node, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
+from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import (
     Composition,
     CompositionError,
     PackSpec,
     ServingComposer,
-    _merge_pack_entry,
     compose_serving,
     default_pack_spec,
     default_pack_specs,
@@ -69,13 +68,10 @@ DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dink
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 FIRST_PARTY_NODE_PACKS = {
-    row["nodeType"]: row["pack"]
-    for row in json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())[
-        "nodes"
-    ]
-} | {
-    "dinkster.utilities.make_list": "dinkster-utilities",
-    "dinkster.utilities.list_element": "dinkster-utilities",
+    node.schema().node_type: manifest.name
+    for spec in default_pack_specs()
+    if (manifest := load_manifest(spec.manifest)).nodes_entry
+    for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
 }
 
 
@@ -361,7 +357,7 @@ def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPa
     spec = compose.default_pack_spec("dinkster-text")
     assert set(requested) == {"dinkster-text"}
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].version == "0.0.2"
+    assert spec.packs["dinkster-text"].version == "0.0.3"
     assert spec.packs["dinkster-text"].source == "python:dinkster-text==1.2.3"
 
 
@@ -927,9 +923,9 @@ def test_compose_serving_default_resolution_is_atomic(
 @pytest.mark.parametrize(
     ("pack_id", "directory", "expected_version"),
     [
-        ("dinkster-text", "dinkster-nodes-text", "0.0.2"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.3"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.4"),
+        ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.5"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.5"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
 )
@@ -1023,11 +1019,6 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         if module_root.parent.name == "dinkster_nodes_vision":
             artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
         artifact_paths.update(
-            sidecar_root / filename
-            for filename in compose._PACK_ARTIFACT_SIDECARS
-            if sidecar_root / filename in tracked_paths
-        )
-        artifact_paths.update(
             path
             for path in tracked_paths
             if any(path.is_relative_to(prefix) for prefix in prefixes)
@@ -1065,40 +1056,6 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
     )
 
 
-def test_default_pack_publishes_alias_registry_from_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import compose
-
-    aliases = ComfyAliasRegistry(source_schemas=(), records=())
-    real_load_manifest = compose.load_manifest
-
-    def load_manifest_with_aliases(path: Path | str):
-        return replace(real_load_manifest(path), comfy_aliases=aliases)
-
-    monkeypatch.setattr(compose, "load_manifest", load_manifest_with_aliases)
-    spec = default_pack_spec("dinkster-text")
-    assert spec.packs is not None
-    assert spec.packs["dinkster-text"].comfy_aliases is aliases
-
-
-def test_default_pack_publishes_group_registry_from_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import compose
-
-    groups = ComfyGroupRegistry(source_schemas=(), group_schemas=(), records=())
-    real_load_manifest = compose.load_manifest
-
-    def load_manifest_with_groups(path: Path | str):
-        return replace(real_load_manifest(path), comfy_groups=groups)
-
-    monkeypatch.setattr(compose, "load_manifest", load_manifest_with_groups)
-    spec = default_pack_spec("dinkster-text")
-    assert spec.packs is not None
-    assert spec.packs["dinkster-text"].comfy_groups is groups
-
-
 def test_default_pack_uses_embedded_wheel_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1127,45 +1084,10 @@ def test_default_pack_uses_embedded_wheel_artifact(
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-text"]
-    assert info.source == "python:dinkster-text==0.0.2"
+    assert info.source == "python:dinkster-text==0.0.3"
     locked = lock.get("dinkster-text")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
-
-
-@pytest.mark.parametrize("filename", ("comfy-aliases.json", "comfy-groups.json"))
-def test_installed_pack_digest_includes_standard_sidecars(tmp_path: Path, filename: str) -> None:
-    from dinkster_schema.comfy_alias import comfy_alias_registry_to_wire
-    from dinkster_schema.comfy_group import comfy_group_registry_to_wire
-
-    from dinkster import compose
-
-    source = tmp_path / "source"
-    source.mkdir()
-    manifest = source / "dinkster-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "test"\nversion = "1.0.0"\nengine = ">=0.0.2"\n'
-        '[pack.entry]\nnodes = "test:NODES"\n',
-        encoding="utf-8",
-    )
-    module = source / "test"
-    module.mkdir()
-    (module / "__init__.py").write_text("NODES = []\n", encoding="utf-8")
-    sidecar = source / filename
-    document = (
-        comfy_alias_registry_to_wire(ComfyAliasRegistry(source_schemas=(), records=()))
-        if filename == "comfy-aliases.json"
-        else comfy_group_registry_to_wire(
-            ComfyGroupRegistry(source_schemas=(), group_schemas=(), records=())
-        )
-    )
-    sidecar.write_text(json.dumps(document), encoding="utf-8")
-
-    first = compose._installed_pack_digest(manifest, module)
-    sidecar.write_text(json.dumps(document, indent=2), encoding="utf-8")
-    second = compose._installed_pack_digest(manifest, module)
-
-    assert first != second
 
 
 def test_installed_pack_digest_rejects_docs_symlinks(tmp_path: Path) -> None:
@@ -1287,17 +1209,17 @@ def test_default_pack_refuses_version_outside_suite_lock(
     manifest.write_text(
         (source / "dinkster-pack.toml")
         .read_text()
-        .replace('version = "0.0.2"', 'version = "9.0.0"')
+        .replace('version = "0.0.3"', 'version = "9.0.0"')
     )
     shutil.copytree(source / "src/dinkster_text", copied / "src/dinkster_text")
     monkeypatch.setattr(
         compose.importlib.metadata,
         "distribution",
-        lambda _name: editable_distribution(copied, "0.0.2"),
+        lambda _name: editable_distribution(copied, "0.0.3"),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.2"):
+    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.3"):
         default_pack_spec("dinkster-text")
 
 
@@ -1310,12 +1232,12 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     lock = compose._default_pack_lock()
     pack = lock.get("dinkster-text")
     assert pack is not None
-    assert pack.version == "0.0.2"
-    assert pack.source == "python:dinkster-text==0.0.2"
+    assert pack.version == "0.0.3"
+    assert pack.source == "python:dinkster-text==0.0.3"
     if mismatch == "pack":
         pack = replace(pack, version="9.0.0")
     elif mismatch == "distribution-name":
-        pack = replace(pack, source="python:dinkster-image==0.0.2")
+        pack = replace(pack, source="python:dinkster-image==0.0.3")
     changed = replace(
         lock, packs=tuple(pack if row.pack == pack.pack else row for row in lock.packs)
     )
@@ -1340,8 +1262,8 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
         return
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.2"
-    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.2"
+    assert spec.packs[pack.pack].version == "0.0.3"
+    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.3"
 
 
 def test_undeclared_pack_version_is_not_replaced_by_distribution_version(
@@ -1389,7 +1311,7 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution",
-        lambda _name: editable_distribution(copied, "0.0.2"),
+        lambda _name: editable_distribution(copied, "0.0.3"),
     )
 
     with pytest.raises(CompositionError, match="locks dinkster-text artifact"):
@@ -1762,9 +1684,7 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             CompositionError,
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
         ):
-            await compose_serving(
-                [first, second], include_default_packs=False, worker_env=WORKER_ENV
-            )
+            await compose_serving([first, second], worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -2170,7 +2090,7 @@ def test_compose_rejects_uncovered_node_type(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, presentation=False, namespaces=None)
         with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
-            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
+            await compose_serving([manifest], worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -2222,7 +2142,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             if node_type.startswith("iso.") or node_type == "dinkster.text.string_concatenate"
         }
         published_packs = {
-            pack_id: replace(info, comfy_aliases=None, comfy_groups=None)
+            pack_id: info
             for pack_id, info in composition.packs.items()
             if pack_id in {"isopack", "dinkster-text"}
         }
@@ -3402,7 +3322,7 @@ def test_pack_spec_attribution_outside_table_fails(tmp_path: Path) -> None:
             attribute=lambda nt: "elsewhere",
         )
         with pytest.raises(CompositionError, match="not among this spec's pack"):
-            await compose_serving([spec], include_default_packs=False)
+            await compose_serving([spec])
 
     run_scenario(scenario())
 
@@ -3441,37 +3361,9 @@ def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
             attribute=lambda nt: "pack-b",
         )
         with pytest.raises(CompositionError, match="different info"):
-            await compose_serving([first, second], include_default_packs=False)
+            await compose_serving([first, second])
 
     run_scenario(scenario())
-
-
-def test_pack_table_rejects_comfy_alias_collisions_without_mutating() -> None:
-    from test_comfy_alias_registry import registry
-
-    packs = {"native-a": PackInfo("Native A", comfy_aliases=registry())}
-    with pytest.raises(CompositionError, match="collide on comfy alias record id"):
-        _merge_pack_entry(
-            packs,
-            "native-b",
-            PackInfo("Native B", comfy_aliases=registry()),
-            "test",
-        )
-    assert set(packs) == {"native-a"}
-
-
-def test_pack_table_rejects_comfy_group_collisions_without_mutating() -> None:
-    from test_comfy_group_registry import registry
-
-    packs = {"native-a": PackInfo("Native A", comfy_groups=registry())}
-    with pytest.raises(CompositionError, match="collide on comfy group record id"):
-        _merge_pack_entry(
-            packs,
-            "native-b",
-            PackInfo("Native B", comfy_groups=registry()),
-            "test",
-        )
-    assert set(packs) == {"native-a"}
 
 
 def test_composition_close_is_idempotent(tmp_path: Path) -> None:

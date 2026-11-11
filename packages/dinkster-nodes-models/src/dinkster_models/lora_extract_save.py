@@ -30,8 +30,8 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     attach_saved_artifact,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 CLAMP_QUANTILE = 0.99
@@ -163,9 +163,9 @@ def calc_lora_model(
 class LoraSave(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LoraSave",
+                node_type="dinkster.models.lora_save",
                 display_name="Extract and Save Lora",
                 category="experimental",
                 search_terms=("export lora",),
@@ -216,7 +216,8 @@ class LoraSave(Node):
                 ),
                 idempotent=False,
                 output_node=True,
-            )
+            ),
+            "LoraSave",
         )
 
     @classmethod

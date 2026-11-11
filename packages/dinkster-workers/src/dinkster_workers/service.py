@@ -212,8 +212,6 @@ async def run_service(
                     pack_name=manifest.name,
                     worker=worker,
                     schemas=schemas,
-                    comfy_aliases=manifest.comfy_aliases,
-                    comfy_groups=manifest.comfy_groups,
                     planner=planner,
                     consumers=consumers,
                     source_staging=source_staging,

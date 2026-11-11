@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -59,7 +59,7 @@ class EmptyQwenImageLayeredLatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyQwenImageLayeredLatentImage",
+            "dinkster.qwen.empty_qwen_image_layered_latent_image",
             "model/latent/qwen",
             (
                 _integer("width", 640, 16384, 16, 16),
@@ -69,7 +69,7 @@ class EmptyQwenImageLayeredLatentImage(Node):
             ),
             "Empty Qwen Image Layered Latent",
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyQwenImageLayeredLatentImage")
 
     @classmethod
     def execute(

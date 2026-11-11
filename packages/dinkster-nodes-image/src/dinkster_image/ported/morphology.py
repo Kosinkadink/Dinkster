@@ -18,8 +18,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -30,7 +30,7 @@ class Morphology(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Morphology",
+            node_type="dinkster.image.morphology",
             display_name="Apply Morphology",
             category="image/filters",
             search_terms=("erode", "dilate"),
@@ -50,7 +50,7 @@ class Morphology(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Morphology")
 
     @classmethod
     def execute(cls, *, image: Any, operation: str, kernel_size: int) -> Mapping[str, object]:
@@ -83,14 +83,14 @@ class ImageRGBToYUV(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageRGBToYUV",
+            node_type="dinkster.image.image_rgb_to_yuv",
             display_name="Image RGB to YUV",
             category="image/color",
             search_terms=("color space conversion",),
             inputs=(InputSpec("image", _IMAGE),),
             outputs=tuple(OutputSpec(name, _IMAGE) for name in ("Y", "U", "V")),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageRGBToYUV")
 
     @classmethod
     def execute(cls, *, image: Any) -> Mapping[str, object]:
@@ -108,14 +108,14 @@ class ImageYUVToRGB(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageYUVToRGB",
+            node_type="dinkster.image.image_yuv_to_rgb",
             display_name="Image YUV to RGB",
             category="image/color",
             search_terms=("color space conversion",),
             inputs=tuple(InputSpec(name, _IMAGE) for name in ("Y", "U", "V")),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageYUVToRGB")
 
     @classmethod
     def execute(cls, *, Y: Any, U: Any, V: Any) -> Mapping[str, object]:

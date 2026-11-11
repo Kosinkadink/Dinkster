@@ -7,20 +7,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from dinkster_schema import (
-    SCHEMA_WIRE_VERSION,
-    ComfyAliasConfidence,
-    ComfyAliasRecord,
-    ComfyAliasRegistry,
-    ComfyAliasSource,
-    ComfyAliasSourceSchema,
-    MappingSource,
-    NodeSchema,
-    ReplacementCase,
-    ReplacementRule,
-    comfy_alias_registry_to_wire,
-    comfy_group_registry_to_wire,
-)
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import (
     PACK_AUTHOR_API_CONTRACT,
@@ -34,8 +20,7 @@ from dinkster_workers import (
 from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import (
-    COMFY_ALIASES_MAX_BYTES,
-    COMFY_ALIASES_MAX_ITEMS,
+    JSON_MAX_ITEMS,
     generation_provider_to_wire,
     generation_providers_from_wire,
     validate_registration_claims,
@@ -106,6 +91,14 @@ def write_manifest(path: Path, handler: object = None) -> Path:
         '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n' + handler_line
     )
     return path
+
+
+def test_manifest_ignores_unrecognized_pack_metadata(tmp_path: Path) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    expected = load_manifest(path)
+    with path.open("a") as output:
+        output.write('\n[pack.custom_metadata]\nimports = ["example"]\nrevision = "1"\n')
+    assert load_manifest(path) == expected
 
 
 @pytest.mark.parametrize(
@@ -361,140 +354,33 @@ def test_locale_metadata_preserves_exact_node_and_port_ids(tmp_path: Path, field
     assert any("not owned" in problem for problem in unowned.locale_catalog_problems)
 
 
-def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:
-    source = ComfyAliasSource("comfy-core", "TestNode", "comfy.TestNode", "b78cec87")
-    registry = ComfyAliasRegistry(
-        source_schemas=(ComfyAliasSourceSchema(NodeSchema(source.node_type), SCHEMA_WIRE_VERSION),),
-        records=(
-            ComfyAliasRecord(
-                id="comfy_alias:comfy-core/TestNode",
-                mapping_kind="op",
-                carrier=carrier,
-                source=source,
-                replacement=ReplacementRule(
-                    from_type=source.node_type,
-                    cases=(
-                        ReplacementCase.build(
-                            carrier,
-                            inputs={"value": MappingSource.constant(1)},
-                        ),
-                    ),
-                ),
-                confidence=ComfyAliasConfidence("exact", ("tests/test_alias.py::test",)),
-            ),
-        ),
-    )
-    path.write_text(json.dumps(comfy_alias_registry_to_wire(registry)), encoding="utf-8")
-
-
-def write_group_registry(path: Path) -> None:
-    from test_comfy_group_registry import registry
-
-    path.write_text(json.dumps(comfy_group_registry_to_wire(registry())), encoding="utf-8")
-
-
-def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
-    tmp_path: Path,
-) -> None:
-    sys.modules.pop("manifest_purity_probe", None)
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        '[pack]\nname = "test"\n[pack.entry]\nnodes = "manifest_purity_probe:NODES"\n'
-    )
-    write_alias_registry(tmp_path / "comfy-aliases.json")
-
-    manifest = load_manifest(manifest_path)
-
-    assert manifest.comfy_aliases is not None
-    assert manifest.comfy_aliases.records[0].id == "comfy_alias:comfy-core/TestNode"
-    assert "manifest_purity_probe" not in sys.modules
-    (tmp_path / "comfy-aliases.json").unlink()
-    assert load_manifest(manifest_path).comfy_aliases is None
-
-
-def test_manifest_loads_strict_adjacent_comfy_group_registry_without_importing_code(
-    tmp_path: Path,
-) -> None:
-    sys.modules.pop("manifest_purity_probe", None)
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        '[pack]\nname = "test"\n[pack.entry]\nnodes = "manifest_purity_probe:NODES"\n'
-    )
-    write_group_registry(tmp_path / "comfy-groups.json")
-
-    manifest = load_manifest(manifest_path)
-
-    assert manifest.comfy_groups is not None
-    assert manifest.comfy_groups.records[0].id == (
-        "comfy_group:comfyui-controlnet-aux/canny-resize"
-    )
-    assert "manifest_purity_probe" not in sys.modules
-    (tmp_path / "comfy-groups.json").unlink()
-    assert load_manifest(manifest_path).comfy_groups is None
-
-
 @pytest.mark.parametrize(
     ("body", "message"),
     [
-        (
-            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"records":[]}',
-            "duplicate JSON object key",
-        ),
-        (
-            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"bad":NaN}',
-            "non-finite JSON number",
-        ),
-        (
-            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"bad":1e999}',
-            "non-finite JSON number",
-        ),
+        ('{"nodes":{},"nodes":{}}', "duplicate JSON object key"),
+        ('{"nodes":{"test.node":{"displayName":NaN}}}', "non-finite JSON number"),
+        ('{"nodes":{"test.node":{"displayName":1e999}}}', "non-finite JSON number"),
         ("[" * 70 + "]" * 70, "nesting depth"),
+        ("[" + ",".join("0" for _ in range(JSON_MAX_ITEMS)) + "]", "item count"),
+    ],
+    ids=[
+        "duplicate-key",
+        "non-finite-number",
+        "overflow-number",
+        "excessive-depth",
+        "excessive-items",
     ],
 )
-def test_manifest_rejects_hostile_comfy_alias_json(tmp_path: Path, body: str, message: str) -> None:
+def test_locale_catalog_rejects_hostile_json(tmp_path: Path, body: str, message: str) -> None:
     manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
-    (tmp_path / "comfy-aliases.json").write_text(body, encoding="utf-8")
-    with pytest.raises(ManifestError, match=message):
-        load_manifest(manifest_path)
+    locales = tmp_path / "locales"
+    locales.mkdir()
+    (locales / "en.json").write_text(body, encoding="utf-8")
 
+    manifest = load_manifest(manifest_path)
 
-def test_manifest_rejects_hostile_comfy_group_json(tmp_path: Path) -> None:
-    manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
-    (tmp_path / "comfy-groups.json").write_text(
-        '{"format":"dinkster-comfy-group/1","sourceSchemas":[],"groupSchemas":[],'
-        '"records":[],"records":[]}',
-        encoding="utf-8",
-    )
-    with pytest.raises(ManifestError, match="duplicate JSON object key"):
-        load_manifest(manifest_path)
-
-
-def test_manifest_rejects_oversized_and_escaping_comfy_alias_registry(tmp_path: Path) -> None:
-    manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
-    alias_path = tmp_path / "comfy-aliases.json"
-    alias_path.write_bytes(b" " * (COMFY_ALIASES_MAX_BYTES + 1))
-    with pytest.raises(ManifestError, match="cap"):
-        load_manifest(manifest_path)
-
-    alias_path.unlink()
-    outside = tmp_path.parent / "outside-comfy-aliases.json"
-    outside.write_text('{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[]}')
-    try:
-        alias_path.symlink_to(outside)
-    except OSError as exc:
-        pytest.skip(f"symlinks unavailable: {exc}")
-    with pytest.raises(ManifestError, match="escape"):
-        load_manifest(manifest_path)
-
-
-def test_manifest_rejects_comfy_alias_json_over_the_item_budget(tmp_path: Path) -> None:
-    manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
-    (tmp_path / "comfy-aliases.json").write_text(
-        "[" + ",".join("0" for _ in range(COMFY_ALIASES_MAX_ITEMS)) + "]",
-        encoding="utf-8",
-    )
-    with pytest.raises(ManifestError, match="item count"):
-        load_manifest(manifest_path)
+    assert manifest.locale_catalogs == ()
+    assert any(message in problem for problem in manifest.locale_catalog_problems)
 
 
 def test_workgroup_handler_entry_is_optional_and_loading_is_pure(tmp_path: Path) -> None:

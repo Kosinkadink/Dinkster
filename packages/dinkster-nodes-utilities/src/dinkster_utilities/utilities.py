@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class ComfyNumberConvert(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ComfyNumberConvert",
+            node_type="dinkster.utilities.comfy_number_convert",
             display_name="Convert Number",
             category="utilities",
             inputs=(
@@ -43,7 +43,7 @@ class ComfyNumberConvert(Node):
                 OutputSpec("INT", TypeExpr.concrete(CORE_INT)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ComfyNumberConvert")
 
     @classmethod
     def execute(cls, *, value: object) -> Mapping[str, object]:
@@ -82,7 +82,7 @@ class SeedNode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SeedNode",
+            node_type="dinkster.utilities.seed_node",
             display_name="Seed",
             category="utilities",
             inputs=(
@@ -94,7 +94,7 @@ class SeedNode(Node):
             ),
             outputs=(OutputSpec("seed", TypeExpr.concrete(CORE_INT)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SeedNode")
 
     @classmethod
     def execute(cls, *, seed: int) -> Mapping[str, object]:
@@ -105,7 +105,7 @@ class PreviewAny(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PreviewAny",
+            node_type="dinkster.utilities.preview_any",
             display_name="Preview as Text",
             category="utilities",
             description="Preview any input value as text.",
@@ -122,7 +122,7 @@ class PreviewAny(Node):
                 "show text",
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PreviewAny")
 
     @classmethod
     def execute(cls, *, source: object = None) -> Mapping[str, object]:

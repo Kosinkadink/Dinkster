@@ -13,8 +13,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -55,14 +55,14 @@ class FluxKVCache(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="FluxKVCache",
+            node_type="dinkster.flux.flux_kv_cache",
             display_name="Flux KV Cache",
             description="Enables KV Cache optimization for reference images on Flux family models.",
             category="experimental",
             inputs=(InputSpec("model", _MODEL),),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "FluxKVCache")
 
     @classmethod
     def execute(cls, *, model: Any) -> Mapping[str, object]:

@@ -1,14 +1,10 @@
 [pack]
 name = "dinkster-vision-rtdetr"
-version = "0.0.4"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.5"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.rtdetr"]
 requires = ["torch", "dinkster-inference==0.1.1", "torchvision", "pillow>=10"]
-
-[pack.inference]
-imports = ["model_management", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true

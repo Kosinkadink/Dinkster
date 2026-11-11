@@ -1,15 +1,11 @@
 [pack]
 name = "dinkster-sd"
-version = "0.0.4"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.5"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.sd"]
 requires = ["dinkster-inference==0.1.1", "torch", "dinkster-pack-helpers>=0.0.2,<1"]
 type-namespaces = ["PHOTOMAKER"]
-
-[pack.inference]
-imports = ["cli_args", "clip_model", "clip_vision", "model_base", "model_management", "model_sampling", "ops", "sd", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true

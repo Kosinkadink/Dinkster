@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class AnimaLLLiteApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="AnimaLLLiteApply",
+            node_type="dinkster.misc.models.anima_ll_lite_apply",
             display_name="Apply Anima LLLite",
             category="model/patch/anima",
             inputs=(
@@ -57,7 +57,7 @@ class AnimaLLLiteApply(Node):
             ),
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "AnimaLLLiteApply")
 
     @classmethod
     def execute(

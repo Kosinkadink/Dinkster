@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MOTIONS = {
@@ -93,7 +93,7 @@ class WanCameraEmbedding(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanCameraEmbedding",
+            node_type="dinkster.wan.wan_camera_embedding",
             category="model/conditioning/wan/camera",
             inputs=(
                 InputSpec(
@@ -171,7 +171,7 @@ class WanCameraEmbedding(Node):
                 OutputSpec("length", TypeExpr.concrete(CORE_INT), display_name="length"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanCameraEmbedding")
 
     @classmethod
     def execute(

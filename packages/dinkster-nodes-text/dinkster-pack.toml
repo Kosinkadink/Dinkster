@@ -1,13 +1,9 @@
 [pack]
 name = "dinkster-text"
-version = "0.0.2"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.3"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.text"]
-
-[pack.inference]
-imports = []
-tested-version = "0.1.1"
 
 [pack.sandbox]
 

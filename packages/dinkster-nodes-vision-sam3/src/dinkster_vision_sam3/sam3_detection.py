@@ -24,10 +24,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 from .sam3 import extract_text_prompts
@@ -101,7 +101,7 @@ class SAM3_Detect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3_Detect",
+            node_type="dinkster.vision.sam3.sam3_detect",
             display_name="SAM3 Detect",
             category="image/detection",
             search_terms=(
@@ -176,7 +176,7 @@ class SAM3_Detect(Node):
                 OutputSpec("bboxes", TypeExpr.concrete(BOUNDING_BOX_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3_Detect")
 
     @classmethod
     def execute(
