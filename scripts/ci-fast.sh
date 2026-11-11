@@ -26,6 +26,7 @@ if [ "${1:-all}" = checks ]; then exit 0; fi
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_disabled_features.py \
   tests/test_settings.py \
+  tests/test_security_notices.py \
   tests/test_extension_factory_guard.py \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
