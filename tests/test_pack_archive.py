@@ -2418,6 +2418,55 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             run_selected_tests(engine, catalog, artifacts)
 
 
+def test_selected_pack_tests_refuse_incompatible_base_before_test_tool_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_pack_environment import _generation, _wheel
+
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution, PackLock
+    from dinkster_workers.provision import ProvisionError
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    source = tmp_path / "selected"
+    source.mkdir()
+    (source / "dinkster_text").mkdir()
+    (source / "dinkster_text/__init__.py").write_text("NODES = []\n")
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        '[pack.entry]\nnodes = "dinkster_text:NODES"\n'
+    )
+    archive = tmp_path / "dinkster_text-1.2.3-py3-none-any.whl"
+    build_pack_archive(source, archive)
+    digest = artifact_digest(archive.read_bytes())
+    archive.rename(tmp_path / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of([LockedPack("dinkster-text", "1.2.3", digest, "dinkster", ())])
+    base = _wheel(tmp_path, "simpleeval", "1.0.7", "simpleeval", "")
+    required = _wheel(tmp_path, "simpleeval", "1.0.8", "simpleeval", "")
+    python = _generation(tmp_path / "generation/python", [base])
+    lock = PackLock(
+        "dinkster-text",
+        "linux-cpu",
+        ">=3.12",
+        ("simpleeval==1.0.8",),
+        (),
+        (LockedDistribution("simpleeval", "1.0.8", (required,)),),
+    )
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/forbidden")
+    with pytest.raises(ProvisionError, match="simpleeval: generation has 1.0.7, lock needs 1.0.8"):
+        run_selected_tests(
+            tmp_path,
+            catalog,
+            tmp_path,
+            generation_python=python,
+            locks={"dinkster-text": lock},
+            variant="linux-cpu",
+        )
+
+
 @pytest.mark.parametrize("selected_value", [17, 29])
 @pytest.mark.parametrize("vision", [False, True])
 @pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")

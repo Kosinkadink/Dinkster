@@ -132,7 +132,7 @@ def main() -> int:
         with admission_timing(identity, f"catalog:{name}"):
             spec = default_pack_spec(name)
             report = prepare_catalog(
-                spec.manifest, interpreter=sys.executable, environment=spec.env
+                spec.manifest, interpreter=config["runtimes"][name], environment=spec.env
             )
             if not report.ok:
                 raise RuntimeError(f"selected {name} runtime catalog refused: {report.to_json()}")
