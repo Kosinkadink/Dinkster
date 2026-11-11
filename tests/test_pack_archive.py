@@ -1710,7 +1710,7 @@ def test_official_publication_declarations_match_archive_admission(
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.2",
+                "0.0.3",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
                     "dinkster-inference",

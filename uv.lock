@@ -1578,7 +1578,7 @@ wheels = [
 
 [[package]]
 name = "dinkster-pack-helpers"
-version = "0.0.2"
+version = "0.0.3"
 source = { editable = "packages/dinkster-pack-helpers" }
 dependencies = [
     { name = "dinkster-api" },
