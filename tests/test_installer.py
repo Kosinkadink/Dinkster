@@ -4019,6 +4019,21 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 error = capsys.readouterr().err
                 assert "demo@1.2.3" in error and "z-other@1.2.3" in error
                 assert "absent-pack" in error
+                with pytest.raises(SystemExit):
+                    run_cli(
+                        *plan_args,
+                        "--installed-lock",
+                        str(source),
+                        "--add",
+                        "demo@1.2.3",
+                        "--add",
+                        "z-other@1.2.3",
+                        "--add",
+                        "absent-pack@2.0.0",
+                    )
+                error = capsys.readouterr().err
+                assert "demo@1.2.3" in error and "z-other@1.2.3" in error
+                assert "absent-pack" in error
             else:
                 run_cli(*plan_args)
                 planned = json.loads(capsys.readouterr().out)
@@ -4041,6 +4056,39 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             assert not snapshot.exists()
             assert not output.parent.exists()
             assert all(not path.endswith(".whl") for path, _ in requests)
+            if problem is None:
+                local = replace(entries[0], pack="local-only", source="local:/author-pack")
+                older = replace(entries[0], version="1.2.0", source="registry:original")
+                (root / "registries.toml").write_text(
+                    f'[registries.original]\nendpoint="{args[3]}"\n'
+                    '[registries.unrelated]\nendpoint="http://127.0.0.1:1"\ndefault=true\n'
+                )
+                source.write_text(Lockfile.of([older, entries[1], local]).record_json())
+                change_args = (*plan_args[:2], *plan_args[4:])
+                project_inputs = {path: path.read_bytes() for path in root.iterdir()}
+
+                def reject_resolution(*args: object, **kwargs: object) -> None:
+                    raise AssertionError("published pack planning must not invoke a resolver")
+
+                for change in (("--add", "demo@1.2.3"), ("--update", "demo")):
+                    with monkeypatch.context() as inspection:
+                        inspection.setattr(subprocess, "run", reject_resolution)
+                        run_cli(*change_args, "--installed-lock", str(source), *change)
+                    changed = json.loads(capsys.readouterr().out)
+                    target = Lockfile.from_record_json(json.dumps(changed["sources"]))
+                    assert target.get("z-other") == entries[1]
+                    assert target.get("local-only") == local
+                    demo = target.get("demo")
+                    assert demo is not None and demo.version == "1.2.3"
+                    assert demo.source == "registry:original"
+                    assert set(changed["dependencyLocks"]) == {"demo"}
+                    assert changed["maximumPackPayloadBytes"] == 12
+                assert {path: path.read_bytes() for path in root.iterdir()} == project_inputs
+                (root / "registries.toml").unlink()
+                source.write_bytes(original)
+                assert not snapshot.exists()
+                assert not output.parent.exists()
+                assert all(not path.endswith(".whl") for path, _ in requests)
             requests.clear()
         if problem and problem not in {"local", "selected"}:
             with pytest.raises(SystemExit):

@@ -104,6 +104,7 @@ from .registries import (
     default_pack_minimums,
     load_registries,
     parse_registry_spec,
+    plan_registry_changes,
     plan_registry_sources,
     prepare_registry_pack_locks,
     prepare_registry_sources,
@@ -1109,19 +1110,39 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     except (OSError, ValueError) as exc:
         raise InstallError(f"target engine metadata refused: {exc}") from exc
     defaults = engine.get("defaultPacks")
-    if not isinstance(defaults, dict) or not defaults:
+    if args.installed_lock is None and (not isinstance(defaults, dict) or not defaults):
         raise InstallError("target engine has no default pack declaration")
     config = _registry_config(args)
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
-    sources, locks = plan_registry_sources(
-        config,
-        select_registry(config, selector),
-        cast("dict[str, str]", defaults),
-        engine_version=cast("str", engine["version"]),
-        variant=args.variant,
-        base_id=args.base_id,
-        index=StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True),
-    )
+    index = StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True)
+    if args.installed_lock is not None:
+        try:
+            installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise InstallError(f"installed sources cannot be read: {exc}") from exc
+        sources, locks = plan_registry_changes(
+            config,
+            installed,
+            selections=tuple(args.add),
+            updates=tuple(args.update) if args.update is not None else None,
+            engine_version=cast("str", engine["version"]),
+            variant=args.variant,
+            base_id=args.base_id,
+            selected=select_registry(config, args.registry) if args.registry else None,
+            index=index,
+        )
+    else:
+        if args.add or args.update is not None:
+            raise InstallError("pack changes require --installed-lock")
+        sources, locks = plan_registry_sources(
+            config,
+            select_registry(config, selector),
+            cast("dict[str, str]", defaults),
+            engine_version=cast("str", engine["version"]),
+            variant=args.variant,
+            base_id=args.base_id,
+            index=index,
+        )
     payloads = {
         (wheel.sha256, wheel.filename): wheel.size
         for lock in locks
@@ -1139,8 +1160,13 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                 "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
                 "maximumPackPayloadBytes": sum(payloads.values()),
                 "plan": [
-                    f"select {entry.pack}@{entry.version} from {entry.source} "
-                    f"({entry.artifact_digest}) using its published {args.variant} lock"
+                    (
+                        f"select {entry.pack}@{entry.version} from {entry.source} "
+                        f"({entry.artifact_digest}) using its published {args.variant} lock"
+                        if entry.pack in {lock.pack for lock in locks}
+                        else f"retain {entry.pack}@{entry.version} from {entry.source} "
+                        f"({entry.artifact_digest}) with its existing dependency lock"
+                    )
                     for entry in sources.packs
                 ],
             },
@@ -1467,6 +1493,11 @@ def main() -> None:
     source_plan.add_argument("--base-id", required=True)
     source_plan.add_argument("--index-snapshot", type=Path)
     source_plan.add_argument("--offline", action="store_true")
+    source_plan.add_argument("--installed-lock", type=Path)
+    source_plan.add_argument("--add", action="append", default=[], metavar="PACK@VERSION")
+    source_plan.add_argument(
+        "--update", nargs="*", metavar="PACK", help="update selected registry packs; default: all"
+    )
     source_plan.set_defaults(handler=_cmd_plan_registry_sources)
 
     sources = commands.add_parser(

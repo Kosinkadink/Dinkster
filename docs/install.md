@@ -107,6 +107,15 @@ registry. Other installed selections are preserved for admission. Update
 preparation refuses unavailable compatible releases and does not allow
 `--allow-missing`.
 
+For metadata-only review, `plan-registry-sources` takes `--engine-manifest`,
+`--engine-release`, `--variant` and `--base-id`. Add `--installed-lock` and
+repeat `--add PACK@VERSION` to inspect exact additions or replacements, or
+use `--update [PACK ...]` for compatible installed registry updates. No names
+means all installed registry packs. Unselected sources remain unchanged;
+updates use their recorded registry and never downgrade. The JSON plan includes
+published dependency locks and a pack payload size upper bound, but acquires
+no pack archives and does not create a generation or write a cache.
+
 For a source lock containing registry packs, `prepare-registry-locks` accepts
 `--catalog-lock`, a new `--output` directory, `--variant` and the exact
 `--base-id sha256:...`. It downloads the dependency locks already published

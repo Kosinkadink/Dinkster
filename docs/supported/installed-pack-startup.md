@@ -128,6 +128,11 @@
   upper bound for pack wheel bytes. Unavailable releases and invalid locks are
   reported together. Offline metadata discovery reads only retained channel,
   engine and base records and reports missing engine/base records together.
+- Registry planning also supports exact additions/replacements and compatible
+  updates against an installed source lock. Unselected sources stay unchanged,
+  including local development packs. Updates keep recorded registry provenance
+  and do not downgrade; missing releases and invalid published locks are reported
+  together without acquiring pack payloads or changing the project.
 - Managed setup and update can require a reviewed published engine and base
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying
