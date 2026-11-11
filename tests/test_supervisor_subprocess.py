@@ -92,6 +92,44 @@ def test_child_output_and_timeout_diagnostics(
     assert "active_child" in notes
     assert (str(module) if entry == "module" else "<string>") in notes
     assert "Requested timeout snapshot" in notes
+    assert "Snapshot dump completed" in notes
+
+
+@pytest.mark.parametrize("failure", ["dump", "acknowledgment"])
+def test_child_snapshot_failure_is_reported(
+    tmp_path: Path, failure: str, expire_after_ready
+) -> None:
+    script = (
+        "import faulthandler, threading\n"
+        "from pathlib import Path\n"
+        "touch = Path.touch\n"
+        "def failing_dump(*args, **kwargs):\n"
+        "    raise ValueError('controlled dump failure')\n"
+        "def failing_touch(path, *args, **kwargs):\n"
+        "    if path.name == 'child.snapshot':\n"
+        "        raise OSError('controlled acknowledgment failure')\n"
+        "    return touch(path, *args, **kwargs)\n"
+        f"if {failure!r} == 'dump':\n"
+        "    faulthandler.dump_traceback = failing_dump\n"
+        "else:\n"
+        "    Path.touch = failing_touch\n"
+        f"Path({str(tmp_path / 'ready')!r}).touch()\n"
+        "threading.Event().wait(90)\n"
+    )
+    expire_after_ready(lambda process: wait_until((tmp_path / "ready").exists))
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        run([sys.executable, "-c", script])
+    assert raised.value.timeout == 0
+    notes = "\n".join(raised.value.__notes__)
+    assert "Timeout snapshot not acknowledged" in notes
+    assert "Snapshot dump call started" in notes
+    assert f"controlled {failure} failure" in notes
+    if failure == "dump":
+        assert "Snapshot dump failed" in notes
+        assert "Snapshot dump completed" not in notes
+    else:
+        assert "Snapshot dump completed" in notes
+        assert "Snapshot acknowledgment failed" in notes
 
 
 @pytest.mark.parametrize(
