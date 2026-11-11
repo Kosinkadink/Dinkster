@@ -1109,15 +1109,15 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if "artifact-sources.json" in expected
                 else None,
             )
-            added_locks = {
+            added_pack_metadata = {
                 name
                 for name, _ in repaired.files
                 if len(Path(name).parts) == 3
                 and Path(name).parts[0] == "packs"
-                and Path(name).parts[2] == "pack-lock.json"
+                and Path(name).parts[2] in {"pack-lock.json", "installed-wheels.json"}
                 and name not in expected
             }
-            if set(dict(repaired.files)) - added_locks != set(expected):
+            if set(dict(repaired.files)) - added_pack_metadata != set(expected):
                 raise EnvironmentError(
                     "repaired file inventory differs from the retained generation"
                 )

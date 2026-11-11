@@ -62,6 +62,10 @@ from dinkster_registry import (
 )
 from dinkster_registry.artifact import MANIFEST_FILENAME, build_artifact, unpack_artifact
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.policy import Artifact as SecurityArtifact
+from dinkster_security.policy import assess
+from dinkster_security.store import SecurityStore
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 from dinkster_workers import (
     PackManifest,
@@ -928,6 +932,7 @@ class Installer:
         NEVER silently substituted.
         The store only ever gains the recorded bytes; a mismatched
         candidate is discarded with the scratch directory."""
+        self._check_security(Lockfile.of([entry]), installing=True)
         if self.artifact_available(entry):
             return
         source = entry.source
@@ -1361,6 +1366,7 @@ class Installer:
         default empty string leaves ordinary unreviewed callers unchanged."""
         with self._locked():
             current = self.current_lockfile()
+            self._check_security(target, installing=True)
             if (
                 expected_base != ""
                 and (current.record_digest() if current is not None else None) != expected_base
@@ -1433,6 +1439,7 @@ class Installer:
                         in_process,
                         runtime_pins,
                     )
+                    self._check_security(target, installing=True)
                     return current_number, InstallPlan()
                 if topology == current_topology:
                     return current_number, InstallPlan()
@@ -1447,6 +1454,7 @@ class Installer:
                 in_process,
                 runtime_pins,
             )
+            self._check_security(target, installing=True)
             numbers = self.generation_numbers()
             number = (numbers[-1] if numbers else 0) + 1
             generation_path = self._generation_path(number)
@@ -1584,6 +1592,49 @@ class Installer:
                     path.unlink()
         return removed
 
+    def _check_security(self, target: Lockfile, *, installing: bool) -> None:
+        database = self.root / "security.sqlite3"
+        if not database.is_file():
+            return
+        from .registries import RegistryConfig, load_registries
+
+        config = self.root / "registries.toml"
+        registries = load_registries(config) if config.is_file() else RegistryConfig()
+        store = SecurityStore(database)
+        installed = {
+            (entry.pack, entry.version, entry.artifact_digest, entry.source)
+            for number in self.generation_numbers()
+            for entry in self.lockfile_of(number).packs
+        }
+        for entry in target.packs:
+            registry = entry.source
+            if _is_registry_source(entry.source):
+                registry = registries.registry_for(entry).endpoint
+            artifact = SecurityArtifact(
+                registry,
+                SecurityRelease.model_validate(
+                    {
+                        "pack": entry.pack,
+                        "version": entry.version,
+                        "artifactDigest": entry.artifact_digest,
+                    }
+                ),
+            )
+            result = assess(
+                store,
+                (artifact,),
+                installing=installing
+                and (entry.pack, entry.version, entry.artifact_digest, entry.source)
+                not in installed,
+            )
+            if not result.allowed:
+                finding = next(item for item in result.findings if not item.allowed)
+                raise InstallError(
+                    f"security {finding.state}: {entry.pack}=={entry.version} "
+                    f"({entry.artifact_digest}), notice {finding.notice.id} "
+                    f"revision {finding.notice.revision}, decision {finding.decision}"
+                )
+
     # -- serving ---------------------------------------------------------
 
     def packs_for_serving(self) -> list[PackSpec]:
@@ -1601,6 +1652,7 @@ class Installer:
         if number is None:
             return []
         lockfile = self.lockfile_of(number)
+        self._check_security(lockfile, installing=False)
         topology = self._hosting_of(number)
         groups = topology.groups
         in_process = set(topology.in_process)

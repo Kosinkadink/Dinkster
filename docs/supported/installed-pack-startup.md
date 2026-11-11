@@ -1,5 +1,22 @@
 ## Installed pack startup
 
+- Pack installation, retained rollback and serving selection enforce locally
+  cached verified security notices. Known malicious artifacts and explicitly
+  denied vulnerable releases refuse without deleting retained bytes or changing
+  the active selection. Retained vulnerable releases remain usable while their
+  decision is pending; a new vulnerable release requires exact-notice approval.
+  These checks do not fetch notices or stop an already running worker.
+- Managed engine and pack environments retain the exact selected wheel identities and
+  distinguish them from unused lock alternatives and inherited dependencies.
+  The records are sealed with the generation and preserved in software snapshots.
+- Managed generation pack selection checks cached notices against sealed library
+  identities and transitive pack sources. A malicious dependency blocks its
+  consumer as affected, not malicious. Missing or changed wheel provenance refuses
+  selection when security checking is configured. This is not a supervisor
+  launch gate or a running-worker monitor.
+- Verified ownership notices accept an explicit operator-owned previous owner.
+  An omitted previous owner, empty new publisher or unchanged owner is refused
+  without losing cached release notices.
 - Plain `pip install dinkster` supports CLI, catalog serving and torch-free
   packs without installing torch or the inference runtime. Install
   `dinkster[inference]` for in-process inference packs; missing inference
@@ -45,7 +62,9 @@
 - Software restore rebuilds isolated and in-process pack dependencies from the
   snapshot's complete locks, including after its old generation was pruned;
   it does not inherit packs from the current generation.
-- Software history records the generation interpreter's wheel compatibility tags.
+- Software history records the generation interpreter's wheel compatibility tags
+  and requirement markers. Replacement previews identify the exact selected
+  engine/base wheels; reconstruction must retain those identities.
   Restore planning reports missing pack dependency wheels before activation,
   honors inherited base/engine and in-process dependencies, and verifies retained
   wheel bytes without creating project or cache files.

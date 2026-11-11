@@ -451,10 +451,11 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
     constraints = deep / "constraints.txt"
     rows = []
     for number in range(directories):
-        digest = f"{number:064x}"
+        payload = f"wheel fixture {number}".encode()
+        digest = hashlib.sha256(payload).hexdigest()
         wheel = store / "wheels" / digest / f"fixture_{number}-1.0-py3-none-any.whl"
         wheel.parent.mkdir(parents=True)
-        wheel.write_bytes(b"wheel fixture")
+        wheel.write_bytes(payload)
         rows.append(f"fixture-{number}==1.0 --hash=sha256:{digest}")
     constraints.write_text("\n".join(rows) + "\n")
 
@@ -486,13 +487,18 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
         assert previous_units == 32768
 
     def sync(command, **kwargs):
+        if command[1:3] == ["-I", "-S"]:
+            return subprocess.CompletedProcess(
+                command, 0, json.dumps({"tags": ["py3-none-any"], "markers": {}}), ""
+            )
         assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
         assert command[1:3] == ["pip", "sync"]
         assert "--offline" in command and "--no-index" in command
         assert "--require-hashes" in command and "--only-binary" in command
         assert command[command.index("--link-mode") + 1] in {"hardlink", "clone"}
-        assert kwargs["input"].count("--find-links ") == directories + 1
-        assert kwargs["input"].endswith(constraints.read_text())
+        assert kwargs["input"].count(" @ file:") == directories
+        assert kwargs["input"].count("--hash=sha256:") == directories
+        assert "--find-links" not in command
         raise RuntimeError("sync inspected")
 
     monkeypatch.setattr(subprocess, "run", sync)
@@ -1634,6 +1640,68 @@ environment.main()
     assert read_current(root) == (1 if problem in {"update", "custom"} else None)
 
 
+def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existing_version(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    base = store / "bases" / ("a" * 64) / "python"
+    _standalone_tree(base)
+    original = tmp_path / "original"
+    original.mkdir()
+    existing, _ = _wheel(original, "selected_fixture", "1.0", -999)
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(interpreter(base.parent)),
+            "--break-system-packages",
+            "--offline",
+            "--no-index",
+            str(existing),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    wheels = store / "wheels"
+    wheels.mkdir()
+    selected, sha = _wheel(wheels, "selected_fixture", "1.0", 73)
+    alternative, other_sha = _wheel(original, "selected_fixture", "1.0", 444)
+    alternative.rename(wheels / "selected_fixture-1.0-cp999-cp999-any.whl")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(
+        f"selected-fixture==1.0 --hash=sha256:{sha} --hash=sha256:{other_sha}\n"
+        'inactive-fixture==1.0; sys_platform == "not-a-platform" --hash=sha256:' + "0" * 64 + "\n"
+    )
+    generation = tmp_path / "generation"
+    python = prepare_engine_interpreter(
+        generation, store=store, base="sha256:" + "a" * 64, constraints=constraints
+    )
+    assert (
+        subprocess.check_output(
+            [str(python), "-I", "-c", "import selected_fixture; print(selected_fixture.VALUE)"]
+        ).strip()
+        == b"73"
+    )
+    assert (
+        subprocess.check_output(
+            [
+                str(interpreter(base.parent)),
+                "-I",
+                "-c",
+                "import selected_fixture; print(selected_fixture.VALUE)",
+            ]
+        ).strip()
+        == b"-999"
+    )
+    assert json.loads((generation / "installed-wheels.json").read_text()) == {
+        "format": "dinkster.installed-wheels/1",
+        "wheels": [{"filename": selected.name, "size": selected.stat().st_size, "sha256": sha}],
+        "inherited": [],
+    }
+
+
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1741,7 +1809,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         ).strip()
         == b"47"
     )
-    assert {path.name for path in scratch.iterdir()} == {"python", "constraints.txt"}
+    assert {path.name for path in scratch.iterdir()} == {
+        "python",
+        "constraints.txt",
+        "installed-wheels.json",
+    }
     assert read_current(root) == 1
     assert first.drift(first_dir) == ()
     assert not list(base.rglob("stable_fixture.py"))
@@ -1786,7 +1858,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert read_current(root) == 1
 
     for digest in (decoy_hash, "f" * 64):
-        with pytest.raises(EnvironmentError, match="offline generation sync failed"):
+        with pytest.raises(EnvironmentError, match="offline generation wheel missing or corrupt"):
             build(3, "3.0", digest)
     assert read_current(root) == 1
     assert not (root / "generations" / "3").exists()
