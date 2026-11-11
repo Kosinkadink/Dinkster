@@ -602,6 +602,128 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         )
 
 
+@pytest.mark.parametrize("mismatched_lock", [False, True])
+def test_locked_default_admission_uses_verified_unpublished_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatched_lock: bool
+) -> None:
+    from dataclasses import replace
+
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_store import pack_archive_path
+    from dinkster_workers.pack_lock import LockedDistribution
+    from dinkster_workers.pack_wheel import build_pack_archive
+    from test_installer import _serve_artifacts
+    from test_pack_environment import _generation, _wheel
+
+    from scripts import check_default_pack_admission as admission
+
+    requests = []
+    server = _serve_artifacts({}, requests)
+    try:
+        sources = tmp_path / "sources"
+        sources.mkdir()
+        helper = _wheel(sources, "test-helper", "0.0.1", "test_helper", "VALUE = 37\n")
+        helper = replace(helper, url=f"http://127.0.0.1:{server.server_port}/{helper.filename}")
+        pack = tmp_path / "pack"
+        pack.mkdir()
+        (pack / "dinkster-pack.toml").write_text(
+            '[pack]\nname = "test-consumer"\nversion = "0.0.2"\npublisher = "dinkster"\n'
+            'engine = ">=0.0.2,<0.1"\nrequires = ["test-helper==0.0.1"]\n'
+            '[pack.entry]\nnodes = "test_consumer:NODES"\n'
+            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+        )
+        module = pack / "test_consumer"
+        module.mkdir()
+        (module / "__init__.py").write_text(
+            "from test_helper import VALUE\nassert VALUE == 37\nNODES = []\n"
+        )
+        consumer = sources / "test_consumer-0.0.2-py3-none-any.whl"
+        build_pack_archive(pack, consumer)
+        prepared = tmp_path / "prepared"
+        artifacts = prepared / "artifacts"
+        artifacts.mkdir(parents=True)
+        lock_output = prepared / "pack-locks"
+        lock_output.mkdir()
+        entries = []
+        for name, version, archive in (
+            ("test-helper", "0.0.1", sources / helper.filename),
+            ("test-consumer", "0.0.2", consumer),
+        ):
+            data = archive.read_bytes()
+            entry = LockedPack(name, version, artifact_digest(data), "dinkster", ())
+            entries.append(entry)
+            pack_archive_path(artifacts, entry.artifact_digest).write_bytes(data)
+            outer = admission.LockedWheel(
+                archive.name, len(data), hashlib.sha256(data).hexdigest(), archive.as_uri()
+            )
+            dependency = replace(helper, sha256="f" * 64) if mismatched_lock else helper
+            packages = (LockedDistribution(name, version, (outer,)),)
+            if name == "test-consumer":
+                packages += (LockedDistribution("test-helper", "0.0.1", (dependency,)),)
+            PackLock(name, "linux-cpu", ">=3.12", (), (), packages).write(
+                lock_output / f"{name}.json"
+            )
+        (prepared / "catalog.lock").write_text(Lockfile.of(entries).record_json())
+        base_id = "sha256:" + "a" * 64
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(admission.__file__).resolve().parents[1],
+            text=True,
+        ).strip()
+        (prepared / "engine.json").write_text(
+            json.dumps(
+                {
+                    "commit": head,
+                    "engineVersion": "0.0.3",
+                    "baseId": base_id,
+                    "variant": "linux-cpu",
+                }
+            )
+        )
+        constraints = tmp_path / "constraints.txt"
+        constraints.touch()
+        python = _generation(tmp_path / "generation/python", [])
+        monkeypatch.setattr(admission, "default_pack_minimums", lambda: {"test-consumer": "0.0.2"})
+        monkeypatch.setattr(admission, "run_selected_tests", lambda *args, **kwargs: None)
+        executed = []
+
+        def probe(root, settings, require_isolation, *, python, source_roots):
+            value = subprocess.check_output(
+                [str(python), "-I", "-c", "import test_consumer; print(test_consumer.VALUE)"],
+                text=True,
+            )
+            executed.append(int(value))
+            return admission.StageResult()
+
+        # Keep real locked provisioning and imports independent of the jail transport.
+        monkeypatch.setattr("dinkster_registry.archive_admission._run_executable_probe", probe)
+        with (
+            pytest.raises(ValueError, match="download/verification failed")
+            if mismatched_lock
+            else nullcontext()
+        ):
+            result = admission.check_defaults(
+                admission.NamedRegistry("", "https://registry.invalid"),
+                engine_version="0.0.3",
+                prepared_sources=prepared,
+                generation_python=python,
+                base_id=base_id,
+                constraints=constraints,
+                test_packs=("test-consumer",),
+            )
+            assert result["packs"] == [
+                {
+                    "pack": "test-consumer",
+                    "version": "0.0.2",
+                    "artifactDigest": entries[1].artifact_digest,
+                }
+            ]
+        assert bool(requests) is mismatched_lock
+        assert executed == ([] if mismatched_lock else [37])
+    finally:
+        server.shutdown()
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize(
     "dependency", ["consumers", "transitive", "extras", "missing-extra", "fixed"]

@@ -591,9 +591,14 @@ def run_executable_probe(
     settings: ProbeSettings | None = None,
     require_isolation: bool = True,
     dependency_wheels: tuple[Path, ...] = (),
+    api_wheel: Path | None = None,
 ) -> StageResult:
-    """Probe with optional caller-verified library wheels, never submission paths."""
+    """Probe caller-verified wheels; a selected engine API runs only in the jail."""
     configured = settings or ProbeSettings()
+    if api_wheel is not None and not require_isolation:
+        return StageResult(
+            (_block("probe.isolation-unavailable", "Selecting an API requires the probe jail."),)
+        )
     try:
         manifest = load_manifest(root / MANIFEST_FILENAME)
         requirements = [Requirement(value) for value in manifest.requires_for("cpu")]
@@ -609,7 +614,7 @@ def run_executable_probe(
                 ),
             )
         )
-    if not requirements and not dependency_wheels:
+    if not requirements and not dependency_wheels and api_wheel is None:
         with admission_timing(manifest.name, "probe-execution"):
             return _run_executable_probe(root, configured, require_isolation)
     installer = shutil.which("uv")
@@ -640,6 +645,7 @@ def run_executable_probe(
             *(["--torch-backend", "cpu"] if configured.probe_dependency_source == "cpu" else []),
             *[str(requirement) for requirement in requirements],
             *[str(wheel.resolve()) for wheel in dependency_wheels],
+            *([str(api_wheel.resolve())] if api_wheel is not None else []),
         ]
         try:
             with admission_timing(manifest.name, "probe-dependency-install"):
@@ -670,6 +676,10 @@ def run_executable_probe(
             )
         # Dependency .pth files must not run before the trusted harness.
         with admission_timing(manifest.name, "probe-execution"):
+            if api_wheel is not None:
+                return _run_executable_probe(
+                    root, configured, require_isolation, dependencies, api_root=dependencies
+                )
             return _run_executable_probe(root, configured, require_isolation, dependencies)
 
 
@@ -681,6 +691,7 @@ def _run_executable_probe(
     *,
     python: Path | None = None,
     source_roots: tuple[Path, ...] = (),
+    api_root: Path | None = None,
 ) -> StageResult:
     manifest_path = root / MANIFEST_FILENAME
     jail = None
@@ -705,6 +716,8 @@ def _run_executable_probe(
     executable = str(python) if python is not None else sys.executable
     command = [executable, "-m", probe_module, str(manifest_path)]
     environment = _probe_environment()
+    if api_root is not None:
+        environment["DINKSTER_PROBE_API_ROOT"] = str(api_root.resolve())
     paths = [str(path) for path in source_roots]
     if dependencies is not None:
         # Trusted bootstrap imports the harness before adding dependency paths.
