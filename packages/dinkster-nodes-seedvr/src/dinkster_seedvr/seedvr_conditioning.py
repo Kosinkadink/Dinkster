@@ -13,9 +13,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -63,7 +63,7 @@ class SeedVR2Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SeedVR2Conditioning",
+            node_type="dinkster.seedvr.seed_vr2_conditioning",
             display_name="Apply SeedVR2 Conditioning",
             category="model/conditioning",
             description="Build SeedVR2 positive/negative conditioning from a VAE latent.",
@@ -87,7 +87,7 @@ class SeedVR2Conditioning(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SeedVR2Conditioning")
 
     @classmethod
     def execute(cls, *, model: Any, vae_conditioning: object) -> Mapping[str, object]:

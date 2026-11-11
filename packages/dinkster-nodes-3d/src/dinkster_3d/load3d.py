@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     LOAD_3D_TYPE,
     AssetRef,
     AssetWidget,
+    CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
     Node,
@@ -22,8 +23,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     SourceFilenameSpec,
     TypeExpr,
-    first_party_schema,
     load_file3d,
+    with_identity_replacement,
 )
 
 
@@ -31,7 +32,7 @@ class Load3DAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Load3DAdvanced",
+            node_type="dinkster.3d.load3_d_advanced",
             display_name="Load 3D (Advanced)",
             category="3d",
             search_terms=("load mesh", "load gltf", "load glb", "load obj", "load fbx", "load stl"),
@@ -43,7 +44,11 @@ class Load3DAdvanced(Node):
                     widget=AssetWidget(kind="media/model3d", allow_upload=True),
                     source_filename=SourceFilenameSpec("media/model3d", "input"),
                 ),
-                InputSpec("viewport_state", TypeExpr.concrete(LOAD_3D_TYPE)),
+                InputSpec(
+                    "viewport_state",
+                    TypeExpr.concrete(LOAD_3D_TYPE),
+                    widget=CustomWidgetDescriptor("LOAD_3D"),
+                ),
                 *(
                     InputSpec(
                         axis,
@@ -66,7 +71,7 @@ class Load3DAdvanced(Node):
                 )
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Load3DAdvanced")
 
     @classmethod
     def execute(

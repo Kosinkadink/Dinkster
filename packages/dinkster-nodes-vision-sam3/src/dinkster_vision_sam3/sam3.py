@@ -22,10 +22,10 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -62,7 +62,7 @@ class SAM3_VideoTrack(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3_VideoTrack",
+            node_type="dinkster.vision.sam3.sam3_video_track",
             display_name="Run SAM3 Video Track",
             category="image/detection",
             search_terms=("sam3", "video", "track", "propagate"),
@@ -122,7 +122,7 @@ class SAM3_VideoTrack(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3_VideoTrack")
 
     @classmethod
     def execute(
@@ -178,7 +178,7 @@ class SAM3_TrackToMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3_TrackToMask",
+            node_type="dinkster.vision.sam3.sam3_track_to_mask",
             display_name="SAM3 Track to Mask",
             category="image/detection",
             inputs=(
@@ -199,7 +199,7 @@ class SAM3_TrackToMask(Node):
             ),
             outputs=(OutputSpec("masks", TypeExpr.concrete(MASK_TYPE), display_name="masks"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3_TrackToMask")
 
     @classmethod
     def execute(cls, *, track_data: Any, object_indices: str = "") -> Mapping[str, object]:

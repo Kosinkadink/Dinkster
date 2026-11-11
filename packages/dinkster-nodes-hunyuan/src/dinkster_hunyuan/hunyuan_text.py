@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     materialize_clip_vision_output,
+    with_identity_replacement,
 )
 
 _PROMPT_TEMPLATE_ENCODE_VIDEO_I2V = (
@@ -38,7 +38,7 @@ class CLIPTextEncodeHunyuanDiT(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeHunyuanDiT",
+            node_type="dinkster.hunyuan.clip_text_encode_hunyuan_di_t",
             display_name="CLIP Text Encode (Hunyuan Image)",
             category="model/conditioning/hunyuan image",
             inputs=(
@@ -56,7 +56,7 @@ class CLIPTextEncodeHunyuanDiT(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeHunyuanDiT")
 
     @classmethod
     def execute(cls, *, clip: Any, bert: str, mt5xl: str) -> Mapping[str, object]:
@@ -69,7 +69,7 @@ class TextEncodeHunyuanVideo_ImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeHunyuanVideo_ImageToVideo",
+            node_type="dinkster.hunyuan.text_encode_hunyuan_video_image_to_video",
             category="model/conditioning/hunyuan video",
             inputs=(
                 InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
@@ -93,7 +93,7 @@ class TextEncodeHunyuanVideo_ImageToVideo(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeHunyuanVideo_ImageToVideo")
 
     @classmethod
     def execute(

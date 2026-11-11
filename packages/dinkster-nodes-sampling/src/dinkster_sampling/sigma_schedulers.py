@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _COMBO = TypeExpr.concrete(CORE_COMBO)
@@ -86,9 +86,9 @@ def _float(
 class BasicScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="BasicScheduler",
+                node_type="dinkster.sampling.basic_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -101,7 +101,8 @@ class BasicScheduler(Node):
                     _float("denoise", 1.0, 0.0, 1.0, 0.01, advanced=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "BasicScheduler",
         )
 
     @classmethod
@@ -123,9 +124,9 @@ class BasicScheduler(Node):
 class KarrasScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="KarrasScheduler",
+                node_type="dinkster.sampling.karras_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     _integer("steps", 20, 1, 10_000),
@@ -134,7 +135,8 @@ class KarrasScheduler(Node):
                     _float("rho", 7.0, 0.0, 100.0, 0.01, round=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "KarrasScheduler",
         )
 
     @classmethod
@@ -149,9 +151,9 @@ class KarrasScheduler(Node):
 class ExponentialScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ExponentialScheduler",
+                node_type="dinkster.sampling.exponential_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     _integer("steps", 20, 1, 10_000),
@@ -159,7 +161,8 @@ class ExponentialScheduler(Node):
                     _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01, round=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "ExponentialScheduler",
         )
 
     @classmethod
@@ -172,9 +175,9 @@ class ExponentialScheduler(Node):
 class PolyexponentialScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PolyexponentialScheduler",
+                node_type="dinkster.sampling.polyexponential_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     _integer("steps", 20, 1, 10_000),
@@ -183,7 +186,8 @@ class PolyexponentialScheduler(Node):
                     _float("rho", 1.0, 0.0, 100.0, 0.01, round=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "PolyexponentialScheduler",
         )
 
     @classmethod
@@ -200,9 +204,9 @@ class PolyexponentialScheduler(Node):
 class LaplaceScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LaplaceScheduler",
+                node_type="dinkster.sampling.laplace_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     _integer("steps", 20, 1, 10_000),
@@ -212,7 +216,8 @@ class LaplaceScheduler(Node):
                     _float("beta", 0.5, 0.0, 10.0, 0.1, round=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "LaplaceScheduler",
         )
 
     @classmethod
@@ -229,9 +234,9 @@ class LaplaceScheduler(Node):
 class VPScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="VPScheduler",
+                node_type="dinkster.sampling.vp_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     _integer("steps", 20, 1, 10_000),
@@ -240,7 +245,8 @@ class VPScheduler(Node):
                     _float("eps_s", 0.001, 0.0, 1.0, 0.0001, round=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "VPScheduler",
         )
 
     @classmethod
@@ -257,9 +263,9 @@ class VPScheduler(Node):
 class BetaSamplingScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="BetaSamplingScheduler",
+                node_type="dinkster.sampling.beta_sampling_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -268,7 +274,8 @@ class BetaSamplingScheduler(Node):
                     _float("beta", 0.6, 0.0, 50.0, 0.01, round=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "BetaSamplingScheduler",
         )
 
     @classmethod
@@ -285,9 +292,9 @@ class BetaSamplingScheduler(Node):
 class SDTurboScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SDTurboScheduler",
+                node_type="dinkster.sampling.sd_turbo_scheduler",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -295,7 +302,8 @@ class SDTurboScheduler(Node):
                     _float("denoise", 1.0, 0.0, 1.0, 0.01, advanced=False),
                 ),
                 outputs=(OutputSpec("SIGMAS", _SIGMAS),),
-            )
+            ),
+            "SDTurboScheduler",
         )
 
     @classmethod

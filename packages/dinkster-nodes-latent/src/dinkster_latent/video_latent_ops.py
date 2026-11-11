@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -25,9 +25,9 @@ _LATENT = TypeExpr.concrete(LATENT_TYPE)
 class TrimVideoLatent(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="TrimVideoLatent",
+                node_type="dinkster.latent.trim_video_latent",
                 display_name="Trim Video Latent",
                 category="model/latent",
                 inputs=(
@@ -40,7 +40,8 @@ class TrimVideoLatent(Node):
                     ),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "TrimVideoLatent",
         )
 
     @classmethod
@@ -54,9 +55,9 @@ class TrimVideoLatent(Node):
 class NormalizeVideoLatentStart(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="NormalizeVideoLatentStart",
+                node_type="dinkster.latent.normalize_video_latent_start",
                 display_name="NormalizeVideoLatentStart",
                 category="model/conditioning",
                 inputs=(
@@ -75,7 +76,8 @@ class NormalizeVideoLatentStart(Node):
                     ),
                 ),
                 outputs=(OutputSpec("latent", _LATENT),),
-            )
+            ),
+            "NormalizeVideoLatentStart",
         )
 
     @classmethod

@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -168,7 +168,7 @@ class CreateCameraInfo(Node):
             _number("position_z", 4.0, -1000.0, 1000.0, 0.01),
         )
         schema = NodeSchema(
-            node_type="CreateCameraInfo",
+            node_type="dinkster.3d.create_camera_info",
             display_name="Create Camera Info",
             search_terms=("camera position", "make camera info", "orbit camera", "look at camera"),
             category="3d",
@@ -288,7 +288,7 @@ class CreateCameraInfo(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CreateCameraInfo")
 
     @classmethod
     def execute(

@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-image"
-version = "0.0.4"
+version = "0.0.6"
 description = "Dinkster first-party image and mask operation nodes"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,7 +15,7 @@ dependencies = [
     "torchvision",
     "scipy",
     "kornia",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
 ]
 
 [build-system]

@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 simple_eval = cast("Callable[..., object]", importlib.import_module("simpleeval").simple_eval)
@@ -65,7 +65,7 @@ class ComfyMathExpression(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ComfyMathExpression",
+            node_type="dinkster.utilities.comfy_math_expression",
             display_name="Math Expression",
             category="utilities",
             inputs=(
@@ -91,7 +91,7 @@ class ComfyMathExpression(Node):
                 OutputSpec("BOOL", TypeExpr.concrete(CORE_BOOLEAN)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ComfyMathExpression")
 
     @classmethod
     def execute(cls, *, expression: str, values: Mapping[str, object]) -> Mapping[str, object]:

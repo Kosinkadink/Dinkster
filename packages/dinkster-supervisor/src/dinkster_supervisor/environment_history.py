@@ -36,6 +36,7 @@ def is_software_metadata(name: str) -> bool:
         "base-manifest.json",
         "engine-manifest.json",
         "artifact-sources.json",
+        "development-sources.json",
         "dinkster.lock",
     } or (
         len(parts) == 3

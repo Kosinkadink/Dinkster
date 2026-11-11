@@ -24,11 +24,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -45,7 +45,7 @@ class WanInfiniteTalkToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanInfiniteTalkToVideo",
+            node_type="dinkster.wan.wan_infinite_talk_to_video",
             category="model/conditioning/wan/infinite talk",
             combos=(
                 DynamicComboSpec(
@@ -140,7 +140,7 @@ class WanInfiniteTalkToVideo(Node):
                 OutputSpec("trim_image", _INT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanInfiniteTalkToVideo")
 
     @classmethod
     def execute(

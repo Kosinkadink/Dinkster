@@ -17,10 +17,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class MoGePanoramaInference(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MoGePanoramaInference",
+            node_type="dinkster.vision.moge.mo_ge_panorama_inference",
             display_name="Run MoGe Panorama Inference",
             category="image/geometry estimation",
             description=(
@@ -94,7 +94,7 @@ class MoGePanoramaInference(Node):
             ),
             outputs=(OutputSpec("moge_geometry", TypeExpr.concrete(MOGE_GEOMETRY_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MoGePanoramaInference")
 
     @classmethod
     def execute(

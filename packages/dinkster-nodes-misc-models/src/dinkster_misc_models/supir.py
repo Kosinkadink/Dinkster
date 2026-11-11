@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class SUPIRApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SUPIRApply",
+            node_type="dinkster.misc.models.supir_apply",
             display_name="Apply SUPIR Patch",
             category="model/patch/supir",
             inputs=(
@@ -75,7 +75,7 @@ class SUPIRApply(Node):
             ),
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SUPIRApply")
 
     @classmethod
     def _encode_with_denoise_encoder(cls, vae: Any, model_patch: Any, image: Any) -> Any:

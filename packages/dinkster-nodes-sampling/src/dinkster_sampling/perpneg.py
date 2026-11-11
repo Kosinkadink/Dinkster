@@ -19,8 +19,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -63,9 +63,9 @@ def _perp_neg(
 class PerpNeg(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PerpNeg",
+                node_type="dinkster.sampling.perp_neg",
                 display_name="Perp-Neg (DEPRECATED by Perp-Neg Guider)",
                 category="experimental",
                 deprecation=Deprecation(message="Use Perp-Neg Guider instead."),
@@ -82,7 +82,8 @@ class PerpNeg(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "PerpNeg",
         )
 
     @classmethod
@@ -117,9 +118,9 @@ class PerpNeg(Node):
 class PerpNegGuider(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="PerpNegGuider",
+                node_type="dinkster.sampling.perp_neg_guider",
                 display_name="Perp-Neg Guider",
                 category="experimental",
                 inputs=(
@@ -142,7 +143,8 @@ class PerpNegGuider(Node):
                     ),
                 ),
                 outputs=(OutputSpec("GUIDER", _GUIDER),),
-            )
+            ),
+            "PerpNegGuider",
         )
 
     @classmethod

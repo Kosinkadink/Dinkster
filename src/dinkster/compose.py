@@ -100,8 +100,6 @@ from dinkster_memory import (
     use_model_tenant_registry,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_native.memory import plan_reservations
-from dinkster_native.pool import default_pool
 from dinkster_protocol import (
     GRAPH_COMPILERS_SURFACE,
     WORKGROUP_DATA_PLANE_CAPABILITY,
@@ -242,8 +240,11 @@ from dinkster_workers.catalog import (
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.manifest import validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
+from dinkster_workers.reservations import plan_reservations
+from dinkster_workers.resident_pool import default_pool
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
+from packaging.requirements import Requirement
 
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
@@ -4944,6 +4945,15 @@ class ServingComposer:
         )
         tenant_proxy: _PackTenantRegistry | None = None
         if spec.in_process:
+            needs_torch = spec.runtime_pins or any(
+                canonical_name(Requirement(requirement).name) in {"torch", "dinkster-inference"}
+                for requirement in manifest.requires
+            )
+            if needs_torch and not self._torch_capable():
+                raise CompositionError(
+                    f"in-process pack {manifest.name!r} requires a torch-capable serve "
+                    'environment; install "dinkster[inference]" in the serving interpreter'
+                )
             if self._private_staging:
                 reused_in_process = self._reusable_in_process.get(canonical)
                 if reused_in_process is None or reused_in_process.spec != spec:
@@ -4970,11 +4980,6 @@ class ServingComposer:
                     "generation baseline"
                 )
             if spec.runtime_pins:
-                if not self._torch_capable():
-                    raise CompositionError(
-                        f"in-process pack {manifest.name!r} requires a torch-capable "
-                        "serve environment"
-                    )
                 if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
                     raise CompositionError(
                         f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "

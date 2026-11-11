@@ -176,6 +176,15 @@ def _print_plan(installer: Installer, steps: InstallPlan, *, venvs: bool) -> Non
     current_number = installer.current_number()
     base = f"generation {current_number}" if current_number is not None else "empty root"
     print(f"plan ({base} -> new generation, accelerator: {installer.accelerator}):")
+    if any(
+        step.to is not None and step.to.source.startswith(("local:", "git:"))
+        for step in steps.steps
+    ):
+        print(
+            "development: local/git sources are not reviewed by the registry; "
+            "dependency ranges resolve unless captured pins are supplied; "
+            "not reproducible from ranges"
+        )
     isolated = 0
     warnings: list[str] = []
     for step in steps.steps:
@@ -1378,7 +1387,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         if report.ok:
             print(f"Prepared runtime catalog: {report.pack_name} ({len(report.node_types)} nodes)")
         else:
-            print(render_text(report))
+            print(render_text(report), file=sys.stderr)
             failed = True
     if failed:
         raise InstallError("runtime catalog preparation failed; repair findings and retry")

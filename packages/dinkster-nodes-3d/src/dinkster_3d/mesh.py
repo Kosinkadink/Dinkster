@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     materialize_mesh,
     report_progress,
+    with_identity_replacement,
 )
 
 _MESH = TypeExpr.concrete(MESH_TYPE)
@@ -36,7 +36,7 @@ class RotateMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RotateMesh",
+            node_type="dinkster.3d.rotate_mesh",
             display_name="Rotate Mesh",
             category="3d/mesh",
             description=(
@@ -79,7 +79,7 @@ class RotateMesh(Node):
             input_order=("mesh", "mode"),
             outputs=(OutputSpec("mesh", _MESH),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RotateMesh")
 
     @classmethod
     def execute(cls, *, mesh: Any, mode: str, **inputs: Any) -> Mapping[str, object]:
@@ -131,7 +131,7 @@ class GetMeshInfo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GetMeshInfo",
+            node_type="dinkster.3d.get_mesh_info",
             display_name="Get Mesh Info",
             category="3d/mesh",
             inputs=(InputSpec("mesh", _MESH),),
@@ -142,7 +142,7 @@ class GetMeshInfo(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GetMeshInfo")
 
     @staticmethod
     def _fmt(count: int) -> str:
@@ -210,7 +210,7 @@ class MergeMeshes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MergeMeshes",
+            node_type="dinkster.3d.merge_meshes",
             display_name="Merge Meshes",
             category="3d/mesh",
             description=(
@@ -229,7 +229,7 @@ class MergeMeshes(Node):
             ),
             outputs=(OutputSpec("mesh", _MESH),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MergeMeshes")
 
     @classmethod
     def execute(cls, *, meshes: Mapping[str, object]) -> Mapping[str, object]:

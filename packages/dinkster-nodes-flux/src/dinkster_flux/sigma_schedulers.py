@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _INT = TypeExpr.concrete(CORE_INT)
@@ -38,7 +38,7 @@ class Flux2Scheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Flux2Scheduler",
+            node_type="dinkster.flux.flux2_scheduler",
             category=_CATEGORY,
             inputs=(
                 _integer("steps", 20, 1, 4096),
@@ -51,7 +51,7 @@ class Flux2Scheduler(Node):
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Flux2Scheduler")
 
     @classmethod
     def execute(cls, *, steps: int, width: int, height: int) -> Mapping[str, object]:

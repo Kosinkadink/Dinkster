@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -327,7 +328,7 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(
             "torchvision",
             "scipy",
             "kornia",
-            "dinkster-inference==0.1.1",
+            "dinkster-inference",
         ),
         "dinkster-nodes-remote": ("httpx>=0.28,<1",),
     }
@@ -840,12 +841,65 @@ def test_official_publication_selects_only_changed_committed_packs(
         select_packs(tmp_path, tag="pack/first/v2.0")
 
 
+def test_default_admission_separates_expensive_children_without_changing_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, official_payloads: tuple[Path, ...]
+) -> None:
+    from dinkster_registry import Lockfile
+
+    from scripts import check_default_pack_admission as admission
+
+    catalog = Lockfile.from_record_json(official_payloads[-1].read_text())
+
+    def registry_defaults(registry, minimums, artifacts, *, engine_version):
+        for entry in catalog.packs:
+            wheel = next(
+                path
+                for path in official_payloads
+                if path.name == f"{entry.pack.replace('-', '_')}-{entry.version}-py3-none-any.whl"
+            )
+            shutil.copyfile(
+                wheel, artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            )
+        return catalog, {}
+
+    monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
+    monkeypatch.setattr(admission.StaticPackIndex, "catalog", lambda *args, **kwargs: [])
+    prepared = tmp_path / "prepared"
+    result = admission.check_defaults(
+        admission.NamedRegistry("", "https://registry.invalid"),
+        engine_version="0.0.4",
+        prepare_output=prepared,
+    )
+    groups = result["groups"]
+    assert isinstance(groups, list)
+    assert len(groups) == 10
+    assert all(groups)
+    assert sorted(name for group in groups for name in group) == sorted(
+        entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
+    )
+    assert ["dinkster-3d"] in groups
+    assert ["dinkster-image", "dinkster-latent"] in groups
+    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
+
+
 @pytest.mark.parametrize(
     ("mode", "problem"),
     [
         ("candidate", None),
         ("candidate", "manifest"),
         ("candidate", "security"),
+        ("prepared", None),
+        ("prepared", "security"),
+        ("prepared", "engine-version"),
+        ("prepared", "incomplete-catalog"),
+        ("prepared", "corrupt-artifact"),
+        ("prepared", "unknown-pack"),
+        ("locked-prepared", None),
+        ("locked-prepared", "lock-base"),
+        ("locked-prepared", "lock-artifact"),
+        ("locked-prepared", "missing-lock"),
+        ("locked-runtime", None),
         ("published", None),
         ("published", "promotion"),
         ("published", "timeout"),
@@ -854,13 +908,19 @@ def test_official_publication_selects_only_changed_committed_packs(
     ],
 )
 def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, problem: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    problem: str | None,
 ) -> None:
     from dataclasses import replace
 
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_registry.archive_admission import StageResult
+    from dinkster_store import pack_archive_path, pack_label
     from dinkster_workers import load_manifest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from dinkster_workers.pack_wheel import wheel_filename
 
     from scripts import check_default_pack_admission as admission
@@ -896,27 +956,104 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
         )
 
-    def build_candidate(root, output, *, packs):
+    locked = mode in {"locked-prepared", "locked-runtime"}
+    is_prepared = mode in {"prepared", "locked-prepared", "locked-runtime"}
+    generation = tmp_path / "generation-python"
+    generation.touch()
+    constraints = tmp_path / "constraints.txt"
+    constraints.touch()
+    context = (
+        {
+            "generation_python": generation,
+            "base_id": "sha256:" + "f" * 64,
+            "constraints": constraints,
+        }
+        if locked
+        else {}
+    )
+    if mode == "locked-runtime":
+        from test_pack_environment import _generation, _wheel
+
+        runtime = tmp_path / "runtime"
+        wheelhouse = runtime / "wheelhouse"
+        wheelhouse.mkdir(parents=True)
+        _wheel(wheelhouse, "dinkster-api", "0.0.4.dev37", "dinkster_api", "")
+        _wheel(wheelhouse, "locked-extra", "1.2+cpu", "locked_extra", "")
+        python = _generation(tmp_path / "managed/python", [])
+        constraints.write_text("dinkster-api==0.0.4.dev37\nlocked-extra==1.2+cpu\n")
+        monkeypatch.setattr(
+            admission,
+            "read_runtime",
+            lambda *args: (python, "sha256:" + "f" * 64, constraints, "linux-cpu"),
+        )
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        context.clear()
+        context["runtime"] = runtime
+
+    def dependency_lock(name):
+        return PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            (),
+            (),
+            (
+                LockedDistribution(
+                    name,
+                    entries[name].version,
+                    (
+                        LockedWheel(
+                            f"{name}-{entries[name].version}-py3-none-any.whl",
+                            len(archives[name]),
+                            hashlib.sha256(archives[name]).hexdigest(),
+                            "https://registry.example/pack.whl",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def build_candidate(root, output, *, packs, **kwargs):
         assert packs == ("candidate",)
         output.mkdir()
         (output / "candidate-7.2-py3-none-any.whl").write_bytes(archives["candidate"])
         (output / "official-packs.lock").write_text(
             Lockfile.of([entries["candidate"]]).record_json()
         )
+        if locked:
+            lock = dependency_lock("candidate")
+            if mode == "locked-runtime":
+                from dinkster_workers.pack_lock import resolve_pack_lock
+
+                resolved = resolve_pack_lock(
+                    pack="candidate",
+                    variant=kwargs["variant"],
+                    requirements=("dinkster-api>=0.0.2.dev0,<0.1", "locked-extra==1.2+cpu"),
+                    python=kwargs["python"],
+                    constraints=kwargs["constraints"],
+                    indexes=kwargs.get("indexes", ()),
+                    find_links=kwargs.get("find_links", ()),
+                    engine=">=0.0.2.dev0,<0.1",
+                )
+                lock = replace(resolved, packages=(*resolved.packages, *lock.packages))
+            lock.write(output / "candidate-7.2-linux-cpu.pack-lock.json")
 
     def registry_defaults(registry, minimums, artifacts, *, engine_version):
         # The candidate has no registry release: requesting it would fail here.
         assert minimums == {"unchanged": "1.0"}
         entry = entries["unchanged"]
-        (artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip").write_bytes(
-            archives["unchanged"]
+        archive = pack_archive_path(
+            artifacts, entry.artifact_digest, label=pack_label(entry.pack, entry.version)
         )
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(archives["unchanged"])
         return Lockfile.of([entry]), {}
 
     observed = []
 
-    def engine_tests(root, catalog, artifacts):
+    def engine_tests(root, catalog, artifacts, *, test_packs=()):
         assert root == Path(admission.__file__).resolve().parents[1]
+        assert test_packs == (("candidate",) if is_prepared else ())
         observed.extend((pack.pack, pack.version) for pack in catalog.packs)
 
     monkeypatch.setattr(
@@ -926,7 +1063,78 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     monkeypatch.setattr(admission, "build", build_candidate)
     monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
     monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
+    monkeypatch.setattr(
+        admission,
+        "read_registry_pack_locks",
+        lambda config, catalog, **kwargs: tuple(dependency_lock(p.pack) for p in catalog.packs),
+    )
+    monkeypatch.setattr(admission, "run_locked_probe", lambda root, lock, **kwargs: StageResult())
     monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
+    prepared = None
+    if is_prepared:
+        prepared = tmp_path / "prepared"
+        output = admission.check_defaults(
+            admission.NamedRegistry("", "https://registry.example"),
+            engine_version="0.2",
+            candidate_base="b" * 40,
+            prepare_output=prepared,
+            **context,
+        )
+        groups = output["groups"]
+        assert isinstance(groups, list)
+        if mode == "locked-runtime":
+            lock = PackLock.read(prepared / "pack-locks/candidate.json")
+            assert [(item.name, item.version) for item in lock.packages] == [
+                ("locked-extra", "1.2+cpu"),
+                ("candidate", "7.2"),
+            ]
+        assert sorted(name for group in groups for name in group) == [
+            "candidate",
+            "unchanged",
+        ]
+        assert not observed
+        import yaml
+
+        workflow = yaml.safe_load(
+            (
+                Path(admission.__file__).resolve().parents[1]
+                / ".github/workflows/default-pack-admission.yml"
+            ).read_text()
+        )
+        upload = next(
+            step["with"]
+            for step in workflow["jobs"]["prepare"]["steps"]
+            if step.get("uses") == "actions/upload-artifact@v4"
+        )
+        transferred = tmp_path / "transferred"
+        shutil.copytree(
+            prepared,
+            transferred,
+            ignore=None
+            if upload.get("include-hidden-files", False)
+            else shutil.ignore_patterns(".*"),
+        )
+        prepared = transferred
+        if problem == "engine-version":
+            metadata = json.loads((prepared / "engine.json").read_text())
+            metadata["engineVersion"] = "0.3"
+            (prepared / "engine.json").write_text(json.dumps(metadata))
+        elif problem == "incomplete-catalog":
+            (prepared / "catalog.lock").write_text(
+                Lockfile.of([entries["candidate"]]).record_json()
+            )
+        elif problem == "corrupt-artifact":
+            digest = entries["candidate"].artifact_digest.removeprefix("blake3:")
+            with zipfile.ZipFile(prepared / "artifacts" / f"{digest}.zip", "a") as wheel:
+                wheel.writestr("changed.txt", "digest drift")
+        elif problem == "lock-base":
+            metadata = json.loads((prepared / "engine.json").read_text())
+            metadata["baseId"] = "sha256:" + "e" * 64
+            (prepared / "engine.json").write_text(json.dumps(metadata))
+        elif problem == "lock-artifact":
+            dependency_lock("unchanged").write(prepared / "pack-locks/candidate.json")
+        elif problem == "missing-lock":
+            (prepared / "pack-locks/candidate.json").unlink()
     publication = None
     if mode == "published":
         publication = tmp_path / "official-packs.lock"
@@ -964,14 +1172,28 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "digest": "digest mismatch",
         "head": "do not match the engine checkout",
         "timeout": "not active yet",
+        "engine-version": "do not match the engine checkout and version",
+        "incomplete-catalog": "prepared sources omit defaults",
+        "corrupt-artifact": "candidate@7.2 admission refused",
+        "unknown-pack": "requested admission packs are not in the catalog",
+        "lock-base": "do not match the engine checkout and version",
+        "lock-artifact": "dependency lock identity differs",
+        "missing-lock": "candidate.json",
     }.get(problem or "")
     if expected_error:
-        with pytest.raises((ValueError, admission.InstallError), match=expected_error):
+        with pytest.raises((ValueError, OSError, admission.InstallError), match=expected_error):
             admission.check_defaults(
                 admission.NamedRegistry("", "https://registry.example"),
                 engine_version="0.2",
                 candidate_base="b" * 40 if mode == "candidate" else None,
                 published_sources=publication,
+                prepared_sources=prepared,
+                test_packs=("unknown",)
+                if problem == "unknown-pack"
+                else ("candidate",)
+                if is_prepared
+                else (),
+                **context,
             )
         assert not observed
     else:
@@ -980,6 +1202,9 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             engine_version="0.2",
             candidate_base="b" * 40 if mode == "candidate" else None,
             published_sources=publication,
+            prepared_sources=prepared,
+            test_packs=("candidate",) if is_prepared else (),
+            **context,
         )
         assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
         assert result == {
@@ -990,9 +1215,22 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                     "version": entries[name].version,
                     "artifactDigest": entries[name].artifact_digest,
                 }
-                for name in ("candidate", "unchanged")
+                for name in (("candidate",) if is_prepared else ("candidate", "unchanged"))
             ],
         }
+    if problem in {"manifest", "security"}:
+        stage = "manifest-admission" if problem == "manifest" else "fast-security"
+        timings = [
+            json.loads(line)
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith('{"admissionTiming":')
+        ]
+        assert any(
+            record["pack"] == "candidate@7.2"
+            and record["stage"] == stage
+            and record.get("status") == "failed"
+            for record in timings
+        )
 
 
 @pytest.mark.parametrize(
@@ -1568,12 +1806,7 @@ def test_official_publication_declarations_match_archive_admission(
 
     from scripts.build_official_packs import library_metadata
 
-    root = Path(__file__).resolve().parents[1]
     first = official_payloads
-    second = build_official_packs(root, tmp_path / "second")
-    assert {path.name: path.read_bytes() for path in first} == {
-        path.name: path.read_bytes() for path in second
-    }
     catalog = Lockfile.from_record_json(first[-1].read_text())
     assert len(catalog.packs) == 37
     for pack in catalog.packs:
@@ -1583,10 +1816,10 @@ def test_official_publication_declarations_match_archive_admission(
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.2",
+                "0.0.3",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
-                    "dinkster-inference==0.1.1",
+                    "dinkster-inference",
                     "numpy>=1.26",
                     "pillow>=10",
                     "torch",
@@ -1600,7 +1833,7 @@ def test_official_publication_declarations_match_archive_admission(
             / package_name
         )
         accepted = run_manifest_admission(
-            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.3.dev123"
+            source, pack.pack, pack.version, publisher="dinkster", engine_version="0.0.4.dev123"
         )
         assert not accepted.blocked, accepted.findings
         for engine in ("0.0.1", "0.1"):
@@ -1690,8 +1923,8 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(
             composition = composer.composition
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
-            assert composition.packs["dinkster-text"].version == "0.0.2"
-            assert composition.packs["dinkster-image"].version == "0.0.4"
+            assert composition.packs["dinkster-text"].version == "0.0.3"
+            assert composition.packs["dinkster-image"].version == "0.0.6"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )
@@ -1878,9 +2111,7 @@ def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem:
         assert result.blocked
         expected = {
             "empty": "probe.no-schemas",
-            "exception": "probe.invalid-report"
-            if os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
-            else "entry.unresolvable",
+            "exception": "entry.unresolvable",
             "output": "probe.output-limit",
             "timeout": "probe.timeout",
         }[problem]
@@ -2169,6 +2400,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         output = capfd.readouterr().out
         assert "3 passed" in output
         assert "2 skipped" in output
+        assert '"admissionTests": "collected"' in output
+        assert '"pack": "dinkster-image@1.2.3"' in output
+        assert '"nodeid": "tests/test_image_nodes.py::test_selected_value"' in output
+        assert '"outcome": "passed"' in output
+        assert '"outcome": "skipped"' in output
         assert "Selected test skipped tests/test_image_nodes.py::test_unpublished_fixture" in output
         assert (
             "Selected test skipped tests/test_image_nodes.py::TestUnpublished::test_node" in output

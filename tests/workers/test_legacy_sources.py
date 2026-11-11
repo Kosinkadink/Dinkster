@@ -1,4 +1,4 @@
-"""Legacy checkpoint conversion at the compat boundary."""
+"""Legacy checkpoint conversion at the worker boundary."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 from dinkster_inference_wire import load_safetensors_header
-from dinkster_native import legacy_sources
-from dinkster_native.legacy_sources import (
+from dinkster_workers import legacy_sources
+from dinkster_workers.legacy_sources import (
     LegacyCheckpointError,
     classify_conversion_error,
     classify_weight_source,

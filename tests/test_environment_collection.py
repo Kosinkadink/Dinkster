@@ -1085,7 +1085,7 @@ def test_generation_cleanup_retry_recovers_without_shared_store_cleanup(
         original = collection.shutil.rmtree
 
         def refuse(path, *args, **kwargs):
-            if path.is_relative_to(root / ".garbage"):
+            if Path(path).is_relative_to(root / ".garbage"):
                 raise PermissionError("fixture Windows sharing violation")
             return original(path, *args, **kwargs)
 

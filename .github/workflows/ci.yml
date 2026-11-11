@@ -2,6 +2,7 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   workflow_call:
   workflow_dispatch:
@@ -81,7 +82,7 @@ jobs:
 
   windows-runtime:
     needs: checks
-    if: needs.checks.outputs.runtime == 'true'
+    if: (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.checks.outputs.runtime == 'true'
     name: Windows SQLite runtime and durable delegations
     runs-on: windows-latest
     timeout-minutes: 15
@@ -128,7 +129,7 @@ jobs:
 
   windows-adoption:
     needs: checks
-    if: needs.checks.outputs.runtime == 'true'
+    if: (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.checks.outputs.runtime == 'true'
     name: Windows adoption and pruned restore (${{ matrix.case }})
     runs-on: windows-latest
     timeout-minutes: 15
@@ -151,7 +152,7 @@ jobs:
 
   windows-imports:
     needs: checks
-    if: needs.checks.outputs.runtime == 'true'
+    if: (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.checks.outputs.runtime == 'true'
     name: Windows legacy snapshot imports
     runs-on: windows-latest
     timeout-minutes: 15
@@ -170,7 +171,7 @@ jobs:
 
   windows-acquisition:
     needs: checks
-    if: needs.checks.outputs.runtime == 'true'
+    if: (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.checks.outputs.runtime == 'true'
     name: Windows public setup acquisition
     runs-on: windows-latest
     timeout-minutes: 15
@@ -189,7 +190,8 @@ jobs:
 
   tests:
     needs: [checks, torch-cpu]
-    if: ${{ !cancelled() }}
+    # Reusable calls retain the caller's workflow name and existing job selection.
+    if: ${{ !cancelled() && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: tests
     runs-on: ubuntu-latest
     # Hosted pytest has taken 24m21s before catalog export and frontend decode.
@@ -306,7 +308,7 @@ jobs:
 
   windows-checks:
     needs: checks
-    if: needs.checks.outputs.runtime == 'true'
+    if: (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.checks.outputs.runtime == 'true'
     name: Windows format, lint and types
     runs-on: windows-latest
     timeout-minutes: 10

@@ -29,10 +29,10 @@ from dinkster_api.v1 import (
     concatenate_video,
     copy_media_semantics,
     disassemble_video,
-    first_party_schema,
     resolver_from_env,
     save_video_stream,
     video_from_source,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -46,7 +46,7 @@ class CreateVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CreateVideo",
+            node_type="dinkster.video.create_video",
             display_name="Create Video",
             category="video",
             description="Create a video from images.",
@@ -97,7 +97,7 @@ class CreateVideo(Node):
             ),
             outputs=(OutputSpec("video", _VIDEO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CreateVideo")
 
     @classmethod
     def execute(
@@ -139,7 +139,7 @@ class GetVideoComponents(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GetVideoComponents",
+            node_type="dinkster.video.get_video_components",
             display_name="Get Video Components",
             category="video",
             description="Extracts video frames, audio, frame rate, bit depth, and color space.",
@@ -153,7 +153,7 @@ class GetVideoComponents(Node):
                 OutputSpec("color_space", _COMBO),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GetVideoComponents")
 
     @classmethod
     def execute(cls, *, video: object) -> Mapping[str, object]:
@@ -177,7 +177,7 @@ class ConcatenateVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ConcatenateVideo",
+            node_type="dinkster.video.concatenate_video",
             display_name="Concatenate Video",
             category="video",
             description="Concatenates videos in order without decoding compatible encoded inputs.",
@@ -210,7 +210,7 @@ class ConcatenateVideo(Node):
             outputs=(OutputSpec("video", _VIDEO),),
             input_order=("videos", "codec", "complete_audio"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ConcatenateVideo")
 
     @classmethod
     def execute(

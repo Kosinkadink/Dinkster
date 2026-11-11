@@ -51,6 +51,11 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=True,
         summary="prepare the local installation used by the default launcher",
     ),
+    "develop": _Command(
+        "dinkster.development",
+        passes_argv=True,
+        summary="build explicit local sources with unlocked development dependencies",
+    ),
     "pack": _Command(
         "dinkster.manager",
         passes_argv=False,

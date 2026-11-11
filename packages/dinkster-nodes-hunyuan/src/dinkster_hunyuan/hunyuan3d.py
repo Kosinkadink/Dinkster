@@ -17,10 +17,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_latent,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class Hunyuan3Dv2Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Hunyuan3Dv2Conditioning",
+            node_type="dinkster.hunyuan.hunyuan3_dv2_conditioning",
             category="model/conditioning/hunyuan 3d",
             inputs=(InputSpec("clip_vision_output", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)),),
             outputs=(
@@ -36,7 +36,7 @@ class Hunyuan3Dv2Conditioning(Node):
                 OutputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Hunyuan3Dv2Conditioning")
 
     @classmethod
     def execute(cls, *, clip_vision_output: object) -> Mapping[str, object]:
@@ -52,7 +52,7 @@ class Hunyuan3Dv2ConditioningMultiView(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Hunyuan3Dv2ConditioningMultiView",
+            node_type="dinkster.hunyuan.hunyuan3_dv2_conditioning_multi_view",
             category="model/conditioning/hunyuan 3d",
             inputs=tuple(
                 InputSpec(name, TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE), required=False)
@@ -63,7 +63,7 @@ class Hunyuan3Dv2ConditioningMultiView(Node):
                 OutputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Hunyuan3Dv2ConditioningMultiView")
 
     @classmethod
     def execute(
@@ -93,7 +93,7 @@ class VAEDecodeHunyuan3D(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VAEDecodeHunyuan3D",
+            node_type="dinkster.hunyuan.vae_decode_hunyuan3_d",
             display_name="Hunyuan 3D VAE Decode",
             category="model/latent/hunyuan 3d",
             inputs=(
@@ -116,7 +116,7 @@ class VAEDecodeHunyuan3D(Node):
             ),
             outputs=(OutputSpec("VOXEL", TypeExpr.concrete(VOXEL_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VAEDecodeHunyuan3D")
 
     @classmethod
     def execute(

@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_latent.audio_vae import VAEEncodeAudio
 
@@ -33,7 +33,7 @@ class LTXVAudioVAEEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVAudioVAEEncode",
+            node_type="dinkster.ltx.ltxv_audio_vae_encode",
             display_name="LTXV Audio VAE Encode",
             category="model/latent/ltxv",
             inputs=(
@@ -47,7 +47,7 @@ class LTXVAudioVAEEncode(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT, display_name="Audio Latent"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVAudioVAEEncode")
 
     @classmethod
     def execute(cls, *, audio: Any, audio_vae: Any) -> Mapping[str, object]:
@@ -58,7 +58,7 @@ class LTXVAudioVAEDecode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVAudioVAEDecode",
+            node_type="dinkster.ltx.ltxv_audio_vae_decode",
             display_name="LTXV Audio VAE Decode",
             category="model/latent/ltxv",
             inputs=(
@@ -72,7 +72,7 @@ class LTXVAudioVAEDecode(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO, display_name="Audio"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVAudioVAEDecode")
 
     @classmethod
     def execute(cls, *, samples: object, audio_vae: Any) -> Mapping[str, object]:
@@ -93,7 +93,7 @@ class LTXVEmptyLatentAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVEmptyLatentAudio",
+            node_type="dinkster.ltx.ltxv_empty_latent_audio",
             display_name="Empty LTXV Latent Audio",
             category="model/latent/ltxv",
             inputs=(
@@ -127,7 +127,7 @@ class LTXVEmptyLatentAudio(Node):
             ),
             outputs=(OutputSpec("LATENT", _LATENT, display_name="Latent"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVEmptyLatentAudio")
 
     @classmethod
     def execute(

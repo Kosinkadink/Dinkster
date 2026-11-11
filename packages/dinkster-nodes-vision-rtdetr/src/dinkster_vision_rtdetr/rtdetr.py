@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _COCO_CLASSES = (
@@ -115,7 +115,7 @@ class RTDETR_detect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RTDETR_detect",
+            node_type="dinkster.vision.rtdetr.rtdetr_detect",
             display_name="Run Real-Time Detection (RT-DETR)",
             category="image/detection",
             search_terms=("bbox", "bounding box", "object detection", "coco"),
@@ -150,7 +150,7 @@ class RTDETR_detect(Node):
             ),
             outputs=(OutputSpec("bboxes", _BBOX),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RTDETR_detect")
 
     @classmethod
     def execute(
@@ -196,7 +196,7 @@ class DrawBBoxes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="DrawBBoxes",
+            node_type="dinkster.vision.rtdetr.draw_b_boxes",
             display_name="Draw BBoxes",
             category="image/detection",
             search_terms=(
@@ -218,7 +218,7 @@ class DrawBBoxes(Node):
             ),
             outputs=(OutputSpec("out_image", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "DrawBBoxes")
 
     @classmethod
     def execute(cls, *, bboxes: Any, image: Any = None) -> Mapping[str, object]:

@@ -12,6 +12,7 @@ from dinkster_api.v1 import (
     AUDIO_TYPE,
     AssetRef,
     AssetWidget,
+    CustomWidgetDescriptor,
     InputSpec,
     LocalAssetRef,
     Node,
@@ -19,7 +20,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     SourceFilenameSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -30,7 +31,7 @@ class LoadAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadAudio",
+            node_type="dinkster.audio.load_audio",
             display_name="Load Audio",
             category="audio",
             search_terms=("import audio", "open audio", "audio file"),
@@ -46,7 +47,7 @@ class LoadAudio(Node):
             ),
             outputs=(OutputSpec("AUDIO", _AUDIO, preview=True),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadAudio")
 
     @classmethod
     def execute(cls, *, audio: object) -> Mapping[str, object]:
@@ -82,21 +83,27 @@ class RecordAudio(LoadAudio):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RecordAudio",
+            node_type="dinkster.audio.record_audio",
             display_name="Record Audio",
             category="audio",
             search_terms=("microphone input", "audio capture", "voice input"),
-            inputs=(InputSpec("audio", TypeExpr.concrete(AUDIO_RECORD_TYPE)),),
+            inputs=(
+                InputSpec(
+                    "audio",
+                    TypeExpr.concrete(AUDIO_RECORD_TYPE),
+                    widget=CustomWidgetDescriptor("AUDIO_RECORD"),
+                ),
+            ),
             outputs=(OutputSpec("AUDIO", _AUDIO),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RecordAudio")
 
 
 class PreviewAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PreviewAudio",
+            node_type="dinkster.audio.preview_audio",
             display_name="Preview Audio",
             category="audio",
             description="Preview the audio without saving it to the ComfyUI output directory.",
@@ -105,7 +112,7 @@ class PreviewAudio(Node):
             outputs=(OutputSpec("audio", _AUDIO, preview=True),),
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PreviewAudio")
 
     @classmethod
     def execute(cls, *, audio: object) -> Mapping[str, object]:

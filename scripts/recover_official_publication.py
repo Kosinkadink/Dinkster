@@ -26,8 +26,12 @@ def _pages(path: str, key: str) -> list[dict]:
     return [row for page in pages for row in page[key]]
 
 
-def recovery_inputs(root: Path, current_run: int) -> dict[str, str]:
+def recovery_inputs(
+    root: Path, current_run: int, *, packs: list[str] | None = None
+) -> dict[str, str]:
     """Reuse only complete source/lock production from an earlier interrupted main run."""
+    if packs == []:
+        return {}
     repository = "repos/Kosinkadink/Dinkster"
     runs = _pages(
         f"{repository}/actions/workflows/official-packs.yml/runs?branch=main&per_page=100",
@@ -118,14 +122,35 @@ def recovery_inputs(root: Path, current_run: int) -> dict[str, str]:
                     target = work / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(inputs.read(matches[0]))
+            engine_head = json.loads((work / "engine/release-manifest.json").read_bytes())["commit"]
+            if (
+                re.fullmatch(r"[0-9a-f]{40}", engine_head) is None
+                or subprocess.run(
+                    ["git", "-C", str(root), "merge-base", "--is-ancestor", engine_head, head],
+                    check=False,
+                ).returncode
+            ):
+                raise ValueError(
+                    "recovered engine commit must belong to the publication run's main"
+                )
             try:
-                validate_recovered_sources(root, work, head)
+                validate_recovered_sources(root, work, engine_head)
             except SupersededPublication as error:
                 print(f"publication run {run['id']}: continuation skipped; {error}")
                 continue
+            if packs is not None:
+                catalog = Lockfile.from_record_json(
+                    (work / "sources/official-packs.lock").read_text()
+                )
+                if {pack.pack for pack in catalog.packs} != set(packs):
+                    print(
+                        f"publication run {run['id']}: continuation skipped; "
+                        "recovered sources do not match missing public versions"
+                    )
+                    continue
         return {
             "recovery_run": str(run["id"]),
-            "recovery_head": head,
+            "recovery_head": engine_head,
             "recovery_artifact": str(source_artifact),
             "recovery_locks": ",".join(
                 str(a["id"]) for a in selected if a["name"].startswith("publication-locks-")
@@ -171,6 +196,7 @@ def validate_recovered_sources(root: Path, work: Path, head: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=int)
+    parser.add_argument("--packs", type=json.loads)
     parser.add_argument("--validate", type=Path)
     parser.add_argument("--head")
     args = parser.parse_args()
@@ -180,7 +206,7 @@ if __name__ == "__main__":
             parser.error("--validate requires --head")
         validate_recovered_sources(root, args.validate, args.head)
     elif args.run is not None:
-        outputs = recovery_inputs(root, args.run)
+        outputs = recovery_inputs(root, args.run, packs=args.packs)
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             for key, value in outputs.items():
                 output.write(f"{key}={value}\n")

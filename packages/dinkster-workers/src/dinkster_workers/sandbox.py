@@ -637,6 +637,7 @@ def build_probe_bwrap_command(
     bwrap: str = "bwrap",
     user_namespaces: bool = True,
     env_fd: int = 3,
+    source_roots: tuple[Path, ...] = (),
 ) -> list[str]:
     """Pure argv construction for the doctor's import-probe jail.
 
@@ -664,6 +665,8 @@ def build_probe_bwrap_command(
     if root in FORBIDDEN_BIND_ROOTS:
         raise SandboxError(f"probe root '{manifest_root}' would dissolve the sandbox")
     command.extend(["--ro-bind", root, root])
+    for path in _validated(tuple(str(path) for path in source_roots), role="probe dependency"):
+        command.extend(["--ro-bind", path, path])
 
     command.append("--clearenv")
     command.extend(["--dir", "/run", "--dir", "/run/dinkster"])
@@ -687,13 +690,21 @@ class ProbeJail:
     bwrap: str
     user_namespaces: bool
 
-    def wrap(self, argv: list[str], manifest_root: Path, *, env_fd: int = 3) -> list[str]:
+    def wrap(
+        self,
+        argv: list[str],
+        manifest_root: Path,
+        *,
+        env_fd: int = 3,
+        source_roots: tuple[Path, ...] = (),
+    ) -> list[str]:
         jailed = build_probe_bwrap_command(
             argv[0],
             manifest_root,
             bwrap=self.bwrap,
             user_namespaces=self.user_namespaces,
             env_fd=env_fd,
+            source_roots=source_roots,
         )
         jailed.extend([argv[0], "-c", _PROBE_RLIMIT_STUB, *argv[1:]])
         return jailed

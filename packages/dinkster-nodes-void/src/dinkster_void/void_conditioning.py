@@ -19,10 +19,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -44,7 +44,7 @@ class VOIDQuadmaskPreprocess(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VOIDQuadmaskPreprocess",
+            node_type="dinkster.void.void_quadmask_preprocess",
             display_name="VOID Quadmask Preprocessor",
             category="image/mask",
             inputs=(
@@ -59,7 +59,7 @@ class VOIDQuadmaskPreprocess(Node):
             ),
             outputs=(OutputSpec("quadmask", _MASK, display_name="quadmask"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VOIDQuadmaskPreprocess")
 
     @classmethod
     def execute(cls, *, mask: object, dilate_width: int = 0) -> Mapping[str, object]:
@@ -89,7 +89,7 @@ class VOIDInpaintConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VOIDInpaintConditioning",
+            node_type="dinkster.void.void_inpaint_conditioning",
             category="model/conditioning/void",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -139,7 +139,7 @@ class VOIDInpaintConditioning(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VOIDInpaintConditioning")
 
     @classmethod
     def execute(
@@ -216,14 +216,14 @@ class VOIDWarpedNoiseSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VOIDWarpedNoiseSource",
+            node_type="dinkster.void.void_warped_noise_source",
             category="model/latent/void",
             inputs=(
                 InputSpec("warped_noise", _LATENT, doc="Warped noise latent from VOIDWarpedNoise"),
             ),
             outputs=(OutputSpec("NOISE", TypeExpr.concrete(NOISE_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VOIDWarpedNoiseSource")
 
     @classmethod
     def execute(cls, *, warped_noise: object) -> Mapping[str, object]:

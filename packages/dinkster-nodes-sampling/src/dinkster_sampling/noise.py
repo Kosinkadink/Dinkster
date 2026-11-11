@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.sampling_boundary import to_public, to_runtime
 
@@ -85,9 +85,9 @@ class _EmptyNoise:
 class RandomNoise(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="RandomNoise",
+                node_type="dinkster.sampling.random_noise",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec(
@@ -98,7 +98,8 @@ class RandomNoise(Node):
                     ),
                 ),
                 outputs=(OutputSpec("NOISE", _NOISE),),
-            )
+            ),
+            "RandomNoise",
         )
 
     @classmethod
@@ -109,14 +110,15 @@ class RandomNoise(Node):
 class DisableNoise(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="DisableNoise",
+                node_type="dinkster.sampling.disable_noise",
                 search_terms=("zero noise",),
                 category=_CATEGORY,
                 inputs=(),
                 outputs=(OutputSpec("NOISE", _NOISE),),
-            )
+            ),
+            "DisableNoise",
         )
 
     @classmethod
@@ -127,9 +129,9 @@ class DisableNoise(Node):
 class AddNoise(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="AddNoise",
+                node_type="dinkster.sampling.add_noise",
                 category=_CATEGORY,
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -138,7 +140,8 @@ class AddNoise(Node):
                     InputSpec("latent_image", _LATENT),
                 ),
                 outputs=(OutputSpec("LATENT", _LATENT),),
-            )
+            ),
+            "AddNoise",
         )
 
     @classmethod

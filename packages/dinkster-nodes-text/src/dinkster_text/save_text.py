@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     attach_saved_artifact,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -50,7 +50,7 @@ class SaveText(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SaveText",
+            node_type="dinkster.text.save_text",
             display_name="Save Text",
             category="text",
             description="Save text content to a file in the output directory.",
@@ -81,7 +81,7 @@ class SaveText(Node):
             idempotent=False,
             output_node=True,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SaveText")
 
     @classmethod
     def execute(

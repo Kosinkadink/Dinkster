@@ -27,9 +27,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -81,7 +81,7 @@ class TextEncodeQwenImageEdit(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeQwenImageEdit",
+            node_type="dinkster.qwen.text_encode_qwen_image_edit",
             display_name="Text Encode Qwen Image Edit",
             category="model/conditioning/qwen image",
             inputs=(
@@ -92,7 +92,7 @@ class TextEncodeQwenImageEdit(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeQwenImageEdit")
 
     @classmethod
     def execute(
@@ -125,7 +125,7 @@ class TextEncodeQwenImageEditPlus(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeQwenImageEditPlus",
+            node_type="dinkster.qwen.text_encode_qwen_image_edit_plus",
             display_name="Text Encode Qwen Image Edit Plus",
             category="model/conditioning/qwen image",
             inputs=(
@@ -136,7 +136,7 @@ class TextEncodeQwenImageEditPlus(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeQwenImageEditPlus")
 
     @classmethod
     def execute(
@@ -174,7 +174,7 @@ class TextEncodeQwenImage21(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeQwenImage21",
+            node_type="dinkster.qwen.text_encode_qwen_image21",
             display_name="Text Encode Qwen Image 2.1",
             category="model/conditioning/qwen image",
             inputs=(
@@ -201,7 +201,7 @@ class TextEncodeQwenImage21(Node):
             ),
             input_order=("clip", "prompt", "negative_prompt", "vae", "resolution", "images"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeQwenImage21")
 
     @classmethod
     def execute(
@@ -266,7 +266,7 @@ class QwenImage21Cache(Node):
     def define_schema(cls) -> NodeSchema:
         combo = TypeExpr.concrete(CORE_COMBO)
         schema = NodeSchema(
-            node_type="QwenImage21Cache",
+            node_type="dinkster.qwen.qwen_image21_cache",
             display_name="Qwen Image 2.1 Cache",
             category="model/conditioning/qwen image",
             inputs=(
@@ -288,7 +288,7 @@ class QwenImage21Cache(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "QwenImage21Cache")
 
     @classmethod
     def execute(cls, *, model: Any, device: str, dtype: str) -> Mapping[str, object]:

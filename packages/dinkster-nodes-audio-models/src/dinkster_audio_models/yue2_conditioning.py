@@ -21,8 +21,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _CATEGORY = "model/conditioning/yue2"
@@ -50,7 +50,7 @@ class YuE2GenerateABC(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="YuE2GenerateABC",
+            node_type="dinkster.audio.models.yu_e2_generate_abc",
             display_name="YuE2 Generate ABC",
             category=_CATEGORY,
             description=(
@@ -121,7 +121,7 @@ class YuE2GenerateABC(Node):
             ),
             outputs=(OutputSpec("abc", _STRING, display_name="abc"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "YuE2GenerateABC")
 
     @classmethod
     def execute(
@@ -164,7 +164,7 @@ class YuE2GenerateMusic(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="YuE2GenerateMusic",
+            node_type="dinkster.audio.models.yu_e2_generate_music",
             display_name="YuE2 Generate Music",
             category=_CATEGORY,
             description=(
@@ -257,7 +257,7 @@ class YuE2GenerateMusic(Node):
                 OutputSpec("seconds", _FLOAT, display_name="seconds"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "YuE2GenerateMusic")
 
     @classmethod
     def execute(

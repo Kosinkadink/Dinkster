@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -24,9 +24,9 @@ _MODEL = TypeExpr.concrete(MODEL_TYPE)
 class ScaleROPE(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ScaleROPE",
+                node_type="dinkster.models.scale_rope",
                 category="model/patch",
                 description="Scale and shift the ROPE of the model.",
                 inputs=(
@@ -54,7 +54,8 @@ class ScaleROPE(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "ScaleROPE",
         )
 
     @classmethod
@@ -77,9 +78,9 @@ class ScaleROPE(Node):
 class DifferentialDiffusion(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="DifferentialDiffusion",
+                node_type="dinkster.models.differential_diffusion",
                 display_name="Differential Diffusion",
                 category="experimental",
                 search_terms=("inpaint gradient", "variable denoise strength"),
@@ -94,7 +95,8 @@ class DifferentialDiffusion(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "DifferentialDiffusion",
         )
 
     @classmethod

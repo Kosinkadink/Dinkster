@@ -119,7 +119,7 @@ def write_manifest(tmp_path: Path) -> Path:
 def write_reserved_manifest(tmp_path: Path) -> Path:
     manifest = write_manifest(tmp_path)
     with manifest.open("a") as stream:
-        stream.write('reservations = "dinkster_native.memory:plan_reservations"\n')
+        stream.write('reservations = "dinkster_workers.reservations:plan_reservations"\n')
     return manifest
 
 

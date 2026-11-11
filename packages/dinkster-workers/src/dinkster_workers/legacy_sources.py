@@ -1,4 +1,4 @@
-"""Convert legacy torch checkpoints at the compat boundary.
+"""Convert legacy torch checkpoints at the worker boundary.
 
 Dinkster's core inference packages remain safetensors-only. This module mirrors
 the safe-loading intent of ComfyUI ``comfy/utils.py:110-155`` at pinned commit

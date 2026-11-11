@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -28,7 +28,7 @@ class CLIPTextEncodePixArtAlpha(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodePixArtAlpha",
+            node_type="dinkster.misc.models.clip_text_encode_pix_art_alpha",
             display_name="CLIP Text Encode (PixArt Alpha)",
             category="model/conditioning/pixart",
             search_terms=("pixart prompt",),
@@ -58,7 +58,7 @@ class CLIPTextEncodePixArtAlpha(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodePixArtAlpha")
 
     @classmethod
     def execute(cls, *, clip: Any, width: int, height: int, text: str) -> Mapping[str, object]:
@@ -81,7 +81,7 @@ class CLIPTextEncodeLumina2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeLumina2",
+            node_type="dinkster.misc.models.clip_text_encode_lumina2",
             display_name="CLIP Text Encode (Lumina 2)",
             category="model/conditioning/lumina",
             search_terms=("lumina prompt",),
@@ -104,7 +104,7 @@ class CLIPTextEncodeLumina2(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeLumina2")
 
     @classmethod
     def execute(cls, *, clip: Any, user_prompt: str, system_prompt: str) -> Mapping[str, object]:
@@ -122,7 +122,7 @@ class CLIPTextEncodeKandinsky5(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CLIPTextEncodeKandinsky5",
+            node_type="dinkster.misc.models.clip_text_encode_kandinsky5",
             display_name="CLIP Text Encode (Kandinsky 5)",
             category="model/conditioning/kandinsky",
             search_terms=("kandinsky prompt",),
@@ -139,7 +139,7 @@ class CLIPTextEncodeKandinsky5(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CLIPTextEncodeKandinsky5")
 
     @classmethod
     def execute(cls, *, clip: Any, clip_l: str, qwen25_7b: str) -> Mapping[str, object]:

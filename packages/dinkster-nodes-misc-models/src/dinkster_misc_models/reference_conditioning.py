@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -29,7 +29,7 @@ class InstructPixToPixConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="InstructPixToPixConditioning",
+            node_type="dinkster.misc.models.instruct_pix_to_pix_conditioning",
             category="model/conditioning/instructpix2pix",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -43,7 +43,7 @@ class InstructPixToPixConditioning(Node):
                 OutputSpec("latent", _LATENT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "InstructPixToPixConditioning")
 
     @classmethod
     def execute(

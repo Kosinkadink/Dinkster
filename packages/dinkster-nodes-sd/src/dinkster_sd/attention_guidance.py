@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_sampling.attention_guidance import SkipLayerGuidanceDiT
 
@@ -31,7 +31,7 @@ class SkipLayerGuidanceSD3(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SkipLayerGuidanceSD3",
+            node_type="dinkster.sd.skip_layer_guidance_sd3",
             category="advanced/guidance",
             description=(
                 "Generic version of SkipLayerGuidance node that can be used on every DiT model."
@@ -65,7 +65,7 @@ class SkipLayerGuidanceSD3(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SkipLayerGuidanceSD3")
 
     @classmethod
     def execute(

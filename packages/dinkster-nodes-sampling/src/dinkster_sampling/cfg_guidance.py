@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
@@ -37,13 +37,14 @@ def optimized_scale(positive: Any, negative: Any) -> Any:
 class CFGZeroStar(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CFGZeroStar",
+                node_type="dinkster.sampling.cfg_zero_star",
                 category="advanced/guidance",
                 inputs=(InputSpec("model", _MODEL),),
                 outputs=(OutputSpec("MODEL", _MODEL, display_name="patched_model"),),
-            )
+            ),
+            "CFGZeroStar",
         )
 
     @classmethod
@@ -67,9 +68,9 @@ class CFGZeroStar(Node):
 class CFGNorm(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="CFGNorm",
+                node_type="dinkster.sampling.cfg_norm",
                 category="advanced/guidance",
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -84,7 +85,8 @@ class CFGNorm(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL, display_name="patched_model"),),
-            )
+            ),
+            "CFGNorm",
         )
 
     @classmethod
@@ -136,9 +138,9 @@ def _project(value: Any, direction: Any) -> tuple[Any, Any]:
 class APG(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="APG",
+                node_type="dinkster.sampling.apg",
                 display_name="Adaptive Projected Guidance",
                 category="model/sampling/custom",
                 inputs=(
@@ -166,7 +168,8 @@ class APG(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "APG",
         )
 
     @classmethod
@@ -230,14 +233,15 @@ def score_tangential_damping(cond_score: Any, uncond_score: Any) -> Any:
 class TCFG(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="TCFG",
+                node_type="dinkster.sampling.tcfg",
                 display_name="Tangential Damping CFG",
                 category="advanced/guidance",
                 inputs=(InputSpec("model", _MODEL),),
                 outputs=(OutputSpec("MODEL", _MODEL, display_name="patched_model"),),
-            )
+            ),
+            "TCFG",
         )
 
     @classmethod
@@ -259,9 +263,9 @@ class TCFG(Node):
 class Mahiro(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="Mahiro",
+                node_type="dinkster.sampling.mahiro",
                 display_name="Positive-Biased Guidance",
                 category="experimental",
                 inputs=(InputSpec("model", _MODEL),),
@@ -272,7 +276,8 @@ class Mahiro(Node):
                     "similarity-adaptive guidance",
                     "positive-biased cfg",
                 ),
-            )
+            ),
+            "Mahiro",
         )
 
     @classmethod
@@ -303,9 +308,9 @@ class Mahiro(Node):
 class NAGuidance(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="NAGuidance",
+                node_type="dinkster.sampling.na_guidance",
                 display_name="Normalized Attention Guidance",
                 category="advanced/guidance",
                 inputs=(
@@ -330,7 +335,8 @@ class NAGuidance(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "NAGuidance",
         )
 
     @classmethod
@@ -378,9 +384,9 @@ class NAGuidance(Node):
 class RenormCFG(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="RenormCFG",
+                node_type="dinkster.sampling.renorm_cfg",
                 category="model/patch",
                 inputs=(
                     InputSpec("model", _MODEL),
@@ -400,7 +406,8 @@ class RenormCFG(Node):
                     ),
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
-            )
+            ),
+            "RenormCFG",
         )
 
     @classmethod

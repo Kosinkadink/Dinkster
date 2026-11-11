@@ -23,7 +23,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _BLEND_MODES = (
@@ -64,7 +64,7 @@ class AddLayer(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "AddLayer",
+            "dinkster.image.add_layer",
             display_name="Add Layer",
             category="image",
             inputs=(
@@ -186,7 +186,7 @@ class AddLayer(Node):
                 OutputSpec("LAYERS", _LAYERS, doc="The layer stack with this layer appended."),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "AddLayer")
 
     @classmethod
     def execute(

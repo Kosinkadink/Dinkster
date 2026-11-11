@@ -28,9 +28,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import (
     conditioning_set_values,
@@ -52,7 +52,7 @@ class MOSSImageLayoutPrompt(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MOSSImageLayoutPrompt",
+            node_type="dinkster.misc.models.moss_image_layout_prompt",
             display_name="MOSS-Image Layout Prompt",
             category="model/conditioning/moss_image",
             description=(
@@ -82,7 +82,7 @@ class MOSSImageLayoutPrompt(Node):
             ),
             outputs=(OutputSpec("prompt", _STRING, display_name="prompt"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MOSSImageLayoutPrompt")
 
     @classmethod
     def execute(
@@ -125,7 +125,7 @@ class MOSSImageControl(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MOSSImageControl",
+            node_type="dinkster.misc.models.moss_image_control",
             display_name="MOSS-Image Color/Depth Control",
             category="model/conditioning/moss_image",
             description=(
@@ -184,7 +184,7 @@ class MOSSImageControl(Node):
                 OutputSpec("negative", _CONDITIONING, display_name="negative"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MOSSImageControl")
 
     @classmethod
     def execute(
@@ -239,7 +239,7 @@ class TextEncodeMOSSImageEdit(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeMOSSImageEdit",
+            node_type="dinkster.misc.models.text_encode_moss_image_edit",
             display_name="Text Encode MOSS-Image Edit",
             category="model/conditioning/moss_image",
             description=(
@@ -271,7 +271,7 @@ class TextEncodeMOSSImageEdit(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeMOSSImageEdit")
 
     @classmethod
     def execute(

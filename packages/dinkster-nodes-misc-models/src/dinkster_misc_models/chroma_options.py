@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -32,7 +32,7 @@ class ChromaRadianceOptions(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ChromaRadianceOptions",
+            node_type="dinkster.misc.models.chroma_radiance_options",
             category="model/patch/chroma radiance",
             description="Allows setting advanced options for the Chroma Radiance model.",
             inputs=(
@@ -90,7 +90,7 @@ class ChromaRadianceOptions(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ChromaRadianceOptions")
 
     @classmethod
     def execute(

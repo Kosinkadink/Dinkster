@@ -26,8 +26,8 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     attach_saved_artifact,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -39,9 +39,9 @@ _STRING = TypeExpr.concrete(CORE_STRING)
 class ConditioningLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="ConditioningLoader",
+                node_type="dinkster.conditioning.conditioning_loader",
                 display_name="Load Conditioning",
                 category="model/loaders",
                 description="Loads a conditioning saved with Save Conditioning, or any safetensors "
@@ -56,7 +56,8 @@ class ConditioningLoader(Node):
                     ),
                 ),
                 outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
-            )
+            ),
+            "ConditioningLoader",
         )
 
     @classmethod
@@ -85,9 +86,9 @@ class ConditioningLoader(Node):
 class SaveConditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SaveConditioning",
+                node_type="dinkster.conditioning.save_conditioning",
                 display_name="Save Conditioning",
                 category="model/conditioning",
                 description="Saves a conditioning to the output folder as safetensors; "
@@ -119,7 +120,8 @@ class SaveConditioning(Node):
                 outputs=(OutputSpec("conditioning", _CONDITIONING),),
                 output_node=True,
                 idempotent=False,
-            )
+            ),
+            "SaveConditioning",
         )
 
     @classmethod

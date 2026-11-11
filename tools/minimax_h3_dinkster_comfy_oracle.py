@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 COMFYUI_REVISION = "4ef23c34d950eecc37040a21ee1741a49d2e44b1"
 PROMPT = "A lighthouse flashes across a calm sea."
 SEED = 459
@@ -136,29 +139,26 @@ class _Resolver:
 
 def _run_worker(paths: dict[str, Path]) -> dict[str, object]:
     from dinkster_assets import AssetRef, digest_file
-    from dinkster_native.fork_nodes import (
-        GenerationKSampler,
-        GenerationLoadDiffusionModel,
-        GenerationVAEDecode,
-        NativeLoadClip,
-        NativeLoadVae,
-        NativeMiniMaxH3ImageToVideo,
-        NativeVAEDecodeAudio,
-    )
+    from dinkster_latent.audio_vae import VAEDecodeAudio
+    from dinkster_latent.vae import VAEDecode
+    from dinkster_minimax.minimax_h3_latent import MiniMaxH3ImageToVideo
+    from dinkster_models.model_file_loaders import CLIPLoader, UNETLoader
+    from dinkster_pack_helpers.sampling_boundary import to_runtime
+    from dinkster_sampling.standard_sampling import KSampler
+
+    from tools.inference_artifacts import load_vae
 
     def asset(path: Path) -> AssetRef:
         return AssetRef(digest_file(path), path.name, path.stat().st_size, resolver=_Resolver(path))
 
     torch = cast("Any", importlib.import_module("torch"))
-    model = GenerationLoadDiffusionModel.execute(
-        diffusion_model=asset(paths["diffusion"]), weight_dtype="default"
-    )["model"]
-    clip = NativeLoadClip.execute(
-        text_encoder=asset(paths["text_encoder"]), type="minimax", device="default"
-    )["clip"]
-    vae = NativeLoadVae.execute(vae=asset(paths["video_vae"]))["vae"]
-    audio_vae = NativeLoadVae.execute(vae=asset(paths["audio_vae"]))["vae"]
-    conditioned = NativeMiniMaxH3ImageToVideo.execute(
+    model = UNETLoader.execute(unet_name=asset(paths["diffusion"]), weight_dtype="default")["MODEL"]
+    clip = CLIPLoader.execute(
+        clip_name=asset(paths["text_encoder"]), type="minimax", device="default"
+    )["CLIP"]
+    vae = load_vae(asset(paths["video_vae"]))
+    audio_vae = load_vae(asset(paths["audio_vae"]))
+    conditioned = MiniMaxH3ImageToVideo.execute(
         clip=clip,
         vae=vae,
         prompt=PROMPT,
@@ -168,7 +168,7 @@ def _run_worker(paths: dict[str, Path]) -> dict[str, object]:
     )
     sampled = cast(
         "dict[str, Any]",
-        GenerationKSampler.execute(
+        KSampler.execute(
             model=model,
             seed=SEED,
             steps=STEPS,
@@ -177,13 +177,14 @@ def _run_worker(paths: dict[str, Path]) -> dict[str, object]:
             scheduler="simple",
             positive=conditioned["positive"],
             negative=[],
-            latent_image=conditioned["latent"],
+            latent_image=conditioned["LATENT"],
             denoise=1.0,
-        )["latent"],
+        )["LATENT"],
     )
-    video = GenerationVAEDecode.execute(samples=sampled, vae=vae)["image"]
+    decode_samples = {**sampled, "samples": to_runtime(sampled["samples"])}
+    video = VAEDecode.execute(samples=decode_samples, vae=vae)["IMAGE"]
     audio = cast(
-        "dict[str, Any]", NativeVAEDecodeAudio.execute(samples=sampled, vae=audio_vae)["audio"]
+        "dict[str, Any]", VAEDecodeAudio.execute(samples=decode_samples, vae=audio_vae)["AUDIO"]
     )["waveform"]
     return {
         "latent": _hash_latent(sampled["samples"]),

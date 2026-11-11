@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_misc_models.lotus import LotusConditioning
 
@@ -65,7 +65,7 @@ class SDPoseKeypointExtractor(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SDPoseKeypointExtractor",
+            node_type="dinkster.vision.sdpose.sd_pose_keypoint_extractor",
             display_name="SDPose Keypoint Extractor",
             category="image/detection",
             search_terms=("openpose", "pose detection", "preprocessor", "keypoints", "sdpose"),
@@ -101,7 +101,7 @@ class SDPoseKeypointExtractor(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SDPoseKeypointExtractor")
 
     @classmethod
     def execute(

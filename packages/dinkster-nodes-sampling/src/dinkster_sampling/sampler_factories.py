@@ -20,8 +20,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -139,7 +139,7 @@ def _schema(
 ) -> NodeSchema:
     return NodeSchema(
         node_type=node_type,
-        display_name=display_name or node_type,
+        display_name=display_name,
         category=_CATEGORY,
         inputs=inputs,
         outputs=(OutputSpec("SAMPLER", _SAMPLER),),
@@ -151,11 +151,12 @@ def _schema(
 class KSamplerSelect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "KSamplerSelect",
+                "dinkster.sampling.k_sampler_select",
                 (InputSpec("sampler_name", _COMBO, widget=ComboWidget(options=SAMPLER_NAMES)),),
-            )
+            ),
+            "KSamplerSelect",
         )
 
     @classmethod
@@ -166,14 +167,15 @@ class KSamplerSelect(Node):
 class SamplerEulerAncestral(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerEulerAncestral",
+                "dinkster.sampling.sampler_euler_ancestral",
                 (
                     _float("eta", 1.0, 100.0, advanced=True),
                     _float("s_noise", 1.0, 100.0, advanced=True),
                 ),
-            )
+            ),
+            "SamplerEulerAncestral",
         )
 
     @classmethod
@@ -186,12 +188,13 @@ class SamplerEulerAncestral(Node):
 class SamplerEulerAncestralCFGPP(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerEulerAncestralCFGPP",
+                "dinkster.sampling.sampler_euler_ancestral_cfgpp",
                 (_float("eta", 1.0, 1.0), _float("s_noise", 1.0, 10.0)),
                 display_name="SamplerEulerAncestralCFG++",
-            )
+            ),
+            "SamplerEulerAncestralCFGPP",
         )
 
     @classmethod
@@ -204,15 +207,16 @@ class SamplerEulerAncestralCFGPP(Node):
 class SamplerLMS(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerLMS",
+                "dinkster.sampling.sampler_lms",
                 (
                     InputSpec(
                         "order", _INT, default=4, advanced=True, widget=NumberWidget(min=1, max=100)
                     ),
                 ),
-            )
+            ),
+            "SamplerLMS",
         )
 
     @classmethod
@@ -223,9 +227,9 @@ class SamplerLMS(Node):
 class SamplerDPMPP_3M_SDE(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerDPMPP_3M_SDE",
+                "dinkster.sampling.sampler_dpmpp_3_m_sde",
                 (
                     _float("eta", 1.0, 100.0, advanced=True),
                     _float("s_noise", 1.0, 100.0, advanced=True),
@@ -236,7 +240,8 @@ class SamplerDPMPP_3M_SDE(Node):
                         widget=ComboWidget(options=("gpu", "cpu")),
                     ),
                 ),
-            )
+            ),
+            "SamplerDPMPP_3M_SDE",
         )
 
     @classmethod
@@ -248,9 +253,9 @@ class SamplerDPMPP_3M_SDE(Node):
 class SamplerDPMPP_2M_SDE(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerDPMPP_2M_SDE",
+                "dinkster.sampling.sampler_dpmpp_2_m_sde",
                 (
                     InputSpec(
                         "solver_type", _COMBO, widget=ComboWidget(options=("midpoint", "heun"))
@@ -264,7 +269,8 @@ class SamplerDPMPP_2M_SDE(Node):
                         widget=ComboWidget(options=("gpu", "cpu")),
                     ),
                 ),
-            )
+            ),
+            "SamplerDPMPP_2M_SDE",
         )
 
     @classmethod
@@ -282,9 +288,9 @@ class SamplerDPMPP_2M_SDE(Node):
 class SamplerDPMPP_SDE(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerDPMPP_SDE",
+                "dinkster.sampling.sampler_dpmpp_sde",
                 (
                     _float("eta", 1.0, 100.0, advanced=True),
                     _float("s_noise", 1.0, 100.0, advanced=True),
@@ -296,7 +302,8 @@ class SamplerDPMPP_SDE(Node):
                         widget=ComboWidget(options=("gpu", "cpu")),
                     ),
                 ),
-            )
+            ),
+            "SamplerDPMPP_SDE",
         )
 
     @classmethod
@@ -312,11 +319,12 @@ class SamplerDPMPP_SDE(Node):
 class SamplerDPMPP_2S_Ancestral(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerDPMPP_2S_Ancestral",
+                "dinkster.sampling.sampler_dpmpp_2_s_ancestral",
                 (_float("eta", 1.0, 100.0), _float("s_noise", 1.0, 100.0)),
-            )
+            ),
+            "SamplerDPMPP_2S_Ancestral",
         )
 
     @classmethod
@@ -329,9 +337,9 @@ class SamplerDPMPP_2S_Ancestral(Node):
 class SamplerDPMAdaptative(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerDPMAdaptative",
+                "dinkster.sampling.sampler_dpm_adaptative",
                 (
                     InputSpec(
                         "order", _INT, default=3, advanced=True, widget=NumberWidget(min=2, max=3)
@@ -346,7 +354,8 @@ class SamplerDPMAdaptative(Node):
                     _float("eta", 0.0, 100.0, advanced=True),
                     _float("s_noise", 1.0, 100.0, advanced=True),
                 ),
-            )
+            ),
+            "SamplerDPMAdaptative",
         )
 
     @classmethod
@@ -386,9 +395,9 @@ class SamplerDPMAdaptative(Node):
 class SamplerER_SDE(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerER_SDE",
+                "dinkster.sampling.sampler_er_sde",
                 (
                     InputSpec(
                         "solver_type",
@@ -416,7 +425,8 @@ class SamplerER_SDE(Node):
                     ),
                     _float("s_noise", 1.0, 100.0, advanced=True),
                 ),
-            )
+            ),
+            "SamplerER_SDE",
         )
 
     @classmethod
@@ -457,9 +467,9 @@ class SamplerER_SDE(Node):
 class SamplerSASolver(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerSASolver",
+                "dinkster.sampling.sampler_sa_solver",
                 (
                     InputSpec("model", _MODEL),
                     _float("eta", 1.0, 10.0, advanced=True),
@@ -484,7 +494,8 @@ class SamplerSASolver(Node):
                     InputSpec("simple_order_2", _BOOLEAN, advanced=True),
                 ),
                 search_terms=("sde",),
-            )
+            ),
+            "SamplerSASolver",
         )
 
     @classmethod
@@ -525,9 +536,9 @@ class SamplerSASolver(Node):
 class SamplerSEEDS2(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SamplerSEEDS2",
+                "dinkster.sampling.sampler_seeds2",
                 (
                     InputSpec(
                         "solver_type", _COMBO, widget=ComboWidget(options=("phi_1", "phi_2"))
@@ -553,7 +564,8 @@ class SamplerSEEDS2(Node):
                     "exp_heun_2_x0_sde\n"
                     "- solver_type=phi_2, r=1.0, eta=1.0, s_noise=1.0"
                 ),
-            )
+            ),
+            "SamplerSEEDS2",
         )
 
     @classmethod

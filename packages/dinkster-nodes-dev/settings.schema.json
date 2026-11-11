@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["showTips"],
+  "properties": {
+    "showTips": {
+      "type": "boolean",
+      "title": "Show example tips",
+      "description": "An example stored pack preference; it does not change node execution.",
+      "default": true
+    }
+  }
+}

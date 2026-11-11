@@ -3160,6 +3160,8 @@ def test_cli_git_install_and_update(tmp_path: Path, capsys: pytest.CaptureFixtur
     run_cli("--root", root, "install", "--no-venv", "--yes", f"git+{url}")
     out = capsys.readouterr().out
     assert "add: demo" in out and "activated generation 1" in out
+    assert "development: local/git sources are not reviewed by the registry" in out
+    assert "not reproducible from ranges" in out
     installer = Installer(Path(root))
     lockfile = installer.current_lockfile()
     assert lockfile is not None
@@ -3441,6 +3443,56 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
         assert requests == [("/static/packs/index.json", None)] + (
             [("/static/packs/demo/index.json", None)] if schema == 2 else []
         )
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("engine", "current"),
+    [
+        ("0.0.2", False),
+        ("0.0.3.dev217+ga990932e", False),
+        ("0.0.3.dev999999", False),
+        ("0.0.3rc1", False),
+        ("0.0.3", True),
+        ("0.0.4.dev1+g1234567", True),
+    ],
+)
+def test_registry_keeps_older_engines_on_compatible_pack_versions(
+    engine: str, current: bool
+) -> None:
+    from dinkster_workers import load_manifest
+
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    manifest = load_manifest(Path("packages/dinkster-nodes-flux/dinkster-pack.toml"))
+    assert manifest.compatibility is not None
+    versions = (
+        ("0.0.2", ">=0.0.2.dev0,<0.1"),
+        (manifest.compatibility.version, manifest.compatibility.engine),
+    )
+    rows = [
+        {
+            **_static_release(
+                LockedPack(manifest.name, version, "blake3:" + f"{index:064x}", "dinkster", ()),
+                b"wheel",
+            ),
+            "engine": bounds,
+        }
+        for index, (version, bounds) in enumerate(versions, start=1)
+    ]
+    server = _serve_artifacts(
+        {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}, []
+    )
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        selected = resolve_compatible_release(registry, manifest.name, "0.0.2", engine)
+        assert selected.version == (manifest.compatibility.version if current else "0.0.2")
+        if not current:
+            with pytest.raises(InstallError, match=manifest.name):
+                resolve_compatible_release(
+                    registry, manifest.name, manifest.compatibility.version, engine
+                )
     finally:
         server.shutdown()
 

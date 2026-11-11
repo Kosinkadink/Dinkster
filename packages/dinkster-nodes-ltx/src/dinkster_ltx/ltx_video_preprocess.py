@@ -14,9 +14,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -72,7 +72,7 @@ class LTXVPreprocess(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVPreprocess",
+            node_type="dinkster.ltx.ltxv_preprocess",
             display_name="LTXV Preprocess",
             category="video/preprocessors",
             inputs=(
@@ -87,7 +87,7 @@ class LTXVPreprocess(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE, display_name="output_image"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVPreprocess")
 
     @classmethod
     def execute(cls, *, image: object, img_compression: int) -> Mapping[str, object]:

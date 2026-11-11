@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _ASPECT_RATIOS = {
@@ -43,7 +43,7 @@ class ColorToRGBInt(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "ColorToRGBInt",
+            "dinkster.utilities.color_to_rgb_int",
             display_name="Color Picker",
             category="utilities",
             description="Return a color RGB integer value and hexadecimal representation.",
@@ -54,7 +54,7 @@ class ColorToRGBInt(Node):
                 OutputSpec("alpha", _FLOAT),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ColorToRGBInt")
 
     @classmethod
     def execute(cls, *, color: str) -> Mapping[str, object]:
@@ -79,7 +79,7 @@ class ResolutionSelector(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            "ResolutionSelector",
+            "dinkster.utilities.resolution_selector",
             display_name="Resolution Selector",
             category="utilities",
             description=(
@@ -138,7 +138,7 @@ class ResolutionSelector(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ResolutionSelector")
 
     @classmethod
     def execute(
