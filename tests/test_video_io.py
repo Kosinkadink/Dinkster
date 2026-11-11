@@ -29,6 +29,8 @@ from dinkster_video.video_load import LoadVideo
 from dinkster_video.webm_save import EncodedVideoSpool
 from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
 
+from tests.test_video_diagnostics import _mount
+
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 
@@ -48,31 +50,6 @@ def _audio(samples: int = 16_000, sample_rate: int = 16_000) -> dict[str, object
     timeline = np.arange(samples, dtype=np.float32) / sample_rate
     waveform = np.sin(2 * np.pi * 440 * timeline, dtype=np.float32)[None, None, :]
     return {"waveform": waveform, "sample_rate": sample_rate}
-
-
-def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "out"
-    root.mkdir()
-    index = root / ".dinkster-asset-index.json"
-    index.write_text("{}", "utf-8")
-    snapshot = tmp_path / "mounts.json"
-    snapshot.write_text(
-        json.dumps(
-            {
-                "mounts": [
-                    {
-                        "id": "comfy-output",
-                        "root": str(root),
-                        "index": str(index),
-                        "mode": "readwrite",
-                    }
-                ]
-            }
-        ),
-        "utf-8",
-    )
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    return root, snapshot
 
 
 def _bound(ref: AssetRef, snapshot: Path) -> AssetRef:
