@@ -1278,7 +1278,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-image"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "packages/dinkster-nodes-image" }
 dependencies = [
     { name = "av" },

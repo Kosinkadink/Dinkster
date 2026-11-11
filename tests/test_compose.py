@@ -407,6 +407,71 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     return pool
 
 
+@pytest.mark.parametrize(
+    "compositor_value, width",
+    [
+        ({"version": 2, "documentDigest": None, "commands": []}, 7),
+        ({}, 7),
+        (None, 7),
+        (
+            {
+                "version": 2,
+                "documentDigest": None,
+                "commands": [{"op": "canvas", "changes": {"width": 5}}],
+            },
+            5,
+        ),
+    ],
+)
+def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta(
+    compositor_value: object, width: int
+) -> None:
+    import numpy as np
+
+    async def scenario() -> None:
+        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
+        assert not image.in_process
+        assert prepare_catalog(image.manifest, environment=os.environ).ok
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(image)
+            assert composer._records["dinkster-image"].worker.cold
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "image": GraphNode(
+                            "dinkster.image.empty_image",
+                            {"width": 7, "height": 3, "batch_size": 1, "color": 0x123456},
+                        ),
+                        "layer": GraphNode(
+                            "dinkster.image.add_layer", {"image": Link("image", "IMAGE")}
+                        ),
+                        "compose": GraphNode(
+                            "dinkster.image.image_compositor",
+                            {
+                                "layers": Link("layer", "LAYERS"),
+                                **(
+                                    {"compositor": compositor_value}
+                                    if compositor_value is not None
+                                    else {}
+                                ),
+                            },
+                        ),
+                    }
+                ),
+                ["compose"],
+            )
+            pixels = np.asarray(image_input(result.outputs["compose"]["IMAGE"].resolve()))
+            assert pixels.shape == (1, 3, width, 3)
+            expected = np.broadcast_to(np.asarray([0x12, 0x34, 0x56]), pixels.shape)
+            np.testing.assert_array_equal(np.rint(pixels * 255).astype(np.uint8), expected)
+            assert result.diagnostics == ()
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 def test_lazy_image_pack_resolves_assets_after_host_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -924,7 +989,7 @@ def test_compose_serving_default_resolution_is_atomic(
     ("pack_id", "directory", "expected_version"),
     [
         ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.6"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.7"),
         ("dinkster-audio", "dinkster-nodes-audio", "0.0.4"),
         ("dinkster-3d", "dinkster-nodes-3d", "0.0.4"),
         ("dinkster-models", "dinkster-nodes-models", "0.0.5"),
