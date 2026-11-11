@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _COMBO = TypeExpr.concrete(CORE_COMBO)
@@ -183,7 +183,7 @@ class ImageSDRToHDR(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageSDRToHDR",
+            node_type="dinkster.image.image_sdr_to_hdr",
             display_name="Convert SDR to HDR",
             category="image/color",
             description=(
@@ -221,7 +221,7 @@ class ImageSDRToHDR(Node):
             outputs=(OutputSpec("IMAGE", _IMAGE),),
             input_order=("image", "algorithm"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageSDRToHDR")
 
     @classmethod
     def execute(cls, *, image: Any, algorithm: str, **inputs: Any) -> Mapping[str, object]:
@@ -250,7 +250,7 @@ class ImageColorSpace(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageColorSpace",
+            node_type="dinkster.image.image_color_space",
             display_name="Convert Image Color Space",
             category="image/color",
             description=(
@@ -265,7 +265,7 @@ class ImageColorSpace(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageColorSpace")
 
     @classmethod
     def execute(cls, *, image: Any, source: str, destination: str) -> Mapping[str, object]:

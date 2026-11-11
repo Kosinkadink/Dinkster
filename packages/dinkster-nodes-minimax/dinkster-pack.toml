@@ -1,14 +1,10 @@
 [pack]
 name = "dinkster-minimax"
-version = "0.0.4"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.5"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.minimax"]
 requires = ["torch", "dinkster-inference==0.1.1", "dinkster-pack-helpers>=0.0.2,<1"]
-
-[pack.inference]
-imports = ["audio", "ldm.minimax.model", "ldm.minimax.vae", "ldm.minimax_music.ar", "ldm.minimax_music.dit", "model_management", "model_prefetch", "model_sampling", "patcher_extension", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true

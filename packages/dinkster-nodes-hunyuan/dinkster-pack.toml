@@ -1,14 +1,10 @@
 [pack]
 name = "dinkster-hunyuan"
-version = "0.0.4"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.5"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.hunyuan"]
 requires = ["torch", "dinkster-inference==0.1.1", "dinkster-pack-helpers>=0.0.2,<1"]
-
-[pack.inference]
-imports = ["ldm.modules.diffusionmodules.mmdit", "model_management", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true

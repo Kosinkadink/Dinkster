@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
@@ -123,7 +123,7 @@ class ImageCompositeMasked(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageCompositeMasked",
+            node_type="dinkster.image.image_composite_masked",
             display_name="Image Composite Masked",
             category="image/compositing",
             inputs=(
@@ -136,7 +136,7 @@ class ImageCompositeMasked(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageCompositeMasked")
 
     @classmethod
     def execute(
@@ -168,13 +168,13 @@ class MaskToImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="MaskToImage",
+            node_type="dinkster.image.mask_to_image",
             display_name="Convert Mask to Image",
             category=_MASK_CATEGORY,
             inputs=(InputSpec("mask", _MASK),),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "MaskToImage")
 
     @classmethod
     def execute(cls, *, mask: Any) -> Mapping[str, object]:
@@ -186,9 +186,9 @@ class MaskToImage(Node):
 class ImageToMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "ImageToMask",
+                "dinkster.image.image_to_mask",
                 "Convert Image to Mask",
                 (
                     InputSpec("image", _IMAGE),
@@ -200,7 +200,8 @@ class ImageToMask(Node):
                         ),
                     ),
                 ),
-            )
+            ),
+            "ImageToMask",
         )
 
     @classmethod
@@ -212,9 +213,9 @@ class ImageToMask(Node):
 class ImageColorToMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "ImageColorToMask",
+                "dinkster.image.image_color_to_mask",
                 "Convert Image Color to Mask",
                 (
                     InputSpec("image", _IMAGE),
@@ -225,7 +226,8 @@ class ImageColorToMask(Node):
                         widget=NumberWidget(min=0, max=0xFFFFFF, step=1, display="number"),
                     ),
                 ),
-            )
+            ),
+            "ImageColorToMask",
         )
 
     @classmethod
@@ -244,9 +246,9 @@ class ImageColorToMask(Node):
 class SolidMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "SolidMask",
+                "dinkster.image.solid_mask",
                 "Create Solid Mask",
                 (
                     InputSpec(
@@ -258,7 +260,8 @@ class SolidMask(Node):
                     _integer("width", 512, 1, _MAX_RESOLUTION, 1),
                     _integer("height", 512, 1, _MAX_RESOLUTION, 1),
                 ),
-            )
+            ),
+            "SolidMask",
         )
 
     @classmethod
@@ -278,8 +281,9 @@ class SolidMask(Node):
 class InvertMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _mask_schema("InvertMask", "Invert Mask", (InputSpec("mask", _MASK),))
+        return with_identity_replacement(
+            _mask_schema("dinkster.image.invert_mask", "Invert Mask", (InputSpec("mask", _MASK),)),
+            "InvertMask",
         )
 
     @classmethod
@@ -290,9 +294,9 @@ class InvertMask(Node):
 class CropMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "CropMask",
+                "dinkster.image.crop_mask",
                 "Crop Mask",
                 (
                     InputSpec("mask", _MASK),
@@ -301,7 +305,8 @@ class CropMask(Node):
                     _integer("width", 512, 1, _MAX_RESOLUTION, 1),
                     _integer("height", 512, 1, _MAX_RESOLUTION, 1),
                 ),
-            )
+            ),
+            "CropMask",
         )
 
     @classmethod
@@ -313,9 +318,9 @@ class CropMask(Node):
 class MaskComposite(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "MaskComposite",
+                "dinkster.image.mask_composite",
                 "Combine Masks",
                 (
                     InputSpec("destination", _MASK),
@@ -333,7 +338,8 @@ class MaskComposite(Node):
                         ),
                     ),
                 ),
-            )
+            ),
+            "MaskComposite",
         )
 
     @classmethod
@@ -374,9 +380,9 @@ class MaskComposite(Node):
 class FeatherMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "FeatherMask",
+                "dinkster.image.feather_mask",
                 "Feather Mask",
                 (
                     InputSpec("mask", _MASK),
@@ -385,7 +391,8 @@ class FeatherMask(Node):
                     _integer("right", 0, 0, _MAX_RESOLUTION, 1),
                     _integer("bottom", 0, 0, _MAX_RESOLUTION, 1),
                 ),
-            )
+            ),
+            "FeatherMask",
         )
 
     @classmethod
@@ -410,16 +417,17 @@ class FeatherMask(Node):
 class GrowMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "GrowMask",
+                "dinkster.image.grow_mask",
                 "Grow Mask",
                 (
                     InputSpec("mask", _MASK),
                     _integer("expand", 0, -_MAX_RESOLUTION, _MAX_RESOLUTION, 1),
                     InputSpec("tapered_corners", _BOOLEAN, default=True, advanced=True),
                 ),
-            )
+            ),
+            "GrowMask",
         )
 
     @classmethod
@@ -447,9 +455,9 @@ class GrowMask(Node):
 class ThresholdMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _mask_schema(
-                "ThresholdMask",
+                "dinkster.image.threshold_mask",
                 "Threshold Mask",
                 (
                     InputSpec("mask", _MASK),
@@ -460,7 +468,8 @@ class ThresholdMask(Node):
                         widget=NumberWidget(min=0.0, max=1.0, step=0.01),
                     ),
                 ),
-            )
+            ),
+            "ThresholdMask",
         )
 
     @classmethod

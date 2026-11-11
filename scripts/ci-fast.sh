@@ -9,7 +9,6 @@ uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
 uv run --locked python scripts/check_builtin_type_spellings.py
-uv run --locked python scripts/check_pack_inference_imports.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright &
@@ -26,6 +25,8 @@ if [ "${1:-all}" = checks ]; then exit 0; fi
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_disabled_features.py \
   tests/test_settings.py \
+  tests/test_dependency_rule.py::test_core_paths_do_not_import_optional_packages_at_module_scope \
+  tests/test_dependency_rule.py::test_umbrella_optional_packages_are_locked \
   tests/test_extension_factory_guard.py \
   tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
@@ -34,6 +35,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
   tests/test_environment_collection.py \
+  tests/test_environment_state.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
@@ -80,6 +82,8 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
   tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
   tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
+  tests/test_library_publication.py::test_default_admission_probes_and_tests_selected_library_dependency \
+  tests/test_library_publication.py::test_admission_library_closure_intersects_ranges_and_activates_extras \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
   tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \

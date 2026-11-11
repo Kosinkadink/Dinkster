@@ -15,9 +15,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class Trellis2Conditioning(Node):
     def define_schema(cls) -> NodeSchema:
         conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
         schema = NodeSchema(
-            node_type="Trellis2Conditioning",
+            node_type="dinkster.3d.models.trellis2_conditioning",
             display_name="Trellis2 Conditioning",
             category="model/conditioning/trellis",
             inputs=(
@@ -39,7 +39,7 @@ class Trellis2Conditioning(Node):
             ),
             outputs=(OutputSpec("positive", conditioning), OutputSpec("negative", conditioning)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Trellis2Conditioning")
 
     @classmethod
     def execute(cls, *, clip_vision_model: Any, image: object) -> Mapping[str, object]:

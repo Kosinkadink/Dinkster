@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -46,7 +46,7 @@ class StableCascade_EmptyLatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="StableCascade_EmptyLatentImage",
+            node_type="dinkster.sd.stable_cascade_empty_latent_image",
             display_name="Empty Stable Cascade Latent Image",
             category="model/latent/stable cascade",
             inputs=(
@@ -72,7 +72,7 @@ class StableCascade_EmptyLatentImage(Node):
             ),
             outputs=_STAGES,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StableCascade_EmptyLatentImage")
 
     @classmethod
     def execute(
@@ -93,13 +93,13 @@ class StableCascade_StageC_VAEEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="StableCascade_StageC_VAEEncode",
+            node_type="dinkster.sd.stable_cascade_stage_c_vae_encode",
             display_name="Stable Cascade Stage C VAE Encode",
             category="model/latent/stable cascade",
             inputs=(InputSpec("image", _IMAGE), InputSpec("vae", _VAE), _COMPRESSION),
             outputs=_STAGES,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StableCascade_StageC_VAEEncode")
 
     @classmethod
     def execute(cls, *, image: Any, vae: Any, compression: int) -> Mapping[str, object]:
@@ -127,12 +127,12 @@ class StableCascade_StageB_Conditioning(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="StableCascade_StageB_Conditioning",
+            node_type="dinkster.sd.stable_cascade_stage_b_conditioning",
             category="model/conditioning/stable cascade",
             inputs=(InputSpec("conditioning", _CONDITIONING), InputSpec("stage_c", _LATENT)),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StableCascade_StageB_Conditioning")
 
     @classmethod
     def execute(
@@ -152,12 +152,12 @@ class StableCascade_SuperResolutionControlnet(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="StableCascade_SuperResolutionControlnet",
+            node_type="dinkster.sd.stable_cascade_super_resolution_controlnet",
             category="experimental/stable cascade",
             inputs=(InputSpec("image", _IMAGE), InputSpec("vae", _VAE)),
             outputs=(OutputSpec("controlnet_input", _IMAGE), *_STAGES),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "StableCascade_SuperResolutionControlnet")
 
     @classmethod
     def execute(cls, *, image: Any, vae: Any) -> Mapping[str, object]:

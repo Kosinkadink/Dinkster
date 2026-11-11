@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -87,7 +87,7 @@ class SeedVR2TemporalChunk(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SeedVR2TemporalChunk",
+            node_type="dinkster.seedvr.seed_vr2_temporal_chunk",
             display_name="Split SeedVR2 Latent",
             category="model/latent/seedvr",
             description="Split a SeedVR2 video latent into overlapping temporal chunks.",
@@ -113,7 +113,7 @@ class SeedVR2TemporalChunk(Node):
                 OutputSpec("temporal_overlap", _INT, doc="Effective latent-frame overlap."),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SeedVR2TemporalChunk")
 
     @classmethod
     def execute(
@@ -184,7 +184,7 @@ class SeedVR2TemporalMerge(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SeedVR2TemporalMerge",
+            node_type="dinkster.seedvr.seed_vr2_temporal_merge",
             display_name="Merge SeedVR2 Latents",
             category="model/latent/seedvr",
             description="Recombine SeedVR2 temporal chunks with a Hann overlap crossfade.",
@@ -203,7 +203,7 @@ class SeedVR2TemporalMerge(Node):
             ),
             outputs=(OutputSpec("latent", _LATENT, doc="The recombined latent."),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SeedVR2TemporalMerge")
 
     @classmethod
     def execute(

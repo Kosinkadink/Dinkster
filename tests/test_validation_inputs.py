@@ -132,6 +132,14 @@ def test_ci_library_changes_select_declared_dependents_only(tmp_path: Path) -> N
     ]
 
 
+def test_development_pack_selects_gallery_behavior() -> None:
+    from tools.ci_selection import test_paths
+
+    assert test_paths(evidence_paths.DINKSTER_ROOT, ["packages/dinkster-nodes-dev"]) == [
+        "tests/test_gallery.py"
+    ]
+
+
 @pytest.mark.parametrize("fail_root", [False, True])
 def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     tmp_path: Path, fail_root: bool
@@ -170,6 +178,23 @@ def test_selected_pack_tests_isolate_modules_and_keep_root_consumers(
     )
     assert result.returncode == (1 if fail_root else 0), result.stdout + result.stderr
     assert executed.read_text().splitlines() == ["image", "video", "root"]
+
+
+def test_full_validation_preserves_started_main_runs() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(
+        (evidence_paths.DINKSTER_ROOT / ".github/workflows/full-validation.yml").read_text()
+    )
+    assert workflow["concurrency"] == {
+        "group": (
+            "${{ github.workflow }}-${{ github.ref }}-"
+            "${{ github.event_name == 'push' && 'push' || 'durable' }}"
+        ),
+        "cancel-in-progress": (
+            "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
+        ),
+    }
 
 
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:

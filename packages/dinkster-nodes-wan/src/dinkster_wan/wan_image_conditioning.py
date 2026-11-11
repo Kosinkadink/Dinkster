@@ -17,10 +17,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -76,7 +76,7 @@ class WanImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanImageToVideo",
+            node_type="dinkster.wan.wan_image_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -106,7 +106,7 @@ class WanImageToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanImageToVideo")
 
     @classmethod
     def execute(
@@ -160,7 +160,7 @@ class WanFirstLastFrameToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanFirstLastFrameToVideo",
+            node_type="dinkster.wan.wan_first_last_frame_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -181,7 +181,7 @@ class WanFirstLastFrameToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanFirstLastFrameToVideo")
 
     @classmethod
     def execute(
@@ -263,7 +263,7 @@ class WanFunInpaintToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanFunInpaintToVideo",
+            node_type="dinkster.wan.wan_fun_inpaint_to_video",
             category="model/conditioning/wan/fun inpaint",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -283,7 +283,7 @@ class WanFunInpaintToVideo(Node):
                 OutputSpec("latent", _LATENT, display_name="latent"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanFunInpaintToVideo")
 
     @classmethod
     def execute(

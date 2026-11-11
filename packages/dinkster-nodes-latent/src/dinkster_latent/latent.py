@@ -21,10 +21,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -70,16 +70,17 @@ def _schema(
 class EmptyLatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "EmptyLatentImage",
+                "dinkster.latent.empty_latent_image",
                 "Empty Latent Image",
                 (
                     _integer("width", 1024, 16, 16384, 8),
                     _integer("height", 1024, 16, 16384, 8),
                     _integer("batch_size", 1, 1, 4096),
                 ),
-            )
+            ),
+            "EmptyLatentImage",
         )
 
     @classmethod
@@ -98,13 +99,14 @@ class EmptyLatentImage(Node):
 class LatentFromBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentFromBatch",
+                "dinkster.latent.latent_from_batch",
                 "Get Latent From Batch",
                 (_SAMPLES, _integer("batch_index", 0, -16384, 16384), _integer("length", 1, 1, 64)),
                 "model/latent/batch",
-            )
+            ),
+            "LatentFromBatch",
         )
 
     @classmethod
@@ -139,13 +141,14 @@ class LatentFromBatch(Node):
 class RepeatLatentBatch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "RepeatLatentBatch",
+                "dinkster.latent.repeat_latent_batch",
                 "Repeat Latent Batch",
                 (_SAMPLES, _integer("amount", 1, 1, 64)),
                 "model/latent/batch",
-            )
+            ),
+            "RepeatLatentBatch",
         )
 
     @classmethod
@@ -169,9 +172,9 @@ class RepeatLatentBatch(Node):
 class LatentUpscale(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentUpscale",
+                "dinkster.latent.latent_upscale",
                 "Upscale Latent",
                 (
                     _SAMPLES,
@@ -180,7 +183,8 @@ class LatentUpscale(Node):
                     _integer("height", 512, 0, 16384, 8),
                     _combo("crop", ("disabled", "center")),
                 ),
-            )
+            ),
+            "LatentUpscale",
         )
 
     @classmethod
@@ -210,9 +214,9 @@ class LatentUpscale(Node):
 class LatentUpscaleBy(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentUpscaleBy",
+                "dinkster.latent.latent_upscale_by",
                 "Upscale Latent By",
                 (
                     _SAMPLES,
@@ -224,7 +228,8 @@ class LatentUpscaleBy(Node):
                         widget=NumberWidget(min=0.01, max=8.0, step=0.01),
                     ),
                 ),
-            )
+            ),
+            "LatentUpscaleBy",
         )
 
     @classmethod
@@ -248,16 +253,17 @@ class LatentUpscaleBy(Node):
 class LatentRotate(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentRotate",
+                "dinkster.latent.latent_rotate",
                 "Rotate Latent",
                 (
                     _SAMPLES,
                     _combo("rotation", ("none", "90 degrees", "180 degrees", "270 degrees")),
                 ),
                 "model/latent/transform",
-            )
+            ),
+            "LatentRotate",
         )
 
     @classmethod
@@ -277,13 +283,14 @@ class LatentRotate(Node):
 class LatentFlip(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentFlip",
+                "dinkster.latent.latent_flip",
                 "Flip Latent",
                 (_SAMPLES, _combo("flip_method", ("x-axis: vertically", "y-axis: horizontally"))),
                 "model/latent/transform",
-            )
+            ),
+            "LatentFlip",
         )
 
     @classmethod
@@ -301,12 +308,13 @@ class LatentFlip(Node):
 class SetLatentNoiseMask(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "SetLatentNoiseMask",
+                "dinkster.latent.set_latent_noise_mask",
                 "Set Latent Noise Mask",
                 (_SAMPLES, InputSpec("mask", TypeExpr.concrete(MASK_TYPE))),
-            )
+            ),
+            "SetLatentNoiseMask",
         )
 
     @classmethod
@@ -320,9 +328,9 @@ class SetLatentNoiseMask(Node):
 class LatentComposite(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentComposite",
+                "dinkster.latent.latent_composite",
                 "Latent Composite",
                 (
                     InputSpec("samples_to", _LATENT),
@@ -331,7 +339,8 @@ class LatentComposite(Node):
                     _integer("y", 0, 0, 16384, 8),
                     _integer("feather", 0, 0, 16384, 8),
                 ),
-            )
+            ),
+            "LatentComposite",
         )
 
     @classmethod
@@ -378,9 +387,9 @@ class LatentComposite(Node):
 class LatentBlend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentBlend",
+                "dinkster.latent.latent_blend",
                 "Latent Blend",
                 (
                     InputSpec("samples1", _LATENT),
@@ -393,7 +402,8 @@ class LatentBlend(Node):
                     ),
                 ),
                 "experimental",
-            )
+            ),
+            "LatentBlend",
         )
 
     @classmethod
@@ -416,9 +426,9 @@ class LatentBlend(Node):
 class LatentCrop(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             _schema(
-                "LatentCrop",
+                "dinkster.latent.latent_crop",
                 "Crop Latent",
                 (
                     _SAMPLES,
@@ -428,7 +438,8 @@ class LatentCrop(Node):
                     _integer("y", 0, 0, 16384, 8),
                 ),
                 "model/latent/transform",
-            )
+            ),
+            "LatentCrop",
         )
 
     @classmethod

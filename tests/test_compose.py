@@ -23,7 +23,6 @@ import weakref
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -43,12 +42,13 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import build_schemas
+from dinkster_schema import Node, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
+from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import (
     Composition,
@@ -68,13 +68,10 @@ DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dink
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 FIRST_PARTY_NODE_PACKS = {
-    row["nodeType"]: row["pack"]
-    for row in json.loads(files("dinkster_schema").joinpath("comfy_node_ids.json").read_text())[
-        "nodes"
-    ]
-} | {
-    "dinkster.utilities.make_list": "dinkster-utilities",
-    "dinkster.utilities.list_element": "dinkster-utilities",
+    node.schema().node_type: manifest.name
+    for spec in default_pack_specs()
+    if (manifest := load_manifest(spec.manifest)).nodes_entry
+    for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
 }
 
 
@@ -360,7 +357,7 @@ def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPa
     spec = compose.default_pack_spec("dinkster-text")
     assert set(requested) == {"dinkster-text"}
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].version == "0.0.2"
+    assert spec.packs["dinkster-text"].version == "0.0.3"
     assert spec.packs["dinkster-text"].source == "python:dinkster-text==1.2.3"
 
 
@@ -926,9 +923,9 @@ def test_compose_serving_default_resolution_is_atomic(
 @pytest.mark.parametrize(
     ("pack_id", "directory", "expected_version"),
     [
-        ("dinkster-text", "dinkster-nodes-text", "0.0.2"),
-        ("dinkster-image", "dinkster-nodes-image", "0.0.4"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.4"),
+        ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
+        ("dinkster-image", "dinkster-nodes-image", "0.0.5"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.5"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
 )
@@ -1087,7 +1084,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-text"]
-    assert info.source == "python:dinkster-text==0.0.2"
+    assert info.source == "python:dinkster-text==0.0.3"
     locked = lock.get("dinkster-text")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
@@ -1212,17 +1209,17 @@ def test_default_pack_refuses_version_outside_suite_lock(
     manifest.write_text(
         (source / "dinkster-pack.toml")
         .read_text()
-        .replace('version = "0.0.2"', 'version = "9.0.0"')
+        .replace('version = "0.0.3"', 'version = "9.0.0"')
     )
     shutil.copytree(source / "src/dinkster_text", copied / "src/dinkster_text")
     monkeypatch.setattr(
         compose.importlib.metadata,
         "distribution",
-        lambda _name: editable_distribution(copied, "0.0.2"),
+        lambda _name: editable_distribution(copied, "0.0.3"),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.2"):
+    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.3"):
         default_pack_spec("dinkster-text")
 
 
@@ -1235,12 +1232,12 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     lock = compose._default_pack_lock()
     pack = lock.get("dinkster-text")
     assert pack is not None
-    assert pack.version == "0.0.2"
-    assert pack.source == "python:dinkster-text==0.0.2"
+    assert pack.version == "0.0.3"
+    assert pack.source == "python:dinkster-text==0.0.3"
     if mismatch == "pack":
         pack = replace(pack, version="9.0.0")
     elif mismatch == "distribution-name":
-        pack = replace(pack, source="python:dinkster-image==0.0.2")
+        pack = replace(pack, source="python:dinkster-image==0.0.3")
     changed = replace(
         lock, packs=tuple(pack if row.pack == pack.pack else row for row in lock.packs)
     )
@@ -1265,8 +1262,8 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
         return
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.2"
-    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.2"
+    assert spec.packs[pack.pack].version == "0.0.3"
+    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.3"
 
 
 def test_undeclared_pack_version_is_not_replaced_by_distribution_version(
@@ -1314,7 +1311,7 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution",
-        lambda _name: editable_distribution(copied, "0.0.2"),
+        lambda _name: editable_distribution(copied, "0.0.3"),
     )
 
     with pytest.raises(CompositionError, match="locks dinkster-text artifact"):
@@ -1687,9 +1684,7 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             CompositionError,
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
         ):
-            await compose_serving(
-                [first, second], include_default_packs=False, worker_env=WORKER_ENV
-            )
+            await compose_serving([first, second], worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -2095,7 +2090,7 @@ def test_compose_rejects_uncovered_node_type(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, presentation=False, namespaces=None)
         with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
-            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
+            await compose_serving([manifest], worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -3327,7 +3322,7 @@ def test_pack_spec_attribution_outside_table_fails(tmp_path: Path) -> None:
             attribute=lambda nt: "elsewhere",
         )
         with pytest.raises(CompositionError, match="not among this spec's pack"):
-            await compose_serving([spec], include_default_packs=False)
+            await compose_serving([spec])
 
     run_scenario(scenario())
 
@@ -3366,7 +3361,7 @@ def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
             attribute=lambda nt: "pack-b",
         )
         with pytest.raises(CompositionError, match="different info"):
-            await compose_serving([first, second], include_default_packs=False)
+            await compose_serving([first, second])
 
     run_scenario(scenario())
 

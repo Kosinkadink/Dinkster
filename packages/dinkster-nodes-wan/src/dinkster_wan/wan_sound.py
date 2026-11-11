@@ -18,10 +18,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -182,7 +182,7 @@ class WanSoundImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanSoundImageToVideo",
+            node_type="dinkster.wan.wan_sound_image_to_video",
             category="model/conditioning/wan/sound",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -196,7 +196,7 @@ class WanSoundImageToVideo(Node):
             ),
             outputs=_OUTPUTS,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanSoundImageToVideo")
 
     @classmethod
     def execute(
@@ -233,7 +233,7 @@ class WanSoundImageToVideoExtend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanSoundImageToVideoExtend",
+            node_type="dinkster.wan.wan_sound_image_to_video_extend",
             category="model/conditioning/wan/sound",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -247,7 +247,7 @@ class WanSoundImageToVideoExtend(Node):
             ),
             outputs=_OUTPUTS,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanSoundImageToVideoExtend")
 
     @classmethod
     def execute(
@@ -297,7 +297,7 @@ class WanHuMoImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanHuMoImageToVideo",
+            node_type="dinkster.wan.wan_hu_mo_image_to_video",
             category="model/conditioning/wan/humo",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -309,7 +309,7 @@ class WanHuMoImageToVideo(Node):
             ),
             outputs=_OUTPUTS,
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanHuMoImageToVideo")
 
     @classmethod
     def execute(

@@ -19,10 +19,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_mesh,
     report_progress,
+    with_identity_replacement,
 )
 
 from .mesh_weld import process_mesh_batch
@@ -32,7 +32,7 @@ class RemeshMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="RemeshMesh",
+            node_type="dinkster.3d.remesh_mesh",
             display_name="Remesh Mesh (Narrow-Band DC)",
             category="3d/mesh",
             description=(
@@ -156,7 +156,7 @@ class RemeshMesh(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "RemeshMesh")
 
     @classmethod
     def execute(

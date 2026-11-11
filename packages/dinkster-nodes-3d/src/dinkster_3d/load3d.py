@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     SourceFilenameSpec,
     TypeExpr,
-    first_party_schema,
     load_file3d,
+    with_identity_replacement,
 )
 
 
@@ -31,7 +31,7 @@ class Load3DAdvanced(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="Load3DAdvanced",
+            node_type="dinkster.3d.load3_d_advanced",
             display_name="Load 3D (Advanced)",
             category="3d",
             search_terms=("load mesh", "load gltf", "load glb", "load obj", "load fbx", "load stl"),
@@ -66,7 +66,7 @@ class Load3DAdvanced(Node):
                 )
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "Load3DAdvanced")
 
     @classmethod
     def execute(

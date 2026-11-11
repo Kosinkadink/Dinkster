@@ -19,10 +19,10 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -154,7 +154,7 @@ class WanSCAILToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanSCAILToVideo",
+            node_type="dinkster.wan.wan_scail_to_video",
             category=_CATEGORY,
             inputs=(
                 InputSpec("positive", _CONDITIONING),
@@ -292,7 +292,7 @@ class WanSCAILToVideo(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanSCAILToVideo")
 
     @classmethod
     def execute(

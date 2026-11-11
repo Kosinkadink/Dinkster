@@ -45,6 +45,7 @@ them from the registry each entry's provenance records.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import platform
@@ -1090,7 +1091,9 @@ def _cmd_archive(args: argparse.Namespace) -> None:
 
 
 def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
-    from dinkster_supervisor.environment_artifacts import validate_manifest
+    validate_manifest = importlib.import_module(
+        "dinkster_supervisor.environment_artifacts"
+    ).validate_manifest
 
     try:
         engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)
@@ -1375,7 +1378,7 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         if report.ok:
             print(f"Prepared runtime catalog: {report.pack_name} ({len(report.node_types)} nodes)")
         else:
-            print(render_text(report))
+            print(render_text(report), file=sys.stderr)
             failed = True
     if failed:
         raise InstallError("runtime catalog preparation failed; repair findings and retry")

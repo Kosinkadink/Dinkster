@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -26,7 +26,7 @@ class GLIGENTextBoxApply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="GLIGENTextBoxApply",
+            node_type="dinkster.sd.gligen_text_box_apply",
             display_name="Apply GLIGEN Text Box",
             category="model/conditioning/gligen",
             inputs=(
@@ -55,7 +55,7 @@ class GLIGENTextBoxApply(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "GLIGENTextBoxApply")
 
     @classmethod
     def execute(

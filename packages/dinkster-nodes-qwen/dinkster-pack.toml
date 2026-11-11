@@ -1,14 +1,10 @@
 [pack]
 name = "dinkster-qwen"
-version = "0.0.4"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.5"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.qwen"]
 requires = ["dinkster-inference==0.1.1", "torch", "dinkster-pack-helpers>=0.0.2,<1"]
-
-[pack.inference]
-imports = ["latent_formats", "ldm.lumina.controlnet", "ldm.qwen_image21.model", "model_management", "model_prefetch", "patcher_extension", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 gpu = true

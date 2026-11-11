@@ -41,11 +41,13 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     attach_saved_artifact,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
 class _Save3D(Node):
+    node_type: str
+    source_type: str
     formats: ClassVar[tuple[str, ...]]
     output_type: ClassVar[str]
     label: ClassVar[str]
@@ -56,7 +58,7 @@ class _Save3D(Node):
     def define_schema(cls) -> NodeSchema:
         detailed = cls.__name__ == "Save3DAdvanced"
         schema = NodeSchema(
-            node_type=cls.__name__,
+            node_type=cls.node_type,
             display_name=cls.label,
             search_terms=cls.aliases,
             category="3d",
@@ -123,7 +125,7 @@ class _Save3D(Node):
                 )
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, cls.source_type)
 
     @classmethod
     def execute(
@@ -189,6 +191,8 @@ class _Save3D(Node):
 
 
 class Save3DAdvanced(_Save3D):
+    node_type = "dinkster.3d.save3_d_advanced"
+    source_type = "Save3DAdvanced"
     formats = (
         FILE_3D_GLB_TYPE,
         FILE_3D_GLTF_TYPE,
@@ -205,6 +209,8 @@ class Save3DAdvanced(_Save3D):
 
 
 class SaveGaussianSplat(_Save3D):
+    node_type = "dinkster.3d.save_gaussian_splat"
+    source_type = "SaveGaussianSplat"
     formats = (
         FILE_3D_SPLAT_ANY_TYPE,
         FILE_3D_PLY_TYPE,
@@ -219,6 +225,8 @@ class SaveGaussianSplat(_Save3D):
 
 
 class SavePointCloud(_Save3D):
+    node_type = "dinkster.3d.save_point_cloud"
+    source_type = "SavePointCloud"
     formats = (FILE_3D_POINT_CLOUD_ANY_TYPE, FILE_3D_PLY_TYPE)
     output_type = FILE_3D_POINT_CLOUD_ANY_TYPE
     label = "Save Point Cloud"

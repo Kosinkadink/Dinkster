@@ -21,16 +21,16 @@ uv sync --all-packages
 
 The package is not published separately yet and provides no console script.
 
-## ComfyUI import metadata
+## Identity replacement declarations
 
-`first_party.collect_comfy_translations` consumes authenticated publisher, pack,
-version and schema snapshots. Each index item carries `pack`, `version`, the
-ordinary `rule` and its target `schema` in the normal schema wire format.
-The schema retains ordered interfaces, family templates, combo choices and
-widget descriptors so import does not require the target pack to be installed.
-These snapshots are import metadata, not installed node registrations. The
-collector accepts only table-owned identities from publisher `dinkster` and
-rejects duplicate source classes and altered identity rules.
+Pack source declares its served `node_type` directly. The generic
+`identity.with_identity_replacement(schema, source_type)` helper, also exported
+by `dinkster_api.v1`, derives an ordinary replacement rule for an explicitly
+named source class without changing that id. It preserves ordered ports,
+input and output families, and dynamic-combo branches. The source class becomes
+a search term and the display-name fallback. The helper replaces aliases and
+existing replacement rules; packs with non-identity conversions author their
+rules directly instead.
 
 ## Pack versions and engine compatibility
 

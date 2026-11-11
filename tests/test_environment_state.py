@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -101,14 +102,44 @@ def test_doctor_detects_edits_missing_and_added_files_without_reporting_pack_fil
     (root / "python" / "__pycache__").mkdir()
     (root / "python" / "__pycache__" / "module.pyc").write_bytes(b"cache")
     assert generation.drift(root) == ()
+    for name in (
+        "packs-extra/unexpected.py",
+        "python/packs/unexpected.py",
+        "python/nested/__pycache__-extra/unexpected.py",
+    ):
+        extra = root / name
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_bytes(b"injected")
+    ignored = root / "python/nested/__pycache__/nested/cache.pyc"
+    ignored.parent.mkdir(parents=True)
+    ignored.write_bytes(b"cache")
     (root / "python" / "module.py").write_bytes(b"ANSWER = 99\n")
     (root / "constraints.txt").unlink()
     (root / "python" / "unexpected.py").write_bytes(b"injected")
     assert generation.drift(root) == (
         "missing: constraints.txt",
         "modified: python/module.py",
+        "unexpected: packs-extra/unexpected.py",
+        "unexpected: python/nested/__pycache__-extra/unexpected.py",
+        "unexpected: python/packs/unexpected.py",
         "unexpected: python/unexpected.py",
     )
+
+
+def test_generation_drift_bounds_memory_for_large_pack_environments(tmp_path: Path):
+    path = _generation(tmp_path, 1)
+    generation = Generation.read(path)
+    packages = path.parent / "packs/example/site-packages"
+    packages.mkdir(parents=True)
+    for index in range(4096):
+        (packages / f"module_{index}.py").touch()
+    tracemalloc.start()
+    try:
+        assert generation.drift(path.parent) == ()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 512 * 1024
 
 
 def test_generation_preserves_in_process_hosting_and_defaults_to_isolated(tmp_path: Path):

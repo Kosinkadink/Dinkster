@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -67,9 +67,12 @@ class EmptyFlux2LatentImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = _schema(
-            "EmptyFlux2LatentImage", "model/latent/flux", _image_inputs(), "Empty Flux 2 Latent"
+            "dinkster.flux.empty_flux2_latent_image",
+            "model/latent/flux",
+            _image_inputs(),
+            "Empty Flux 2 Latent",
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyFlux2LatentImage")
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:

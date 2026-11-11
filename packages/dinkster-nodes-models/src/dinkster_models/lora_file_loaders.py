@@ -23,9 +23,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     obtain_resident,
+    with_identity_replacement,
 )
 
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -202,7 +202,10 @@ def _loader_schema(node_type: str, *, bypass: bool, model_only: bool) -> NodeSch
 class LoraLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_loader_schema("LoraLoader", bypass=False, model_only=False))
+        return with_identity_replacement(
+            _loader_schema("dinkster.models.lora_loader", bypass=False, model_only=False),
+            "LoraLoader",
+        )
 
     @classmethod
     def execute(
@@ -223,8 +226,9 @@ class LoraLoader(Node):
 class LoraLoaderModelOnly(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _loader_schema("LoraLoaderModelOnly", bypass=False, model_only=True)
+        return with_identity_replacement(
+            _loader_schema("dinkster.models.lora_loader_model_only", bypass=False, model_only=True),
+            "LoraLoaderModelOnly",
         )
 
     @classmethod
@@ -238,7 +242,10 @@ class LoraLoaderModelOnly(Node):
 class LoraLoaderBypass(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_loader_schema("LoraLoaderBypass", bypass=True, model_only=False))
+        return with_identity_replacement(
+            _loader_schema("dinkster.models.lora_loader_bypass", bypass=True, model_only=False),
+            "LoraLoaderBypass",
+        )
 
     @classmethod
     def execute(
@@ -259,8 +266,11 @@ class LoraLoaderBypass(Node):
 class LoraLoaderBypassModelOnly(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
-            _loader_schema("LoraLoaderBypassModelOnly", bypass=True, model_only=True)
+        return with_identity_replacement(
+            _loader_schema(
+                "dinkster.models.lora_loader_bypass_model_only", bypass=True, model_only=True
+            ),
+            "LoraLoaderBypassModelOnly",
         )
 
     @classmethod
@@ -316,9 +326,9 @@ def _row_strength(row: Mapping[str, object]) -> float:
 class LoadLoraModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LoadLoraModel",
+                node_type="dinkster.models.load_lora_model",
                 display_name="Load LoRA (Model)",
                 category="model/loaders",
                 description=(
@@ -334,7 +344,8 @@ class LoadLoraModel(Node):
                 ),
                 input_families=(_stack_family("Each row applies one LoRA to the model."),),
                 outputs=(OutputSpec("MODEL", _MODEL, doc="The modified diffusion model."),),
-            )
+            ),
+            "LoadLoraModel",
         )
 
     @classmethod
@@ -351,9 +362,9 @@ class LoadLoraModel(Node):
 class LoadLoraTextEncoder(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="LoadLoraTextEncoder",
+                node_type="dinkster.models.load_lora_text_encoder",
                 display_name="Load LoRA (Text Encoder)",
                 category="model/loaders",
                 description=(
@@ -369,7 +380,8 @@ class LoadLoraTextEncoder(Node):
                 ),
                 input_families=(_stack_family("Each row applies one LoRA to the text encoder."),),
                 outputs=(OutputSpec("CLIP", _CLIP, doc="The modified CLIP text encoder."),),
-            )
+            ),
+            "LoadLoraTextEncoder",
         )
 
     @classmethod

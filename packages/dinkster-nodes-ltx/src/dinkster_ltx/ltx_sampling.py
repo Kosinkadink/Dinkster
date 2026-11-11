@@ -18,9 +18,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_latent,
+    with_identity_replacement,
 )
 
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -53,7 +53,7 @@ class ModelSamplingLTXV(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ModelSamplingLTXV",
+            node_type="dinkster.ltx.model_sampling_ltxv",
             category="model/patch/ltxv",
             inputs=(
                 InputSpec("model", _MODEL),
@@ -62,7 +62,7 @@ class ModelSamplingLTXV(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ModelSamplingLTXV")
 
     @classmethod
     def execute(
@@ -84,7 +84,7 @@ class LTXVScheduler(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVScheduler",
+            node_type="dinkster.ltx.ltxv_scheduler",
             category="model/sampling/schedulers",
             inputs=(
                 InputSpec(
@@ -113,7 +113,7 @@ class LTXVScheduler(Node):
             ),
             outputs=(OutputSpec("SIGMAS", TypeExpr.concrete(SIGMAS_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVScheduler")
 
     @classmethod
     def execute(

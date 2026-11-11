@@ -21,9 +21,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     materialize_voxel,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -274,7 +274,7 @@ class VoxelToMeshBasic(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VoxelToMeshBasic",
+            node_type="dinkster.3d.voxel_to_mesh_basic",
             display_name="Voxel to Mesh (Basic) (DEPRECATED)",
             category="3d",
             description="Converts a voxel grid to a mesh.",
@@ -283,7 +283,7 @@ class VoxelToMeshBasic(Node):
             inputs=(InputSpec("voxel", _VOXEL), _THRESHOLD),
             outputs=(OutputSpec("MESH", _MESH),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VoxelToMeshBasic")
 
     @classmethod
     def execute(cls, *, voxel: object, threshold: float) -> Mapping[str, object]:
@@ -294,7 +294,7 @@ class VoxelToMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="VoxelToMesh",
+            node_type="dinkster.3d.voxel_to_mesh",
             display_name="Voxel to Mesh",
             category="3d",
             description="Converts a voxel grid to a mesh.",
@@ -310,7 +310,7 @@ class VoxelToMesh(Node):
             ),
             outputs=(OutputSpec("MESH", _MESH),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VoxelToMesh")
 
     @classmethod
     def execute(cls, *, voxel: object, algorithm: str, threshold: float) -> Mapping[str, object]:

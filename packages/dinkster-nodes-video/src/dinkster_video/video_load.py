@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     TypeExpr,
     admit_video_source,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -25,7 +25,7 @@ class LoadVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LoadVideo",
+            node_type="dinkster.video.load_video",
             display_name="Load Video",
             category="video",
             search_terms=("import video", "open video", "video file"),
@@ -39,7 +39,7 @@ class LoadVideo(Node):
             ),
             outputs=(OutputSpec("VIDEO", TypeExpr.concrete(VIDEO_TYPE), preview=True),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LoadVideo")
 
     @classmethod
     def execute(cls, *, file: object) -> Mapping[str, object]:

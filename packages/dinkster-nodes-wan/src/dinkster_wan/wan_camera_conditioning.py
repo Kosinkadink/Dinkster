@@ -18,11 +18,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
     materialize_latent,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -31,7 +31,7 @@ class WanCameraImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="WanCameraImageToVideo",
+            node_type="dinkster.wan.wan_camera_image_to_video",
             category="model/conditioning/wan/camera",
             inputs=(
                 InputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
@@ -77,7 +77,7 @@ class WanCameraImageToVideo(Node):
                 OutputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "WanCameraImageToVideo")
 
     @classmethod
     def execute(

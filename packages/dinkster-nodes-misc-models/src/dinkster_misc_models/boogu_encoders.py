@@ -20,9 +20,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.conditioning import conditioning_set_values
 
@@ -41,7 +41,7 @@ class TextEncodeBooguEdit(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="TextEncodeBooguEdit",
+            node_type="dinkster.misc.models.text_encode_boogu_edit",
             category="model/conditioning/boogu",
             inputs=(
                 InputSpec("clip", _CLIP),
@@ -66,7 +66,7 @@ class TextEncodeBooguEdit(Node):
             ),
             outputs=(OutputSpec("positive", _CONDITIONING), OutputSpec("negative", _CONDITIONING)),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextEncodeBooguEdit")
 
     @classmethod
     def execute(

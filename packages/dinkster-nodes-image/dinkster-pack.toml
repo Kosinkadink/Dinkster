@@ -1,7 +1,7 @@
 [pack]
 name = "dinkster-image"
-version = "0.0.4"
-engine = ">=0.0.2.dev0,<0.1"
+version = "0.0.5"
+engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 requires = [
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
@@ -17,10 +17,6 @@ requires = [
     "dinkster-inference==0.1.1",
 ]
 namespaces = ["dinkster.image"]
-
-[pack.inference]
-imports = ["cli_args", "model_management", "utils"]
-tested-version = "0.1.1"
 
 [pack.sandbox]
 writable-mounts = true

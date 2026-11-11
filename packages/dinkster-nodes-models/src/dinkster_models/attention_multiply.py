@@ -15,7 +15,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 
@@ -73,7 +73,9 @@ def _unet_attention(model: Any, attention: str, q: float, k: float, v: float, ou
 class UNetSelfAttentionMultiply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema(cls.__name__))
+        return with_identity_replacement(
+            _schema("dinkster.models.u_net_self_attention_multiply"), "UNetSelfAttentionMultiply"
+        )
 
     @classmethod
     def execute(
@@ -85,7 +87,9 @@ class UNetSelfAttentionMultiply(Node):
 class UNetCrossAttentionMultiply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema(cls.__name__))
+        return with_identity_replacement(
+            _schema("dinkster.models.u_net_cross_attention_multiply"), "UNetCrossAttentionMultiply"
+        )
 
     @classmethod
     def execute(
@@ -97,7 +101,9 @@ class UNetCrossAttentionMultiply(Node):
 class CLIPAttentionMultiply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(_schema(cls.__name__, clip=True))
+        return with_identity_replacement(
+            _schema("dinkster.models.clip_attention_multiply", clip=True), "CLIPAttentionMultiply"
+        )
 
     @classmethod
     def execute(
@@ -122,9 +128,9 @@ class CLIPAttentionMultiply(Node):
 class UNetTemporalAttentionMultiply(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type=cls.__name__,
+                node_type="dinkster.models.u_net_temporal_attention_multiply",
                 category="experimental/attention_experiments",
                 inputs=(
                     InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
@@ -134,7 +140,8 @@ class UNetTemporalAttentionMultiply(Node):
                     _strength("cross_temporal"),
                 ),
                 outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
-            )
+            ),
+            "UNetTemporalAttentionMultiply",
         )
 
     @classmethod

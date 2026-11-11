@@ -15,8 +15,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 
@@ -44,7 +44,7 @@ class EmptyAceStepLatentAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyAceStepLatentAudio",
+            node_type="dinkster.audio.models.empty_ace_step_latent_audio",
             display_name="Empty Ace Step 1.0 Latent Audio",
             category="model/latent/ace",
             inputs=_duration_inputs(
@@ -52,7 +52,7 @@ class EmptyAceStepLatentAudio(Node):
             ),
             outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyAceStepLatentAudio")
 
     @classmethod
     def execute(cls, *, seconds: float, batch_size: int) -> Mapping[str, object]:
@@ -72,7 +72,7 @@ class EmptyAceStep15LatentAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyAceStep1.5LatentAudio",
+            node_type="dinkster.audio.models.empty_ace_step1_5_latent_audio",
             display_name="Empty Ace Step 1.5 Latent Audio",
             category="model/latent/ace",
             inputs=_duration_inputs(
@@ -80,7 +80,7 @@ class EmptyAceStep15LatentAudio(Node):
             ),
             outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyAceStep1.5LatentAudio")
 
     @classmethod
     def execute(cls, *, seconds: float, batch_size: int) -> Mapping[str, object]:
@@ -102,13 +102,13 @@ class EmptyYuE2LatentAudio(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="EmptyYuE2LatentAudio",
+            node_type="dinkster.audio.models.empty_yu_e2_latent_audio",
             display_name="Empty YuE2 Latent Audio",
             category="model/latent/yue2",
             inputs=_duration_inputs(120.0, 0.04, minimum=0.04),
             outputs=(OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "EmptyYuE2LatentAudio")
 
     @classmethod
     def execute(cls, *, seconds: float, batch_size: int) -> Mapping[str, object]:

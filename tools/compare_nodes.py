@@ -1,7 +1,7 @@
 """Compare an audit ComfyUI core dump with the served /api/nodes registry.
 
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
-Classes match only their explicit frozen ids for packs selected in the scope
+Classes match schema-declared replacement sources for packs selected in the scope
 data, and their original ids otherwise. Aliases and labels never match an id
 or a value. The only additional input is an appended optional save mount.
 Source-marked file combos and strings may use an ASSET socket and asset picker.
@@ -42,10 +42,6 @@ from pathlib import Path
 from typing import Any, cast
 
 FORBIDDEN_PREFIXES = ("dinkster.", "comfy.")
-ID_TABLE = (
-    Path(__file__).resolve().parents[1]
-    / "packages/dinkster-schema/src/dinkster_schema/comfy_node_ids.json"
-)
 SCOPE_RULES = Path(__file__).with_name("node_comparison_scope.json")
 INPUT_ROLES = {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}
 VALUE_OPTIONS = (
@@ -558,33 +554,15 @@ def compare_registry(
     reference: dict[str, Any],
     registry: dict[str, Any],
     *,
-    id_table: dict[str, Any] | None = None,
     scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if id_table is None:
-        id_table = cast(
-            "dict[str, Any]", json.loads(ID_TABLE.read_text(), object_pairs_hook=_unique_object)
-        )
     if scope is None:
         scope = cast(
             "dict[str, Any]", json.loads(SCOPE_RULES.read_text(), object_pairs_hook=_unique_object)
         )
-    if id_table["schemaVersion"] != 1 or scope["schemaVersion"] != 1:
-        raise ValueError("unsupported node id table or scope version")
-    assignments = {row["from"]: row for row in id_table["nodes"]}
-    if len(assignments) != len(id_table["nodes"]):
-        raise ValueError("duplicate source class in node id table")
-    if len({row["nodeType"] for row in assignments.values()}) != len(assignments):
-        raise ValueError("duplicate target id in node id table")
+    if scope["schemaVersion"] != 1:
+        raise ValueError("unsupported scope version")
     migrated = set(scope["migratedPacks"])
-    unknown_packs = migrated - {row["pack"] for row in assignments.values()}
-    if unknown_packs:
-        raise ValueError(f"scope selects unknown packs: {sorted(unknown_packs)}")
-    identities = {
-        source: (row["nodeType"], row["pack"])
-        for source, row in assignments.items()
-        if row["pack"] in migrated
-    }
     nodes = reference["nodes"]
     if not nodes:
         raise ValueError("reference contains no node classes")
@@ -594,27 +572,54 @@ def compare_registry(
     served = registry["nodes"]
     results = []
     errors = []
+    identities: dict[str, tuple[str, str]] = {}
+    # A nested official namespace belongs to the most specific selected pack.
+    moved_owners = {
+        key: pack
+        for key in served
+        for pack in sorted(migrated, key=len)
+        if key.startswith(pack.replace("-", ".") + ".")
+    }
+    for key, schema in served.items():
+        if key not in moved_owners:
+            continue
+        for rule in schema.get("replacements", []):
+            if rule.get("migration") is not None or rule["from"] == key:
+                continue
+            if not rule.get("cases") or any(case.get("to") != key for case in rule["cases"]):
+                errors.append(f"{key}: replacement must target its declaring node")
+                continue
+            source = rule["from"]
+            if source in identities:
+                raise ValueError(f"duplicate replacement source class: {source}")
+            identities[source] = (key, moved_owners[key])
     conditional_options = {}
     if reference.get("builtin_import_failures"):
         errors.append(
             "reference builtin imports failed: " + ", ".join(reference["builtin_import_failures"])
         )
-    expected = {
-        name: identities.get(name, (name, scope["extraOwners"].get(name, scope["legacyPack"])))
-        for name in classes
+    expected = {name: identities.get(name, (name, scope["legacyPack"])) for name in classes}
+    exclusions = {
+        row["class_name"]: next(
+            (
+                rule
+                for rule in scope["exclusions"]
+                if any(row.get(flag) for flag in rule.get("flags", []))
+                or row.get("file") in rule.get("files", [])
+                or any(
+                    str(row.get("file", "")).startswith(prefix)
+                    for prefix in rule.get("filePrefixes", [])
+                )
+            ),
+            None,
+        )
+        for row in nodes
     }
+    eligible_targets = {target for name, (target, _) in expected.items() if not exclusions[name]}
     owners = {node_type: pack for node_type, pack in expected.values()}
-    if len(owners) != len(expected):
-        raise ValueError("node id table collides with an unmoved reference class")
     ids = set(owners)
-    owners.update({node_type: pack for node_type, pack in identities.values()})
-    moved_ids = {node_type for node_type, _ in identities.values()}
-    for row in id_table.get("supportNodes", []):
-        if row["pack"] in migrated:
-            if row["nodeType"] in owners:
-                raise ValueError("support node id collides with another declared node")
-            owners[row["nodeType"]] = row["pack"]
-            moved_ids.add(row["nodeType"])
+    owners.update(moved_owners)
+    moved_ids = set(moved_owners)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
             errors.append(f"registry key {key!r} differs from nodeType {schema.get('nodeType')!r}")
@@ -654,19 +659,14 @@ def compare_registry(
         if row_conditionals:
             conditional_options[name] = row_conditionals
         exclusion = ""
-        for rule in scope["exclusions"]:
-            if (
-                any(row.get(flag) for flag in rule.get("flags", []))
-                or row.get("file") in rule.get("files", [])
-                or any(
-                    str(row.get("file", "")).startswith(prefix)
-                    for prefix in rule.get("filePrefixes", [])
-                )
+        if rule := exclusions[name]:
+            exclusion = rule["reason"]
+            # An import-only rule can share a target with an eligible class;
+            # the excluded source must still never be registered itself.
+            if rule["mustBeAbsent"] and (
+                name in served or (node_type in served and node_type not in eligible_targets)
             ):
-                exclusion = rule["reason"]
-                if rule["mustBeAbsent"] and (name in served or node_type in served):
-                    errors.append(f"excluded {exclusion} remains registered: {name}")
-                break
+                errors.append(f"excluded {exclusion} remains registered: {name}")
         differences = []
         if exclusion:
             status = "excluded"
@@ -750,7 +750,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("reference", "registry", "csv_output", "summary_output"):
         parser.add_argument(name, type=Path)
-    parser.add_argument("--id-table", type=Path, default=ID_TABLE)
     parser.add_argument("--scope", type=Path, default=SCOPE_RULES)
     args = parser.parse_args()
     reference = json.loads(args.reference.read_text(), object_pairs_hook=_unique_object)
@@ -758,7 +757,6 @@ def main() -> int:
     summary = compare_registry(
         reference,
         registry,
-        id_table=json.loads(args.id_table.read_text(), object_pairs_hook=_unique_object),
         scope=json.loads(args.scope.read_text(), object_pairs_hook=_unique_object),
     )
     with args.csv_output.open("w", newline="") as handle:

@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     TriangleMeshBatch,
     TypeExpr,
-    first_party_schema,
     materialize_mesh,
     materialize_voxel,
+    with_identity_replacement,
 )
 
 
@@ -46,7 +46,7 @@ class PaintMesh(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PaintMesh",
+            node_type="dinkster.3d.paint_mesh",
             display_name="Paint Mesh",
             category="3d/mesh",
             description=(
@@ -58,7 +58,7 @@ class PaintMesh(Node):
             ),
             outputs=(OutputSpec("mesh", TypeExpr.concrete(MESH_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PaintMesh")
 
     @classmethod
     def execute(cls, *, mesh: object, voxel_colors: object) -> Mapping[str, object]:

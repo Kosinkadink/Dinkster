@@ -3445,6 +3445,56 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("engine", "current"),
+    [
+        ("0.0.2", False),
+        ("0.0.3.dev217+ga990932e", False),
+        ("0.0.3.dev999999", False),
+        ("0.0.3rc1", False),
+        ("0.0.3", True),
+        ("0.0.4.dev1+g1234567", True),
+    ],
+)
+def test_registry_keeps_older_engines_on_compatible_pack_versions(
+    engine: str, current: bool
+) -> None:
+    from dinkster_workers import load_manifest
+
+    from dinkster.registries import NamedRegistry, resolve_compatible_release
+
+    manifest = load_manifest(Path("packages/dinkster-nodes-flux/dinkster-pack.toml"))
+    assert manifest.compatibility is not None
+    versions = (
+        ("0.0.2", ">=0.0.2.dev0,<0.1"),
+        (manifest.compatibility.version, manifest.compatibility.engine),
+    )
+    rows = [
+        {
+            **_static_release(
+                LockedPack(manifest.name, version, "blake3:" + f"{index:064x}", "dinkster", ()),
+                b"wheel",
+            ),
+            "engine": bounds,
+        }
+        for index, (version, bounds) in enumerate(versions, start=1)
+    ]
+    server = _serve_artifacts(
+        {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}, []
+    )
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        selected = resolve_compatible_release(registry, manifest.name, "0.0.2", engine)
+        assert selected.version == (manifest.compatibility.version if current else "0.0.2")
+        if not current:
+            with pytest.raises(InstallError, match=manifest.name):
+                resolve_compatible_release(
+                    registry, manifest.name, manifest.compatibility.version, engine
+                )
+    finally:
+        server.shutdown()
+
+
 @pytest.mark.parametrize("removed", [True, False])
 def test_registry_selection_snapshot_refreshes_between_operations(
     removed: bool,

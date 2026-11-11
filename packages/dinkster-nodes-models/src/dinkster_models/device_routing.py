@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -153,9 +153,9 @@ def _prune_multigpu_collision(model: Any, primary_device: object) -> None:
 class MultiGPUWorkUnits(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="MultiGPU_WorkUnits",
+                node_type="dinkster.models.multi_gpu_work_units",
                 display_name="MultiGPU CFG Split",
                 category="advanced/multigpu",
                 inputs=(
@@ -169,7 +169,8 @@ class MultiGPUWorkUnits(Node):
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
                 occupies=("gpu",),
-            )
+            ),
+            "MultiGPU_WorkUnits",
         )
 
     @classmethod
@@ -181,9 +182,9 @@ class MultiGPUWorkUnits(Node):
 class SelectModelDevice(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SelectModelDevice",
+                node_type="dinkster.models.select_model_device",
                 display_name="Select Model Device",
                 category="advanced/multigpu",
                 inputs=(
@@ -192,7 +193,8 @@ class SelectModelDevice(Node):
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL),),
                 occupies=("gpu",),
-            )
+            ),
+            "SelectModelDevice",
         )
 
     @classmethod
@@ -222,9 +224,9 @@ class SelectModelDevice(Node):
 class SelectCLIPDevice(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SelectCLIPDevice",
+                node_type="dinkster.models.select_clip_device",
                 display_name="Select CLIP Device",
                 category="advanced/multigpu",
                 inputs=(
@@ -233,7 +235,8 @@ class SelectCLIPDevice(Node):
                 ),
                 outputs=(OutputSpec("CLIP", _CLIP),),
                 occupies=("gpu",),
-            )
+            ),
+            "SelectCLIPDevice",
         )
 
     @classmethod
@@ -259,9 +262,9 @@ class SelectCLIPDevice(Node):
 class SelectVAEDevice(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="SelectVAEDevice",
+                node_type="dinkster.models.select_vae_device",
                 display_name="Select VAE Device",
                 category="advanced/multigpu",
                 inputs=(
@@ -270,7 +273,8 @@ class SelectVAEDevice(Node):
                 ),
                 outputs=(OutputSpec("VAE", _VAE),),
                 occupies=("gpu",),
-            )
+            ),
+            "SelectVAEDevice",
         )
 
     @classmethod

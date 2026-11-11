@@ -239,6 +239,13 @@ Pointer and journal writes flush to disk before atomic replacement. The
 `Generation`, `Journal`, `read_current` and `set_current` APIs read and write
 these records; the latter refuses missing or misnumbered target generations.
 
+Generation integrity checks hash every recorded file and stream the tree to
+detect unexpected files. Pack environments and bytecode directories are pruned
+from that discovery walk, not collected and sorted before being ignored. Pack
+environments have separate dependency checks. Recorded files remain checked even
+inside excluded directories; only unexpected files are sorted for diagnostics.
+Pack reviews retain their integrity checks before and after registry preparation.
+
 The channel format is `dinkster.channel/1`, with
 `engine: {version, release, locations}`, `base: {variant: {id, locations}}`,
 `minimumDesktopVersion`, and `signature`. Locations are a nonempty ordered array:

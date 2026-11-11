@@ -22,9 +22,9 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 _VISION_CONFIG = {
@@ -140,7 +140,7 @@ class PhotoMakerLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PhotoMakerLoader",
+            node_type="dinkster.sd.photo_maker_loader",
             display_name="Load PhotoMaker Model",
             category="model/loaders",
             inputs=(
@@ -152,7 +152,7 @@ class PhotoMakerLoader(Node):
             ),
             outputs=(OutputSpec("PHOTOMAKER", TypeExpr.concrete(PHOTOMAKER_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PhotoMakerLoader")
 
     @classmethod
     def execute(cls, *, photomaker_model_name: object) -> Mapping[str, object]:
@@ -173,7 +173,7 @@ class PhotoMakerEncode(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="PhotoMakerEncode",
+            node_type="dinkster.sd.photo_maker_encode",
             display_name="PhotoMaker Encode",
             category="model/conditioning/photomaker",
             inputs=(
@@ -189,7 +189,7 @@ class PhotoMakerEncode(Node):
             ),
             outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "PhotoMakerEncode")
 
     @classmethod
     def execute(

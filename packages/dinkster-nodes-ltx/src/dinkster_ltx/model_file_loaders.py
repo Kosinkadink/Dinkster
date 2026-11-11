@@ -10,8 +10,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 from dinkster_pack_helpers.model_file_loaders import (
     asset_input as _asset,
@@ -38,13 +38,13 @@ class LTXVAudioVAELoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXVAudioVAELoader",
+            node_type="dinkster.ltx.ltxv_audio_vae_loader",
             display_name="Load LTXV Audio VAE",
             category="model/loaders",
             inputs=(_asset("ckpt_name", "model/checkpoint", doc="Audio VAE checkpoint to load."),),
             outputs=(OutputSpec("VAE", _VAE, display_name="Audio VAE"),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXVAudioVAELoader")
 
     @classmethod
     def execute(cls, *, ckpt_name: object) -> Mapping[str, object]:
@@ -65,7 +65,7 @@ class LTXAVTextEncoderLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="LTXAVTextEncoderLoader",
+            node_type="dinkster.ltx.ltxav_text_encoder_loader",
             display_name="Load LTXV Audio Text Encoder",
             category="model/loaders",
             description="Recipes:\nltxav: gemma 3 12B or matching gemma 4 model",
@@ -76,7 +76,7 @@ class LTXAVTextEncoderLoader(Node):
             ),
             outputs=(OutputSpec("CLIP", _CLIP),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "LTXAVTextEncoderLoader")
 
     @classmethod
     def execute(

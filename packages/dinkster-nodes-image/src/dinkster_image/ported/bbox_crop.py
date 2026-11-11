@@ -19,9 +19,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -29,7 +29,7 @@ class CropByBBoxes(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CropByBBoxes",
+            node_type="dinkster.image.crop_by_b_boxes",
             display_name="Crop By Bounding Boxes",
             category="image/transform",
             search_terms=("crop", "face crop", "bbox crop", "pose", "bounding box"),
@@ -85,7 +85,7 @@ class CropByBBoxes(Node):
                 ),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CropByBBoxes")
 
     @classmethod
     def execute(

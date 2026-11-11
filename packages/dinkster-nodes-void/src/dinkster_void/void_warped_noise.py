@@ -16,9 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
+    with_identity_replacement,
 )
 
 
@@ -27,7 +27,7 @@ class VOIDWarpedNoise(Node):
     def define_schema(cls) -> NodeSchema:
         integer = TypeExpr.concrete(CORE_INT)
         schema = NodeSchema(
-            node_type="VOIDWarpedNoise",
+            node_type="dinkster.void.void_warped_noise",
             category="model/latent/void",
             inputs=(
                 InputSpec(
@@ -68,7 +68,7 @@ class VOIDWarpedNoise(Node):
                 OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE), display_name="warped_noise"),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "VOIDWarpedNoise")
 
     @classmethod
     def execute(

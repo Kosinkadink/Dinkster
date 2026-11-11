@@ -93,6 +93,14 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+def test_manifest_ignores_unrecognized_pack_metadata(tmp_path: Path) -> None:
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    expected = load_manifest(path)
+    with path.open("a") as output:
+        output.write('\n[pack.custom_metadata]\nimports = ["example"]\nrevision = "1"\n')
+    assert load_manifest(path) == expected
+
+
 @pytest.mark.parametrize(
     "path",
     sorted(Path("packages").glob("dinkster-nodes-*/dinkster-pack.toml"))
@@ -354,6 +362,13 @@ def test_locale_metadata_preserves_exact_node_and_port_ids(tmp_path: Path, field
         ('{"nodes":{"test.node":{"displayName":1e999}}}', "non-finite JSON number"),
         ("[" * 70 + "]" * 70, "nesting depth"),
         ("[" + ",".join("0" for _ in range(JSON_MAX_ITEMS)) + "]", "item count"),
+    ],
+    ids=[
+        "duplicate-key",
+        "non-finite-number",
+        "overflow-number",
+        "excessive-depth",
+        "excessive-items",
     ],
 )
 def test_locale_catalog_rejects_hostile_json(tmp_path: Path, body: str, message: str) -> None:

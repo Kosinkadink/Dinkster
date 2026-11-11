@@ -27,8 +27,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
+    with_identity_replacement,
 )
 
 HEAD_DIM = 128
@@ -585,9 +585,9 @@ def _method_input(name: str, default: float, doc: str) -> InputSpec:
 class BlockSparseAttention(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return first_party_schema(
+        return with_identity_replacement(
             NodeSchema(
-                node_type="BlockSparseAttention",
+                node_type="dinkster.models.block_sparse_attention",
                 display_name="Model Sparse Attention",
                 category="model/patch",
                 description=(
@@ -696,7 +696,8 @@ class BlockSparseAttention(Node):
                     "verbose",
                 ),
                 outputs=(OutputSpec("MODEL", _MODEL, display_name="model"),),
-            )
+            ),
+            "BlockSparseAttention",
         )
 
     @classmethod

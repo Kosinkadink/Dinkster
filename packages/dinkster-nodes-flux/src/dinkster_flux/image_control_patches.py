@@ -15,9 +15,9 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_clip_vision_output,
+    with_identity_replacement,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -72,7 +72,7 @@ class USOStyleReference(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="USOStyleReference",
+            node_type="dinkster.flux.uso_style_reference",
             display_name="Apply USO Style Reference",
             category="model/patch/flux",
             inputs=(
@@ -82,7 +82,7 @@ class USOStyleReference(Node):
             ),
             outputs=(OutputSpec("MODEL", _MODEL),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "USOStyleReference")
 
     @classmethod
     def execute(

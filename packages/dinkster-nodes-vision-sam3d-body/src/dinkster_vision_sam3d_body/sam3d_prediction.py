@@ -22,11 +22,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_image,
     materialize_vision_packet,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -34,7 +34,7 @@ class SAM3DBody_Predict(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SAM3DBody_Predict",
+            node_type="dinkster.vision.sam3d.body.sam3_d_body_predict",
             display_name="Run SAM3D Body Prediction",
             category="image/detection",
             inputs=(
@@ -80,7 +80,7 @@ class SAM3DBody_Predict(Node):
             ),
             outputs=(OutputSpec("mhr_pose_data", TypeExpr.concrete(MHR_POSE_DATA_TYPE)),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SAM3DBody_Predict")
 
     @classmethod
     def execute(

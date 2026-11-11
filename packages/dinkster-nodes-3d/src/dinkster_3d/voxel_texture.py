@@ -18,11 +18,11 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     initialize_inference_process,
     materialize_mesh,
     materialize_voxel,
     report_progress,
+    with_identity_replacement,
 )
 
 
@@ -162,7 +162,7 @@ class BakeTextureFromVoxel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="BakeTextureFromVoxel",
+            node_type="dinkster.3d.bake_texture_from_voxel",
             display_name="Bake Texture From Voxel",
             category="3d/texturing",
             description=(
@@ -195,7 +195,7 @@ class BakeTextureFromVoxel(Node):
                 for name in ("base_color", "metallic", "roughness")
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "BakeTextureFromVoxel")
 
     @classmethod
     def execute(

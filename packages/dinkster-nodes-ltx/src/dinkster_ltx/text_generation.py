@@ -6,7 +6,7 @@ from typing import Any
 
 from dinkster_api.v1 import (
     NodeSchema,
-    first_party_schema,
+    with_identity_replacement,
 )
 from dinkster_llm.text_generation import TextGenerate
 
@@ -146,11 +146,11 @@ class TextGenerateLTX2Prompt(TextGenerate):
     def define_schema(cls) -> NodeSchema:
         schema = replace(
             super().define_schema(),
-            node_type="TextGenerateLTX2Prompt",
+            node_type="dinkster.ltx.text_generate_ltx2_prompt",
             display_name="Generate LTX2 Prompt",
             search_terms=("prompt enhance", "LLM", "gemma"),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "TextGenerateLTX2Prompt")
 
     @classmethod
     def execute(

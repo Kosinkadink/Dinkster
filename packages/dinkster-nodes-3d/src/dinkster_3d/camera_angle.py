@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
+    with_identity_replacement,
 )
 
 _HORIZONTAL_TERMS = (
@@ -37,7 +37,7 @@ class CameraAngle(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="CameraAngle",
+            node_type="dinkster.3d.camera_angle",
             display_name="Compose Camera Angle Prompt",
             category="3d",
             description=(
@@ -105,7 +105,7 @@ class CameraAngle(Node):
                 OutputSpec("prompt", TypeExpr.concrete(CORE_STRING)),
             ),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "CameraAngle")
 
     @classmethod
     def execute(

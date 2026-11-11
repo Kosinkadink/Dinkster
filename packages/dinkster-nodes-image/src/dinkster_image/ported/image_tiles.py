@@ -16,8 +16,8 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    first_party_schema,
     materialize_image,
+    with_identity_replacement,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -58,7 +58,7 @@ class SplitImageToTileList(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="SplitImageToTileList",
+            node_type="dinkster.image.split_image_to_tile_list",
             display_name="Split Image into List of Tiles",
             description="Splits an image into a batched list of tiles with a specified overlap.",
             category="image/batch",
@@ -71,7 +71,7 @@ class SplitImageToTileList(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE_LIST),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "SplitImageToTileList")
 
     @staticmethod
     def get_grid_coords(
@@ -98,7 +98,7 @@ class ImageMergeTileList(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         schema = NodeSchema(
-            node_type="ImageMergeTileList",
+            node_type="dinkster.image.image_merge_tile_list",
             display_name="Merge List of Tiles to Image",
             category="image/batch",
             search_terms=("split image", "tile image", "slice image"),
@@ -110,7 +110,7 @@ class ImageMergeTileList(Node):
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
-        return first_party_schema(schema)
+        return with_identity_replacement(schema, "ImageMergeTileList")
 
     @classmethod
     def execute(

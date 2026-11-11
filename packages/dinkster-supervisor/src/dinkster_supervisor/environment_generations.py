@@ -851,6 +851,10 @@ def build_generation(
                     cast("str", row["pack"])
                     for row in cast("list[dict[str, object]]", provision["packs"])
                 }
+        if prepare_packs is None and source_generation is not None:
+            development = source_generation / "development-sources.json"
+            if development.is_file():
+                shutil.copyfile(development, destination / development.name)
         if catalog_lock is not None and artifacts is not None:
             if acquire_pack_sources:
                 restore_pack_sources(
