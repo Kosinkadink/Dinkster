@@ -51,6 +51,7 @@ class LockedWheel:
     size: int
     sha256: str
     url: str
+    registry: str | None = None
 
     def __post_init__(self) -> None:
         if Path(self.filename).name != self.filename or "\\" in self.filename:
@@ -60,6 +61,18 @@ class LockedWheel:
             raise ProvisionError(f"invalid wheel hash or size: {self.filename}")
         if urlparse(self.url).scheme not in {"https", "http", "file"}:
             raise ProvisionError(f"unsupported wheel URL: {self.filename}")
+        if self.registry is not None:
+            issuer = urlparse(self.registry) if isinstance(self.registry, str) else None
+            if (
+                issuer is None
+                or issuer.scheme not in {"https", "http"}
+                or not issuer.hostname
+                or issuer.username
+                or issuer.password
+                or issuer.query
+                or issuer.fragment
+            ):
+                raise ProvisionError(f"invalid wheel issuing registry: {self.filename}")
 
 
 @dataclass(frozen=True)
@@ -145,6 +158,10 @@ class PackLock:
 
     def to_json(self) -> str:
         data = asdict(self)
+        for package in data["packages"]:
+            for wheel in package["wheels"]:
+                if wheel["registry"] is None:
+                    wheel.pop("registry")
         data["format"] = (
             "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
         )
