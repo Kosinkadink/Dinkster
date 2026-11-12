@@ -1530,7 +1530,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-nodes-dev"
-version = "0.0.4"
+version = "0.0.3"
 source = { editable = "packages/dinkster-nodes-dev" }
 dependencies = [
     { name = "dinkster-api" },
