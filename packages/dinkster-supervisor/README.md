@@ -206,9 +206,10 @@ Failed restores append separate immutable receipts under
 The activation journal records `restoredFrom` before construction; recovery of an
 interrupted restore appends its failure receipt before making the journal terminal.
 Repeated recovery never duplicates an attempt. Source archives are retained in
-the engine cache after admission. Restore uses the target engine's exact-pin pack
-restore in a disposable install root to reacquire missing sources; it does not
-resolve newer pack versions or mutate the project's standalone pack install.
+the engine cache after admission. Restore uses the target engine's digest-verified
+source acquisition in disposable storage, without standalone provisioning or
+activation. It collects missing sources before copying the set to the retained
+cache; it never resolves newer pack versions.
 Pack provisioning uses the staged snapshot locks as its complete source set,
 not the current generation's locks, so later-added packs are not inherited.
 

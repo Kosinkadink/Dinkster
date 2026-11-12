@@ -45,12 +45,14 @@ them from the registry each entry's provenance records.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
 import platform
 import sys
 import tempfile
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -92,6 +94,7 @@ from .installer import (
     VenvSpec,
     lock_git_pack,
     lock_local_pack,
+    require_development_sources,
 )
 from .pack_archive import PackArchiveError, build_pack_archive
 from .registries import (
@@ -104,6 +107,7 @@ from .registries import (
     default_pack_minimums,
     load_registries,
     parse_registry_spec,
+    plan_registry_changes,
     plan_registry_sources,
     prepare_registry_pack_locks,
     prepare_registry_sources,
@@ -113,6 +117,8 @@ from .registries import (
     resolve_release,
     routing_registry_fetcher,
     select_registry,
+    static_pack_release,
+    static_release_wheel,
 )
 
 if TYPE_CHECKING:
@@ -304,10 +310,8 @@ def _finish(
     hosting_runtime_pins: Mapping[str, str] | None = None,
     generation_topology: bool = False,
 ) -> None:
-    """The shared plan/apply tail of every mutating command. Entries
-    whose bytes are not local yet (registry-resolved pins carry only the
-    digest) are acquired between confirmation and apply, digest-verified;
-    unacquirable ones refuse at plan time, naming the fix."""
+    """Review and apply development sources; published sources require a managed generation."""
+    require_development_sources(target)
     current = installer.current_lockfile()
     steps = plan(current if current is not None else Lockfile(), target)
     venvs = not args.no_venv
@@ -380,23 +384,205 @@ def _finish(
     print(f"activated generation {number}")
 
 
+def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, object]) -> None:
+    if set(document) != {
+        "format",
+        "root",
+        "expires",
+        "selections",
+        "updates",
+        "registryArguments",
+        "review",
+    }:
+        raise InstallError("invalid pack plan fields; request a new plan")
+    for key in ("selections", "updates", "registryArguments"):
+        value = document[key]
+        if key == "updates" and value is None:
+            continue
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise InstallError("invalid pack plan arguments; request a new plan")
+    arguments = cast("list[str]", document["registryArguments"])
+    flags = arguments[::2]
+    if (
+        len(arguments) % 2
+        or len(set(flags)) != len(flags)
+        or any(flag not in ("--registry", "--registries") for flag in flags)
+        or not isinstance(document["review"], dict)
+        or type(document["expires"]) not in (int, float)
+    ):
+        raise InstallError("invalid pack plan review; request a new plan")
+    operations = importlib.import_module("dinkster_supervisor.environment_pack_install")
+    root = Path(args.root).resolve()
+    if document.get("root") != str(root):
+        raise InstallError("pack plan belongs to another project")
+    if not time.time() < cast("float", document["expires"]) <= time.time() + 900:
+        raise InstallError("pack plan expired; request a new plan")
+    selections = tuple(cast("list[str]", document["selections"]))
+    updates = document["updates"]
+    registry_arguments = tuple(cast("list[str]", document["registryArguments"]))
+    approved = cast("dict[str, object]", document["review"])
+    try:
+        observed = operations.inspect_pack_install(
+            root,
+            selections,
+            updates=tuple(cast("list[str]", updates)) if updates is not None else None,
+            registry_arguments=registry_arguments,
+        )
+        if observed != approved:
+            raise InstallError("pack plan is stale; request a new plan")
+        metadata = cast("dict[str, object]", approved["metadata"])
+        selected = cast("dict[str, object]", metadata["dependencyLocks"])
+        sources = Lockfile.from_record_json(json.dumps(metadata["sources"]))
+        additions = tuple(
+            f"{entry.pack}@{entry.version}" for entry in sources.packs if entry.pack in selected
+        )
+        if not additions:
+            print("nothing to do; no registry packs selected")
+            return
+        with tempfile.TemporaryDirectory(prefix="dinkster-pack-review-") as directory:
+            retained = Path(directory) / "inputs"
+            result = operations.plan_pack_install(
+                root, additions, retained, registry_arguments=registry_arguments
+            )
+            prepared = result["packPlan"]
+            acquired = Lockfile.from_record_json(json.dumps(prepared["sources"]))
+            if tuple(replace(entry, claims=()) for entry in acquired.packs) != tuple(
+                replace(entry, claims=()) for entry in sources.packs
+            ) or any(
+                prepared["dependencyLocks"].get(name) != lock for name, lock in selected.items()
+            ):
+                raise InstallError("pack inputs changed after approval; request a new plan")
+            if (
+                operations.inspect_pack_install(
+                    root,
+                    selections,
+                    updates=tuple(cast("list[str]", updates)) if updates is not None else None,
+                    registry_arguments=registry_arguments,
+                )
+                != approved
+            ):
+                raise InstallError("pack plan is stale; request a new plan")
+            applied = operations.apply_pack_install(root, retained, result["approval"])
+            print(f"activated generation {applied['current']}")
+    except (OSError, ValueError) as exc:
+        raise InstallError(str(exc)) from exc
+
+
+def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> None:
+    if not args.root or not (Path(args.root) / "store").is_file():
+        raise InstallError(
+            "registry.managed-generation-required: registry installs are bound to a "
+            "base and variant; "
+            "create an active project with dinkster-env setup before installing published packs"
+        )
+    if args.no_venv or args.allow_doctor_findings or args.workspace_package or args.shared_store:
+        raise InstallError(
+            "managed published packs require their reviewed locks and generation store"
+        )
+    root = Path(args.root).resolve()
+    registry_arguments: list[str] = []
+    for flag, value in (("--registry", args.registry), ("--registries", args.registries)):
+        if value:
+            registry_arguments.extend(
+                [flag, str(Path(value).resolve()) if flag == "--registries" else value]
+            )
+    operations = importlib.import_module("dinkster_supervisor.environment_pack_install")
+    selections = () if update else tuple(args.packs)
+    updates = tuple(args.packs) if update else None
+    try:
+        review = operations.inspect_pack_install(
+            root, selections, updates=updates, registry_arguments=tuple(registry_arguments)
+        )
+    except (OSError, ValueError) as exc:
+        raise InstallError(str(exc)) from exc
+    metadata = cast("dict[str, object]", review["metadata"])
+    print(
+        f"Project: {root}\nStore: {review['store']}\n"
+        f"Current generation: {review['current']} -> proposed generation: {review['next']}"
+    )
+    print(
+        f"Retain engine {metadata['engineVersion']} ({metadata['engineRelease']}); "
+        f"base {metadata['baseId']}; variant {metadata['variant']}"
+    )
+    for line in cast("list[str]", metadata["plan"]):
+        print(line)
+    previous = Lockfile.from_record_json(json.dumps(metadata["previousSources"]))
+    proposed = Lockfile.from_record_json(json.dumps(metadata["sources"]))
+    for entry in proposed.packs:
+        old = previous.get(entry.pack)
+        print(
+            f"{entry.pack}: {old.version if old else 'absent'} -> {entry.version}; "
+            f"{old.artifact_digest if old else 'absent'} -> {entry.artifact_digest}; "
+            f"registry/source {old.source if old else 'absent'} -> {entry.source}"
+        )
+    for row in cast("list[dict[str, object]]", metadata["sourceCosts"]):
+        print(
+            f"Source {row['pack']}: {'verified cached' if row['cached'] else 'download required'}; "
+            f"{row['bytes'] if row['bytes'] is not None else 'unknown upper bound'} bytes"
+        )
+    for row in cast("list[dict[str, object]]", metadata["dependencyCosts"]):
+        print(
+            f"Dependency wheel upper bound: {row['filename']}; sha256:{row['sha256']}; "
+            f"{row['size']} bytes; {'verified cached' if row['cached'] else 'download if selected'}"
+        )
+    for name, lock in cast("dict[str, object]", metadata["dependencyLocks"]).items():
+        identity = hashlib.sha256(json.dumps(lock, sort_keys=True).encode("ascii")).hexdigest()
+        print(f"Dependency lock: {name}; sha256:{identity}")
+    print(f"Pack payload upper bound: {metadata['maximumPackPayloadBytes']} bytes")
+    print(f"Own-environment fallback: {review['ownEnvironmentBytes']} bytes; no automatic fallback")
+    print(f"Isolation: {ISOLATION_NOTE}")
+    print(
+        "No payload acquired; apply builds and activates a fresh generation; "
+        "project data is retained"
+    )
+    document = {
+        "format": "dinkster.pack-command-plan/1",
+        "root": str(root),
+        "selections": list(selections),
+        "updates": list(updates) if updates is not None else None,
+        "registryArguments": registry_arguments,
+        "expires": time.time() + 900,
+        "review": review,
+    }
+    if args.plan_file:
+        path = Path(args.plan_file)
+        if path.resolve().is_relative_to(root) or path.resolve().is_relative_to(
+            Path(review["store"])
+        ):
+            raise InstallError("pack plan must be outside the project and shared store")
+        with path.open("x", encoding="ascii") as stream:
+            json.dump(document, stream, sort_keys=True, indent=2)
+        print(f"plan written to {path}; apply with: dinkster pack --root {root} apply {path}")
+        return
+    if not _confirmed(args):
+        print("plan not applied; nothing changed")
+        return
+    _apply_managed_pack_plan(args, document)
+
+
 def _cmd_install(args: argparse.Namespace) -> None:
+    registry = [
+        not raw.startswith(GIT_PREFIX) and parse_registry_spec(raw) is not None
+        for raw in args.packs
+    ]
+    if any(registry):
+        if not all(registry):
+            raise InstallError(
+                "published selections cannot be mixed with local/git development sources"
+            )
+        _managed_pack_changes(args)
+        return
+    if args.root and (Path(args.root) / "store").is_file():
+        raise InstallError("local/git sources require explicit development; use dinkster develop")
     from .compose import resolve_manifest_path
 
     installer = _installer(args)
     current = installer.current_lockfile()
     entries = {entry.pack: entry for entry in (current.packs if current is not None else ())}
     for raw in args.packs:
-        spec = None if raw.startswith(GIT_PREFIX) else parse_registry_spec(raw)
         if raw.startswith(GIT_PREFIX):
             url, ref = _parse_git_spec(raw)
             entry, _ = lock_git_pack(url, installer.artifacts_dir, ref=ref)
-        elif spec is not None:
-            raise InstallError(
-                "registry.managed-generation-required: registry installs are bound to a base "
-                "and variant; use dinkster-env setup with --catalog-lock, --artifacts and "
-                "--pack-lock inputs instead of dinkster-pack install"
-            )
         else:
             pack_dir = resolve_manifest_path(raw).parent
             entry, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
@@ -419,6 +605,9 @@ def _cmd_remove(args: argparse.Namespace) -> None:
 
 
 def _cmd_update(args: argparse.Namespace) -> None:
+    if args.root and (Path(args.root) / "store").is_file():
+        _managed_pack_changes(args, update=True)
+        return
     installer = _installer(args)
     current = installer.current_lockfile()
     if current is None:
@@ -514,7 +703,12 @@ def _cmd_apply(args: argparse.Namespace) -> None:
     path = Path(args.plan_file)
     if not path.is_file():
         raise InstallError(f"no plan file at {path}")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("format") == "dinkster.pack-command-plan/1":
+        _apply_managed_pack_plan(args, document)
+        return
     record = PlanRecord.from_record_json(path.read_text())
+    require_development_sources(record.target)
     installer = _installer(args, accelerator=record.accelerator or None)
     current = installer.current_lockfile()
     if not record.matches_base(current):
@@ -651,6 +845,7 @@ def _cmd_restore(args: argparse.Namespace) -> None:
     if not path.is_file():
         raise InstallError(f"no snapshot file at {path}")
     record = SnapshotRecord.from_record_json(path.read_text())
+    require_development_sources(record.lockfile)
     replay_groups = _matching_restore_groups(installer, record.lockfile, record.venv_groups)
     host = f"{sys.platform}-{platform.machine()}"
     mismatches: list[str] = []
@@ -935,6 +1130,7 @@ def _cmd_reproduce(args: argparse.Namespace) -> None:
         )
     if not provisional:
         raise InstallError("the environment stamp pins no packs; nothing to reproduce")
+    require_development_sources(Lockfile.of(provisional))
     missing = [entry for entry in provisional if not installer.artifact_available(entry)]
     stuck = sorted(entry.pack for entry in missing if not installer.acquirable(entry))
     if stuck:
@@ -1116,25 +1312,63 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     except (OSError, ValueError) as exc:
         raise InstallError(f"target engine metadata refused: {exc}") from exc
     defaults = engine.get("defaultPacks")
-    if not isinstance(defaults, dict) or not defaults:
+    if args.installed_lock is None and (not isinstance(defaults, dict) or not defaults):
         raise InstallError("target engine has no default pack declaration")
     config = _registry_config(args)
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
-    sources, locks = plan_registry_sources(
-        config,
-        select_registry(config, selector),
-        cast("dict[str, str]", defaults),
-        engine_version=cast("str", engine["version"]),
-        variant=args.variant,
-        base_id=args.base_id,
-        index=StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True),
-    )
+    index = StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True)
+    installed = Lockfile()
+    if args.installed_lock is not None:
+        try:
+            installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise InstallError(f"installed sources cannot be read: {exc}") from exc
+        sources, locks = plan_registry_changes(
+            config,
+            installed,
+            selections=tuple(args.add),
+            updates=tuple(args.update) if args.update is not None else None,
+            engine_version=cast("str", engine["version"]),
+            variant=args.variant,
+            base_id=args.base_id,
+            selected=select_registry(config, args.registry) if args.registry else None,
+            index=index,
+        )
+    else:
+        if args.add or args.update is not None:
+            raise InstallError("pack changes require --installed-lock")
+        sources, locks = plan_registry_sources(
+            config,
+            select_registry(config, selector),
+            cast("dict[str, str]", defaults),
+            engine_version=cast("str", engine["version"]),
+            variant=args.variant,
+            base_id=args.base_id,
+            index=index,
+        )
     payloads = {
         (wheel.sha256, wheel.filename): wheel.size
         for lock in locks
         for package in lock.packages
         for wheel in package.wheels
     }
+    source_wheels: dict[str, object] = {}
+    selected_registry = select_registry(config, args.registry) if args.registry else None
+    for entry in sources.packs:
+        if entry.pack not in {lock.pack for lock in locks}:
+            continue
+        registry = config.registry_for(entry, selected_registry)
+        wheel, identity = static_release_wheel(
+            registry, static_pack_release(registry, entry.pack, entry.version, index=index)
+        )
+        if identity != entry.artifact_digest:
+            raise InstallError(f"{entry.pack}: published source identity changed")
+        source_wheels[entry.pack] = {
+            "filename": wheel.filename,
+            "size": wheel.size,
+            "sha256": wheel.sha256,
+            "url": wheel.url,
+        }
     print(
         json.dumps(
             {
@@ -1143,11 +1377,20 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                 "variant": args.variant,
                 "baseId": args.base_id,
                 "sources": json.loads(sources.record_json()),
+                "previousSources": json.loads(installed.record_json())
+                if args.installed_lock is not None
+                else {"packs": []},
+                "sourceWheels": source_wheels,
                 "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
                 "maximumPackPayloadBytes": sum(payloads.values()),
                 "plan": [
-                    f"select {entry.pack}@{entry.version} from {entry.source} "
-                    f"({entry.artifact_digest}) using its published {args.variant} lock"
+                    (
+                        f"select {entry.pack}@{entry.version} from {entry.source} "
+                        f"({entry.artifact_digest}) using its published {args.variant} lock"
+                        if entry.pack in {lock.pack for lock in locks}
+                        else f"retain {entry.pack}@{entry.version} from {entry.source} "
+                        f"({entry.artifact_digest}) with its existing dependency lock"
+                    )
                     for entry in sources.packs
                 ],
             },
@@ -1342,6 +1585,8 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
     specs = default_pack_specs() if args.defaults else _installer(args).packs_for_serving()
+    if args.defaults and specs:
+        print("development: checkout defaults are not reproducible from dependency ranges")
     default_count = len(specs)
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
@@ -1355,6 +1600,7 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
                 spec,
                 venv_root=_default_pack_venv_root(args.library_root),
                 accelerator=resolve_accelerator(args.accelerator),
+                development=True,
             )
         yield spec
 
@@ -1474,6 +1720,11 @@ def main() -> None:
     source_plan.add_argument("--base-id", required=True)
     source_plan.add_argument("--index-snapshot", type=Path)
     source_plan.add_argument("--offline", action="store_true")
+    source_plan.add_argument("--installed-lock", type=Path)
+    source_plan.add_argument("--add", action="append", default=[], metavar="PACK@VERSION")
+    source_plan.add_argument(
+        "--update", nargs="*", metavar="PACK", help="update selected registry packs; default: all"
+    )
     source_plan.set_defaults(handler=_cmd_plan_registry_sources)
 
     sources = commands.add_parser(

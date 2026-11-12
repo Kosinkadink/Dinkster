@@ -15,7 +15,14 @@ HELPER = "dinkster-dry-run-helpers"
 CONSUMER = "dinkster-dry-run-consumer"
 
 
-def prepare_fixture(bases: Path, output: Path, *, incompatible: bool = False) -> None:
+def prepare_fixture(
+    bases: Path,
+    output: Path,
+    *,
+    incompatible: bool = False,
+    engine: Path | None = None,
+    missing_export: bool = False,
+) -> None:
     """Create ordinary wheels and complete locks, retaining the supplied base identities."""
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
@@ -44,8 +51,22 @@ def prepare_fixture(bases: Path, output: Path, *, incompatible: bool = False) ->
     pack = output / "pack"
     module = pack / "dinkster_dry_run_consumer"
     module.mkdir(parents=True)
+    api_import = ""
+    if engine is not None:
+        export = (
+            "register_compositor_type_missing" if missing_export else "register_compositor_type"
+        )
+        api_import = f"from dinkster_api.v1 import {export}\n"
+        destination = output / "engine"
+        destination.mkdir()
+        manifest = engine / "release-manifest.json"
+        shutil.copyfile(manifest, destination / manifest.name)
+        for artifact in json.loads(manifest.read_bytes())["artifacts"]:
+            filename = artifact["name"]
+            if filename.startswith("dinkster_api-") and Path(filename).name == filename:
+                shutil.copyfile(engine / filename, destination / filename)
     (module / "__init__.py").write_text(
-        "from dinkster_dry_run_helpers import VALUE\n"
+        api_import + "from dinkster_dry_run_helpers import VALUE\n"
         "from dinkster_api.v1 import Node, NodeSchema\n"
         "assert VALUE == 37\n"
         "class Example(Node):\n"
@@ -118,6 +139,10 @@ def prepare_fixture(bases: Path, output: Path, *, incompatible: bool = False) ->
     (simple / "index.html").write_text(
         f'<a href="../../{helper.name}">{helper.name}</a>', encoding="ascii"
     )
+    if engine is not None:
+        from scripts.stage_publication_probe_index import stage_index
+
+        stage_index(sources, index, engine=engine)
 
 
 def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> dict:
@@ -145,7 +170,22 @@ def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> 
             raise
     else:
         raise RuntimeError("publisher accepted an incompatible selected dependency")
-    return {"orderingAndReplay": results, "incompatibleDependencyRefused": True}
+    selected = fixtures / "matching-engine"
+    matching = check_publication(root, selected, selected / "index", service_image, publisher_image)
+    missing = fixtures / "missing-export"
+    try:
+        check_publication(root, missing, missing / "index", service_image, publisher_image)
+    except RuntimeError as exc:
+        if "entry.unresolvable" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("publisher accepted an export absent from the selected API")
+    return {
+        "orderingAndReplay": results,
+        "incompatibleDependencyRefused": True,
+        "matchingEngine": matching,
+        "missingExportRefused": True,
+    }
 
 
 if __name__ == "__main__":
@@ -153,6 +193,7 @@ if __name__ == "__main__":
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare")
     prepare.add_argument("--bases", required=True, type=Path)
+    prepare.add_argument("--engine", required=True, type=Path)
     prepare.add_argument("--output", required=True, type=Path)
     check = commands.add_parser("check")
     check.add_argument("--fixtures", required=True, type=Path)
@@ -162,6 +203,17 @@ if __name__ == "__main__":
     if args.command == "prepare":
         prepare_fixture(args.bases.resolve(), args.output.resolve() / "good")
         prepare_fixture(args.bases.resolve(), args.output.resolve() / "broken", incompatible=True)
+        prepare_fixture(
+            args.bases.resolve(),
+            args.output.resolve() / "matching-engine",
+            engine=args.engine.resolve(),
+        )
+        prepare_fixture(
+            args.bases.resolve(),
+            args.output.resolve() / "missing-export",
+            engine=args.engine.resolve(),
+            missing_export=True,
+        )
     else:
         print(
             json.dumps(

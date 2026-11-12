@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import email.parser
 import json
 import shutil
 import subprocess
@@ -24,11 +25,21 @@ from scripts.build_official_packs import library_metadata
 from scripts.build_release import sha256
 
 
-def stage_index(sources: Path, output: Path) -> dict:
+def stage_index(sources: Path, output: Path, *, engine: Path | None = None) -> dict:
     """Resolve CPU probe requirements independently of the native install locks."""
     output.mkdir(parents=True, exist_ok=True)
     catalog = Lockfile.from_record_json((sources / "official-packs.lock").read_text())
     requirements: set[str] = set()
+    if engine is not None:
+        apis = list(engine.glob("dinkster_api-*.whl"))
+        if len(apis) != 1:
+            raise ValueError("probe index requires exactly one selected API wheel")
+        with ZipFile(apis[0]) as wheel:
+            metadata = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
+            if len(metadata) != 1:
+                raise ValueError("selected API wheel requires one distribution")
+            fields = email.parser.BytesParser().parsebytes(wheel.read(metadata[0]))
+            requirements.update(fields.get_all("Requires-Dist", []))
     with tempfile.TemporaryDirectory(prefix="publication-probe-") as directory:
         work = Path(directory)
         for pack in catalog.packs:
@@ -123,6 +134,15 @@ def stage_index(sources: Path, output: Path) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sources", required=True, type=Path)
+    parser.add_argument("--engine", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
-    print(json.dumps(stage_index(args.sources.resolve(), args.output.resolve())))
+    print(
+        json.dumps(
+            stage_index(
+                args.sources.resolve(),
+                args.output.resolve(),
+                engine=args.engine.resolve() if args.engine else None,
+            )
+        )
+    )

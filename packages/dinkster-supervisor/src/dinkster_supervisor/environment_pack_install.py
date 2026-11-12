@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-from .environment_generations import build_generation, pack_operation, prepare_registry_inputs
+from dinkster_store import object_path
+
+from .environment_generations import (
+    build_generation,
+    pack_operation,
+    prepare_engine_interpreter,
+    restore_pack_sources,
+    retained_pack_archive,
+)
 from .environment_progress import preparation_progress
 from .environment_runtime import engine_status
 from .environment_state import (
@@ -18,6 +29,7 @@ from .environment_state import (
     Generation,
     Journal,
     content_digest,
+    interpreter,
     read_current,
     read_document,
     relative_file,
@@ -71,7 +83,154 @@ def _current(root: Path) -> tuple[Path, Generation, Path]:
     return source, generation, store
 
 
-def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> dict[str, object]:
+def inspect_pack_install(
+    root: Path,
+    selections: tuple[str, ...],
+    *,
+    updates: tuple[str, ...] | None = None,
+    registry_arguments: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Read the active engine's published metadata without acquiring payloads or writing state."""
+    root = root.resolve()
+    source, generation, store = _current(root)
+    inputs = _project_inputs(root)
+    registry_inputs: dict[str, str] = {}
+    for flag, value in zip(registry_arguments[::2], registry_arguments[1::2], strict=True):
+        if flag == "--registries":
+            path = Path(value)
+            if path.is_symlink():
+                raise EnvironmentError("pack installation refuses linked registry configuration")
+            registry_inputs[str(path)] = content_digest(path)
+    software = content_digest(source / "generation.json")
+    command = [
+        str(interpreter(source)),
+        "-I",
+        "-B",
+        "-m",
+        "dinkster.manager",
+        "--root",
+        str(root),
+        *registry_arguments,
+        "plan-registry-sources",
+        "--engine-manifest",
+        str(source / "engine-manifest.json"),
+        "--engine-release",
+        generation.engine_release,
+        "--installed-lock",
+        str(source / "dinkster.lock"),
+        "--variant",
+        generation.variant,
+        "--base-id",
+        generation.base,
+    ]
+    for selection in selections:
+        command.extend(["--add", selection])
+    if updates is not None:
+        command.extend(["--update", *updates])
+    preparation_progress("checking-registry-metadata")
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    errors: list[str] = []
+    if result.returncode:
+        errors.append(result.stderr.strip() or result.stdout.strip())
+    base = object_path(store / "bases", generation.base) / "python"
+    if not base.is_dir() or base.is_symlink():
+        errors.append(f"retained base {generation.base} is missing or linked")
+    if errors:
+        raise EnvironmentError("published pack review refused:\n" + "\n".join(errors))
+    try:
+        raw: object = json.loads(result.stdout)
+        if not isinstance(raw, dict):
+            raise ValueError("expected an object")
+        metadata = cast("dict[str, object]", raw)
+        if (
+            metadata.get("engineRelease") != generation.engine_release
+            or metadata.get("engineVersion") != generation.engine_version
+            or metadata.get("variant") != generation.variant
+            or metadata.get("baseId") != generation.base
+            or not isinstance(metadata.get("sources"), dict)
+            or not isinstance(metadata.get("dependencyLocks"), dict)
+            or not isinstance(metadata.get("plan"), list)
+        ):
+            raise ValueError("target engine returned inconsistent identities")
+    except ValueError as exc:
+        raise EnvironmentError(f"published pack review returned invalid metadata: {exc}") from exc
+    source_costs: list[dict[str, object]] = []
+    for entry in cast(
+        "list[dict[str, object]]", cast("dict[str, object]", metadata["sources"])["packs"]
+    ):
+        name, identity = cast("str", entry["pack"]), cast("str", entry["artifactDigest"])
+        cached = retained_pack_archive(store, identity)
+        wheel = cast("dict[str, dict[str, object]]", metadata["sourceWheels"]).get(name)
+        source_costs.append(
+            {
+                "pack": name,
+                "cached": cached is not None,
+                "bytes": cached.stat().st_size
+                if cached is not None
+                else wheel["size"]
+                if wheel
+                else None,
+            }
+        )
+    metadata["sourceCosts"] = source_costs
+    dependency_costs: dict[tuple[str, str], dict[str, object]] = {}
+    retained_locks = {
+        path.parent.name: read_document(path)
+        for path in sorted((source / "packs").glob("*/pack-lock.json"))
+    } | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
+    for lock in retained_locks.values():
+        for package in cast("list[dict[str, object]]", lock["packages"]):
+            for wheel in cast("list[dict[str, object]]", package["wheels"]):
+                identity, filename = cast("str", wheel["sha256"]), cast("str", wheel["filename"])
+                cached = any(
+                    path.is_file()
+                    and not path.is_symlink()
+                    and path.stat().st_size == wheel["size"]
+                    and content_digest(path) == "sha256:" + identity
+                    for path in (
+                        object_path(store / "wheels", "sha256:" + identity) / filename,
+                        store / "wheels" / filename,
+                    )
+                )
+                dependency_costs[identity, filename] = {**wheel, "cached": cached}
+    metadata["dependencyCosts"] = list(dependency_costs.values())
+    metadata["maximumPackPayloadBytes"] = sum(
+        cast("int", row["size"]) for row in dependency_costs.values()
+    )
+    if (
+        _project_inputs(root) != inputs
+        or any(content_digest(Path(path)) != digest for path, digest in registry_inputs.items())
+        or content_digest(source / "generation.json") != software
+        or generation.drift(source)
+    ):
+        raise EnvironmentError("project changed after planning; request a new plan")
+    return {
+        "root": str(root),
+        "store": str(store),
+        "current": generation.number,
+        "next": next_generation(root),
+        "software": software,
+        "projectInputs": inputs,
+        "registryInputs": registry_inputs,
+        "metadata": metadata,
+        "ownEnvironmentBytes": sum(
+            path.stat().st_size for path in base.rglob("*") if path.is_file()
+        ),
+    }
+
+
+def plan_pack_install(
+    root: Path,
+    selections: tuple[str, ...],
+    output: Path,
+    *,
+    registry_arguments: tuple[str, ...] = (),
+) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
     if not selections or len(selections) > 64:
@@ -79,31 +238,43 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
     source, generation, store = _current(root)
     if output.is_relative_to(root) or output.is_relative_to(store):
         raise EnvironmentError("pack review inputs must be outside project and shared store")
+    review = inspect_pack_install(root, selections, registry_arguments=registry_arguments)
+    metadata = cast("dict[str, object]", review["metadata"])
     with writer_lock(store), writer_lock(root):
         source, generation, actual_store = _current(root)
         if actual_store != store:
             raise EnvironmentError("project changed after planning; request a new plan")
         inputs = _project_inputs(root)
         software = content_digest(source / "generation.json")
-        size = sum(
-            path.stat().st_size
-            for path in (store / "bases" / generation.base[7:] / "python").rglob("*")
-            if path.is_file()
-        )
-        with prepare_registry_inputs(
-            store=store,
-            base=generation.base,
-            constraints=source / "constraints.txt",
-            variant=generation.variant,
-            engine_version=generation.engine_version,
-            project=root,
-            installed_lock=source / "dinkster.lock",
-            additions=selections,
-        ) as (catalog, artifacts, locks, _unavailable):
+        if (
+            inputs != review["projectInputs"]
+            or software != review["software"]
+            or generation.number != review["current"]
+        ):
+            raise EnvironmentError("project changed after planning; request a new plan")
+        size = cast("int", review["ownEnvironmentBytes"])
+        with tempfile.TemporaryDirectory(dir=store, prefix=".pack-inputs-") as directory:
+            scratch = Path(directory)
+            catalog, artifacts = scratch / "dinkster.lock", scratch / "artifacts"
+            write_document(catalog, cast("dict[str, object]", metadata["sources"]))
+            lock_root = scratch / "locks"
+            lock_root.mkdir()
+            for name, lock in cast("dict[str, object]", metadata["dependencyLocks"]).items():
+                write_document(lock_root / f"{name}.json", cast("dict[str, object]", lock))
+            locks = tuple(sorted(lock_root.glob("*.json")))
+            engine = scratch / "engine"
+            preparation_progress("preparing-runtime")
+            prepare_engine_interpreter(
+                engine,
+                store=store,
+                base=generation.base,
+                constraints=source / "constraints.txt",
+                uv_cache=scratch / "uv-cache",
+            )
             preparation_progress("checking-pack-requirements")
             preflight = pack_operation(
                 "preflight",
-                generation=catalog.parent / "engine",
+                generation=engine,
                 store=store,
                 variant=generation.variant,
                 worker_protocol=generation.worker_protocol,
@@ -112,6 +283,86 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
                 locks=locks,
                 in_process_packs=generation.in_process_packs,
             )
+            errors: list[str] = []
+            preparation_progress("preparing-pack-sources")
+            try:
+                restore_pack_sources(
+                    engine,
+                    catalog_lock=catalog,
+                    artifacts=artifacts,
+                    project=root,
+                    store=store,
+                    registry_arguments=registry_arguments,
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
+            wheels = scratch / "store" / "wheels"
+            wheels.mkdir(parents=True)
+            all_locks = {
+                path.parent.name: read_document(path)
+                for path in sorted((source / "packs").glob("*/pack-lock.json"))
+            } | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
+            for lock in all_locks.values():
+                for package in cast("list[dict[str, object]]", lock["packages"]):
+                    for wheel in cast("list[dict[str, object]]", package["wheels"]):
+                        identity, filename = (
+                            cast("str", wheel["sha256"]),
+                            cast("str", wheel["filename"]),
+                        )
+                        cached = object_path(store / "wheels", "sha256:" + identity) / filename
+                        if not cached.is_file():
+                            cached = store / "wheels" / filename
+                        if cached.is_file() and content_digest(cached) == "sha256:" + identity:
+                            target = wheels / identity / filename
+                            target.parent.mkdir(exist_ok=True)
+                            shutil.copyfile(cached, target)
+            preparation_progress("acquiring-pack-inputs")
+            try:
+                pack_operation(
+                    "acquire",
+                    generation=engine,
+                    store=scratch / "store",
+                    variant=generation.variant,
+                    worker_protocol=generation.worker_protocol,
+                    own_environment_size=size,
+                    source_generation=source,
+                    locks=locks,
+                    in_process_packs=generation.in_process_packs,
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
+            if errors:
+                raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
+            preparation_progress("checking-pack-admission")
+            admitted = subprocess.run(
+                [
+                    str(interpreter(engine)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    """
+import sys
+from pathlib import Path
+from dinkster_registry import Lockfile
+from dinkster_store import pack_archive_path
+from dinkster.registries import registry_source_lock
+lock = Lockfile.from_record_json(Path(sys.argv[1]).read_text())
+entries = [registry_source_lock(entry, pack_archive_path(Path(sys.argv[2]), entry.artifact_digest),
+                               engine_version=sys.argv[3])
+           if entry.source == 'registry' or entry.source.startswith('registry:') else entry
+           for entry in lock.packs]
+print(Lockfile.of(entries).record_json())
+""",
+                    str(catalog),
+                    str(artifacts),
+                    generation.engine_version,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if admitted.returncode:
+                raise EnvironmentError("pack admission refused: " + admitted.stderr.strip())
+            write_document(catalog, cast("dict[str, object]", json.loads(admitted.stdout)))
             if (
                 _project_inputs(root) != inputs
                 or content_digest(source / "generation.json") != software
@@ -123,6 +374,7 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
             try:
                 shutil.copyfile(catalog, output / "dinkster.lock")
                 shutil.copytree(artifacts, output / "artifacts")
+                shutil.copytree(wheels, output / "wheels")
                 (output / "locks").mkdir()
                 for lock in locks:
                     shutil.copyfile(lock, output / "locks" / lock.name)
@@ -214,6 +466,11 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
         revalidate()
         if time.time() >= cast("float", record["expires"]) or (inputs / "consumed").exists():
             raise EnvironmentError("pack installation confirmation expired or was already used")
+        for wheel in (inputs / "wheels").rglob("*.whl"):
+            identity = content_digest(wheel)
+            destination = object_path(store / "wheels", identity) / wheel.name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(wheel, destination)
         with (inputs / "consumed").open("x", encoding="ascii") as handle:
             handle.write(approval)
         target = next_generation(root)
@@ -236,7 +493,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
                 own_environment_size=cast("int", record["ownEnvironmentBytes"]),
                 catalog_lock=inputs / "dinkster.lock",
                 artifacts=inputs / "artifacts",
-                acquire_pack_wheels=True,
+                acquire_pack_wheels=False,
                 source_kind=generation.source,
                 artifact_sources=read_document(source / "artifact-sources.json")
                 if (source / "artifact-sources.json").exists()

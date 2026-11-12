@@ -243,8 +243,9 @@ def _prepare_default_pack(
     *,
     venv_root: Path,
     accelerator: str,
+    development: bool = False,
 ) -> PackSpec:
-    """Attach a complete interpreter to an isolated installed default pack."""
+    """Resolve a checkout pack only in an explicitly labelled development session."""
     if spec.in_process or spec.python is not None:
         return spec
     manifest = load_manifest(resolve_manifest_path(spec.manifest))
@@ -255,6 +256,11 @@ def _prepare_default_pack(
         environment["PYTHONPATH"] = pythonpath + (os.pathsep + inherited if inherited else "")
     if configured := os.environ.get(_SERVING_PYTHON_ENV):
         return replace(spec, python=configured, env=environment)
+    if not development:
+        raise CompositionError(
+            "published packs require a prepared generation interpreter; use dinkster develop "
+            "for unlocked dependency resolution"
+        )
     if spec.packs is None or len(spec.packs) != 1:
         raise CompositionError("an installed default pack must carry exactly one provenance entry")
     info = next(iter(spec.packs.values()))
@@ -310,6 +316,7 @@ def _prepare_stale_catalogs(
     *,
     venv_root: Path,
     accelerator: str,
+    development: bool = False,
 ) -> None:
     stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
     for entry in specs:
@@ -335,7 +342,9 @@ def _prepare_stale_catalogs(
     completed = 0
     for entry, manifest_paths in stale_by_spec:
         prepared = (
-            _prepare_default_pack(entry, venv_root=venv_root, accelerator=accelerator)
+            _prepare_default_pack(
+                entry, venv_root=venv_root, accelerator=accelerator, development=development
+            )
             if not entry.in_process and _is_standard_vision_pack(entry)
             else entry
         )
@@ -1893,6 +1902,7 @@ def main(argv: list[str] | None = None) -> None:
                 specs if args.prepare_stale_catalogs else specs[:resolved_default_pack_count],
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
+                development=development,
             )
         composer.validate_catalogs(specs)
         composition = composer.composition
@@ -2266,6 +2276,7 @@ def main(argv: list[str] | None = None) -> None:
                                     entry,
                                     venv_root=default_pack_venv_root,
                                     accelerator=default_pack_accelerator,
+                                    development=development,
                                 )
                             async with composer.publication_transaction():
                                 delta = await composer.add_pack(entry)

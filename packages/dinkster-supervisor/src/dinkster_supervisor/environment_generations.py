@@ -331,15 +331,60 @@ def retained_pack_archive(store: Path, identity: str, artifacts: Path | None = N
     return None
 
 
+ACQUIRE_PACK_SOURCES = """
+import json, os, sys
+from pathlib import Path
+from dinkster.installer import Installer
+from dinkster.registries import (
+    RegistryConfig, load_registries, routing_registry_fetcher, select_registry,
+)
+from dinkster_registry import Lockfile
+project = Path(sys.argv[1])
+arguments = dict(zip(sys.argv[2::2], sys.argv[3::2], strict=True))
+config_path = project / 'registries.toml'
+if '--registries' in arguments:
+    config = load_registries(Path(arguments['--registries']))
+elif config_path.is_file():
+    config = load_registries(config_path)
+elif os.environ.get('DINKSTER_REGISTRIES'):
+    config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
+else:
+    config = RegistryConfig()
+selector = arguments.get('--registry', os.environ.get('DINKSTER_REGISTRY', ''))
+if (not selector and not config_path.is_file()
+        and not os.environ.get('DINKSTER_REGISTRIES') and '--registries' not in arguments):
+    selector = 'https://registry.dinkster.org'
+selected = select_registry(config, selector) if selector else None
+installer = Installer(
+    Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
+)
+missing = {}
+for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
+    try:
+        installer.acquire(entry)
+    except Exception as exc:
+        missing[entry.artifact_digest] = str(exc)
+print(json.dumps(missing))
+"""
+
+
 def restore_pack_sources(
-    generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path, store: Path
+    generation: Path,
+    *,
+    catalog_lock: Path,
+    artifacts: Path,
+    project: Path,
+    store: Path,
+    registry_arguments: tuple[str, ...] = (),
 ) -> None:
-    """Use the target's exact-pin restore in scratch, never the live pack install."""
+    """Acquire exact source bytes in scratch without provisioning or activating packs."""
+    lock = read_document(catalog_lock)
+    if not lock["packs"]:
+        return
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
         scratch = Path(directory)
         cache = scratch / "artifacts"
         cache.mkdir()
-        lock = read_document(catalog_lock)
         for row in cast("list[dict[str, object]]", lock["packs"]):
             identity = row.get("artifactDigest")
             if not isinstance(identity, str):
@@ -348,31 +393,18 @@ def restore_pack_sources(
             if archive is not None:
                 # Older target engines still consume flat digest-named archives.
                 shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
-        snapshot = scratch / "snapshot.json"
-        write_document(
-            snapshot,
-            {
-                "format": "dinkster.snapshot/1",
-                "lockfile": json.loads(catalog_lock.read_bytes()),
-                "venvs": {},
-            },
-        )
-        command = [
-            str(interpreter(generation)),
-            "-I",
-            "-B",
-            "-m",
-            "dinkster.manager",
-            "--root",
-            str(scratch),
-        ]
-        registries = project / "registries.toml"
-        if registries.is_file():
-            command.extend(["--registries", str(registries)])
-        elif not os.environ.get("DINKSTER_REGISTRIES") and not os.environ.get("DINKSTER_REGISTRY"):
-            command.extend(["--registry", "https://registry.dinkster.org"])
         completed = subprocess.run(
-            [*command, "restore", str(snapshot), "--no-venv", "--yes"],
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-c",
+                ACQUIRE_PACK_SOURCES,
+                str(project),
+                *registry_arguments,
+            ],
+            cwd=scratch,
+            input=json.dumps(lock),
             capture_output=True,
             text=True,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DINKSTER_SHARED_STORE": ""},
@@ -381,6 +413,23 @@ def restore_pack_sources(
             raise EnvironmentError(
                 "target exact source restore refused: "
                 + (completed.stderr.strip() or completed.stdout.strip())
+            )
+        try:
+            missing: object = json.loads(completed.stdout)
+            if not isinstance(missing, dict) or any(
+                not isinstance(identity, str) or not isinstance(reason, str)
+                for identity, reason in cast("dict[object, object]", missing).items()
+            ):
+                raise ValueError("expected source identities and errors")
+        except ValueError as exc:
+            raise EnvironmentError(f"invalid source acquisition result: {exc}") from exc
+        if missing:
+            raise EnvironmentError(
+                "target exact source restore refused:\n"
+                + "\n".join(
+                    f"{identity}: {reason}"
+                    for identity, reason in cast("dict[str, str]", missing).items()
+                )
             )
         for row in cast("list[dict[str, object]]", lock["packs"]):
             identity = cast("str", row["artifactDigest"])
@@ -484,6 +533,7 @@ def prepare_engine_interpreter(
     constraints: Path,
     uv: str = "uv",
     refresh_cache: bool = False,
+    uv_cache: Path | None = None,
 ) -> Path:
     """Prepare acquired engine inputs in a new caller-owned, unsealed directory.
 
@@ -561,7 +611,7 @@ def prepare_engine_interpreter(
     )
     environment = {
         **os.environ,
-        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_CACHE_DIR": str(uv_cache if uv_cache is not None else store / "uv-cache"),
         "UV_OFFLINE": "1",
         "UV_NO_INDEX": "1",
         "UV_PYTHON_DOWNLOADS": "never",
