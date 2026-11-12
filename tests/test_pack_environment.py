@@ -315,6 +315,61 @@ def test_pack_download_retry_refusals_preserve_verification_and_offline(
         assert not list((tmp_path / "store").rglob("*.partial"))
 
 
+@pytest.mark.parametrize("engine", [None, ">=0.0.3"])
+@pytest.mark.parametrize("issuer", [None, "https://issuer.example.test/simple"])
+def test_dependency_lock_reader_preserves_issuer_and_unchanged_originless_bytes(
+    tmp_path: Path, engine: str | None, issuer: str | None
+) -> None:
+    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    wheel = {
+        "filename": artifact.filename,
+        "size": artifact.size,
+        "sha256": artifact.sha256,
+        "url": artifact.url,
+    }
+    if issuer is not None:
+        wheel["registry"] = issuer
+    document = {
+        "format": "dinkster.pack-lock/2" if engine else "dinkster.pack-lock/1",
+        "pack": "example",
+        "variant": "linux-cpu",
+        "requiresPython": ">=3.12",
+        "requirements": ["fixture-extra==1.2"],
+        "indexes": [],
+        "packages": [{"name": "fixture-extra", "version": "1.2", "wheels": [wheel]}],
+    }
+    if engine is not None:
+        document["engine"] = engine
+    encoded = json.dumps(document, indent=2, sort_keys=True) + "\n"
+    lock = PackLock.from_json(encoded)
+    selected = lock.packages[0].wheels[0]
+    assert selected.registry == issuer
+    assert replace(selected, registry=None) == artifact
+    assert lock.to_json() == encoded
+
+
+@pytest.mark.parametrize(
+    "issuer",
+    [7, "", "file:///wheels", "https://user@issuer.test", "https://issuer.test/?query=1"],
+)
+def test_dependency_lock_reader_refuses_invalid_issuing_endpoint(
+    tmp_path: Path, issuer: object
+) -> None:
+    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    original = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        (),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (artifact,)),),
+    )
+    document = json.loads(original.to_json())
+    document["packages"][0]["wheels"][0]["registry"] = issuer
+    with pytest.raises(ProvisionError, match="invalid wheel issuing registry"):
+        PackLock.from_json(json.dumps(document))
+
+
 @pytest.mark.parametrize("measured", [False, True])
 @pytest.mark.parametrize("outcome", ["partial", "exhausted", "hash"])
 def test_lock_resolution_retries_verified_dependency_metadata(
