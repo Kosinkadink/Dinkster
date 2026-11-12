@@ -11,18 +11,10 @@ from .store import SecurityStore
 
 
 @dataclass(frozen=True)
-class Dependency:
-    registry: str
-    name: str
-    version: str
-    digest: str
-
-
-@dataclass(frozen=True)
 class Artifact:
     registry: str
     release: Release
-    dependencies: tuple[Dependency, ...] = ()
+    dependency_digests: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,18 +58,7 @@ def assess(
         raise ValueError("policy time must include a timezone")
     if maximum_feed_age is not None and maximum_feed_age <= timedelta(0):
         raise ValueError("maximum feed age must be positive")
-    registries = tuple(
-        sorted(
-            set(store.registries())
-            | {item.registry for item in artifacts}
-            | {
-                dependency.registry
-                for item in artifacts
-                for dependency in item.dependencies
-                if dependency.registry
-            }
-        )
-    )
+    registries = tuple(sorted(set(store.registries()) | {item.registry for item in artifacts}))
     findings: list[Finding] = []
     stale: list[str] = []
     provisioned = set(store.registries())
@@ -94,24 +75,11 @@ def assess(
                 continue
             for artifact in artifacts:
                 exact = registry == artifact.registry and notice.release == artifact.release
-                dependency_match = any(
-                    (dependency.registry, dependency.name, dependency.version, dependency.digest)
-                    == (
-                        registry,
-                        notice.release.pack,
-                        notice.release.version,
-                        notice.release.artifact_digest,
-                    )
-                    for dependency in artifact.dependencies
-                )
                 malicious_bytes = notice.state == "malicious" and (
                     notice.release.artifact_digest == artifact.release.artifact_digest
-                    or any(
-                        notice.release.artifact_digest == dependency.digest
-                        for dependency in artifact.dependencies
-                    )
+                    or notice.release.artifact_digest in artifact.dependency_digests
                 )
-                if not exact and not dependency_match and not malicious_bytes:
+                if not exact and not malicious_bytes:
                     continue
                 state = notice.state
                 if (

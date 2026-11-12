@@ -3212,7 +3212,7 @@ def test_registries_config_loads_and_refuses_loudly(tmp_path: Path) -> None:
     assert public.endpoint == "https://reg.example.org"  # trailing slash normalized
     corp = config.get("corp")
     assert corp is not None and corp.token_env == "CORP_TOKEN"
-    assert corp.source == "registry:http://reg.corp.internal"
+    assert corp.source == "registry:corp"
     assert config.get("Corp") is corp  # canonical lookup, one grammar
 
     for body, complaint in (
@@ -3311,7 +3311,7 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
     cross-checks the answer: a 404 names the miss, a substituted or
     malformed record refuses - the index can confess or refuse, never
     redirect."""
-    from dinkster.registries import NamedRegistry, RegistryConfig, resolve_release
+    from dinkster.registries import NamedRegistry, resolve_release
 
     installer = make_installer(tmp_path)
     demo = write_pack(tmp_path / "demo", "demo")
@@ -3330,11 +3330,7 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         assert resolved.pack == "demo" and resolved.version == "1.0.0"
         assert resolved.artifact_digest == entry.artifact_digest
         assert resolved.publisher == "acme"
-        assert resolved.source == "registry:" + registry.endpoint
-        retained = Lockfile.from_record_json(Lockfile.of([resolved]).record_json())
-        rebound = RegistryConfig((NamedRegistry("corp", "https://another.example.test"),))
-        assert rebound.registry_for(retained.packs[0]).endpoint == registry.endpoint
-        assert RegistryConfig().registry_for(retained.packs[0]).endpoint == registry.endpoint
+        assert resolved.source == "registry:corp"
         assert requests[-1] == (good, None)  # token env unset: no header
 
         with pytest.raises(InstallError, match="publishes no release demo@0.0.1"):
@@ -3740,7 +3736,7 @@ def test_registry_source_identity_comes_from_verified_archive(
         else:
             entry = registry_source_lock(selected, cached, engine_version=engine)
             assert entry == LockedPack(
-                "demo", "2.3.1", digest, "audit-actor", ("demo-tools",), registry.source
+                "demo", "2.3.1", digest, "audit-actor", ("demo-tools",), "registry:official"
             )
             assert entry.publisher == selected.publisher
             assert cached.read_bytes() == archive.read_bytes()
@@ -3820,77 +3816,6 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         compatibility = manifests[pack].compatibility
         assert compatibility is not None
         assert Version(minimum) <= Version(compatibility.version)
-
-
-@pytest.mark.parametrize("issuer", [None, "https://dependency-issuer.example.test/simple"])
-def test_published_dependency_origins_are_not_replaced_by_pack_registry(
-    tmp_path: Path, issuer: str | None
-) -> None:
-    from dinkster_registry import artifact_digest
-    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-
-    from dinkster.registries import RegistryConfig, read_registry_pack_locks
-
-    entry = LockedPack("demo", "1.2.3", "blake3:" + "a" * 64, "publisher", ())
-    dependency = LockedWheel(
-        "helper-1.0-py3-none-any.whl",
-        7,
-        "b" * 64,
-        "https://mirror.example.test/helper-1.0-py3-none-any.whl",
-        issuer,
-    )
-    payload = (
-        PackLock(
-            "demo",
-            "linux-cpu",
-            ">=3.12",
-            ("helper>=1",),
-            (),
-            (LockedDistribution("helper", "1.0", (dependency,)),),
-        )
-        .to_json()
-        .encode()
-    )
-    identity = artifact_digest(payload)
-    lock_path = "locks/" + identity.replace(":", "/") + ".json"
-    release = _static_release(entry, b"pack archive")
-    release["installLocks"] = {
-        "linux-cpu": {
-            "baseId": "sha256:" + "c" * 64,
-            "artifactDigest": entry.artifact_digest,
-            "digest": identity,
-            "size": len(payload),
-            "url": lock_path,
-        }
-    }
-    requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts(
-        {
-            **_static_indexes([release]),
-            "/static/" + lock_path: payload,
-        },
-        requests,
-    )
-    endpoint = f"http://127.0.0.1:{server.server_port}"
-    try:
-        locks = read_registry_pack_locks(
-            RegistryConfig(),
-            Lockfile.of([replace(entry, source="registry:" + endpoint)]),
-            variant="linux-cpu",
-            base_id="sha256:" + "c" * 64,
-        )
-        helper = next(package for package in locks[0].packages if package.name == "helper")
-        assert helper.wheels == (dependency,)
-        outer = next(package for package in locks[0].packages if package.name == "demo")
-        assert outer.wheels[0].registry == endpoint
-        assert requests == [
-            ("/static/packs/index.json", None),
-            ("/static/packs/demo/index.json", None),
-            ("/static/" + lock_path, None),
-        ]
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 @pytest.mark.parametrize(
@@ -4135,7 +4060,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                     assert target.get("local-only") == local
                     demo = target.get("demo")
                     assert demo is not None and demo.version == "1.2.3"
-                    assert demo.source == "registry:" + args[3]
+                    assert demo.source == "registry:original"
                     assert set(changed["dependencyLocks"]) == {"demo"}
                     assert changed["maximumPackPayloadBytes"] == 12
                 assert {path: path.read_bytes() for path in root.iterdir()} == project_inputs
@@ -4185,7 +4110,6 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                                     "sha256": "f" * 64,
                                     "size": 12,
                                     "url": endpoint + f"/static/wheels/{'f' * 64}/{filename}",
-                                    "registry": endpoint,
                                 }
                             ],
                         }
@@ -4484,7 +4408,9 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             assert result.packs == (
                 replace(
                     added,
-                    source=f"registry:http://127.0.0.1:{server.server_port}",
+                    source="registry:original"
+                    if problem == "replacement"
+                    else f"registry:http://127.0.0.1:{server.server_port}",
                 ),
                 old,
             )
@@ -4519,14 +4445,14 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
     source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
     (source / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
-        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["dinkster.text"]\n'
+        'version = "0.0.4"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["dinkster.text"]\n'
         '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
     )
     archive = tmp_path / "published.zip"
     digest = build_artifact(source, archive)
-    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    release = LockedPack(pack_name, "0.0.4", digest, "audit-actor", ())
     record = {**_static_release(release, archive.read_bytes()), "engine": ">=0.0.2.dev0,<0.1"}
-    newer = {**_static_release(replace(release, version="0.0.4"), b"newer"), "engine": ">=0.2"}
+    newer = {**_static_release(replace(release, version="0.0.5"), b"newer"), "engine": ">=0.2"}
     wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     artifact_path = f"/static/{wheel['url']}"
     files = {
@@ -4737,7 +4663,7 @@ def test_cli_reresolves_installed_sources_without_mutating_project(
                         release,
                         publisher="dinkster",
                         claims=("std",),
-                        source=f"registry:{endpoint}",
+                        source=f"registry:{endpoint}" if mode == "url" else "registry:official",
                     ),
                     local,
                     git,
