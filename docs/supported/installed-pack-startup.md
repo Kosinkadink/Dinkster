@@ -5,15 +5,25 @@
   denied vulnerable releases refuse without deleting retained bytes or changing
   the active selection. Retained vulnerable releases remain usable while their
   decision is pending; a new vulnerable release requires exact-notice approval.
-  These checks do not fetch notices or stop an already running worker.
+  Installer operations refresh independently trusted issuers before checking,
+  including configured mirrors. Failed refresh preserves cached decisions and
+  blocks without inventing incidents. Feed age does not refuse by default;
+  explicit age limits and vulnerability refusal apply to retained releases too.
+  Serving hosts periodically refresh configured security feeds. A newly blocked
+  isolated worker stops, including work pinned before the notice arrived;
+  pinned work from a retired composition remains subject to the same policy.
+  Unrelated workers continue. Pending vulnerable work continues until denied.
+  A signed lift clears the classification without resuming a stopped worker.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
 - Managed generation pack selection checks cached notices against sealed library
   identities and transitive pack sources. A malicious dependency blocks its
   consumer as affected, not malicious. Missing or changed wheel provenance refuses
-  selection when security checking is configured. This is not a supervisor
-  launch gate or a running-worker monitor.
+  selection when security checking is configured. Generation selection refreshes
+  before checking. Catalog preparation also checks before importing pack code,
+  using the provisioned wheel receipts before the generation is sealed. Sealed
+  generations continue to require the recorded receipt hashes.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.
@@ -55,8 +65,9 @@
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
   not newer releases. Acquisition collects unavailable or mismatched sources
   before copying any of the set into the retained cache, without provisioning
-  or activating a standalone installation. Interrupted software restores retain
-  a failed-attempt receipt while leaving successful history unchanged.
+  or activating a standalone installation or importing pack code. Interrupted
+  software restores retain a failed-attempt receipt while leaving successful
+  history unchanged.
 - Restore can recover selected source archives retained by another engine release
   when the recorded source cache was pruned. Retained bytes must match the locked
   BLAKE3 identity; corrupt copies cannot displace an intact retained archive.

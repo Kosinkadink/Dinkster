@@ -26,6 +26,45 @@ Dinkster deliberately stays out of the ComfyUI port neighborhood
 (8188/8189/8199) so a Dinkster install never collides with a running
 ComfyUI or comfy-runner allocation.
 
+## Signed security feed refresh
+
+The shared `dinkster_security.host.SecurityHost` reads independently provisioned
+trust from `<root>/security.sqlite3`. Refresh requests the complete signed
+`/v1/security/blocks` document from each trusted issuer. A local
+`<root>/security.toml` can select a mirror without changing the issuing identity:
+
+```toml
+refuse_vulnerable = false
+request_timeout_seconds = 5.0
+refresh_interval_seconds = 60.0
+# maximum_feed_age_seconds = 86400
+
+[feed_urls]
+"https://registry.example.org" = "https://mirror.example.org/security/index.json"
+```
+
+Overrides require independently provisioned trust for the exact issuer. Feed
+responses cannot provision keys. Refresh failures retain the accepted checkpoint
+and decisions; downloads are limited to 32 MiB and do not send registry bearer
+credentials. Default policy has no feed-age refusal. An explicit maximum age
+uses signed `issuedAt`, not the time of the latest successful download. Explicit
+vulnerability refusal applies to retained releases too. Local policy reloads
+on refresh; malformed policy refuses rather than silently reverting to defaults.
+Installer acquisition, install, rollback and serving selection refresh before
+their policy check. Managed generation pack selection also refreshes its project
+root. Serving uses the selected generation's project root, otherwise the install
+root, otherwise the library root, when security trust or configuration exists
+at launch. The serving host owns a periodic refresh task and cancels it during
+cleanup. It checks release identities before catalog preparation, worker import,
+lazy activation and dispatch, including previously pinned routes. A new block
+revokes execution before closing isolated workers or shared process owners;
+affected in-process execution requests whole-engine shutdown. A lift never
+resumes a revoked session. `GET /api/security` reports current findings, decisions,
+configured stale issuers and refresh failures. Flagged releases are logged once
+per notice revision and answer during a host lifetime.
+
+## Ingress
+
 An optional `[ingress]` table adds a fleet-facing port:
 
 ```toml
