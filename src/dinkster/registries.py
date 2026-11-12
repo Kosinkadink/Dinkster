@@ -641,6 +641,28 @@ class StaticPackIndex:
             )
         return releases
 
+    def release_manifest(self, registry: NamedRegistry, entry: LockedPack) -> dict[str, object]:
+        """Read active release constraints bound to the selected archive identity."""
+        if self._offline:
+            raise InstallError("offline release manifest is unavailable for security repair")
+        document = _index_get(
+            registry,
+            f"/v1/packs/{entry.pack}/versions/{entry.version}",
+            action="reading release constraints",
+            subject=f"{entry.pack}@{entry.version}",
+        )
+        artifact, manifest = document.get("artifact"), document.get("manifest")
+        if (
+            document.get("packName") != entry.pack
+            or document.get("version") != entry.version
+            or document.get("state") != "active"
+            or not isinstance(artifact, dict)
+            or artifact.get("digest") != entry.artifact_digest
+            or not isinstance(manifest, dict)
+        ):
+            raise InstallError("release constraints differ from selected active archive")
+        return cast("dict[str, object]", manifest)
+
 
 def _static_releases(
     registry: NamedRegistry,

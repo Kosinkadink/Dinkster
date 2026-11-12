@@ -37,7 +37,7 @@ def wheel_compatibility(python: Path) -> dict[str, object]:
         "'markers': default_environment()}))"
     )
     result = subprocess.run(
-        [str(python), "-I", "-S", "-c", script, str(Path(packaging.__file__).parent.parent)],
+        [str(python), "-I", "-B", "-S", "-c", script, str(Path(packaging.__file__).parent.parent)],
         capture_output=True,
         text=True,
         timeout=60,

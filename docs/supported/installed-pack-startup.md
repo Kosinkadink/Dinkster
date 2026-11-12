@@ -30,6 +30,12 @@
   version and file digest, preserving pending continuation and explicit denial.
   Missing issuing origins refuse security-checked selection rather than guessing
   authority from download URLs or local cache paths.
+- Security repair planning can offer one compatible published pack release or
+  dependency-lock change excluding refused files. It checks engine, Python,
+  shared-library and pack dependency constraints and cached security notices.
+  Planning downloads metadata only: it does not import packs, acquire payloads,
+  change current software or approve an installation. An offer requires a separate
+  host-owned approval plan; no compatible offer leaves the refusal in effect.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.

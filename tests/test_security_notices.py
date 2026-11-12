@@ -17,13 +17,13 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import Request, urlopen
 from uuid import UUID
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from dinkster_registry import InstallError, LockedPack, Lockfile, build_artifact
+from dinkster_registry import InstallError, LockedPack, Lockfile, artifact_digest, build_artifact
 from dinkster_security.documents import Release, SecurityError
 from dinkster_security.host import SecurityHost
 from dinkster_security.policy import Artifact, Dependency, assess
@@ -1405,3 +1405,249 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(
     receipt_path.write_text("{}\n")
     with pytest.raises(SecurityError, match="sealed provenance"):
         load_generation_packs(generation)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "release",
+        "lock",
+        "rehost",
+        "engine",
+        "python",
+        "incoming",
+        "outgoing",
+        "root",
+        "requirements",
+        "identity",
+    ],
+)
+def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
+    tmp_path: Path, case: str
+):
+    from dinkster_supervisor.environment_state import Generation, content_digest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_environment_generations import _standalone_tree
+    from test_installer import _serve_artifacts, _static_release
+
+    from dinkster.registries import RegistryConfig, StaticPackIndex
+    from dinkster.security_repair import plan_security_repair
+
+    generation = tmp_path / "generations/1"
+    generation.mkdir(parents=True)
+    _standalone_tree(generation / "python")
+    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "history").mkdir()
+    (tmp_path / "history/unchanged").write_bytes(b"retained history")
+    (generation / "constraints.txt").write_text("")
+    requests: list[tuple[str, str | None]] = []
+    documents: dict[str, bytes] = {}
+    server = _serve_artifacts(documents, requests)
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    bad_sha, good_sha = "a" * 64, "b" * 64
+
+    def dependency(sha: str, registry: str = REGISTRY) -> LockedDistribution:
+        return LockedDistribution(
+            "bad-library",
+            "1.0",
+            (
+                LockedWheel(
+                    "bad_library-1.0-py3-none-any.whl",
+                    7,
+                    sha,
+                    endpoint + "/payload-never-fetch",
+                    registry,
+                ),
+            ),
+        )
+
+    entries = [
+        LockedPack(name, "1.0.0", "blake3:" + digest * 64, "publisher", (), "registry:" + endpoint)
+        for name, digest in (("consumer", "c"), ("provider", "d"))
+    ]
+    old_lock = PackLock(
+        "provider", "fixture-cpu", ">=3.12", ("bad-library>=1",), (), (dependency(bad_sha),)
+    )
+    for entry in entries:
+        source = generation / "pack-sources" / entry.pack
+        source.mkdir(parents=True)
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{entry.pack}"\n[pack.entry]\nnodes="nodes:NODES"\n'
+            + (
+                '[pack.dependencies]\nprovider="<1.1"\n'
+                if case == "incoming" and entry.pack == "consumer"
+                else '[pack.dependencies]\nprovider=">=1"\n'
+                if entry.pack == "consumer"
+                else ""
+            )
+        )
+        (source / "nodes.py").write_text("raise AssertionError('pack code must not be imported')\n")
+        pack_root = generation / "packs" / entry.pack
+        pack_root.mkdir(parents=True)
+        lock = (
+            old_lock
+            if entry.pack == "provider"
+            else PackLock("consumer", "fixture-cpu", ">=3.12", (), (), ())
+        )
+        lock.write(pack_root / "pack-lock.json")
+        (pack_root / "installed-wheels.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "inherited": [],
+                    "wheels": [
+                        {
+                            "filename": "bad_library-1.0-py3-none-any.whl",
+                            "size": 7,
+                            "sha256": bad_sha,
+                            "registry": REGISTRY,
+                        }
+                    ]
+                    if entry.pack == "provider" and case != "root"
+                    else [],
+                }
+            )
+        )
+    (generation / "installed-wheels.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.installed-wheels/1",
+                "inherited": [],
+                "wheels": [
+                    {
+                        "filename": "bad_library-1.0-py3-none-any.whl",
+                        "size": 7,
+                        "sha256": bad_sha,
+                        "registry": REGISTRY,
+                    }
+                ]
+                if case == "root"
+                else [],
+            }
+        )
+    )
+    (generation / "dinkster.lock").write_text(Lockfile.of(entries).record_json())
+    record = Generation(
+        1,
+        "sha256:" + "e" * 64,
+        "1.0.0",
+        "sha256:" + "f" * 64,
+        content_digest(generation / "constraints.txt"),
+        "fixture-cpu",
+        1,
+        tuple(
+            (path.relative_to(generation).as_posix(), content_digest(path))
+            for path in generation.rglob("*")
+            if path.is_file()
+        ),
+        ("provider",),
+    )
+    record.write(generation / "generation.json")
+    rows = []
+    for version, sha in (
+        ("1.0.0", good_sha if case == "lock" else bad_sha),
+        ("1.1.0", bad_sha if case == "rehost" else good_sha),
+        ("1.2.0", bad_sha),
+    ):
+        if case == "lock" and version != "1.0.0":
+            continue
+        entry = replace(
+            entries[1],
+            version=version,
+            artifact_digest=entries[1].artifact_digest
+            if version == "1.0.0"
+            else "blake3:" + ("1" if version == "1.1.0" else "2") * 64,
+        )
+        row = _static_release(entry, version.encode())
+        row["engine"] = ">=2" if case == "engine" and version != "1.0.0" else ">=1,<2"
+        lock = replace(
+            old_lock,
+            requires_python=">=99" if case == "python" and version != "1.0.0" else ">=3.12",
+            packages=(
+                dependency(sha, "https://rehost.example.test" if case == "rehost" else REGISTRY),
+            ),
+        )
+        payload = lock.to_json().encode()
+        digest = artifact_digest(payload)
+        url = "locks/" + digest.replace(":", "/") + ".json"
+        row["installLocks"] = {
+            "fixture-cpu": {
+                "baseId": record.base,
+                "artifactDigest": entry.artifact_digest,
+                "digest": digest,
+                "size": len(payload),
+                "url": url,
+            }
+        }
+        rows.append(row)
+        documents["/static/" + url] = payload
+        documents[f"/v1/packs/provider/versions/{version}"] = json.dumps(
+            {
+                "packName": "provider",
+                "version": version,
+                "state": "active",
+                "artifact": {
+                    "digest": "blake3:" + "0" * 64 if case == "identity" else entry.artifact_digest
+                },
+                "manifest": {
+                    "dinkster": ">=1,<2",
+                    "pythonRequirements": [
+                        "bad-library>=2" if case == "requirements" else "bad-library>=1"
+                    ],
+                    "dependencies": [{"packName": "absent", "versionRange": ">=1"}]
+                    if case == "outgoing"
+                    else [],
+                },
+            }
+        ).encode()
+    documents["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": rows}).encode()
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    feed = _feed("malicious")
+    feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    host = SecurityHost(tmp_path)
+    before = {
+        path: content_digest(path)
+        for path in tmp_path.rglob("*")
+        if path.is_file() and "security.sqlite3" not in path.name
+    }
+    try:
+        result = plan_security_repair(
+            generation,
+            "consumer",
+            RegistryConfig(),
+            index=StaticPackIndex(read_only=True),
+            security=host,
+        )
+        assert result["status"] == (
+            "approval-required" if case in {"release", "lock"} else "no-compatible-fix"
+        ), result
+        if case in {"release", "lock"}:
+            offer = cast("dict[str, Any]", result["offer"])
+            assert offer["approvalRequired"] is True
+            assert offer["changedPack"] == "provider"
+            proposed = Lockfile.from_record_json(json.dumps(offer["sources"]))
+            provider = proposed.get("provider")
+            assert provider is not None
+            assert provider.version == ("1.0.0" if case == "lock" else "1.1.0")
+            assert proposed.get("consumer") == entries[0]
+            selected = PackLock.from_json(json.dumps(offer["dependencyLocks"]["provider"]))
+            assert selected.packages[0].wheels[0].sha256 == good_sha
+        else:
+            assert result["offer"] is None
+        assert all(content_digest(path) == data for path, data in before.items())
+        assert {
+            path
+            for path in tmp_path.rglob("*")
+            if path.is_file() and "security.sqlite3" not in path.name
+        } == set(before)
+        assert (tmp_path / "current").read_text() == "1\n"
+        assert not (tmp_path / "generations/2").exists()
+        assert not (tmp_path / "store").exists()
+        assert not any(
+            "/static/wheels/" in path or "payload-never-fetch" in path for path, _ in requests
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
