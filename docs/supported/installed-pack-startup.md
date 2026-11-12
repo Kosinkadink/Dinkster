@@ -42,6 +42,8 @@
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
+- Official pack publication can bind scans to the exact acquired engine commit
+  and manifest digest while retaining the original archive and dependency locks.
 - Dependency locks declaring engine API compatibility can layer unchanged on
   later engines inside that range. The target must supply the API, and all
   ordinary shared dependency versions must still agree exactly. Older exact

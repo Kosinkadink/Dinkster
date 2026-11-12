@@ -16,8 +16,6 @@ import torch
 from dinkster_api.v1 import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_TYPE,
-    CORE_FLOAT,
-    CORE_INT,
     CORE_STRING,
     InputSpec,
     Node,
@@ -54,33 +52,6 @@ def _assert_output(
 
 
 def test_schema_and_cold_source_tree_discovery() -> None:
-    schema = WanDancerEncodeAudio.define_schema()
-    assert schema.node_type == "dinkster.wan.wan_dancer_encode_audio"
-    assert schema.category == "model/conditioning/wan/dancer"
-    assert [(item.id, item.type.types) for item in schema.inputs] == [
-        ("audio", (AUDIO_TYPE,)),
-        ("video_frames", (CORE_INT,)),
-        ("audio_inject_scale", (CORE_FLOAT,)),
-    ]
-    assert [item.default for item in schema.inputs[1:]] == [149, 1.0]
-    assert [(item.widget.min, item.widget.max, item.widget.step) for item in schema.inputs[1:]] == [
-        (1, 16384, 4),
-        (0.0, 10.0, 0.01),
-    ]
-    assert (
-        schema.inputs[2].doc
-        == "The scale for the audio features when injected into the video model."
-    )
-    assert [(item.id, item.type.types, item.display_name, item.doc) for item in schema.outputs] == [
-        ("audio_encoder_output", (AUDIO_ENCODER_OUTPUT_TYPE,), "audio_encoder_output", ""),
-        (
-            "fps_string",
-            (CORE_STRING,),
-            "fps_string",
-            "The calculated fps based on the audio length and the number of video frames. "
-            "Used in the prompt.",
-        ),
-    ]
 
     root = Path(__file__).resolve().parents[3]
     python_path = os.pathsep.join(

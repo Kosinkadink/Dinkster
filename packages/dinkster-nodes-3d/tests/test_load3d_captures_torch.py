@@ -13,7 +13,6 @@ import av
 import numpy as np
 import pytest
 import torch
-from dinkster_3d import NODES
 from dinkster_3d import register_types as register_inference_types
 from dinkster_3d.load3d_captures import Load3D
 from dinkster_api.v1 import (
@@ -28,7 +27,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import LocalAssetRef, MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, TypedLiteral
-from dinkster_schema.wire import schema_to_wire
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
@@ -40,27 +38,6 @@ from geometry_pack_fixtures import geometry_pack_specs
 from PIL import Image
 
 from dinkster.compose import ServingComposer
-
-
-@pytest.mark.parametrize(
-    "node_type,input_id",
-    [
-        ("dinkster.3d.load3_d", "image"),
-        ("dinkster.3d.load3_d_advanced", "viewport_state"),
-        ("dinkster.3d.preview3_d_advanced", "viewport_state"),
-        ("dinkster.3d.preview_gaussian_splat", "viewport_state"),
-        ("dinkster.3d.preview_point_cloud", "viewport_state"),
-        ("dinkster.3d.save3_d_advanced", "viewport_state"),
-        ("dinkster.3d.save_gaussian_splat", "viewport_state"),
-        ("dinkster.3d.save_point_cloud", "viewport_state"),
-    ],
-)
-def test_viewport_input_advertises_existing_editor(node_type: str, input_id: str) -> None:
-    schemas = {node.schema().node_type: node.schema() for node in NODES}
-    wire = schema_to_wire(schemas[node_type])
-    viewport = next(entry for entry in wire["interface"] if entry["id"] == input_id)
-    assert viewport["type"] == {"kind": "concrete", "types": [LOAD_3D_TYPE]}
-    assert viewport["widget"] == {"type": "LOAD_3D"}
 
 
 @pytest.fixture

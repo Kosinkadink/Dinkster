@@ -7,7 +7,9 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 from collections.abc import Generator
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Never
 
@@ -112,24 +114,26 @@ def main() -> int:
     if len(sys.argv) > 2 and sys.argv[2] == "--check-only":
         return 0
     nodeid = sys.argv[3] if len(sys.argv) > 2 and sys.argv[2] == "--nodeid" else None
+    shard = int(sys.argv[3]) if len(sys.argv) > 2 and sys.argv[2] == "--test-shard" else None
     identity = config.get("testPack", "selected-tests")
-    with admission_timing(identity, "child-provenance"):
-        subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                "-B",
-                str(Path(__file__).resolve()),
-                str(config_path),
-                "--check-only",
-            ],
-            check=True,
-        )
+    if shard is None:
+        with admission_timing(identity, "child-provenance"):
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    str(Path(__file__).resolve()),
+                    str(config_path),
+                    "--check-only",
+                ],
+                check=True,
+            )
     from dinkster_workers.doctor import prepare_catalog
 
     from dinkster.compose import default_pack_spec
 
-    for name in () if nodeid else config["packs"]:
+    for name in () if nodeid or shard is not None else config["packs"]:
         with admission_timing(identity, f"catalog:{name}"):
             spec = default_pack_spec(name)
             report = prepare_catalog(
@@ -141,7 +145,42 @@ def main() -> int:
     for directory in dict.fromkeys(str(Path(test).resolve().parent) for test in config["tests"]):
         sys.path.append(directory)
     with admission_timing(identity, "available-imports"):
-        select_available_tests(config["tests"], config["modules"])
+        select_available_tests(config["tests"] if shard is None else [], config["modules"])
+
+    if nodeid is None and shard is None and len(config["tests"]) > 1:
+        # Each serial pytest process keeps its inline plugin state; catalogs run only once.
+        with ExitStack() as stack:
+            outputs = [stack.enter_context(tempfile.TemporaryFile(mode="w+")) for _ in range(2)]
+            children = [
+                subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-B",
+                        str(Path(__file__).resolve()),
+                        str(config_path),
+                        "--test-shard",
+                        str(index),
+                    ],
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                )
+                for index, output in enumerate(outputs)
+            ]
+            results = [child.wait() for child in children]
+            # Replay each log intact so concurrent writes cannot corrupt JSON evidence.
+            for output in outputs:
+                output.seek(0)
+                sys.stdout.write(output.read())
+            sys.stdout.flush()
+        for result in results:
+            if result not in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
+                return result if result > 0 else int(pytest.ExitCode.TESTS_FAILED)
+        return int(
+            pytest.ExitCode.OK
+            if pytest.ExitCode.OK in results
+            else pytest.ExitCode.NO_TESTS_COLLECTED
+        )
 
     class RequireExecutedTests:
         passed: set[str] = set()
@@ -227,7 +266,7 @@ def main() -> int:
                 print(f"Selected test skipped {report.nodeid}: {report.longrepr}", flush=True)
 
         def pytest_sessionfinish(self, session: pytest.Session) -> None:
-            if not self.passed and (nodeid is None or session.exitstatus == pytest.ExitCode.OK):
+            if not self.passed and session.exitstatus == pytest.ExitCode.OK:
                 session.exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
 
     with admission_timing(identity, "pytest"):
@@ -239,7 +278,13 @@ def main() -> int:
                     "-n",
                     "0",
                     "--import-mode=importlib",
-                    *([nodeid] if nodeid else config["tests"]),
+                    *(
+                        [nodeid]
+                        if nodeid
+                        else config["tests"][shard::2]
+                        if shard is not None
+                        else config["tests"]
+                    ),
                 ],
                 plugins=[RequireExecutedTests()],
             )

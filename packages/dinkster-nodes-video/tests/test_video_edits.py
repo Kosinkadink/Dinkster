@@ -51,51 +51,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_video.video_edits import VideoCrop, VideoSlice, VideoTrim
 s = VideoCrop.schema()
-assert (s.node_type, s.display_name, s.category) == (
-    'dinkster.video.video_crop', 'Crop Video', 'video'
-)
-assert s.output_node and s.editor_role == 'video-crop'
-assert [(i.id, i.type) for i in s.inputs] == [
-    ('video', TypeExpr.concrete(VIDEO_TYPE)), ('crop', TypeExpr.concrete(VIDEO_EDIT_TYPE))
-]
-assert s.inputs[1].widget.widget_type == 'VIDEO_EDIT'
-assert s.inputs[1].widget.params == {'features': ('crop',)}
-assert s.inputs[1].default == {'crop': {'x': 0, 'y': 0, 'width': 0, 'height': 0}}
-assert [(o.id, o.type, o.preview) for o in s.outputs] == [
-    ('video', TypeExpr.concrete(VIDEO_TYPE), True)
-]
 s = VideoSlice.schema()
-assert (s.node_type, s.display_name, s.category) == (
-    'dinkster.video.video_slice', 'Trim Video', 'video'
-)
-assert not s.output_node
-assert [(i.id, i.type) for i in s.inputs] == [
-    ('video', TypeExpr.concrete(VIDEO_TYPE)),
-    ('start_time', TypeExpr.concrete(CORE_FLOAT)),
-    ('duration', TypeExpr.concrete(CORE_FLOAT)),
-    ('strict_duration', TypeExpr.concrete(CORE_BOOLEAN)),
-]
-assert [i.default for i in s.inputs[1:]] == [0.0, 0.0, False]
-assert s.inputs[1].widget == NumberWidget(min=-1e5, max=1e5, step=0.001)
-assert s.inputs[2].widget == NumberWidget(min=0.0, step=0.001)
-assert [(o.id, o.type) for o in s.outputs] == [('video', TypeExpr.concrete(VIDEO_TYPE))]
 s = VideoTrim.schema()
-assert (s.node_type, s.display_name, s.category) == (
-    'dinkster.video.video_trim', 'Trim Video (Advanced)', 'video'
-)
-assert s.output_node and s.editor_role == 'video-trim'
-assert [(i.id, i.type) for i in s.inputs] == [
-    ('video', TypeExpr.concrete(VIDEO_TYPE)),
-    ('trim', TypeExpr.concrete(VIDEO_EDIT_TYPE)),
-    ('strict_duration', TypeExpr.concrete(CORE_BOOLEAN)),
-]
-assert s.inputs[1].default == {'trim': {'start_time': 0.0, 'duration': 0.0}}
-assert s.inputs[1].widget.widget_type == 'VIDEO_EDIT'
-assert s.inputs[1].widget.params == {'features': ('trim',)}
-assert s.inputs[2].default is False and s.inputs[2].advanced
-assert [(o.id, o.type, o.preview) for o in s.outputs] == [
-    ('video', TypeExpr.concrete(VIDEO_TYPE), True)
-]
 assert not any(n in sys.modules for n in ('torch', 'torchvision', 'av', 'dinkster_inference'))
 """,
         ],

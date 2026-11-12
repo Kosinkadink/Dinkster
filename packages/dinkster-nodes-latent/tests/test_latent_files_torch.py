@@ -13,10 +13,8 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import (
-    CLIP_TYPE,
     CORE_STRING,
     LATENT_TYPE,
-    VAE_TYPE,
     AssetRef,
     ExportSnapshot,
     InputSpec,
@@ -34,23 +32,6 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
-
-
-class _Clip:
-    def load_model(self) -> None:
-        pass
-
-    def state_dict_for_saving(self) -> dict[str, torch.Tensor]:
-        return {
-            "clip_l.transformer.left": torch.tensor([1.25, -3.5]),
-            "clip_g.right": torch.tensor([[8, -2]], dtype=torch.int32),
-            "transformer.other": torch.tensor([9.0], dtype=torch.float64),
-        }
-
-
-class _Vae:
-    def get_sd(self) -> dict[str, torch.Tensor]:
-        return {"decoder.weight": torch.tensor([[1.25, -3.5]], dtype=torch.float64)}
 
 
 @pytest.mark.parametrize("versioned", (False, True))
@@ -172,22 +153,6 @@ def test_save_latent_preserves_source_and_writes_versioned_tensors_to_selected_m
     assert not samples["samples"].is_contiguous()
 
 
-class EncoderSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="file-export-fixture.source",
-            outputs=(
-                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
-                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
-            ),
-        )
-
-    @classmethod
-    def execute(cls) -> dict[str, object]:
-        return cls.outputs(clip=_Clip(), vae=_Vae())
-
-
 class LatentInspect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -207,7 +172,7 @@ class LatentInspect(Node):
         return cls.outputs(summary="latent-values-exact")
 
 
-HOST_NODES = (EncoderSource, LatentInspect)
+HOST_NODES = (LatentInspect,)
 
 
 @pytest.mark.parametrize("in_process", (True, False))

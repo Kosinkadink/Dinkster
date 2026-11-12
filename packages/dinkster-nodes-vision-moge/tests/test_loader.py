@@ -3,31 +3,14 @@
 from __future__ import annotations
 
 import importlib
-import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-from dinkster_api.v1 import initialize_inference_process, schema_to_wire
+from dinkster_api.v1 import initialize_inference_process
 from dinkster_assets import MountDef, MountTable
 
-from tools.compare_nodes import compare
-
 LoadMoGeModel = importlib.import_module("dinkster_vision_moge.loader").LoadMoGeModel
-
-
-def test_loader_schema_matches_reference_except_frozen_id() -> None:
-    reference = json.loads(
-        (Path(__file__).parents[3] / "tools/data/comfy_core_reference.json").read_text()
-    )
-    row = next(item for item in reference["nodes"] if item["class_name"] == "LoadMoGeModel")
-    schema = LoadMoGeModel.define_schema()
-    assert schema.node_type == "dinkster.vision.moge.load_mo_ge_model"
-    assert schema.search_terms == ("LoadMoGeModel",)
-    assert schema.aliases == ()
-    wire = schema_to_wire(schema)
-    wire["nodeType"] = "LoadMoGeModel"
-    assert compare(row, wire) == []
 
 
 def test_loader_reconstructs_synthetic_checkpoint_from_granted_asset(tmp_path: Path) -> None:

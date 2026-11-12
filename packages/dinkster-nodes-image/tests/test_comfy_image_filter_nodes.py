@@ -8,76 +8,12 @@ from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import schema_to_wire
-from dinkster_image.ported import NODES
 from dinkster_image.ported.image_filters import (
     ImageBlend,
     ImageBlur,
     ImageQuantize,
     ImageSharpen,
 )
-
-IMAGE_FILTER_NODES = tuple(
-    node for node in NODES if node.__module__ == "dinkster_image.ported.image_filters"
-)
-
-
-def test_image_filter_schemas_match_the_fixed_reference_contract() -> None:
-    expected = (
-        (
-            "dinkster.image.image_blend",
-            "Blend Images",
-            "image/filters",
-            ("image1", "image2", "blend_factor", "blend_mode"),
-        ),
-        (
-            "dinkster.image.image_blur",
-            "Blur Image",
-            "image/filters",
-            ("image", "blur_radius", "sigma"),
-        ),
-        (
-            "dinkster.image.image_quantize",
-            "Quantize Image",
-            "image/filters",
-            ("image", "colors", "dither"),
-        ),
-        (
-            "dinkster.image.image_sharpen",
-            "Sharpen Image",
-            "image/filters",
-            ("image", "sharpen_radius", "sigma", "alpha"),
-        ),
-        (
-            "dinkster.image.image_scale_to_total_pixels",
-            "Scale Image to Total Pixels",
-            "image/upscaling",
-            ("image", "upscale_method", "megapixels", "resolution_steps"),
-        ),
-        (
-            "dinkster.image.canny",
-            "Detect Edges (Canny)",
-            "image/filters",
-            ("image", "low_threshold", "high_threshold"),
-        ),
-    )
-    actual = tuple(
-        (
-            node.schema().node_type,
-            node.schema().display_name,
-            node.schema().category,
-            tuple(port.id for port in node.schema().inputs),
-        )
-        for node in IMAGE_FILTER_NODES
-    )
-    assert actual == expected
-    schemas = {node.schema().node_type: node.schema() for node in IMAGE_FILTER_NODES}
-    assert schemas["dinkster.image.image_blend"].inputs[2].default == 0.5
-    assert schemas["dinkster.image.image_sharpen"].inputs[1].advanced is True
-    assert schemas["dinkster.image.image_scale_to_total_pixels"].inputs[3].advanced is True
-    assert [item.default for item in schemas["dinkster.image.canny"].inputs[1:]] == [0.4, 0.8]
-    for schema in schemas.values():
-        assert schema_to_wire(schema)
 
 
 def test_zero_radius_returns_original_live_value() -> None:

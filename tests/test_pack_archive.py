@@ -1284,6 +1284,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "source-version",
         "publisher",
         "declaration",
+        "preflight-published-digest",
+        "preflight-published-lock",
+        "preflight-helper-change",
+        "preflight-lookup-failed",
+        "preflight-unpublished",
+        "preflight-version-raised",
     ],
 )
 def test_official_publication_requires_complete_supported_base_bindings(
@@ -1301,14 +1307,34 @@ def test_official_publication_requires_complete_supported_base_bindings(
     )
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_installer import _serve_artifacts
+    from test_pack_environment import _wheel
 
     from dinkster.registries import NamedRegistry, RegistryPublishError
     from scripts.publish_official_packs import publish_official_packs
 
+    preflight = bool(problem and problem.startswith("preflight-"))
+    if preflight:
+        assert problem is not None
+        problem = problem.removeprefix("preflight-")
     sources = tmp_path / "sources"
     sources.mkdir()
+    engine_manifest = tmp_path / "release-manifest.json"
+    engine_manifest.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.engine/1",
+                "repository": "Kosinkadink/Dinkster",
+                "commit": "c" * 40,
+                "version": "0.3.1",
+            }
+        )
+    )
     packs = []
-    versions = [("first-pack", "1.2.3"), ("second-pack", "7.4.0rc1")]
+    published_helper = None
+    versions = [
+        ("first-pack", "1.2.3"),
+        ("second-pack", "7.4.1" if problem == "version-raised" else "7.4.0rc1"),
+    ]
     chained = problem in {"dependency-levels", "dependency-levels-timeout"}
     if chained:
         versions.extend([("third-pack", "2.0"), ("fourth-pack", "3.0")])
@@ -1346,6 +1372,24 @@ def test_official_publication_requires_complete_supported_base_bindings(
             built.rename(archive)
         else:
             build_artifact(tree, archive)
+        if name == "second-pack" and problem in {"helper-change", "version-raised"}:
+            old = _wheel(
+                tmp_path,
+                name,
+                "7.4.0rc1",
+                module.name,
+                "VALUE = 1\n",
+                requires=("dinkster-inference==0.1.1",),
+            )
+            published_helper = (tmp_path / old.filename).read_bytes()
+            _wheel(
+                sources,
+                name,
+                version,
+                module.name,
+                "VALUE = 1\n",
+                requires=("dinkster-inference",),
+            )
         digest = artifact_digest(archive.read_bytes())
         packs.append(LockedPack(name, version, digest, "dinkster", ()))
     (sources / "official-packs.lock").write_text(Lockfile.of(packs).record_json())
@@ -1454,7 +1498,10 @@ def test_official_publication_requires_complete_supported_base_bindings(
         files["/v1/packs/third-pack/versions/2.3"] = json.dumps(
             {"packName": "third-pack", "version": "2.3", "state": "active"}
         ).encode()
-    if problem and (problem.startswith("published-") or problem == "check-published"):
+    if problem and (
+        problem.startswith("published-")
+        or problem in {"check-published", "helper-change", "version-raised"}
+    ):
         for pack in packs:
             record = {
                 "packName": pack.pack,
@@ -1496,7 +1543,13 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     del record["installLocks"]["win-nvidia"]
                 elif problem == "published-publisher":
                     record["publishedBy"]["principalId"] = "other"
-            files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(record).encode()
+            if published_helper is not None and pack.pack == "second-pack":
+                record["version"] = "7.4.0rc1"
+                record["artifact"]["digest"] = artifact_digest(published_helper)
+                record["artifact"]["size"] = len(published_helper)
+            files[f"/v1/packs/{pack.pack}/versions/{record['version']}"] = json.dumps(
+                record
+            ).encode()
     server = _serve_artifacts(files, requests)
     respond = vars(server.RequestHandlerClass)["respond"]
     submitted = []
@@ -1617,6 +1670,23 @@ def test_official_publication_requires_complete_supported_base_bindings(
             respond(handler)
 
     monkeypatch.setattr(server.RequestHandlerClass, "respond", registry_response)
+    engine_bindings = []
+    if problem is None:
+        from email import policy
+        from email.parser import BytesParser
+
+        def receive(handler):
+            body = handler.rfile.read(int(handler.headers["Content-Length"]))
+            message = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {handler.headers['Content-Type']}\r\n\r\n".encode() + body
+            )
+            parts = list(message.iter_parts())
+            payload = parts[2].get_payload(decode=True)
+            assert isinstance(payload, bytes)
+            engine_bindings.append(json.loads(payload))
+            handler.respond()
+
+        monkeypatch.setattr(server.RequestHandlerClass, "do_POST", receive)
     output = tmp_path / "publication"
     before = {path: path.read_bytes() for path in [*sources.iterdir(), *locks, *bases]}
     try:
@@ -1739,19 +1809,44 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     else "not retried.*bump the pack version"
                 ),
             ):
-                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+                publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=None if preflight else registry,
+                    preflight_registry=registry.endpoint if preflight else None,
+                )
             assert [path for path, _ in requests] == (
                 lookup_paths[:1]
                 if problem == "lookup-failed"
                 else lookup_paths + ["/v1/publish/first-pack/versions/1.2.3"]
             )
-        elif problem and problem.startswith("published-") and problem != "published-identical":
+        elif problem == "helper-change" or (
+            problem and problem.startswith("published-") and problem != "published-identical"
+        ):
             with pytest.raises(
                 RegistryPublishError, match="second-pack@7.4.0rc1.*bump the pack version"
             ):
-                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+                publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=None if preflight else registry,
+                    preflight_registry=registry.endpoint if preflight else None,
+                )
             assert [path for path, _ in requests] == lookup_paths
-        elif problem not in {None, "prepare-only", "published-identical", "check-published"}:
+        elif problem not in {
+            None,
+            "prepare-only",
+            "published-identical",
+            "check-published",
+            "unpublished",
+            "version-raised",
+        }:
             with pytest.raises((ValueError, ArtifactError)):
                 publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
             assert not output.exists()
@@ -1764,10 +1859,13 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 locks,
                 output,
                 registry=registry if problem in {None, "published-identical"} else None,
-                preflight_registry=registry.endpoint if problem == "check-published" else None,
+                preflight_registry=registry.endpoint
+                if preflight or problem == "check-published"
+                else None,
+                engine_manifest=engine_manifest if problem is None else None,
             )
             assert len(result) == 2
-            assert [row["version"] for row in result] == ["1.2.3", "7.4.0rc1"]
+            assert [row["version"] for row in result] == [version for _, version in versions]
             for pack, row in zip(packs, result, strict=True):
                 lock_map = row["locks"]
                 assert isinstance(lock_map, str)
@@ -1789,8 +1887,22 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 + lookup_paths
                 if problem is None
                 else lookup_paths
-                if problem in {"check-published", "published-identical"}
+                if preflight or problem in {"check-published", "published-identical"}
                 else []
+            )
+        if preflight:
+            assert submitted == []
+        if problem is None:
+            assert (
+                engine_bindings
+                == [
+                    {
+                        "commit": "c" * 40,
+                        "manifestDigest": "sha256:"
+                        + hashlib.sha256(engine_manifest.read_bytes()).hexdigest(),
+                    }
+                ]
+                * 2
             )
         assert {path: path.read_bytes() for path in before} == before
         assert not list(tmp_path.glob("official-publication-*"))
@@ -1807,6 +1919,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
         ("locks", "scanning"),
         ("locks", "retrying"),
         ("locks", "accepted"),
+        ("engine", "queued"),
         ("missing", "queued"),
         ("refused", "queued"),
         ("invalid", "rejected"),
@@ -1831,6 +1944,7 @@ def test_publication_client_preserves_archive_and_lock_bytes(
     archive, locks = tmp_path / "demo-1.2.3-py3-none-any.whl", tmp_path / "locks.json"
     archive.write_bytes(b"exact archive\x00\xff\r\n")
     lock_bytes = b'{"win-cpu":{"baseId":"exact binding"}}\n'
+    engine = {"commit": "a" * 40, "manifestDigest": "sha256:" + "b" * 64}
     if mode != "missing":
         locks.write_bytes(lock_bytes)
     requests = []
@@ -1872,7 +1986,12 @@ def test_publication_client_preserves_archive_and_lock_bytes(
                 publish_release(registry, archive, "demo", "1.2.3", locks=locks)
         else:
             result = publish_release(
-                registry, archive, "demo", "1.2.3", locks=locks if mode == "locks" else None
+                registry,
+                archive,
+                "demo",
+                "1.2.3",
+                locks=locks if mode in {"locks", "engine"} else None,
+                engine=engine if mode == "engine" else None,
             )
             assert result.state == state and result.candidate_id == "candidate-1"
         if mode == "missing":
@@ -1891,9 +2010,13 @@ def test_publication_client_preserves_archive_and_lock_bytes(
             assert [part.get_param("name", header="content-disposition") for part in parts] == [
                 "archive",
                 "locks",
-            ]
+            ] + (["engine"] if mode == "engine" else [])
             assert parts[0].get_payload(decode=True) == archive.read_bytes()
             assert parts[1].get_payload(decode=True) == lock_bytes
+            if mode == "engine":
+                payload = parts[2].get_payload(decode=True)
+                assert isinstance(payload, bytes)
+                assert json.loads(payload) == engine
     finally:
         server.shutdown()
         server.server_close()
@@ -2026,7 +2149,7 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
             assert composition.packs["dinkster-text"].version == "0.0.3"
-            assert composition.packs["dinkster-image"].version == "0.0.8"
+            assert composition.packs["dinkster-image"].version == "0.0.9"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )
@@ -2577,8 +2700,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem is None:
         run_selected_tests(engine, catalog, artifacts, **context)
         output = capfd.readouterr().out
-        assert "3 passed" in output
-        assert "2 skipped" in output
+        outcomes = [
+            json.loads(line[line.index('{"admissionTests"') :])["outcome"]
+            for line in output.splitlines()
+            if '{"admissionTests": "result"' in line
+        ]
+        assert outcomes.count("passed") == 3
+        assert outcomes.count("skipped") == 2
         assert '"admissionTests": "collected"' in output
         assert '"pack": "dinkster-image@1.2.3"' in output
         assert '"nodeid": "tests/test_image_nodes.py::test_selected_value"' in output

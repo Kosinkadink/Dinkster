@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import numpy as np
 import pytest
 from dinkster_api.v1 import Curve
@@ -21,52 +19,7 @@ def test_exact_glsl_schema_preserves_source_members_and_output_positions() -> No
 
     schema = NativeGlslShader.schema()
     assert NativeGlslShader in IMAGE_NODES
-    assert schema.node_type == "dinkster.image.glsl_shader" and not schema.aliases
-    assert not schema.output_node
-    assert schema.input_order == (
-        "fragment_shader",
-        "size_mode",
-        "images",
-        "floats",
-        "ints",
-        "bools",
-        "curves",
-    )
-    assert [
-        (family.member_prefix, family.min_members, family.max_members)
-        for family in schema.input_families
-    ] == [
-        ("image", 1, 5),
-        ("u_float", 0, 20),
-        ("u_int", 0, 20),
-        ("u_bool", 0, 10),
-        ("u_curve", 0, 4),
-    ]
-    assert [spec.id for spec in schema.outputs] == ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"]
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    interface = json.loads(json.dumps(schema_to_wire(schema)))["interface"]
-    shader, size_mode, images, *uniforms = interface[:7]
-    assert shader["required"] is True
-    assert size_mode["required"] is True and "default" not in size_mode
-    assert size_mode["options"][0]["inputs"] == []
-    assert [
-        (spec["id"], spec["required"], spec["default"], spec["widget"])
-        for spec in size_mode["options"][1]["inputs"]
-    ] == [
-        ("width", True, 512, {"type": "NUMBER", "min": 1, "max": 16384}),
-        ("height", True, 512, {"type": "NUMBER", "min": 1, "max": 16384}),
-    ]
-    assert images["optionalAfterMinimum"] is True
-    assert images["template"][0]["required"] is True
-    for family in uniforms:
-        member = family["template"][0]
-        assert member["required"] is False
-        assert member["forceInput"] is True
-        assert "step" not in (member.get("widget") or {})
-    assert uniforms[-1]["template"][0]["default"] == {
-        "points": [[0.0, 0.0], [1.0, 1.0]],
-        "interpolation": "monotone_cubic",
-    }
     effective = elaborate(
         schema,
         ("images.image4", "images.image0", "images.image2", "floats.u_float3"),

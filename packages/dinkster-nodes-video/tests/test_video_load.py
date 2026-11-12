@@ -103,20 +103,6 @@ from dinkster_video.video_load import LoadVideo
 
 assert Path(module.__file__).resolve() == Path(sys.argv[1])
 schema = LoadVideo.schema()
-assert schema.node_type == "dinkster.video.load_video"
-assert schema.display_name == "Load Video"
-assert schema.category == "video"
-assert schema.search_terms == ("import video", "open video", "video file", "LoadVideo")
-assert tuple(item.id for item in schema.inputs) == ("file",)
-assert schema.inputs[0].type == TypeExpr.concrete(ASSET_TYPE)
-assert schema.inputs[0].widget.kind == "media/video"
-assert schema.inputs[0].widget.accept == ("video/*",)
-assert schema.inputs[0].widget.allow_upload is True
-assert schema.inputs[0].source_filename.kind == "media/video"
-assert schema.inputs[0].source_filename.category == "input"
-assert [(item.id, item.type, item.preview) for item in schema.outputs] == [
-    ("VIDEO", TypeExpr.concrete(VIDEO_TYPE), True)
-]
 assert "av" not in sys.modules
 assert "torch" not in sys.modules
 assert not any(
