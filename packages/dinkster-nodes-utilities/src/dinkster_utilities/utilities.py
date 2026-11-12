@@ -36,6 +36,7 @@ class ComfyNumberConvert(Node):
                     "value",
                     TypeExpr.union(CORE_INT, CORE_FLOAT, CORE_STRING, CORE_BOOLEAN),
                     display_name="value",
+                    force_input=True,
                 ),
             ),
             outputs=(
