@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -16,8 +17,12 @@ from .documents import SecurityError
 from .policy import Artifact, Assessment, assess
 from .store import SecurityStore
 
+if TYPE_CHECKING:
+    from ..limits import SECURITY_FEED_LIMIT_BYTES
+else:
+    from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES
+
 logger = logging.getLogger(__name__)
-MAXIMUM_FEED_BYTES = 32 * 1024 * 1024
 
 
 class HostSettings(BaseModel):
@@ -63,8 +68,8 @@ class SecurityHost:
                 with urllib.request.urlopen(  # noqa: S310
                     endpoint, timeout=self.settings.request_timeout_seconds
                 ) as response:
-                    data = response.read(MAXIMUM_FEED_BYTES + 1)
-                if len(data) > MAXIMUM_FEED_BYTES:
+                    data = response.read(SECURITY_FEED_LIMIT_BYTES + 1)
+                if len(data) > SECURITY_FEED_LIMIT_BYTES:
                     raise SecurityError("security feed exceeds maximum document size")
                 self.store.import_feed(registry, data)
             except (OSError, http.client.HTTPException, ValueError) as exc:
