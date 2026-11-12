@@ -56,6 +56,7 @@ class LazyWorker:
         start: Callable[[], Awaitable[Any]],
         close: Callable[[], Awaitable[None]],
         on_declarations_changed: Callable[[], None] | None = None,
+        check_execution: Callable[[], None] | None = None,
     ) -> None:
         self.pack = manifest.name
         self._manifest = manifest
@@ -63,6 +64,7 @@ class LazyWorker:
         self._start = start
         self._close = close
         self._on_declarations_changed = on_declarations_changed
+        self._check_execution = check_execution
         self.declarations_changed = False
         self._owns_worker = True
         self._worker: Any = None
@@ -153,6 +155,8 @@ class LazyWorker:
         return getattr(self._worker, name)
 
     async def ensure_started(self) -> Any:
+        if self._check_execution is not None:
+            self._check_execution()
         if self._closed:
             raise RuntimeError(f"pack {self.pack!r} is closed")
         if self._worker is not None:
@@ -183,6 +187,8 @@ class LazyWorker:
 
     async def _activate(self) -> Any:
         try:
+            if self._check_execution is not None:
+                self._check_execution()
             self.validate_source()
             worker = await self._start()
             self.adopt(worker)
