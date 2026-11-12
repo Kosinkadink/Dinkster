@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import importlib
 import logging
+import os
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -64,7 +66,15 @@ def _device_input(options: tuple[str, ...], choice_id: str) -> InputSpec:
 
 
 def _device_options(*, include_cpu: bool = True) -> tuple[str, ...]:
-    options = _model_management().get_gpu_device_options()
+    # Explicit CPU selection needs no tensor runtime to enumerate its device.
+    # An already initialized runtime still owns the process's device policy.
+    if (
+        os.environ.get("DINKSTER_ACCELERATOR") == "cpu"
+        and "dinkster_inference.model_management" not in sys.modules
+    ):
+        options = ("default", "cpu")
+    else:
+        options = _model_management().get_gpu_device_options()
     return tuple(option for option in options if include_cpu or option != "cpu")
 
 

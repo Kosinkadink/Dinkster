@@ -2189,6 +2189,50 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+def test_composed_cpu_device_choices_without_tensor_initialization(tmp_path: Path) -> None:
+    (tmp_path / "sitecustomize.py").write_text(
+        "import importlib.abc\nimport sys\n"
+        "class NoTensorRuntime(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:\n"
+        "            raise AssertionError('device enumeration imported ' + fullname)\n"
+        "sys.meta_path.insert(0, NoTensorRuntime())\n",
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [default_pack_spec("dinkster-models")],
+            include_default_packs=False,
+            worker_env={
+                **WORKER_ENV,
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+                "DINKSTER_ACCELERATOR": "cpu",
+            },
+        )
+        app = create_app(
+            composition.make_engine,
+            composition.schemas,
+            choices=composition.choices,
+            lazy_choices=composition.lazy_choices,
+        )
+        try:
+            async with TestClient(TestServer(app)) as client:
+                for _ in range(2):
+                    for name, expected in (
+                        ("devices.gpu", ["default", "cpu"]),
+                        ("devices.vae", ["default"]),
+                    ):
+                        response = await client.get(f"/api/choices/{name}")
+                        assert response.status == 200, await response.text()
+                        assert await response.json() == expected
+                assert (await client.get("/api/choices/missing")).status == 404
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
 def test_composed_server_end_to_end(tmp_path: Path) -> None:
     """One server: text nodes in-process, the pack isolated, both executing
     through the same queue; /api/nodes attributes each side truthfully and
