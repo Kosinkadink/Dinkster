@@ -448,7 +448,9 @@
   requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
   acquires their verified pack archives, and builds and activates a managed
   generation. `--yes` skips the prompt, not the plan or identity checks.
-  Offline application is refused; `--offline --plan` remains read-only.
+  `--offline --yes` uses retained release and registry metadata, runtime inputs
+  and locked pack wheels without acquisition. Missing or corrupt inputs refuse
+  before installation state changes. `--offline --plan` remains read-only.
 - Pack wheel and dependency-metadata downloads retry dropped connections,
   TLS transport failures, timeouts and HTTP 5xx responses up to three times.
   Every attempt has a 30-second network timeout, with a wait between attempts.

@@ -329,6 +329,9 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
+    offline = getattr(args, "offline", False)
+    if offline and (args.from_scratch or args.catalog_lock is None or not args.pack_lock):
+        raise EnvironmentError("offline setup requires published source and dependency locks")
     developing = args.operation == "develop"
     adopting = getattr(args, "adopt_from", None)
     if adopting is not None and (root.exists() or args.root.is_symlink()):
@@ -519,7 +522,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 ]
             )
     else:
-        catalog = discover(mirrors, channel, store=store)
+        catalog = discover(mirrors, channel, store=store, offline=offline)
         if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -800,6 +803,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     base_sources=(str(object_path(store / "downloads", base_id)),)
                     if custom is not None
                     else None,
+                    offline=offline,
                 )
 
                 def custom_locks(
@@ -980,7 +984,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     artifacts=source_artifacts,
                     source_kind="local" if local is not None else "published",
                     prepare_packs=prepare_packs,
-                    acquire_pack_wheels=local is None,
+                    acquire_pack_wheels=local is None and not offline,
                     artifact_sources={
                         "channel": catalog.document,
                         "engine": list(catalog.engine_sources),
@@ -1415,6 +1419,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--repair", action="store_true", help="rebuild offline from the local store"
     )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
+    setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
 
     setup.add_argument(
         "--from-scratch", action="store_true", help="resolve locally; development only"

@@ -53,6 +53,14 @@ This option is separate from `--mirror`, which selects channel, base and
 Dinkster release artifact locations. Warm shared-store wheels need no index
 access. Repair and move remain offline.
 
+For cached published setup, use `dinkster setup --offline --yes --variant VARIANT`
+with the same `--channel`, `--mirror`, `--registry` and `--data` selection used
+to populate the cache. Retained channel, release, registry and dependency-lock
+metadata, runtime payloads and locked pack wheels must all be available.
+Missing or corrupt inputs refuse before changing the project or store; the
+command does not fetch replacements. `--offline --plan` inspects cached inputs
+without creating or changing installation state.
+
 Download the three Dinkster wheels and `constraints.txt` from the same release.
 A manual installation for inspection can be created without Git credentials;
 the command fetches third-party wheels from the package index using the exported
