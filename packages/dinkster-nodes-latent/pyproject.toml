@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-latent"
-version = "0.0.4"
+version = "0.0.5"
 description = "First-party Dinkster latent nodes"
 requires-python = ">=3.12"
 dependencies = [
