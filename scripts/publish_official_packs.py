@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import tempfile
 import time
 import urllib.error
@@ -138,6 +140,7 @@ def publish_official_packs(
     registry: NamedRegistry | None = None,
     preflight_registry: str | None = None,
     activation_timeout: float = 600,
+    engine_manifest: Path | None = None,
 ) -> list[dict[str, object]]:
     """Validate the entire publication set before exposing maps or making a request.
 
@@ -147,6 +150,25 @@ def publish_official_packs(
     """
     if output.exists():
         raise ValueError("publication output must be a new directory")
+    engine = None
+    engine_version = None
+    if engine_manifest is not None:
+        metadata = engine_manifest.read_bytes()
+        release = json.loads(metadata)
+        if (
+            not isinstance(release, dict)
+            or release.get("format") != "dinkster.engine/1"
+            or release.get("repository") != "Kosinkadink/Dinkster"
+            or not isinstance(release.get("commit"), str)
+            or re.fullmatch(r"[0-9a-f]{40}", release["commit"]) is None
+            or not isinstance(release.get("version"), str)
+        ):
+            raise ValueError("publication requires an exact Dinkster engine manifest")
+        engine_version = release["version"]
+        engine = {
+            "commit": release["commit"],
+            "manifestDigest": "sha256:" + hashlib.sha256(metadata).hexdigest(),
+        }
     supported = json.loads((root / "scripts/base_bundles.json").read_bytes())
     if not supported:
         raise ValueError("official publication requires supported bases")
@@ -209,6 +231,8 @@ def publish_official_packs(
                     or manifest.compatibility.version != pack.version
                 ):
                     raise ValueError(f"official publication source identity mismatch: {pack.pack}")
+                if engine_version is not None:
+                    manifest.compatibility.require_engine(pack.pack, engine_version)
             for value in requirements:
                 requirement = Requirement(value)
                 name = canonicalize_name(requirement.name)
@@ -365,6 +389,7 @@ def publish_official_packs(
                     pack.pack,
                     pack.version,
                     locks=locks,
+                    engine=engine,
                 )
             except RegistryPublishError as exc:
                 raise RegistryPublishError(
@@ -409,6 +434,7 @@ if __name__ == "__main__":
     parser.add_argument("--base-manifest", required=True, action="append", type=Path)
     parser.add_argument("--pack-lock", required=True, action="append", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--engine-manifest", type=Path)
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--check-published", action="store_true")
     parser.add_argument("--registry", default="https://registry.dinkster.org")
@@ -424,6 +450,7 @@ if __name__ == "__main__":
             if args.publish
             else None,
             preflight_registry=args.registry if args.check_published else None,
+            engine_manifest=args.engine_manifest,
         )
     except RegistryPublishError as exc:
         if args.output.exists():

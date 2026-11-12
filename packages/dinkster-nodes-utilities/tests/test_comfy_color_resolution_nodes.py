@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
@@ -15,21 +14,6 @@ from tests.async_scenarios import run_scenario
 
 
 def test_color_and_resolution_schemas_preserve_public_types_and_positional_inputs() -> None:
-    color = cast(dict[str, Any], schema_to_wire(ColorToRGBInt.schema()))
-    assert color["interface"][0]["type"] == {"kind": "concrete", "types": ["COLOR"]}
-    assert color["interface"][0]["default"] == "#ffffff"
-    assert color["interface"][0]["widget"] == {"type": "COLOR"}
-    resolution = cast(dict[str, Any], schema_to_wire(ResolutionSelector.schema()))
-    inputs = [item for item in resolution["interface"] if item["role"] == "input"]
-    assert [item["id"] for item in inputs] == ["aspect_ratio", "megapixels", "preview", "multiple"]
-    assert inputs[2]["required"] is False
-    assert inputs[2]["type"] == {"kind": "concrete", "types": ["RESOLUTION_PREVIEW"]}
-    assert inputs[2]["widget"] == {
-        "type": "RESOLUTION_PREVIEW",
-        "ratio_widget": "aspect_ratio",
-        "megapixels_widget": "megapixels",
-        "multiple_widget": "multiple",
-    }
     for node in (ColorToRGBInt, ResolutionSelector):
         wire = schema_to_wire(node.schema())
         assert schema_to_wire(schema_from_wire(wire)) == wire

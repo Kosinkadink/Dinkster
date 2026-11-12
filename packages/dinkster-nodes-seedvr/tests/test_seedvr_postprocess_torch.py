@@ -17,6 +17,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
@@ -87,6 +88,7 @@ def test_color_transfer_resizes_the_whole_reference_before_even_crop() -> None:
 
 
 def test_adain_retries_smaller_chunks_and_rejects_non_oom(monkeypatch: pytest.MonkeyPatch) -> None:
+    initialize_inference_process()
     from dinkster_inference import model_management
     from dinkster_inference.ldm.seedvr import color_fix
 

@@ -101,6 +101,8 @@ pass at the offered head. Registry default pack admission gates only changes
 to its scanner or harness. The full suite runs in hosted full validation on
 main after landing; a local counted suite or its shards is not a landing gate.
 
+- For a ready pull request affecting official pack inputs, read the `Published pack versions` check green at the exact head before adding `ready-to-land`. Keep drafts light; raise affected pack or library versions when built archives or install locks differ from the published version.
+
 ```
 .venv/bin/ruff check .
 .venv/bin/pyright

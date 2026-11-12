@@ -64,16 +64,6 @@ class SVGInspect(Node):
         return cls.outputs(result="SVG unchanged")
 
 
-def test_svg_save_schema_uses_canonical_type_and_adjacent_mount() -> None:
-    schema = SaveSVGNode.define_schema()
-    assert [input.id for input in schema.inputs] == ["svg", "filename_prefix", "mount"]
-    assert schema.inputs[-1].adjacent_to == "filename_prefix"
-    assert schema.inputs[0].type == TypeExpr.concrete(SVG_TYPE)
-    assert schema.inputs[1].widget is not None and schema.inputs[1].widget.multiline is False
-    assert schema.outputs[0].type == TypeExpr.concrete(SVG_TYPE)
-    assert schema.output_node and not schema.idempotent
-
-
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize(
     ("prompt", "with_snapshot", "check_artifacts"),

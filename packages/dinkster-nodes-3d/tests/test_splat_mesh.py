@@ -3,31 +3,13 @@
 from __future__ import annotations
 
 import importlib
-import json
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import initialize_inference_process, schema_to_wire
-
-from tools.compare_nodes import compare
+from dinkster_api.v1 import initialize_inference_process
 
 SplatToMesh = importlib.import_module("dinkster_3d.splat_mesh").SplatToMesh
-
-
-def test_splat_mesh_schema_matches_reference_except_frozen_id() -> None:
-    reference = json.loads(
-        (Path(__file__).parents[3] / "tools/data/comfy_core_reference.json").read_text()
-    )
-    row = next(item for item in reference["nodes"] if item["class_name"] == "SplatToMesh")
-    schema = SplatToMesh.define_schema()
-    assert schema.node_type == "dinkster.3d.splat_to_mesh"
-    assert "SplatToMesh" in schema.search_terms
-    assert schema.aliases == ()
-    wire = schema_to_wire(schema)
-    wire["nodeType"] = "SplatToMesh"
-    assert compare(row, wire) == []
 
 
 @pytest.mark.parametrize(

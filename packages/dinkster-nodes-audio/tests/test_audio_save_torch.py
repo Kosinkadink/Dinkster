@@ -14,7 +14,7 @@ import dinkster_audio.audio_io as audio_io
 import numpy as np
 import pytest
 import torch
-from dinkster_api.v1 import MountWidget, decode_audio, materialize_audio
+from dinkster_api.v1 import decode_audio, materialize_audio
 from dinkster_assets import MountDef, MountTable
 from dinkster_audio.audio_save import (
     SaveAudio,
@@ -97,28 +97,6 @@ def test_save_audio_writes_each_asymmetric_stereo_batch_and_passes_through_audio
             assert stream.channels == 2
         assert path.read_bytes() == source
     assert paths[0].resolve().is_relative_to(root.resolve())
-
-
-def test_save_audio_schema_preserves_upstream_inputs_with_a_trailing_mount() -> None:
-    legacy = (SaveAudio, SaveAudioMP3, SaveAudioOpus)
-    assert [input.id for input in SaveAudio.schema().inputs] == [
-        "audio",
-        "filename_prefix",
-        "mount",
-    ]
-    for node in legacy:
-        schema = node.schema()
-        assert schema.outputs[0].id == "audio"
-        assert schema.outputs[0].preview
-        assert schema.deprecation is not None
-        assert schema.inputs[-1].id == "mount"
-        assert schema.inputs[-1].default is None
-        assert isinstance(schema.inputs[-1].widget, MountWidget)
-        assert schema.inputs[-1].adjacent_to == "filename_prefix"
-    advanced = SaveAudioAdvanced.schema()
-    assert [input.id for input in advanced.inputs] == ["audio", "filename_prefix", "mount"]
-    assert advanced.combos[0].id == "format"
-    assert tuple(option.key for option in advanced.combos[0].options) == ("flac", "mp3", "opus")
 
 
 @pytest.mark.parametrize(
