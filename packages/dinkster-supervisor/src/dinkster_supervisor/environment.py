@@ -16,6 +16,7 @@ from pathlib import Path
 from platform import machine
 from time import monotonic
 from typing import cast
+from uuid import UUID
 
 from dinkster_store import object_path, pack_archive_path
 
@@ -1383,12 +1384,56 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
+    from .limits import SECURITY_FEED_LIMIT_BYTES
+    from .security.host import SecurityHost
+
+    if not (args.root / "security.sqlite3").is_file():
+        raise EnvironmentError("security operation requires an independently provisioned install")
+    host = SecurityHost(args.root)
+    if args.security_action == "import":
+        with args.file.open("rb") as stream:
+            data = stream.read(SECURITY_FEED_LIMIT_BYTES + 1)
+        if len(data) > SECURITY_FEED_LIMIT_BYTES:
+            raise EnvironmentError("security feed exceeds maximum document size")
+        document = host.store.import_feed(args.registry, data)
+        result.update(registry=args.registry, revision=document.revision)
+    else:
+        host.store.answer(
+            args.registry,
+            args.notice,
+            args.revision,
+            approved=args.security_action == "approve",
+        )
+        result.update(
+            registry=args.registry,
+            notice=str(args.notice),
+            revision=args.revision,
+            decision=host.store.decision(args.registry, args.notice, args.revision),
+        )
+    result.update(status="applied", automaticResume=False)
+    return 0
+
+
 def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, required=True, help="absolute prospective project root"
     )
     commands = parser.add_subparsers(dest="operation", required=True)
+    security = commands.add_parser(
+        "security", help="answer exact notices or import signed evidence"
+    )
+    security.add_argument("--json", action="store_true", help="emit exactly one result object")
+    security_actions = security.add_subparsers(dest="security_action", required=True)
+    for action in ("approve", "disapprove"):
+        answer = security_actions.add_parser(action, help="change an exact vulnerability answer")
+        answer.add_argument("--registry", required=True)
+        answer.add_argument("--notice", type=UUID, required=True)
+        answer.add_argument("--revision", type=int, required=True)
+    feed_import = security_actions.add_parser("import", help="verify a signed file before import")
+    feed_import.add_argument("--registry", required=True)
+    feed_import.add_argument("--file", type=Path, required=True)
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "main"))
@@ -1549,7 +1594,9 @@ def run(args: argparse.Namespace) -> int:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
-        if args.operation == "packs-plan":
+        if args.operation == "security":
+            code = _security(args, result)
+        elif args.operation == "packs-plan":
             sequence = 0
             last_write = 0.0
             last_stage = ""

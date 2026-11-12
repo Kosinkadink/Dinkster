@@ -25,7 +25,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from dinkster_registry import InstallError, LockedPack, Lockfile, artifact_digest, build_artifact
 from dinkster_security.documents import Release, SecurityError
-from dinkster_security.host import SecurityHost
+from dinkster_security.host import HostSettings, SecurityHost
 from dinkster_security.policy import Artifact, Dependency, assess
 from dinkster_security.store import SecurityStore
 
@@ -383,6 +383,11 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             findings = composer.security_status()["findings"]
             assert isinstance(findings, list)
             assert findings[0]["decision"] == "pending"
+            status = composer.security_status()
+            assert status["workInventory"] == {"workers": "registered", "jobs": "unavailable"}
+            work = status["work"]
+            assert isinstance(work, list)
+            assert {"pack": "test-pack", "kind": "worker", "state": "registered"} in work
             control = await invoke("control-pack")
             assert control.error is None and control.outputs is not None
             assert control.outputs["value"].resolve() == "control-pack"
@@ -1233,6 +1238,128 @@ def test_signed_ownership_change_requires_explicit_previous_publisher(
     assert cached.ownership_changes[0].publisher == "new-publisher"
     assert cached.notices[0].state == "malicious"
     assert verified == VERIFIED_AT
+
+
+@pytest.mark.parametrize("state", ["vulnerable", "malicious"])
+@pytest.mark.parametrize("dependency", [False, True])
+def test_public_status_names_local_evidence_without_repair_or_refresh(
+    tmp_path: Path, state: str, dependency: bool, caplog: pytest.LogCaptureFixture
+):
+    key = Ed25519PrivateKey.generate()
+    host = SecurityHost(tmp_path)
+    host.store.provision_trust(json.dumps(_trust(key)).encode())
+    host.store.import_feed(REGISTRY, _signed(_feed(state), key), now=VERIFIED_AT)
+    release = Release.model_validate(_feed()["notices"][0]["release"])
+    artifact = (
+        Artifact(
+            "https://consumer.example.test",
+            Release.model_validate(
+                {
+                    "pack": "consumer-pack",
+                    "version": "2.0.0",
+                    "artifactDigest": "sha256:" + "b" * 64,
+                }
+            ),
+            (Dependency(REGISTRY, release.pack, release.version, release.artifact_digest),),
+        )
+        if dependency
+        else Artifact(REGISTRY, release)
+    )
+    control = Artifact(
+        REGISTRY,
+        release.model_copy(update={"version": "1.2.4", "artifact_digest": "sha256:" + "c" * 64}),
+    )
+    before = host.store.path.read_bytes()
+    host.refresh_errors[REGISTRY] = "TimeoutError"
+    result = host.status((artifact, control))
+    (finding,) = cast("list[dict[str, Any]]", result["findings"])
+    assert finding["pack"] == ("consumer-pack" if dependency else "test-pack")
+    assert finding["artifactDigest"] == (
+        "sha256:" + "b" * 64 if dependency else release.artifact_digest
+    )
+    assert finding["noticeRegistry"] == REGISTRY
+    assert finding["notice"] == NOTICE and finding["revision"] == 1
+    assert finding["state"] == ("affected" if dependency and state == "malicious" else state)
+    assert finding["decision"] == ("pending" if state == "vulnerable" else "blocked")
+    assert finding["allowed"] is (state == "vulnerable")
+    assert finding["lastVerifiedAt"] == VERIFIED_AT.isoformat()
+    assert finding["details"]["incident"] == "test-incident"
+    assert finding["details"]["release"]["artifactDigest"] == release.artifact_digest
+    assert finding["recovery"]["repair"] == "not-reviewed"
+    assert finding["recovery"]["automaticResume"] is False
+    feeds = {row["registry"]: row for row in cast("list[dict[str, Any]]", result["feeds"])}
+    assert feeds[REGISTRY]["status"] == "expired"
+    assert feeds[REGISTRY]["refreshError"] == "TimeoutError"
+    assert feeds[REGISTRY]["lastVerifiedAt"] == VERIFIED_AT.isoformat()
+    assert feeds[REGISTRY]["ageRefused"] is False
+    if dependency:
+        assert feeds[artifact.registry]["status"] == "not-provisioned"
+        assert feeds[artifact.registry]["lastVerifiedAt"] is None
+    assert result["policy"] == {"refuseVulnerable": False, "maximumFeedAgeSeconds": None}
+    logged = len(caplog.records)
+    assert host.status((artifact, control)) == result
+    assert len(caplog.records) == logged
+    assert host.store.path.read_bytes() == before
+    assert set(path.name for path in tmp_path.iterdir()) == {"security.sqlite3"}
+    host.settings = HostSettings(maximum_feed_age_seconds=1)
+    aged = host.status((artifact, control))
+    assert aged["allowed"] is False
+    assert REGISTRY in cast("list[str]", aged["staleRegistries"])
+    assert cast("list[dict[str, Any]]", aged["findings"])[0]["recovery"]["status"] == "refused"
+    if state == "vulnerable":
+        host.settings = HostSettings(refuse_vulnerable=True)
+        refused = cast("list[dict[str, Any]]", host.status((artifact, control))["findings"])[0]
+        assert refused["allowed"] is False
+        assert "answers do not override" in refused["recovery"]["action"]
+
+
+def test_public_cli_import_and_changed_exact_answers(tmp_path: Path):
+    key = Ed25519PrivateKey.generate()
+    root = tmp_path / "install"
+    host = SecurityHost(root)
+    host.store.provision_trust(json.dumps(_trust(key)).encode())
+    feed_file = tmp_path / "feed.json"
+    feed_file.write_bytes(_signed(_feed(), key))
+
+    def command(*arguments: str) -> dict[str, Any]:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(root),
+                "security",
+                "--json",
+                *arguments,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        result = json.loads(completed.stdout)
+        assert completed.returncode == (1 if result["status"] == "error" else 0)
+        return result
+
+    assert (
+        command("import", "--registry", REGISTRY, "--file", str(feed_file))["status"] == "applied"
+    )
+    identity = ("--registry", REGISTRY, "--notice", NOTICE, "--revision", "1")
+    assert command("disapprove", *identity)["decision"] == "denied"
+    assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "denied"
+    approved = command("approve", *identity)
+    assert approved["decision"] == "approved"
+    assert approved["automaticResume"] is False
+    assert command("disapprove", *identity[:-1], "2")["status"] == "error"
+    assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
+    cached = host.store.cached(REGISTRY)
+    untrusted = Ed25519PrivateKey.generate()
+    feed_file.write_bytes(_signed(_feed("malicious", revision=2), untrusted))
+    assert command("import", "--registry", REGISTRY, "--file", str(feed_file))["status"] == "error"
+    assert host.store.cached(REGISTRY) == cached
+    assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
+    assert not (root / "generations").exists()
+    assert feed_file.is_file()
 
 
 def test_cached_notice_and_changeable_exact_decision_survive_restart_and_lift(tmp_path: Path):

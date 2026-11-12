@@ -14,6 +14,15 @@
   pinned work from a retired composition remains subject to the same policy.
   Unrelated workers continue. Pending vulnerable work continues until denied.
   A signed lift clears the classification without resuming a stopped worker.
+  Runtime security status names the affected release digest and issuing registry,
+  exact notice details and decision, last successful verification, and separate
+  cached, expired, not-received and not-provisioned feed states. Expired evidence
+  is not a refusal unless an explicit maximum-age policy requires one. Recovery
+  status distinguishes policy allowance from execution and never claims an
+  unreviewed repair is compatible or automatically resumes stopped work.
+  Public environment commands accept exact-notice approval/disapproval changes
+  after unattended start and authenticated signed-feed file import. Rejected
+  imports preserve cached evidence and answers; neither operation resumes work.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.

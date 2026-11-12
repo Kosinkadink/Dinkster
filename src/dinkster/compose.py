@@ -3040,23 +3040,22 @@ class ServingComposer:
                 for artifact in self._security_inventory(spec)
             )
         )
-        result = self._security.assess(artifacts)
-        return {
-            "findings": [
+        result = self._security.status(artifacts)
+        result["work"] = [
+            {"pack": pack, "kind": "worker", "state": state}
+            for pack, state in sorted(
                 {
-                    "pack": item.artifact.release.pack,
-                    "version": item.artifact.release.version,
-                    "state": item.state,
-                    "notice": str(item.notice.id),
-                    "revision": item.notice.revision,
-                    "decision": item.decision,
-                    "allowed": item.allowed,
+                    (
+                        artifact.release.pack,
+                        "restart-required" if worker in self._security_revoked else "registered",
+                    )
+                    for worker, (spec, _) in self._security_workers.items()
+                    for artifact in self._security_inventory(spec)
                 }
-                for item in result.findings
-            ],
-            "staleRegistries": list(result.stale_registries),
-            "refreshErrors": dict(self._security.refresh_errors),
-        }
+            )
+        ]
+        result["workInventory"] = {"workers": "registered", "jobs": "unavailable"}
+        return result
 
     def validate_catalogs(self, entries: Sequence[PackSpec | Path | str]) -> None:
         """Require installed declarations before a serving host binds."""

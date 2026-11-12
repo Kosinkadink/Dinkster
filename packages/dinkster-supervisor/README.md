@@ -60,9 +60,23 @@ cleanup. It checks release identities before catalog preparation, worker import,
 lazy activation and dispatch, including previously pinned routes. A new block
 revokes execution before closing isolated workers or shared process owners;
 affected in-process execution requests whole-engine shutdown. A lift never
-resumes a revoked session. `GET /api/security` reports current findings, decisions,
-configured stale issuers and refresh failures. Flagged releases are logged once
-per notice revision and answer during a host lifetime.
+resumes a revoked session. `GET /api/security` uses `SecurityHost.status` to
+report affected release digests, issuing registries, full exact-notice details,
+decisions, last verification times, configured age refusals and refresh failures.
+Feed observations distinguish cached, expired, not-received and not-provisioned
+issuers. Recovery reports policy allowance, not whether a worker is running, and
+marks repairs as not reviewed until a compatible plan is requested. Status does
+not refresh, acquire payloads or change software. Flagged releases are logged
+once per notice revision and answer during a host lifetime. Runtime work inventory
+names registered or revoked pack workers, not whether an invocation is running;
+job inventory is explicitly unavailable on this surface.
+
+The public environment CLI accepts `security --json approve` or `disapprove`
+with `--registry`, `--notice` and `--revision`. The exact answer persists and may
+be changed; stale revisions and malicious notices cannot be approved. These
+commands do not start or resume execution. `security --json import --registry
+ISSUER --file PATH` verifies a signed feed through the same trusted store before
+replacing its checkpoint; rejected files leave accepted evidence and answers intact.
 
 ## Ingress
 
