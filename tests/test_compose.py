@@ -357,7 +357,7 @@ def test_first_party_pack_uses_its_own_distribution(monkeypatch: pytest.MonkeyPa
     spec = compose.default_pack_spec("dinkster-text")
     assert set(requested) == {"dinkster-text"}
     assert spec.packs is not None
-    assert spec.packs["dinkster-text"].version == "0.0.3"
+    assert spec.packs["dinkster-text"].version == "0.0.4"
     assert spec.packs["dinkster-text"].source == "python:dinkster-text==1.2.3"
 
 
@@ -988,12 +988,12 @@ def test_compose_serving_default_resolution_is_atomic(
 @pytest.mark.parametrize(
     ("pack_id", "directory", "expected_version"),
     [
-        ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
+        ("dinkster-text", "dinkster-nodes-text", "0.0.4"),
         ("dinkster-image", "dinkster-nodes-image", "0.0.11"),
-        ("dinkster-audio", "dinkster-nodes-audio", "0.0.5"),
+        ("dinkster-audio", "dinkster-nodes-audio", "0.0.6"),
         ("dinkster-3d", "dinkster-nodes-3d", "0.0.7"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.8"),
-        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.5"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.9"),
+        ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.6"),
     ],
 )
 def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
@@ -1151,7 +1151,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     assert spec.manifest == bundled
     assert spec.packs is not None
     info = spec.packs["dinkster-text"]
-    assert info.source == "python:dinkster-text==0.0.3"
+    assert info.source == "python:dinkster-text==0.0.4"
     locked = lock.get("dinkster-text")
     assert locked is not None
     assert info.artifact_digest == locked.artifact_digest
@@ -1276,17 +1276,17 @@ def test_default_pack_refuses_version_outside_suite_lock(
     manifest.write_text(
         (source / "dinkster-pack.toml")
         .read_text()
-        .replace('version = "0.0.3"', 'version = "9.0.0"')
+        .replace('version = "0.0.4"', 'version = "9.0.0"')
     )
     shutil.copytree(source / "src/dinkster_text", copied / "src/dinkster_text")
     monkeypatch.setattr(
         compose.importlib.metadata,
         "distribution",
-        lambda _name: editable_distribution(copied, "0.0.3"),
+        lambda _name: editable_distribution(copied, "0.0.4"),
     )
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
 
-    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.3"):
+    with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.4"):
         default_pack_spec("dinkster-text")
 
 
@@ -1299,8 +1299,8 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     lock = compose._default_pack_lock()
     pack = lock.get("dinkster-text")
     assert pack is not None
-    assert pack.version == "0.0.3"
-    assert pack.source == "python:dinkster-text==0.0.3"
+    assert pack.version == "0.0.4"
+    assert pack.source == "python:dinkster-text==0.0.4"
     if mismatch == "pack":
         pack = replace(pack, version="9.0.0")
     elif mismatch == "distribution-name":
@@ -1329,8 +1329,8 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
         return
     spec = default_pack_spec("dinkster-text")
     assert spec.packs is not None
-    assert spec.packs[pack.pack].version == "0.0.3"
-    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.3"
+    assert spec.packs[pack.pack].version == "0.0.4"
+    assert spec.packs[pack.pack].source == "python:dinkster-text==0.0.4"
 
 
 def test_undeclared_pack_version_is_not_replaced_by_distribution_version(
@@ -1378,7 +1378,7 @@ def test_default_pack_refuses_bytes_outside_suite_lock(
     monkeypatch.setattr("dinkster.compose._default_pack_lock", lambda: lock)
     monkeypatch.setattr(
         "dinkster.compose.importlib.metadata.distribution",
-        lambda _name: editable_distribution(copied, "0.0.3"),
+        lambda _name: editable_distribution(copied, "0.0.4"),
     )
 
     with pytest.raises(CompositionError, match="locks dinkster-text artifact"):

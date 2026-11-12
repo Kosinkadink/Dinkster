@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-vision-sam3d-body"
-version = "0.0.8"
+version = "0.0.9"
 description = "ComfyUI-origin vision-sam3d-body nodes"
 requires-python = ">=3.12"
 dependencies = [

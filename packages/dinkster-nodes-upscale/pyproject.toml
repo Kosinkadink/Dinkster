@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-upscale"
-version = "0.0.4"
+version = "0.0.5"
 description = "Dinkster single-image upscale model loading and tiled application"
 requires-python = ">=3.12"
 dependencies = [

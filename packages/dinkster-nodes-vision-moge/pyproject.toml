@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-vision-moge"
-version = "0.0.4"
+version = "0.0.5"
 description = "ComfyUI-origin vision-moge nodes"
 requires-python = ">=3.12"
 dependencies = [
