@@ -322,6 +322,78 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         diagnostic
                     )
                 if number == 2:
+                    external_plan = tmp_path / "refused-pack-plan"
+                    external_refusal = subprocess.run(
+                        [
+                            str(python),
+                            "-I",
+                            "-c",
+                            "import sys; from pathlib import Path; "
+                            "from dinkster_supervisor.environment_pack_install import "
+                            "plan_pack_install; "
+                            "plan_pack_install(Path(sys.argv[1]), ('healthy@1.0.0',), "
+                            "Path(sys.argv[2]), diagnostic_python=Path(sys.executable))",
+                            str(root),
+                            str(external_plan),
+                        ],
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert external_refusal.returncode != 0
+                    assert not external_plan.exists()
+                    assert {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    } == before
+                    diagnostic = external_refusal.stdout + external_refusal.stderr
+                    assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                    assert entry.artifact_digest in diagnostic, diagnostic
+                    assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                    unavailable_base.rename(base)
+                    base_python = interpreter(base)
+                    held_base_python = tmp_path / "unavailable-base-python"
+                    base_python.rename(held_base_python)
+                    partial_before = {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    }
+                    try:
+                        partial_base = subprocess.run(
+                            refused.args,
+                            cwd=tmp_path,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        assert partial_base.returncode != 0
+                        diagnostic = partial_base.stdout + partial_base.stderr
+                        assert f"retained base {base_id} interpreter unavailable" in diagnostic, (
+                            diagnostic
+                        )
+                        assert entry.artifact_digest in diagnostic, diagnostic
+                        assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                        for path in engine_wheels:
+                            name = parse_wheel_filename(path.name)[0]
+                            assert (
+                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                            ), diagnostic
+                        assert {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        } == partial_before
+                    finally:
+                        held_base_python.rename(base_python)
+                        base.rename(unavailable_base)
                     engine_python = interpreter(root / "generations/1")
                     held_python = tmp_path / "unavailable-generation-python"
                     engine_python.rename(held_python)
@@ -363,6 +435,42 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             assert (
                                 f"offline generation wheel missing or corrupt: {name}" in diagnostic
                             ), diagnostic
+                        history_paths = list((root / "history").glob("*.json"))
+                        history_bytes = {path: path.read_bytes() for path in history_paths}
+                        try:
+                            for path in history_paths:
+                                document = json.loads(history_bytes[path])
+                                document["snapshot"]["host"] = {"wheelTags": 0, "markers": {}}
+                                path.write_text(json.dumps(document))
+                            malformed_before = {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            }
+                            malformed_host = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert malformed_host.returncode != 0
+                            diagnostic = malformed_host.stdout + malformed_host.stderr
+                            assert "recorded target wheel compatibility unavailable" in diagnostic
+                            assert f"retained base {base_id} is missing or linked" in diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert "TypeError" not in diagnostic, diagnostic
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == malformed_before
+                        finally:
+                            for path, data in history_bytes.items():
+                                path.write_bytes(data)
                     finally:
                         held_python.rename(engine_python)
                 metadata_paths = [
@@ -452,6 +560,46 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             } == no_history_before
                         finally:
                             held_history.rename(root / "history")
+                        history_file = next((root / "history").glob("*.json"))
+                        history_bytes = history_file.read_bytes()
+                        history_file.write_bytes(b"{")
+                        corrupt_history_before = {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        }
+                        try:
+                            corrupt_history = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert corrupt_history.returncode != 0
+                            diagnostic = corrupt_history.stdout + corrupt_history.stderr
+                            assert "recorded software history unavailable:" in diagnostic, (
+                                diagnostic
+                            )
+                            assert f"retained base {base_id} is missing or linked" in diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                            for path in engine_wheels:
+                                name = parse_wheel_filename(path.name)[0]
+                                assert (
+                                    f"offline generation wheel missing or corrupt: {name}"
+                                    in diagnostic
+                                )
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == corrupt_history_before
+                        finally:
+                            history_file.write_bytes(history_bytes)
                 finally:
                     for path, data in metadata_bytes.items():
                         path.write_bytes(data)

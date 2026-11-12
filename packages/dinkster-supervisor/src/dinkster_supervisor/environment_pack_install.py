@@ -104,7 +104,11 @@ def _current(
 
 
 def _metadata_text(
-    root: Path, source: Path, generation: Generation, name: str, errors: list[str] | None = None
+    entries: list[dict[str, object]],
+    source: Path,
+    generation: Generation,
+    name: str,
+    errors: list[str] | None = None,
 ) -> str:
     """Read sealed current or history bytes without repairing retained software."""
     expected = dict(generation.files).get(name)
@@ -113,13 +117,14 @@ def _metadata_text(
         data = path.read_bytes()
         if "sha256:" + hashlib.sha256(data).hexdigest() == expected:
             return data.decode("utf-8")
-    for entry in reversed(history(root)):
-        if entry["generation"] != generation.number:
+    for entry in reversed(entries):
+        if entry.get("generation") != generation.number:
             continue
         snapshot = cast("dict[str, object]", entry["snapshot"])
-        text = cast("dict[str, str]", snapshot["metadata"]).get(name)
+        metadata = snapshot.get("metadata")
+        text = cast("dict[str, object]", metadata).get(name) if isinstance(metadata, dict) else None
         if (
-            text is not None
+            isinstance(text, str)
             and "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest() == expected
         ):
             return text
@@ -163,7 +168,6 @@ def inspect_pack_install(
         str(root),
         *registry_arguments,
         "plan-registry-sources",
-        "--collect-errors",
         "--engine-manifest",
         str(source / "engine-manifest.json"),
         "--engine-release",
@@ -180,8 +184,15 @@ def inspect_pack_install(
     if updates is not None:
         command.extend(["--update", *updates])
     errors: list[str] = []
+    try:
+        entries = history(root)
+    except (OSError, ValueError) as exc:
+        if diagnostic_python is None:
+            raise
+        errors.append(f"recorded software history unavailable: {exc}")
+        entries = []
     if diagnostic_python is not None:
-        command.extend(["--engine-version", generation.engine_version])
+        command.extend(["--collect-errors", "--engine-version", generation.engine_version])
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-metadata-") as directory:
         for flag, name in (
             ("--engine-manifest", "engine-manifest.json"),
@@ -190,7 +201,7 @@ def inspect_pack_install(
             path = Path(directory) / name
             path.write_bytes(
                 _metadata_text(
-                    root, source, generation, name, errors if diagnostic_python else None
+                    entries, source, generation, name, errors if diagnostic_python else None
                 ).encode("utf-8")
             )
             command[command.index(flag) + 1] = str(path)
@@ -221,7 +232,7 @@ def inspect_pack_install(
     except ValueError as exc:
         raise EnvironmentError(f"published pack review returned invalid metadata: {exc}") from exc
     metadata["constraints"] = _metadata_text(
-        root, source, generation, "constraints.txt", errors if diagnostic_python else None
+        entries, source, generation, "constraints.txt", errors if diagnostic_python else None
     )
     compatibility: dict[str, object] | None = None
     if diagnostic_python is not None:
@@ -231,12 +242,28 @@ def inspect_pack_install(
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 errors.append(f"target interpreter unavailable: {exc}")
         if compatibility is None:
-            for entry in reversed(history(root)):
-                if entry["generation"] != generation.number:
+            for entry in reversed(entries):
+                if entry.get("generation") != generation.number:
                     continue
-                host = cast("dict[str, dict[str, object]]", entry["snapshot"])["host"]
-                if "wheelTags" in host and "markers" in host:
-                    compatibility = {"tags": host["wheelTags"], "markers": host["markers"]}
+                host = cast("dict[str, object]", entry["snapshot"]).get("host")
+                if not isinstance(host, dict):
+                    continue
+                host = cast("dict[str, object]", host)
+                tags, markers = host.get("wheelTags"), host.get("markers")
+                if (
+                    isinstance(tags, list)
+                    and bool(tags)
+                    and all(isinstance(tag, str) for tag in cast("list[object]", tags))
+                    and isinstance(markers, dict)
+                    and all(
+                        isinstance(key, str) and isinstance(value, str)
+                        for key, value in cast("dict[object, object]", markers).items()
+                    )
+                    and isinstance(
+                        cast("dict[str, object]", markers).get("python_full_version"), str
+                    )
+                ):
+                    compatibility = {"tags": tags, "markers": markers}
                     break
             if compatibility is None:
                 errors.append("recorded target wheel compatibility unavailable")
@@ -249,6 +276,10 @@ def inspect_pack_install(
     if not base.is_dir() or base.is_symlink():
         cast("list[str]", metadata.setdefault("errors", [])).append(
             f"retained base {generation.base} is missing or linked"
+        )
+    elif not interpreter(base.parent).is_file():
+        cast("list[str]", metadata.setdefault("errors", [])).append(
+            f"retained base {generation.base} interpreter unavailable: {interpreter(base.parent)}"
         )
     source_costs: list[dict[str, object]] = []
     for entry in cast(
@@ -443,25 +474,26 @@ def plan_pack_install(
                             target = wheels / identity / filename
                             target.parent.mkdir(exist_ok=True)
                             shutil.copyfile(cached, target)
-            try:
-                if diagnostic_python is not None and metadata["compatibility"] is None:
-                    raise EnvironmentError("recorded target wheel compatibility unavailable")
-                pack_operation(
-                    "collect",
-                    generation=source,
-                    store=scratch / "store",
-                    variant=generation.variant,
-                    worker_protocol=generation.worker_protocol,
-                    own_environment_size=size,
-                    source_generation=source,
-                    constraints=scratch / "constraints.txt",
-                    collection_python=diagnostic_python,
-                    compatibility=cast("dict[str, object] | None", metadata["compatibility"]),
-                    locks=locks,
-                    in_process_packs=generation.in_process_packs,
-                )
-            except (OSError, ValueError) as exc:
-                errors.append(str(exc))
+            if diagnostic_python is not None:
+                try:
+                    if metadata["compatibility"] is None:
+                        raise EnvironmentError("recorded target wheel compatibility unavailable")
+                    pack_operation(
+                        "collect",
+                        generation=source,
+                        store=scratch / "store",
+                        variant=generation.variant,
+                        worker_protocol=generation.worker_protocol,
+                        own_environment_size=size,
+                        source_generation=source,
+                        constraints=scratch / "constraints.txt",
+                        collection_python=diagnostic_python,
+                        compatibility=cast("dict[str, object] | None", metadata["compatibility"]),
+                        locks=locks,
+                        in_process_packs=generation.in_process_packs,
+                    )
+                except (OSError, ValueError) as exc:
+                    errors.append(str(exc))
             if errors:
                 raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
             engine = scratch / "engine"
@@ -483,6 +515,18 @@ def plan_pack_install(
                 locks=locks,
                 in_process_packs=generation.in_process_packs,
             )
+            if diagnostic_python is None:
+                pack_operation(
+                    "acquire",
+                    generation=engine,
+                    store=scratch / "store",
+                    variant=generation.variant,
+                    worker_protocol=generation.worker_protocol,
+                    own_environment_size=size,
+                    source_generation=source,
+                    locks=locks,
+                    in_process_packs=generation.in_process_packs,
+                )
             admitted = subprocess.run(
                 [
                     str(interpreter(engine)),

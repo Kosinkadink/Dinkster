@@ -173,6 +173,8 @@
   interpreter is unavailable. Missing history or metadata is reported, never
   silently replaced with another engine or dependency version. A damaged
   generation cannot be constructed or activated.
+  An absent retained-base interpreter or unreadable history does not hide
+  independent source and wheel failures. Refusal creates no external pack plan.
   Engine wheel checks use the retained exact constraints, not a package index.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
