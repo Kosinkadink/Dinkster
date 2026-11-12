@@ -51,7 +51,8 @@ jobs:
           USER root
           RUN uv pip install --python /app/.venv/bin/python dinkster-token-verifier==0.1.2
           DOCKER
-          docker save dinkster-disposable-registry:local dinkster-disposable-publisher:local > disposable-images.tar
+          docker pull postgres:16-alpine
+          docker save dinkster-disposable-registry:local dinkster-disposable-publisher:local postgres:16-alpine > disposable-images.tar
       - uses: actions/upload-artifact@v4
         with:
           name: disposable-registry-images
