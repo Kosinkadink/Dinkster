@@ -31,11 +31,7 @@ from .environment_artifacts import (
     validate_dependency_base,
     validate_manifest,
 )
-from .environment_constraints import (
-    effective_constraints,
-    installed_wheel_origins,
-    selected_wheel_rows,
-)
+from .environment_constraints import effective_constraints, selected_wheel_rows
 from .environment_downloads import artifact_available, read_metadata
 from .environment_generations import ACQUIRE_PACK_SOURCES, retained_pack_archive, verify_base_inputs
 from .environment_history import history, validate_import
@@ -597,7 +593,6 @@ def _replacement_wheel_receipt(
     wheels = selected_wheel_rows(
         _metadata(snapshot)["constraints.txt"], rows, {"tags": tags, "markers": markers}
     )
-    wheels = installed_wheel_origins(wheels, base, engine, variant)
     return (
         json.dumps(
             {"format": "dinkster.installed-wheels/1", "wheels": wheels, "inherited": []},

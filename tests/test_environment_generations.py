@@ -242,7 +242,6 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
                                 len(payloads["added"]),
                                 hashlib.sha256(payloads["added"]).hexdigest(),
                                 endpoint + "/static/" + wheel_record["url"],
-                                endpoint,
                             ),
                         ),
                     ),
@@ -763,7 +762,7 @@ def test_checkout_pack_commands_do_not_expand_wheel_sources(
         if "--find-links-stdin" in command:
             assert json.loads(kwargs["input"]) == [str(path) for path in links]
         else:
-            source = Path(command[command.index("--no-config") + 1]).read_text()
+            source = Path(command[3]).read_text()
             assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
             assert "--no-index" in command
         raise RuntimeError("command inspected")
@@ -1626,34 +1625,8 @@ environment.main()
     assert read_current(root) == (1 if problem in {"update", "custom"} else None)
 
 
-@pytest.mark.parametrize("base_owned", [False, True])
-def test_selected_root_wheel_origin_respects_base_replacement_ownership(base_owned: bool) -> None:
-    from dinkster_supervisor.environment_constraints import installed_wheel_origins
-
-    wheel = {"filename": "helper-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
-    base: dict[str, object] = {
-        "replaces": ["helper"] if base_owned else [],
-        "wheels": [{**wheel, "index": "https://base-issuer.example.test/simple"}],
-    }
-    engine: dict[str, object] = {
-        "dependencies": {
-            "cpu": {"wheels": [{**wheel, "index": "https://engine-issuer.example.test/simple"}]}
-        }
-    }
-    assert installed_wheel_origins([wheel], base, engine, "cpu") == [
-        {
-            **wheel,
-            "registry": "https://base-issuer.example.test/simple"
-            if base_owned
-            else "https://engine-issuer.example.test/simple",
-        }
-    ]
-
-
-@pytest.mark.parametrize("origin", ["base", "engine", "custom-engine"])
 def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existing_version(
     tmp_path: Path,
-    origin: str,
 ) -> None:
     store = tmp_path / "store"
     base = store / "bases" / ("a" * 64) / "python"
@@ -1686,37 +1659,10 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
         f"selected-fixture==1.0 --hash=sha256:{sha} --hash=sha256:{other_sha}\n"
         'inactive-fixture==1.0; sys_platform == "not-a-platform" --hash=sha256:' + "0" * 64 + "\n"
     )
-    wheel_row = {
-        "filename": selected.name,
-        "size": selected.stat().st_size,
-        "sha256": sha,
-        "index": "https://issuer.example.test/simple",
-    }
-    (base.parent / "manifest.json").write_text(
-        json.dumps({"wheels": [wheel_row] if origin == "base" else []})
+    generation = tmp_path / "generation"
+    python = prepare_engine_interpreter(
+        generation, store=store, base="sha256:" + "a" * 64, constraints=constraints
     )
-    engine_manifest = json.dumps(
-        {"dependencies": {"linux-cpu": {"wheels": [wheel_row] if origin != "base" else []}}}
-    ).encode()
-    engine_sha = hashlib.sha256(engine_manifest).hexdigest()
-    engine = store / "engines" / engine_sha
-    engine.mkdir(parents=True)
-    (engine / "release-manifest.json").write_bytes(engine_manifest)
-    root = tmp_path / "project"
-    generation = root / "generations/1"
-    sealed = build_generation(
-        root=root,
-        number=1,
-        store=store,
-        base="sha256:" + "a" * 64,
-        engine_version="1.0",
-        engine_release="sha256:" + engine_sha,
-        constraints=constraints,
-        variant="custom-base" if origin == "custom-engine" else "linux-cpu",
-        worker_protocol=1,
-        artifact_sources={"dependencyVariant": "linux-cpu"},
-    )
-    python = interpreter(generation)
     assert (
         subprocess.check_output(
             [str(python), "-I", "-c", "import selected_fixture; print(selected_fixture.VALUE)"]
@@ -1736,19 +1682,9 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
     )
     assert json.loads((generation / "installed-wheels.json").read_text()) == {
         "format": "dinkster.installed-wheels/1",
-        "wheels": [
-            {
-                "filename": selected.name,
-                "size": selected.stat().st_size,
-                "sha256": sha,
-                "registry": "https://issuer.example.test/simple",
-            }
-        ],
+        "wheels": [{"filename": selected.name, "size": selected.stat().st_size, "sha256": sha}],
         "inherited": [],
     }
-    assert dict(sealed.files)["installed-wheels.json"] == (
-        "sha256:" + hashlib.sha256((generation / "installed-wheels.json").read_bytes()).hexdigest()
-    )
 
 
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
