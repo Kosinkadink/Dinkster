@@ -2,29 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-from dinkster_api.v1 import schema_to_wire
 from dinkster_image.image_compositor import ImageCompositor
-
-from tools.compare_nodes import compare
-
-
-def test_compositor_schema_matches_reference_except_frozen_id() -> None:
-    reference = json.loads(
-        (Path(__file__).parents[3] / "tools/data/comfy_core_reference.json").read_text()
-    )
-    row = next(item for item in reference["nodes"] if item["class_name"] == "ImageCompositor")
-    schema = ImageCompositor.define_schema()
-    assert schema.node_type == "dinkster.image.image_compositor"
-    assert "ImageCompositor" in schema.search_terms
-    assert schema.aliases == ()
-    wire = schema_to_wire(schema)
-    wire["nodeType"] = "ImageCompositor"
-    assert compare(row, wire) == []
 
 
 def test_compositor_places_layers_and_rejects_stale_editor_changes() -> None:

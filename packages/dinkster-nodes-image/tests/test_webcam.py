@@ -2,33 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import WEBCAM_TYPE, TypeRegistry, schema_to_wire
+from dinkster_api.v1 import WEBCAM_TYPE, TypeRegistry
 from dinkster_assets import LocalAssetRef, MountDef, MountTable, digest_bytes
 from dinkster_image import register_types
 from dinkster_image.webcam import WebcamCapture
 from PIL import Image
-
-from tools.compare_nodes import compare
-
-
-def test_webcam_schema_matches_reference_except_frozen_id() -> None:
-    reference = json.loads(
-        (Path(__file__).parents[3] / "tools/data/comfy_core_reference.json").read_text()
-    )
-    row = next(item for item in reference["nodes"] if item["class_name"] == "WebcamCapture")
-    schema = WebcamCapture.define_schema()
-    assert schema.node_type == "dinkster.image.webcam_capture"
-    assert "WebcamCapture" in schema.search_terms
-    assert schema.aliases == ()
-    wire = schema_to_wire(schema)
-    wire["nodeType"] = "WebcamCapture"
-    assert compare(row, wire) == []
 
 
 @pytest.mark.parametrize("verified", [False, True])

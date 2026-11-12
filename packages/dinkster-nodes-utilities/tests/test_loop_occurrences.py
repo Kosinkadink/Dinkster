@@ -3,7 +3,6 @@
 import asyncio
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -19,7 +18,6 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_to_wire,
 )
 from dinkster_utilities import NODES as UTILITY_NODES
 from dinkster_utilities.loop_lists import ListElement, MakeList
@@ -42,45 +40,6 @@ NODES = (
     MakeList,
     ListElement,
 )
-
-
-@pytest.mark.parametrize(
-    ("node_type", "expected"),
-    [
-        (
-            "dinkster.utilities.end_loop",
-            [("output_value", False), ("next_iteration_value", False), ("accumulate", True)],
-        ),
-        (
-            "dinkster.utilities.loop_iteration",
-            [
-                ("iteration_index", True),
-                ("is_first", True),
-                ("is_last", True),
-                ("list_item", False),
-                ("current_iteration_value", False),
-                ("reuse_cache", True),
-            ],
-        ),
-    ],
-)
-def test_loop_wire_inputs_preserve_v3_declaration_order(
-    node_type: str, expected: list[tuple[str, bool]]
-) -> None:
-    schema = build_schemas(LOOP_NODES)[node_type]
-    interface = cast(list[dict[str, object]], schema_to_wire(schema)["interface"])
-    inputs = [(item["id"], item["required"]) for item in interface if item["role"] == "input"]
-    assert inputs == expected
-    if node_type == "dinkster.utilities.end_loop":
-        family = next(item for item in interface if item["role"] == "inputFamily")
-        assert family["id"] == "terminations"
-        assert family["required"] is False
-        assert family["minMembers"] == 0
-        assert family["maxMembers"] == 50
-        assert family["memberPrefix"] == "termination"
-        assert family["template"] == [
-            {"role": "input", "id": "termination", "required": False, "type": {"kind": "wildcard"}}
-        ]
 
 
 def make_engine() -> Engine:

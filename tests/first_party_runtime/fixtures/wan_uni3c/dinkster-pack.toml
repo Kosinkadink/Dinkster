@@ -1,8 +1,0 @@
-[pack]
-name = "wan-uni3c-fixture"
-publisher = "dinkster"
-namespaces = ["wan-uni3c-fixture"]
-
-[pack.entry]
-nodes = "wan_uni3c_fixture:FIXTURE_NODES"
-types = "wan_uni3c_fixture:register_inference_types"
