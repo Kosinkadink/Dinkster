@@ -315,6 +315,163 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         review_temp.cleanup()
 
 
+@pytest.mark.parametrize("notice_state", ["vulnerable", "malicious"])
+def test_managed_pack_install_requires_exact_security_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    notice_state: str,
+):
+    import tomllib
+    from uuid import UUID
+
+    import test_installer
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_security.store import SecurityStore
+    from dinkster_workers.pack_lock import PackLock
+    from test_security_notices import NOTICE, _feed, _signed, _trust
+
+    from dinkster.pack_archive import build_pack_archive
+
+    original_run = _run
+    original_server = test_installer._serve_artifacts
+    registry_files: dict[str, bytes] = {}
+
+    def serve(files, requests):
+        nonlocal registry_files
+        registry_files = files
+        return original_server(files, requests)
+
+    class Observed(Exception):
+        pass
+
+    def run(root: Path, *arguments, **kwargs):
+        if not arguments or arguments[0] != "packs-apply":
+            return original_run(root, *arguments, **kwargs)
+        registry = tomllib.loads((root / "registries.toml").read_text())["registries"]["official"][
+            "endpoint"
+        ]
+        identity = artifact_digest((tmp_path / "healthy-1.0.0-py3-none-any.whl").read_bytes())
+        key = Ed25519PrivateKey.generate()
+        trust = _trust(key)
+        trust["registry"] = registry
+        security = SecurityStore(root / "security.sqlite3")
+        security.provision_trust(json.dumps(trust).encode())
+        feed = _feed(notice_state)
+        feed["registry"] = registry
+        feed["notices"][0]["release"].update(
+            pack="healthy", version="1.0.0", artifactDigest=identity
+        )
+        security.import_feed(registry, _signed(feed, key))
+        review = Path(arguments[arguments.index("--input") + 1])
+        store = Path((root / "store").read_text().strip())
+        for decision in ("pending", "denied") if notice_state == "vulnerable" else ("blocked",):
+            if decision == "denied":
+                security.answer(registry, UUID(NOTICE), 1, approved=False)
+            before = {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            }
+            code, result = original_run(root, *arguments, **kwargs)
+            assert code != 0, result
+            diagnostic = json.dumps(result)
+            for expected in ("healthy", "1.0.0", identity, NOTICE, "revision 1", decision):
+                assert expected in diagnostic, diagnostic
+            assert (root / "current").read_text() == "2\n"
+            assert not (root / "generations/3").exists()
+            assert not (review / "consumed").exists()
+            assert {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            } == before
+        if notice_state == "malicious":
+            raise Observed
+        security.answer(registry, UUID(NOTICE), 1, approved=True)
+        code, result = original_run(root, *arguments, **kwargs)
+        assert code == 0 and result["current"] == 3, result
+
+        feed["revision"] = 2
+        feed["notices"][0].update(revision=2, previousRevision=1)
+        security.import_feed(registry, _signed(feed, key))
+        assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+        sibling = tmp_path / "sibling"
+        shutil.copytree(tmp_path / "pack", sibling)
+        manifest = sibling / "dinkster-pack.toml"
+        manifest.write_text(manifest.read_text().replace("healthy", "sibling"))
+        (sibling / "healthy").rename(sibling / "sibling")
+        nodes = sibling / "sibling/__init__.py"
+        nodes.write_text(nodes.read_text().replace("healthy.", "sibling."))
+        (sibling / "pyproject.toml").write_text('[project]\nname="sibling"\nversion="1.0.0"\n')
+        archive = tmp_path / "sibling-1.0.0-py3-none-any.whl"
+        build_pack_archive(sibling, archive)
+        payload = archive.read_bytes()
+        entry = LockedPack(
+            "sibling",
+            "1.0.0",
+            artifact_digest(payload),
+            "dinkster",
+            ("sibling",),
+            "registry:official",
+        )
+        lock_path = tmp_path / "sibling-lock.json"
+        PackLock("sibling", "fixture-cpu", ">=3.12", (), (), ()).write(lock_path)
+        lock = lock_path.read_bytes()
+        lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
+        index = json.loads(registry_files["/static/packs/index.json"])
+        release = {
+            **test_installer._static_release(entry, payload),
+            "engine": ">=1,<3",
+            "installLocks": {
+                "fixture-cpu": {
+                    **index["items"][0]["installLocks"]["fixture-cpu"],
+                    "artifactDigest": entry.artifact_digest,
+                    "digest": artifact_digest(lock),
+                    "size": len(lock),
+                    "url": lock_url,
+                }
+            },
+        }
+        index["items"].append(release)
+        registry_files["/static/packs/index.json"] = json.dumps(index).encode()
+        registry_files["/static/" + lock_url] = lock
+        registry_files["/static/" + release["wheels"][0]["url"]] = payload
+        retained_review = tmp_path / "retained-review"
+        code, plan = original_run(
+            root, "packs-plan", "sibling@1.0.0", "--output", str(retained_review)
+        )
+        assert code == 0, plan
+        code, result = original_run(
+            root,
+            "packs-apply",
+            "--input",
+            str(retained_review),
+            "--approval",
+            plan["approval"],
+            timeout=120,
+        )
+        assert code == 0 and result["current"] == 4, result
+        assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+        assert {
+            entry.pack
+            for entry in Lockfile.from_record_json(
+                (root / "generations/4/dinkster.lock").read_text()
+            ).packs
+        } == {"healthy", "sibling"}
+        raise Observed
+
+    monkeypatch.setattr(test_installer, "_serve_artifacts", serve)
+    monkeypatch.setattr(sys.modules[__name__], "_run", run)
+    with pytest.raises(Observed):
+        test_fresh_install_engine_update_pack_install_and_exact_restore(
+            tmp_path, monkeypatch, capsys, "supervisor"
+        )
+
+
 @pytest.mark.parametrize("pack_route", ["supervisor", "command"])
 def test_fresh_install_engine_update_pack_install_and_exact_restore(
     tmp_path: Path,

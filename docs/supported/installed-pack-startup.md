@@ -164,6 +164,12 @@
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
   or selection metadata; successful add and update activate fresh generations
   without package-index resolution, retaining the engine and base.
+  A verified vulnerable notice requires approval for that exact notice revision
+  before a new release is installed; a pending or denied answer refuses.
+  Already retained vulnerable releases may remain while a different pack is added
+  with the answer pending. Malicious releases refuse regardless of approval.
+  Security refusal names the release digest, notice revision and decision and
+  does not activate a generation or consume the reviewed plan.
   Missing retained bases refuse early rather than listing later payload failures.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
