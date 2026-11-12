@@ -13,10 +13,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-from dinkster_security.documents import Release as SecurityRelease
-from dinkster_security.policy import Artifact as SecurityArtifact
-from dinkster_security.policy import assess
-from dinkster_security.store import SecurityStore
 from dinkster_store import object_path
 
 from .environment_constraints import (
@@ -52,6 +48,10 @@ from .environment_transactions import (
     next_generation,
     recover_activation,
 )
+from .security.documents import Release as SecurityRelease
+from .security.policy import Artifact as SecurityArtifact
+from .security.policy import assess
+from .security.store import SecurityStore
 
 
 def _approval(record: dict[str, object]) -> str:
