@@ -810,6 +810,28 @@ def test_probe_index_stages_selected_library_dependency_without_public_lookup(
         stage_index(sources, tmp_path / "bad-index")
 
 
+def test_incompatible_publication_fixture_keeps_engine_without_resolving_invalid_requirement(
+    tmp_path: Path,
+) -> None:
+    from scripts.check_publication_controls import prepare_fixture
+
+    bases = tmp_path / "bases"
+    bases.mkdir()
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "constraints.txt").write_bytes(b"verified constraints")
+    manifest = {"artifacts": [{"name": "constraints.txt"}]}
+    (engine / "release-manifest.json").write_text(json.dumps(manifest))
+    output = tmp_path / "broken"
+    prepare_fixture(bases, output, incompatible=True, engine=engine)
+    assert (output / "engine/constraints.txt").read_bytes() == b"verified constraints"
+    assert (
+        'requires = ["dinkster-dry-run-helpers>=2"]'
+        in (output / "pack/dinkster-pack.toml").read_text()
+    )
+    assert (output / "index/simple/dinkster-dry-run-helpers/index.html").is_file()
+
+
 @pytest.mark.parametrize(
     "damage", [None, "base-metadata", "base-archive", "engine-artifact", "dependency"]
 )

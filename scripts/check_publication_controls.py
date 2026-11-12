@@ -140,7 +140,7 @@ def prepare_fixture(
     (simple / "index.html").write_text(
         f'<a href="../../{helper.name}">{helper.name}</a>', encoding="ascii"
     )
-    if engine is not None:
+    if engine is not None and not incompatible:
         from scripts.stage_publication_probe_index import stage_index
 
         stage_index(sources, index, engine=engine)
