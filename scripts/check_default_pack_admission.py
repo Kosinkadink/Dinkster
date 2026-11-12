@@ -457,24 +457,24 @@ def check_defaults(
                     lock.write(lock_output / f"{lock.pack}.json")
             libraries = selected_library_wheels(catalog, artifacts)
             names = [pack.pack for pack in catalog.packs if pack.pack not in libraries]
-            heavy = ("dinkster-3d", "dinkster-image", "dinkster-video")
+            heavy = ("dinkster-3d", "dinkster-image", "dinkster-video", "dinkster-audio")
             groups = [[name] for name in heavy if name in names]
             remaining = [name for name in names if name not in heavy]
-            groups.extend(remaining[index::7] for index in range(7) if remaining[index::7])
-            # These two children dominated one round-robin group in hosted measurements.
-            for pack, companion in (
-                ("dinkster-audio", "dinkster-video"),
-                ("dinkster-latent", "dinkster-image"),
-            ):
-                if pack in names and companion in names:
-                    next(group for group in groups if pack in group).remove(pack)
-                    next(group for group in groups if companion in group).append(pack)
-            groups = [group for group in groups if group]
+            groups.extend(remaining[index::9] for index in range(9) if remaining[index::9])
             return {"engineVersion": engine_version, "groups": groups}
         if missing := set(test_packs) - {pack.pack for pack in catalog.packs}:
             raise ValueError(f"requested admission packs are not in the catalog: {sorted(missing)}")
         entries = {pack.pack: pack for pack in catalog.packs}
         libraries = selected_library_wheels(catalog, artifacts)
+        if generation_python is not None and libraries:
+            wheel_store = work / "wheels"
+            wheel_store.mkdir()
+            # Selected libraries may not be public yet. The provisioner still
+            # verifies these bytes against each consumer's immutable lock.
+            for name, archive in libraries.items():
+                _, version, _ = library_metadata(archive)
+                filename = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
+                shutil.copyfile(archive, wheel_store / filename)
         graph: dict[str, set[str]] = {}
         sources = {}
         import_roots: dict[str, Path] = {}
@@ -591,10 +591,17 @@ def check_defaults(
                     {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
                 )
         with admission_timing("defaults", "selected-tests"):
-            if test_packs:
-                run_selected_tests(root, catalog, artifacts, test_packs=test_packs)
-            else:
-                run_selected_tests(root, catalog, artifacts)
+            if generation_python is None:
+                raise ValueError("selected tests require the managed engine and dependency locks")
+            run_selected_tests(
+                root,
+                catalog,
+                artifacts,
+                generation_python=generation_python,
+                locks=locks,
+                variant=variant,
+                test_packs=test_packs,
+            )
         return {"engineVersion": engine_version, "packs": results}
 
 

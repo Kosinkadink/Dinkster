@@ -3,8 +3,9 @@
 - The optional development pack provides CPU-only examples for dynamic slots,
   count-bound outputs, conditional rows, multi-combo, Markdown, palette, list
   and button widgets, switchable widget forms, editable output descriptors,
-  and image mirror estimates. It also supplies help, a guide, a blueprint,
-  a saved pack preference, Chinese labels, and a template. See
+  and image mirror estimates. It also supplies help, a guide, a blueprint
+  that inserts an independent boundary subgraph, a saved pack preference,
+  Chinese labels, and a separate template. See
   [Try optional node features](../dev-node-features.md).
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
@@ -34,6 +35,10 @@
   Rules preserve the math expression and output identities, and identify the
   old flat boolean-family socket path. Node execution is unchanged. Automatic
   application requires a frontend that supports positional family migrations.
+- Math Expression's named numeric inputs are connection-only sockets; the
+  expression remains an editable text field.
+- Convert Number's value and both bounding-box initialization inputs are
+  connection-only sockets, retaining their accepted value types.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,

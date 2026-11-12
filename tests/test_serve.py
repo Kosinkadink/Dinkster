@@ -309,6 +309,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         spec,
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cuda",
+        development=True,
     )
 
     assert prepared.python == str(selected_python)
@@ -344,8 +345,16 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     def unexpected(*_args: object, **_kwargs: object) -> Path:
         raise AssertionError("configured serving interpreter must not provision")
 
-    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
+    monkeypatch.delenv("DINKSTER_SERVING_PYTHON")
     monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
+    with pytest.raises(serve.CompositionError, match="prepared generation interpreter"):
+        serve._prepare_default_pack(
+            default_pack_spec("dinkster-vision-depth-anything-3"),
+            venv_root=tmp_path / "runtime-venvs",
+            accelerator="cpu",
+        )
+    assert not (tmp_path / "runtime-venvs").exists()
+    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
     prepared = serve._prepare_default_pack(
         default_pack_spec("dinkster-vision-depth-anything-3"),
         venv_root=tmp_path / "runtime-venvs",
@@ -402,6 +411,7 @@ def test_bundled_standard_pack_exposes_its_artifact_module(
         ),
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cpu",
+        development=True,
     )
 
     assert prepared.python == str(selected_python)
@@ -2547,7 +2557,7 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
         (False, "watched"),
         (False, "installed-local"),
         (False, "installed-git"),
-        (False, "installed-registry"),
+        (False, "managed-registry"),
     ],
 )
 def test_serve_empty_generation_health_distinguishes_failed_selection(
@@ -2559,10 +2569,11 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
 
     generation = tmp_path / "generation"
     generation.mkdir()
-    stage_generation_packs(generation, Lockfile.of(()), {})
-    (generation / "generation.json").write_text(
-        json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
-    )
+    if development != "managed-registry":
+        stage_generation_packs(generation, Lockfile.of(()), {})
+        (generation / "generation.json").write_text(
+            json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+        )
     if development == "captured":
         (generation / "development-sources.json").write_text(
             json.dumps({"format": "dinkster.development-sources/1", "sources": []})
@@ -2574,7 +2585,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
     )
     if development == "watched":
         extra = ("--no-default-packs", "--watch-packs")
-    if development.startswith("installed-"):
+    if development.startswith("installed-") or development == "managed-registry":
         from dataclasses import replace
 
         from dinkster.installer import Installer, lock_local_pack
@@ -2596,13 +2607,32 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
             '[pack.entry]\nnodes="example:NODES"\n[pack.sandbox]\n'
         )
         installer = Installer(tmp_path / "installed")
-        entry, _ = lock_local_pack(source, installer.artifacts_dir)
+        entry, archive = lock_local_pack(source, installer.artifacts_dir)
         if development == "installed-git":
             entry = replace(entry, source="git:https://example.invalid/pack@" + "a" * 40)
-        elif development == "installed-registry":
+        if development == "managed-registry":
+            from dinkster_workers.doctor import prepare_catalog
+
             entry = replace(entry, source="registry:public", publisher="acme", version="1.0")
-        installer.apply(Lockfile.of([entry]), venvs=False)
-        extra = ("--no-default-packs", "--install-root", str(installer.root))
+            stage_generation_packs(generation, Lockfile.of([entry]), {"example": archive})
+            prepared = generation / "pack-sources/example"
+            report = prepare_catalog(
+                prepared / "dinkster-pack.toml", environment={"PYTHONPATH": str(prepared)}
+            )
+            assert report.ok, report
+            (generation / "generation.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.generation/1",
+                        "variant": "linux-cpu",
+                        "inProcessPacks": ["example"],
+                    }
+                )
+            )
+            extra = ("--generation", str(generation))
+        else:
+            installer.apply(Lockfile.of([entry]), venvs=False)
+            extra = ("--no-default-packs", "--install-root", str(installer.root))
     port = free_port()
     log = tmp_path / "empty-generation.log"
     with log.open("wb") as output:
@@ -2618,7 +2648,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
             assert isinstance(packs, dict)
             if failed_pack:
                 assert packs["core"]["state"] == "failed"
-            elif development.startswith("installed-"):
+            elif development.startswith("installed-") or development == "managed-registry":
                 assert packs["example"]["state"] == "announced"
             else:
                 assert packs == {}
@@ -2632,9 +2662,12 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                         assert response.status == 200
                         catalog = await response.json()
                         assert set(catalog["nodes"]) == (
-                            {"example.probe"} if development.startswith("installed-") else set()
+                            {"example.probe"}
+                            if development.startswith("installed-")
+                            or development == "managed-registry"
+                            else set()
                         )
-                        if development not in {"published", "installed-registry"}:
+                        if development not in {"published", "managed-registry"}:
                             label = catalog["dinkster"]["development"]
                             assert label["mode"] == "development"
                             assert label["reproducible"] is False
@@ -2644,7 +2677,7 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
 
             run_scenario(check())
             assert ("development: not reviewed by the registry" in log.read_text()) is (
-                development not in {"published", "installed-registry"}
+                development not in {"published", "managed-registry"}
             )
         except Exception as exc:
             exc.add_note(log.read_text())

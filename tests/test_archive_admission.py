@@ -574,3 +574,75 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
         assert not result.blocked, result.operator_details
         assert result.data is not None
         assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
+
+
+def test_service_fixture_selected_api_refuses_unjailed_execution(tmp_path: Path) -> None:
+    result = run_executable_probe(
+        tmp_path, api_wheel=tmp_path / "engine.whl", require_isolation=False
+    )
+    assert [finding.code for finding in result.findings] == ["probe.isolation-unavailable"]
+
+
+@pytest.mark.skipif(
+    os.environ.get("DINKSTER_TEST_FULL_PROBE") != "1",
+    reason="the full Linux archive-admission workflow runs this jailed contract",
+)
+@pytest.mark.parametrize("export_exists", [True, False])
+def test_service_fixture_selected_api_keeps_pinned_probe(
+    tmp_path: Path, export_exists: bool
+) -> None:
+    import dinkster_api.v1 as host_api
+    import dinkster_workers
+
+    root = tmp_path / "pack"
+    shutil.copytree(FIXTURES / "color-tools", root)
+    module = root / "color_tools/__init__.py"
+    module.write_text(
+        "from dinkster_api.v1 import SELECTED_API_DESCRIPTION\n"
+        + module.read_text().replace(
+            'description="Adjust image color properties."', "description=SELECTED_API_DESCRIPTION"
+        )
+    )
+    wheel = tmp_path / "dinkster_api-99.0-py3-none-any.whl"
+    files = {
+        "dinkster_api/__init__.py": "",
+        "dinkster_api/v1.py": (
+            "from dinkster_schema import Node, NodeSchema\n"
+            + ('SELECTED_API_DESCRIPTION = "Same-head API export"\n' if export_exists else "")
+        ),
+        "dinkster_api-99.0.dist-info/METADATA": (
+            "Metadata-Version: 2.1\nName: dinkster-api\nVersion: 99.0\n"
+        ),
+        "dinkster_api-99.0.dist-info/WHEEL": (
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+        "untrusted-startup.pth": "import sys; raise RuntimeError('API startup hook executed')\n",
+    }
+    workers = Path(dinkster_workers.__file__).parent
+    for path in workers.rglob("*.py"):
+        files["dinkster_workers/" + path.relative_to(workers).as_posix()] = path.read_text()
+    files["dinkster_workers/_doctor_probe.py"] = (
+        "raise RuntimeError('Selected engine replaced the pinned probe')\n"
+    )
+    record = "dinkster_api-99.0.dist-info/RECORD"
+    files[record] = "".join(f"{entry},,\n" for entry in [*files, record])
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    index = tmp_path / "empty-index"
+    index.mkdir()
+    assert not hasattr(host_api, "SELECTED_API_DESCRIPTION")
+    result = run_executable_probe(
+        root,
+        api_wheel=wheel,
+        settings=ProbeSettings(
+            probe_package_index_url=index.as_uri(), probe_dependency_source="index"
+        ),
+    )
+    assert not hasattr(host_api, "SELECTED_API_DESCRIPTION")
+    assert result.blocked is not export_exists, result.operator_details
+    if export_exists:
+        assert result.data is not None
+        assert result.data["schemas"][0]["schema"]["description"] == "Same-head API export"
+    else:
+        assert any(finding.code == "entry.unresolvable" for finding in result.findings)

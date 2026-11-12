@@ -8,14 +8,17 @@ import copy
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
 from uuid import UUID
 
 import pytest
@@ -408,24 +411,12 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    ("stop_reason", "in_process"), [("malicious", False), ("denied", False), ("malicious", True)]
-)
-def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
+@pytest.fixture
+def execution_artifacts(
     tmp_path: Path,
-    security_feed: tuple[str, dict[str, Any]],
-    stop_reason: str,
-    in_process: bool,
-    capfd: pytest.CaptureFixture[str],
-):
-    import aiohttp
-    from dinkster_graph import Graph, GraphNode, graph_to_wire
-    from dinkster_supervisor.supervisor import EngineLink, EngineProcess
+) -> tuple[list[LockedPack], dict[str, Path], dict[str, Path]]:
     from dinkster_workers.doctor import prepare_catalog
 
-    from dinkster.installer import Installer
-
-    installer = Installer(tmp_path / "installed", accelerator="cpu", runtime_probe=lambda _: ())
     entries = []
     archives = {}
     markers = {}
@@ -469,17 +460,102 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
             LockedPack(name, "1.2.3", digest, "publisher", (name,), "registry:" + REGISTRY)
         )
         archives[digest] = archive
-    installer.apply(
+    return entries, archives, markers
+
+
+def _execution_generation(
+    root: Path,
+    entries: list[LockedPack],
+    archives: dict[str, Path],
+    in_process: tuple[str, ...],
+) -> Path:
+    from dinkster_supervisor.environment_state import interpreter
+    from test_environment_generations import _workspace_tree
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = root / "generations/1"
+    generation.mkdir(parents=True)
+    _workspace_tree(generation / "python")
+    stage_generation_packs(
+        generation,
         Lockfile.of(entries),
-        archives,
-        venvs=False,
-        hosting_in_process=("test-pack",) if in_process else (),
-        hosting_runtime_pins=installer.serving_runtime_pins() if in_process else {},
+        {entry.pack: archives[entry.artifact_digest] for entry in entries},
+    )
+    receipt = json.dumps({"format": "dinkster.installed-wheels/1", "wheels": [], "inherited": []})
+    receipts = ["installed-wheels.json"]
+    for entry in entries:
+        pack = generation / "packs" / entry.pack
+        if entry.pack not in in_process:
+            subprocess.run(
+                [
+                    str(interpreter(generation)),
+                    "-m",
+                    "venv",
+                    "--system-site-packages",
+                    "--without-pip",
+                    str(pack),
+                ],
+                check=True,
+                capture_output=True,
+            )
+        receipts.append(f"packs/{entry.pack}/installed-wheels.json")
+    for name in receipts:
+        path = generation / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(receipt)
+    (generation / "constraints.txt").write_text("")
+    files = {
+        name: "sha256:" + hashlib.sha256((generation / name).read_bytes()).hexdigest()
+        for name in ["constraints.txt", *receipts]
+    }
+    if set(in_process) != {entry.pack for entry in entries}:
+        from dinkster_supervisor.environment_generations import prepare_pack_catalogs
+
+        prepare_pack_catalogs(generation, in_process)
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "generation": 1,
+                "base": "sha256:" + "a" * 64,
+                "engine": {"version": "test", "release": "sha256:" + "b" * 64},
+                "constraints": files["constraints.txt"],
+                "variant": "linux-cpu",
+                "workerProtocol": 1,
+                "inProcessPacks": list(in_process),
+                "files": files,
+            }
+        )
+    )
+    (root / "current").write_text("1\n")
+    return generation
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "in_process"), [("malicious", False), ("denied", False), ("malicious", True)]
+)
+def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
+    tmp_path: Path,
+    security_feed: tuple[str, dict[str, Any]],
+    execution_artifacts: tuple[list[LockedPack], dict[str, Path], dict[str, Path]],
+    stop_reason: str,
+    in_process: bool,
+    capfd: pytest.CaptureFixture[str],
+):
+    import aiohttp
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_supervisor.supervisor import EngineLink, EngineProcess
+
+    entries, archives, markers = execution_artifacts
+    root = tmp_path / "managed"
+    generation = _execution_generation(
+        root, entries, archives, ("test-pack",) if in_process else ()
     )
     key = Ed25519PrivateKey.generate()
-    store = _store(installer.root, key)
+    store = _store(root, key)
     url, response = security_feed
-    (installer.root / "security.toml").write_text(
+    (root / "security.toml").write_text(
         "refresh_interval_seconds = 0.05\n[feed_urls]\n"
         f'"{REGISTRY}" = "{url}/security/index.json"\n'
     )
@@ -497,8 +573,8 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 "--no-default-packs",
                 "--library-root",
                 "",
-                "--install-root",
-                str(installer.root),
+                "--generation",
+                str(generation),
             ],
             link,
             probe_interval=0.05,
@@ -641,6 +717,173 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 await engine.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("policy", ["pending", "outage", "malicious", "denied", "refuse", "age"])
+def test_managed_generation_start_enforces_cached_and_refreshed_policy(
+    tmp_path: Path,
+    security_feed: tuple[str, dict[str, Any]],
+    execution_artifacts: tuple[list[LockedPack], dict[str, Path], dict[str, Path]],
+    policy: str,
+):
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from test_environment_runtime import free_port
+
+    entries, archives, markers = execution_artifacts
+    root = tmp_path / "managed"
+    _execution_generation(root, entries, archives, tuple(entry.pack for entry in entries))
+    key = Ed25519PrivateKey.generate()
+    store = _store(root, key)
+    url, response = security_feed
+    config = (
+        "refuse_vulnerable = true\n"
+        if policy == "refuse"
+        else "maximum_feed_age_seconds = 1\n"
+        if policy == "age"
+        else ""
+    )
+    (root / "security.toml").write_text(
+        config + f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
+    feed = _feed("malicious" if policy == "malicious" else "vulnerable")
+    feed["notices"][0]["release"]["artifactDigest"] = entries[0].artifact_digest
+    if policy in {"outage", "denied"}:
+        store.import_feed(REGISTRY, _signed(feed, key))
+    if policy == "denied":
+        store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    response.update(status=503 if policy == "outage" else 200, body=_signed(feed, key))
+    port = free_port()
+    try:
+        if policy not in {"pending", "outage"}:
+            expected = (
+                "maximum age"
+                if policy == "age"
+                else "security " + ("malicious" if policy == "malicious" else "vulnerable")
+            )
+            with pytest.raises(EnvironmentError, match=expected):
+                start_engine(root, 1, "main", port)
+            assert all(not (marker / "imported").exists() for marker in markers.values())
+            assert store.cached(REGISTRY)[0] is not None
+            return
+        for attempt in range(2):
+            row = start_engine(root, 1, "main", port)
+            assert row["state"] == "ready"
+            base = f"http://127.0.0.1:{port}"
+            for name in markers:
+                job = f"{name}-{attempt}"
+                request = Request(
+                    base + "/api/jobs",
+                    data=json.dumps(
+                        {
+                            "clientId": "security",
+                            "jobId": job,
+                            "graph": graph_to_wire(
+                                Graph(nodes={"marker": GraphNode(f"{name}.run", {"nonce": job})})
+                            ),
+                            "targets": ["marker"],
+                        }
+                    ).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urlopen(request, timeout=5) as result:  # noqa: S310
+                    assert result.status == 202
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    with urlopen(base + f"/api/jobs/security/{job}", timeout=5) as result:  # noqa: S310
+                        state = json.load(result)
+                    if state["state"] in {"completed", "failed", "cancelled"}:
+                        assert state["state"] == "completed", state
+                        break
+                    time.sleep(0.02)
+                else:
+                    pytest.fail("managed generation job did not finish")
+                assert (markers[name] / "finished").read_text() == "finished\n" * (attempt + 1)
+            with urlopen(base + "/api/security", timeout=5) as result:  # noqa: S310
+                status = json.load(result)
+            assert status["findings"][0]["decision"] == "pending"
+            assert bool(status["refreshErrors"]) is (policy == "outage")
+            stop_engine(root, "main")
+    finally:
+        stop_engine(root, "main")
+    assert "decision pending, execution allowed" in (root / "runtime/1/main.log").read_text()
+
+
+@pytest.mark.parametrize("state", ["malicious", "denied"])
+def test_generation_catalog_preparation_refuses_signed_blocks_before_import(
+    tmp_path: Path, security_feed: tuple[str, dict[str, Any]], state: str
+):
+    from dinkster_store import pack_archive_path
+    from dinkster_supervisor.environment_generations import (
+        prepare_pack_catalogs,
+        restore_pack_sources,
+    )
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+    from test_environment_generations import _workspace_tree
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = tmp_path / "generations/1"
+    generation.mkdir(parents=True)
+    _workspace_tree(generation / "python")
+    source = tmp_path / "source"
+    source.mkdir()
+    marker = tmp_path / "imported"
+    (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST)
+    (source / "healthy_nodes.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n" + HEALTHY_NODES
+    )
+    archive = tmp_path / "healthy.zip"
+    identity = build_artifact(source, archive)
+    entry = LockedPack(
+        "healthy-nodes", "1.2.3", identity, "dinkster", ("healthy",), "registry:" + REGISTRY
+    )
+    stage_generation_packs(generation, Lockfile.of([entry]), {entry.pack: archive})
+    receipt = json.dumps({"format": "dinkster.installed-wheels/1", "wheels": [], "inherited": []})
+    (generation / "installed-wheels.json").write_text(receipt)
+    pack = generation / "packs" / entry.pack
+    pack.mkdir(parents=True)
+    (pack / "installed-wheels.json").write_text(receipt)
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    url, response = security_feed
+    (tmp_path / "security.toml").write_text(
+        f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
+    feed = _feed("malicious" if state == "malicious" else "vulnerable")
+    feed["notices"][0]["release"].update(pack=entry.pack, artifactDigest=identity)
+    if state == "denied":
+        store.import_feed(REGISTRY, _signed(feed, key))
+        store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    response.update(status=200, body=_signed(feed, key))
+    artifacts = tmp_path / "artifacts"
+    retained = pack_archive_path(artifacts, identity)
+    retained.parent.mkdir(parents=True)
+    retained.write_bytes(archive.read_bytes())
+    restore_pack_sources(
+        generation,
+        catalog_lock=generation / "dinkster.lock",
+        artifacts=artifacts,
+        project=tmp_path,
+        store=tmp_path / "store",
+    )
+    assert not marker.exists()
+    with pytest.raises(
+        EnvironmentError,
+        match="security " + ("malicious" if state == "malicious" else "vulnerable"),
+    ):
+        prepare_pack_catalogs(generation, (entry.pack,))
+    assert not marker.exists()
+    assert store.cached(REGISTRY)[0] is not None
+    assert archive.is_file()
+    assert not (generation / "generation.json").exists()
+    feed["revision"] = 2
+    feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
+    response["body"] = _signed(feed, key)
+    prepare_pack_catalogs(generation, (entry.pack,))
+    assert marker.exists()
 
 
 @pytest.mark.parametrize("previous_publisher", [None, "original-publisher"])
@@ -856,16 +1099,17 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     source = tmp_path / "pack"
     source.mkdir()
     (source / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "test-pack"\n[pack.entry]\nnodes = "example:NODES"\n'
+        '[pack]\nname = "test-pack"\n[pack.entry]\nnodes = "test_pack:NODES"\n[pack.sandbox]\n'
     )
+    (source / "test_pack").mkdir()
     targets = []
     archives = {}
     for version in ("1.2.3", "2.0.0", "3.0.0"):
-        (source / "example.py").write_text(f'NODES = []\nVERSION = "{version}"\n')
+        (source / "test_pack/__init__.py").write_text(f'NODES = []\nVERSION = "{version}"\n')
         archive = tmp_path / f"{version}.zip"
         digest = build_artifact(source, archive)
         entry = LockedPack(
-            "test-pack", version, digest, "publisher", ("test-pack",), "registry:" + REGISTRY
+            "test-pack", version, digest, "local", ("test-pack",), "local:" + str(source)
         )
         targets.append(Lockfile.of([entry]))
         archives[version] = archive
@@ -895,18 +1139,47 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     assert installer.current_number() == current
     assert archives["1.2.3"].is_file()
     spec = installer.packs_for_serving()[0]
-    assert spec.packs is not None and spec.packs["test-pack"].version == "2.0.0"
+    assert spec.packs is not None
+    assert spec.packs["test-pack"].artifact_digest == targets[1].packs[0].artifact_digest
+    previous, _ = store.cached(REGISTRY)
+    assert previous is not None
+    feed["revision"] = 2
+    feed["notices"][0]["release"]["artifactDigest"] = targets[1].packs[0].artifact_digest
+    feed["notices"][0].update(id="636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8", revision=2)
+    feed["notices"].append(previous.notices[0].model_dump(mode="json", by_alias=True))
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    with pytest.raises(InstallError, match="security malicious"):
+        installer.packs_for_serving()
+    with pytest.raises(InstallError, match="security malicious"):
+        installer.apply(targets[1], venvs=False)
+    assert installer.current_number() == current
+
+    acquisition = Installer(
+        tmp_path / "acquisition",
+        accelerator="cpu",
+        registry_fetch=lambda entry: archives[entry.version].read_bytes(),
+    )
+    store = SecurityStore(acquisition.root / "security.sqlite3")
+    store.provision_trust(json.dumps(_trust(key)).encode())
+    feed = _feed("vulnerable")
+    feed["notices"][0]["release"]["artifactDigest"] = targets[0].packs[0].artifact_digest
+    published = replace(targets[0].packs[0], source="registry:" + REGISTRY)
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    with pytest.raises(InstallError, match="decision pending"):
+        acquisition.acquire(published)
+    assert not acquisition.artifact_available(published)
+    store.answer(REGISTRY, UUID(NOTICE), 1, approved=True)
+    acquisition.acquire(published)
+    assert acquisition.artifact_available(published)
+    assert acquisition.current_number() is None
+    store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    with pytest.raises(InstallError, match="decision denied"):
+        acquisition.acquire(published)
     feed["revision"] = 2
     feed["notices"][0].update(revision=2, previousRevision=1, state="vulnerable")
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
-    installer.rollback(venvs=False)
-    spec = installer.packs_for_serving()[0]
-    assert spec.packs is not None and spec.packs["test-pack"].version == "1.2.3"
-    store.answer(REGISTRY, UUID(NOTICE), 2, approved=False)
-    with pytest.raises(InstallError, match="decision denied"):
-        installer.packs_for_serving()
-    with pytest.raises(InstallError, match="decision denied"):
-        installer.apply(targets[0], venvs=False)
+    with pytest.raises(InstallError, match="decision pending"):
+        acquisition.acquire(published)
     feed["revision"] = 3
     feed["notices"][0].update(id="636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8", revision=3)
     feed["notices"][0]["release"].update(
@@ -917,26 +1190,25 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     assert previous is not None
     feed["notices"].append(previous.notices[0].model_dump(mode="json", by_alias=True))
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    published = replace(targets[2].packs[0], source="registry:" + REGISTRY)
     with pytest.raises(InstallError, match="decision pending"):
-        installer.apply(
-            targets[2], {targets[2].packs[0].artifact_digest: archives["3.0.0"]}, venvs=False
-        )
+        acquisition.acquire(published)
     store.answer(REGISTRY, UUID("636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"), 3, approved=True)
-    installer.apply(
-        targets[2], {targets[2].packs[0].artifact_digest: archives["3.0.0"]}, venvs=False
-    )
-    spec = installer.packs_for_serving()[0]
-    assert spec.packs is not None and spec.packs["test-pack"].version == "3.0.0"
+    acquisition.acquire(published)
+    assert acquisition.artifact_available(published)
+    assert acquisition.current_number() is None
     transport = f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
-    config = installer.root / "security.toml"
+    config = acquisition.root / "security.toml"
     config.write_text("maximum_feed_age_seconds = 1\n" + transport)
     with pytest.raises(InstallError, match="configured maximum age"):
-        installer.packs_for_serving()
+        acquisition.acquire(published)
     config.write_text("refuse_vulnerable = true\n" + transport)
     with pytest.raises(InstallError, match="security vulnerable"):
-        installer.packs_for_serving()
+        acquisition.acquire(published)
     config.write_text(transport)
-    assert installer.packs_for_serving()[0].packs == spec.packs
+    acquisition.acquire(published)
+    assert acquisition.artifact_available(published)
+    assert acquisition.current_number() is None
 
 
 @pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused"])

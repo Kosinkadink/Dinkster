@@ -339,6 +339,7 @@ class CreateBoundingBoxes(Node):
                     "bboxes",
                     TypeExpr.union(BOUNDING_BOX_TYPE, ARRAY_TYPE, CORE_STRING),
                     required=False,
+                    force_input=True,
                     doc=(
                         "Bounding boxes, elements, or a JSON string to initialize the canvas. "
                         "A new upstream value initializes the canvas; edits made on the canvas "

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -147,56 +148,6 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
     specs = generation_pack_specs(
         generation, tuple(hosting), local_build=record.get("source") == "local"
     )
-    project = generation.parent.parent
-    database = project / "security.sqlite3"
-    if database.is_file() or (project / "security.toml").is_file():
-        security = SecurityHost(project)
-        security.refresh()
-        lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
-        libraries = generation_dependencies(
-            generation, record["files"], tuple(entry.pack for entry in lock.packs), tuple(hosting)
-        )
-        config = project / "registries.toml"
-        registries = load_registries(config) if config.is_file() else RegistryConfig()
-        entries = {entry.pack: entry for entry in lock.packs}
-        artifacts: list[SecurityArtifact] = []
-        selected: list[PackSpec] = []
-        for entry, spec in zip(lock.packs, specs, strict=True):
-            dependencies = {
-                entries[Path(path).name].artifact_digest
-                for path in spec.env["PYTHONPATH"].split(os.pathsep)
-                if Path(path).name != entry.pack
-            }
-            registry = (
-                registries.registry_for(entry).endpoint
-                if entry.source == "registry" or entry.source.startswith("registry:")
-                else entry.source
-            )
-            artifacts.append(
-                SecurityArtifact(
-                    registry,
-                    SecurityRelease.model_validate(
-                        {
-                            "pack": entry.pack,
-                            "version": entry.version,
-                            "artifactDigest": entry.artifact_digest,
-                        }
-                    ),
-                    tuple(sorted(dependencies | set(libraries[entry.pack]))),
-                )
-            )
-            selected.append(replace(spec, security_artifacts=(artifacts[-1],)))
-        specs = tuple(selected)
-        result = security.assess(tuple(artifacts))
-        if not result.allowed:
-            if result.stale_registries:
-                raise CompositionError("security feed exceeds configured maximum age")
-            finding = next(item for item in result.findings if not item.allowed)
-            raise CompositionError(
-                f"security {finding.state}: {finding.artifact.release.pack}, "
-                f"notice {finding.notice.id} revision {finding.notice.revision}, "
-                f"decision {finding.decision}"
-            )
     return variant, specs
 
 
@@ -326,6 +277,63 @@ def generation_pack_specs(
                 )
             },
         )
+    project = generation.parent.parent
+    if (project / "security.sqlite3").is_file() or (project / "security.toml").is_file():
+        security = SecurityHost(project)
+        security.refresh()
+        record = generation / "generation.json"
+        if record.is_file():
+            files = json.loads(record.read_text(encoding="utf-8"))["files"]
+        else:
+            # Catalog preparation precedes sealing. Inspect the provisioner's
+            # current receipts; sealed generations must retain their recorded hashes.
+            receipts = [
+                "installed-wheels.json",
+                *(f"packs/{entry.pack}/installed-wheels.json" for entry in lock.packs),
+            ]
+            files = {
+                name: "sha256:" + hashlib.sha256((generation / name).read_bytes()).hexdigest()
+                for name in receipts
+            }
+        libraries = generation_dependencies(generation, files, tuple(entries), in_process_packs)
+        config = project / "registries.toml"
+        registries = load_registries(config) if config.is_file() else RegistryConfig()
+        artifacts: list[SecurityArtifact] = []
+        for index, (entry, spec) in enumerate(zip(lock.packs, specs, strict=True)):
+            dependencies = {
+                entries[Path(path).name].artifact_digest
+                for path in spec.env["PYTHONPATH"].split(os.pathsep)
+                if Path(path).name != entry.pack
+            }
+            registry = (
+                registries.registry_for(entry).endpoint
+                if entry.source == "registry" or entry.source.startswith("registry:")
+                else entry.source
+            )
+            artifacts.append(
+                SecurityArtifact(
+                    registry,
+                    SecurityRelease.model_validate(
+                        {
+                            "pack": entry.pack,
+                            "version": entry.version,
+                            "artifactDigest": entry.artifact_digest,
+                        }
+                    ),
+                    tuple(sorted(dependencies | set(libraries[entry.pack]))),
+                )
+            )
+            specs[index] = replace(spec, security_artifacts=(artifacts[-1],))
+        result = security.assess(tuple(artifacts))
+        if not result.allowed:
+            if result.stale_registries:
+                raise CompositionError("security feed exceeds configured maximum age")
+            finding = next(item for item in result.findings if not item.allowed)
+            raise CompositionError(
+                f"security {finding.state}: {finding.artifact.release.pack}, "
+                f"notice {finding.notice.id} revision {finding.notice.revision}, "
+                f"decision {finding.decision}"
+            )
     return tuple(specs)
 
 

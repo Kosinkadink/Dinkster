@@ -32,7 +32,7 @@ runs:
         print(f"torch {torch.__version__} ATen CPU capability: {capability}")
         assert capability == "AVX2", capability
         PY
-    - name: Test CPU comfy contracts
+    - name: Test CPU node pack contracts
       if: inputs.suite != 'vision'
       shell: bash
       run: |

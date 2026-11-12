@@ -33,7 +33,7 @@ from .environment_artifacts import (
 )
 from .environment_constraints import effective_constraints, selected_wheel_rows
 from .environment_downloads import artifact_available, read_metadata
-from .environment_generations import retained_pack_archive, verify_base_inputs
+from .environment_generations import ACQUIRE_PACK_SOURCES, retained_pack_archive, verify_base_inputs
 from .environment_history import history, validate_import
 from .environment_state import (
     Channel,
@@ -62,38 +62,6 @@ def _pack_source_missing(
     if not needed:
         return []
     lock["packs"] = needed
-    # Only acquisition runs in the active engine: no pack imports, provisioning or activation.
-    script = """
-import json, os, sys
-from pathlib import Path
-from dinkster.installer import Installer
-from dinkster.registries import (
-    RegistryConfig, load_registries, routing_registry_fetcher, select_registry,
-)
-from dinkster_registry import Lockfile
-project = Path(sys.argv[1])
-config_path = project / 'registries.toml'
-if config_path.is_file():
-    config = load_registries(config_path)
-elif os.environ.get('DINKSTER_REGISTRIES'):
-    config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
-else:
-    config = RegistryConfig()
-selector = os.environ.get('DINKSTER_REGISTRY', '')
-if not selector and not config_path.is_file() and not os.environ.get('DINKSTER_REGISTRIES'):
-    selector = 'https://registry.dinkster.org'
-selected = select_registry(config, selector) if selector else None
-installer = Installer(
-    Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
-)
-missing = []
-for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
-    try:
-        installer.acquire(entry)
-    except Exception:
-        missing.append(entry.artifact_digest)
-print(json.dumps(missing))
-"""
     unavailable = {cast("str", row["artifactDigest"]) for row in needed}
     current = read_current(root) if root is not None else None
     if current is not None and root is not None:
@@ -105,7 +73,7 @@ print(json.dumps(missing))
                         "-I",
                         "-B",
                         "-c",
-                        script,
+                        ACQUIRE_PACK_SOURCES,
                         str(root),
                     ],
                     cwd=directory,
@@ -134,11 +102,11 @@ print(json.dumps(missing))
                         raise
             if process.returncode == 0:
                 reported: object = json.loads(output)
-                if isinstance(reported, list) and all(
-                    isinstance(item, str) and item in unavailable
-                    for item in cast("list[object]", reported)
+                if isinstance(reported, dict) and all(
+                    isinstance(item, str) and item in unavailable and isinstance(reason, str)
+                    for item, reason in cast("dict[object, object]", reported).items()
                 ):
-                    unavailable = set(cast("list[str]", reported))
+                    unavailable = set(cast("dict[str, str]", reported))
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
     return [

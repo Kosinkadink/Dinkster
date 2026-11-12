@@ -20,8 +20,9 @@
   identities and transitive pack sources. A malicious dependency blocks its
   consumer as affected, not malicious. Missing or changed wheel provenance refuses
   selection when security checking is configured. Generation selection refreshes
-  before checking. Supervisor install/start/restore gates are separate from this
-  serving-host behavior.
+  before checking. Catalog preparation also checks before importing pack code,
+  using the provisioned wheel receipts before the generation is sealed. Sealed
+  generations continue to require the recorded receipt hashes.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.
@@ -59,8 +60,11 @@
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
   approve an approximate restore. Shared tools are recorded, never replaced.
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
-  not newer releases. Interrupted software restores retain a failed-attempt receipt
-  while leaving successful history unchanged.
+  not newer releases. Acquisition collects unavailable or mismatched sources
+  before copying any of the set into the retained cache, without provisioning
+  or activating a standalone installation or importing pack code. Interrupted
+  software restores retain a failed-attempt receipt while leaving successful
+  history unchanged.
 - Restore can recover selected source archives retained by another engine release
   when the recorded source cache was pruned. Retained bytes must match the locked
   BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
@@ -155,6 +159,27 @@
   upper bound for pack wheel bytes. Unavailable releases and invalid locks are
   reported together. Offline metadata discovery reads only retained channel,
   engine and base records and reports missing engine/base records together.
+- Registry planning also supports exact additions/replacements and compatible
+  updates against an installed source lock. Unselected sources stay unchanged,
+  including local development packs. Updates keep recorded registry provenance
+  and do not downgrade; missing releases and invalid published locks are reported
+  together without acquiring pack payloads or changing the project.
+- Published pack install/update commands on an active managed project display
+  the retained engine/base/variant, old/new identities, proposed generation,
+  published locks, verified cached versus downloadable payloads, wheel-byte
+  upper bounds and worker cost before confirmation. Non-terminal use
+  requires `--yes` or a saved plan. Declining leaves the project and store
+  unchanged. Saved reviews expire after 15 minutes and refuse changed project
+  or selection metadata; successful add and update activate fresh generations
+  without package-index resolution, retaining the engine and base.
+  Missing retained bases refuse early rather than listing later payload failures.
+  Local/git selections require explicit development rather than mixed installation.
+- Standalone pack installation and serving are development-only. Registry-bearing
+  saved plans, snapshots, workflow stamps and rollback targets refuse instead of
+  provisioning published dependencies without reviewed base/variant locks.
+  Published source acquisition remains available to managed software restore;
+  catalog preparation cannot fall back to range resolution outside a labelled
+  development session.
 - Managed setup and update can require a reviewed published engine and base
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying
@@ -447,6 +472,24 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env --root ROOT space --json` observes managed generation and shared
+  store allocation without collecting or changing cleanup settings. Linux uses
+  physical extents, counts hardlinks and overlapping clone extents once, and
+  separates shared bytes from exclusive rows. It reports automatic cleanup
+  policy, generation retention reasons, eligible backlog and additional explicit
+  cleanup allocation. User libraries are excluded. Unsupported, changing,
+  delayed or encoded allocation is unavailable, not replaced by logical file
+  sizes. Shared clone references outside the scan make reclaimability unknown.
+  Protected software history and settings are included separately from disposable
+  generations and stores. Shared-store metadata includes registrations and cached
+  channel, engine and base manifests, without treating them as reclaimable.
+  Empty shared-store categories remain visible. Without
+  `--json`, the command shows the same report with IEC units, exact byte counts,
+  retention reasons and settings guidance.
+  Windows uses native allocation and file identities, including resident data,
+  and checks the volume's clone capability before counting shared extents.
+  Unreadable allocation, reparse points and named streams make sizes unavailable;
+  they are never silently omitted or replaced with logical sizes.
 - `dinkster-env cleanup --plan` reports retained, candidate and deferred
   generation numbers with reasons without recovering or modifying the project.
   Status includes the same preview and visible pending quarantine warnings.
