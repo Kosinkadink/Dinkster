@@ -328,7 +328,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "uses": "softprops/action-gh-release@v2",
         "with": {
             "tag_name": "${{ steps.identity.outputs.tag }}",
-            "target_commitish": "${{ github.sha }}",
             "prerelease": "${{ github.ref == 'refs/heads/main' }}",
             "make_latest": "${{ github.ref != 'refs/heads/main' }}",
             "generate_release_notes": True,
@@ -336,6 +335,67 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
             "files": "dist/*",
         },
     }
+
+
+@pytest.mark.parametrize("state", ["absent", "matching", "annotated", "wrong", "release", "denied"])
+def test_engine_release_tag_is_bound_to_built_commit(tmp_path: Path, state: str) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    script = next(
+        step["with"]["script"]
+        for step in workflow["jobs"]["release"]["steps"]
+        if step.get("id") == "identity"
+    )
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist/release-manifest.json").write_text(
+        json.dumps({"commit": "a" * 40, "tag": "main-test"})
+    )
+    harness = """
+    const assert = require('assert');
+    const state = process.argv[1];
+    const sha = 'a'.repeat(40);
+    const calls = [];
+    let pushed = false;
+    const fixtureRequire = name => name === 'child_process' ? {
+      execFileSync: (command, args) => {
+        assert.equal(command, 'git');
+        assert.deepEqual(args, ['push', 'origin', sha + ':refs/tags/main-test']);
+        calls.push('push');
+        pushed = true;
+      },
+    } : require(name);
+    const missing = () => { throw Object.assign(new Error('missing'), { status: 404 }); };
+    const github = { rest: { repos: {
+      getReleaseByTag: async () => { calls.push('release'); if (state !== 'release') missing(); },
+    }, git: {
+      getRef: async () => {
+        calls.push('get');
+        if (state === 'absent' && !pushed) missing();
+        if (state === 'denied') throw Object.assign(new Error('denied'), { status: 403 });
+        return { data: { object: { type: state === 'annotated' ? 'tag' : 'commit',
+          sha: state === 'wrong' ? 'b'.repeat(40) : sha } } };
+      },
+      getTag: async () => {
+        calls.push('peel');
+        return { data: { object: { type: 'commit', sha } } };
+      },
+    } } };
+    const context = { sha, ref: 'refs/heads/main',
+      repo: { owner: 'Kosinkadink', repo: 'Dinkster' } };
+    const core = { setOutput: () => {} };
+    (async () => {
+      let error;
+      try { await new Function('github', 'context', 'core', 'require',
+        'return (async () => {' + SCRIPT + '})()')(github, context, core, fixtureRequire); }
+      catch (caught) { error = caught; }
+      const refused = ['wrong', 'release', 'denied'].includes(state);
+      assert.equal(Boolean(error), refused, String(error));
+      assert.equal(pushed, state === 'absent');
+      if (pushed) assert.deepEqual(calls, ['release', 'get', 'push', 'get']);
+      if (state === 'release') assert.deepEqual(calls, ['release']);
+      if (state === 'annotated') assert(calls.includes('peel'));
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+    """.replace("SCRIPT", json.dumps(script))
+    subprocess.run(["node", "-e", harness, state], cwd=tmp_path, check=True)
 
 
 def test_release_acquires_each_selected_base_without_pack_lock_matrix(
