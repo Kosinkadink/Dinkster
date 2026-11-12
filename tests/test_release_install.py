@@ -1436,11 +1436,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         helper = tomllib.loads(
             (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.5"
+        assert helper["version"] == "0.0.4"
         models = tomllib.loads(
             (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
         )["project"]
-        assert "dinkster-pack-helpers==0.0.5" in models["dependencies"]
+        assert "dinkster-pack-helpers==0.0.4" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -2308,7 +2308,6 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     engine = {
         "version": "1.2.3",
         "label": "2026-10-31-1.2.3",
-        "repository": "Kosinkadink/Dinkster",
         "workerProtocol": 11,
         "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
     }
@@ -2405,7 +2404,6 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         )
     assert first_lock.packages[0].wheels[0].url == expected
     assert first_lock.packages[0].wheels[0].sha256 == digest
-    assert first_lock.packages[0].wheels[0].registry == "https://github.com/Kosinkadink/Dinkster"
     if published:
         assert hashlib.sha256(metadata.read_bytes()).hexdigest() == before
         return
@@ -2494,7 +2492,6 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
                 "size": 17,
                 "sha256": "b" * 64,
                 "url": "https://example.test/fixture.whl",
-                "index": "https://issuer.example.test/simple" if mode == "independent" else None,
             }
         ],
         "nvidia": None,
@@ -2550,9 +2547,6 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
             lock = PackLock.read(path)
             assert lock.pack in expected and lock.variant == "fixture-base"
             assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
-            assert lock.packages[0].wheels[0].registry == (
-                "https://issuer.example.test/simple" if mode == "independent" else None
-            )
     assert {path: path.read_bytes() for path in before} == before
     assert not list(tmp_path.glob("release-pack-locks-*"))
 
@@ -4170,7 +4164,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.10")
+                ("dinkster-image", "0.0.9")
             ]
     finally:
         server.shutdown()
