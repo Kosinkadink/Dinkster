@@ -1035,3 +1035,29 @@ def test_expansion_output_replacement_is_preserved_on_the_wire() -> None:
     seed = dict(decoded.expansion.bindings)["seed"]
     assert isinstance(seed, PresentOutput)
     assert seed.value.resolve() == 23
+
+
+def test_expansion_keeps_document_attachments_separate_from_values_and_previews() -> None:
+    from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
+
+    unit = expanded_outcome().batch.units[0]
+    assert isinstance(unit, ExpandedReturn)
+    documents = (ImageDocumentArtifact(b'{"original":true}'),)
+    previews = (EncodedPreviewArtifact(b"encoded-media", "preview.png", "image/png"),)
+    header, blobs, segments = encode_result(
+        ValueCodec(registry(), use_shm=False),
+        InvocationResult(expansion=unit, image_documents=documents, preview_artifacts=previews),
+        "expanded",
+        0.0,
+    )
+    assert not segments
+    decoded, _ = boundary.decode_result(ValueCodec(registry(), use_shm=False), header, blobs, [])
+    assert decoded.image_documents == documents
+    assert decoded.preview_artifacts == previews
+    assert decoded.expansion is not None
+    assert decoded.expansion.expansion == unit.expansion
+    bindings = dict(decoded.expansion.bindings)
+    assert bindings["result"] == LocalOutputRef("child", "out")
+    seed = bindings["seed"]
+    assert isinstance(seed, PresentOutput)
+    assert seed.value.resolve() == 7

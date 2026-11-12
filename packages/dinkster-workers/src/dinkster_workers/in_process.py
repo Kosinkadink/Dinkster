@@ -90,6 +90,7 @@ from dinkster_schema import (
 )
 from dinkster_schema.media import media_diagnostics
 from dinkster_schema.reporting import (
+    capture_image_documents,
     capture_preview_artifacts,
     capture_saved_artifacts,
     capture_value_diagnostics,
@@ -719,6 +720,7 @@ class InProcessWorker:
                 reporter,
                 capture,
                 capture_value_diagnostics() as pack_diagnostics,
+                capture_image_documents() as image_documents,
                 capture_preview_artifacts() as preview_artifacts,
                 capture_saved_artifacts() as saved_artifact_claims,
                 capture_saved_file_previews(
@@ -770,6 +772,7 @@ class InProcessWorker:
                 result = replace(
                     result,
                     artifact_candidates=tuple(artifact_candidates),
+                    image_documents=tuple(image_documents),
                     preview_artifacts=tuple(preview_artifacts),
                     saved_artifact_claims=tuple(saved_artifact_claims),
                     saved_file_previews=tuple(saved_file_previews),

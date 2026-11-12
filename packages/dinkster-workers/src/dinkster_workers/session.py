@@ -1692,6 +1692,7 @@ class BoundarySession:
             artifacts=artifacts,
             expansion=decoded.expansion,
             preview_artifacts=decoded.preview_artifacts,
+            image_documents=decoded.image_documents,
             saved_artifact_claims=decoded.saved_artifact_claims,
             saved_file_previews=saved_file_previews,
         )

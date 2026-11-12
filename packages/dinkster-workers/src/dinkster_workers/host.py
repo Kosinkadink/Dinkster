@@ -1552,6 +1552,7 @@ async def serve_connection(
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
                     preview_artifacts=result.preview_artifacts,
+                    image_documents=result.image_documents,
                     saved_artifact_claims=result.saved_artifact_claims,
                     saved_file_previews=result.saved_file_previews,
                 )

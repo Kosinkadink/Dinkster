@@ -84,6 +84,7 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, InputSpec, Node, NodeSchema, "
         "OutputSpec, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
         "attach_saved_artifact, AssetWriter, MountSnapshotWriter, SaveTarget)\n"
+        "from dinkster_schema.reporting import publish_image_document\n"
         f"DATA = base64.b64decode({payload!r})\n"
         f"FAILED_DATA = base64.b64decode({failed_payload!r})\n"
         "LAST_REF = None\n"
@@ -97,6 +98,12 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         " def execute(cls, *, mode: str) -> Mapping[str, object]:\n"
         "  global LAST_REF\n"
         "  data = FAILED_DATA if mode == 'fail' else DATA\n"
+        "  if mode.startswith('document'):\n"
+        "   publish_image_document(b'{\"original\":true}')\n"
+        "   publish_image_document(b'{\"edited\":true}')\n"
+        "   publish_preview_artifact(DATA, name='preview.mp4', media_type='video/mp4')\n"
+        "   if mode == 'document-fail': raise ValueError('document fixture failed')\n"
+        "   return cls.outputs(out='document')\n"
         "  if mode == 'mounted-stale':\n"
         "   attach_saved_artifact(LAST_REF)\n"
         "   publish_saved_file_preview(LAST_REF, lambda: DATA, name='preview.mp4', "
@@ -880,6 +887,140 @@ def test_encoded_retention_requires_live_output_and_recovers_catalog(
     path.unlink()
     assert (output / "movie.mp4").read_bytes() == mp4
     assert mounts.resolve(digest_bytes(mp4)) is not None
+
+
+@pytest.mark.parametrize("fail", (False, True))
+def test_isolated_image_document_attachments_survive_worker_teardown(
+    tmp_path: Path, mp4: bytes, fail: bool
+) -> None:
+    from dinkster_protocol import Invocation
+    from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
+    from dinkster_workers import IsolatedWorker
+
+    manifest = _write_preview_pack(tmp_path, mp4)
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker = IsolatedWorker(manifest, registry, extra_env={"PYTHONPATH": str(tmp_path)})
+        try:
+            await worker.start()
+            schema = worker.schemas["preview-fixture.emit"]
+            result = await worker.invoke(
+                Invocation(
+                    "document",
+                    "node",
+                    schema.node_type,
+                    {"mode": registry.wrap(CORE_STRING, "document-fail" if fail else "document")},
+                    schema,
+                )
+            )
+        finally:
+            await worker.close()
+        if fail:
+            assert result.error is not None
+            assert result.image_documents == result.preview_artifacts == ()
+        else:
+            assert result.error is None
+            assert [item.data for item in result.image_documents] == [
+                b'{"original":true}',
+                b'{"edited":true}',
+            ]
+            assert [item.data for item in result.preview_artifacts] == [mp4]
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("fail", (False, True))
+def test_image_documents_cross_successful_invocations_without_becoming_previews(
+    fail: bool, mp4: bytes
+) -> None:
+    from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_protocol import Invocation
+    from dinkster_schema.reporting import publish_image_document
+    from dinkster_values import TypeRegistry, register_core_types
+    from dinkster_workers import InProcessWorker
+    from dinkster_workers.boundary import ValueCodec, decode_result, encode_result
+
+    original = b'{"original":true}'
+    edited = b'{"edited":true}'
+
+    class Document(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="document-fixture.emit",
+                outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            publish_image_document(original)
+            publish_image_document(edited)
+            publish_preview_artifact(mp4, name="preview.mp4", media_type="video/mp4")
+            if fail:
+                raise ValueError("document fixture failed")
+            return cls.outputs(out="unchanged output")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schema = Document.schema()
+        worker = InProcessWorker({schema.node_type: Document}, registry)
+        result = await worker.invoke(Invocation("document", "node", schema.node_type, {}, schema))
+        if fail:
+            assert result.error is not None
+            assert result.image_documents == result.preview_artifacts == ()
+            header, blobs, segments = encode_result(ValueCodec(registry), result, "document", 0)
+            assert "imageDocuments" not in header and blobs == [] and segments == []
+            return
+        assert result.error is None
+        assert [item.data for item in result.image_documents] == [original, edited]
+        codec = ValueCodec(registry)
+        header, blobs, segments = encode_result(codec, result, "document", 0)
+        assert not segments
+        decoded, _ = decode_result(codec, header, blobs, [])
+        assert [item.data for item in decoded.image_documents] == [original, edited]
+        assert decoded.preview_artifacts == result.preview_artifacts
+        assert decoded.outputs is not None
+        assert decoded.outputs["out"].payload.load() == "unchanged output"
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize(
+    "claims,blobs,reason",
+    [
+        ({}, [], "batch"),
+        ([{"blob": 0, "digest": "forged"}], [b"original"], "fields"),
+        ([{"blob": True}], [b"original"], "blob index"),
+        ([{"blob": 0}], [b"original", b"other"], "blob index"),
+        ([{"blob": 0}], [b""], "nonempty bounded"),
+    ],
+)
+def test_image_document_transport_rejects_malformed_attachments(
+    claims: object, blobs: list[bytes], reason: str
+) -> None:
+    from dinkster_values import TypeRegistry
+    from dinkster_workers.boundary import ValueCodec, decode_result
+
+    with pytest.raises(BoundaryError, match=reason):
+        decode_result(
+            ValueCodec(TypeRegistry()), {"outputs": {}, "imageDocuments": claims}, blobs, []
+        )
+
+
+def test_image_document_attachment_rejects_closed_copied_context() -> None:
+    from contextvars import copy_context
+
+    from dinkster_schema.reporting import capture_image_documents, publish_image_document
+
+    with capture_image_documents() as documents:
+        copied = copy_context()
+        publish_image_document(b"original")
+    with pytest.raises(RuntimeError, match="closed"):
+        copied.run(publish_image_document, b"late")
+    assert [item.data for item in documents] == [b"original"]
 
 
 def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:
