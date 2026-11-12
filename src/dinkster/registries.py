@@ -11,8 +11,9 @@ design, enforced here so no caller can weaken them:
   private one). With multiple registries configured and no default,
   resolution refuses loudly and names the choices.
 - THE REGISTRY IS PROVENANCE, NEVER IDENTITY. Resolution records
-  ``registry:<name>`` (configured) or ``registry:<url>`` (ad-hoc) as the
-  entry's source; identity stays the artifact digest, and acquisition
+  ``registry:<url>`` as the entry's source, even when selected by a local
+  name, so later configuration cannot change its issuing registry.
+  Identity stays the artifact digest, and acquisition
   verifies the bytes against it, so even a lying index cannot
   substitute content - only refuse or confess.
 - CREDENTIALS ARE PER REGISTRY ENDPOINT, NEVER IN THE CONFIG FILE.
@@ -232,10 +233,8 @@ class NamedRegistry:
 
     @property
     def source(self) -> str:
-        """The provenance qualifier resolution records: the NAME when
-        configured (portable across machines that configure the same
-        label), the URL for ad-hoc endpoints."""
-        return f"registry:{self.name or self.endpoint}"
+        """Pin the issuing endpoint independently of mutable local labels."""
+        return f"registry:{self.endpoint}"
 
     @property
     def label(self) -> str:
@@ -637,6 +636,28 @@ class StaticPackIndex:
             )
         return releases
 
+    def release_manifest(self, registry: NamedRegistry, entry: LockedPack) -> dict[str, object]:
+        """Read active release constraints bound to the selected archive identity."""
+        if self._offline:
+            raise InstallError("offline release manifest is unavailable for security repair")
+        document = _index_get(
+            registry,
+            f"/v1/packs/{entry.pack}/versions/{entry.version}",
+            action="reading release constraints",
+            subject=f"{entry.pack}@{entry.version}",
+        )
+        artifact, manifest = document.get("artifact"), document.get("manifest")
+        if (
+            document.get("packName") != entry.pack
+            or document.get("version") != entry.version
+            or document.get("state") != "active"
+            or not isinstance(artifact, dict)
+            or artifact.get("digest") != entry.artifact_digest
+            or not isinstance(manifest, dict)
+        ):
+            raise InstallError("release constraints differ from selected active archive")
+        return cast("dict[str, object]", manifest)
+
 
 def _static_releases(
     registry: NamedRegistry,
@@ -712,6 +733,7 @@ def static_release_wheel(
             cast("int", size),
             sha256,
             registry.endpoint + "/static/" + cast("str", relative),
+            registry.endpoint,
         )
         LockedDistribution(name, version, (wheel,))
     except (ValueError, ProvisionError) as exc:
@@ -989,10 +1011,7 @@ def prepare_registry_update_sources(
                 engine_version=engine_version,
                 index=index,
             )
-            entries.extend(
-                replace(updated, source=entry.source) if entry.source != "registry" else updated
-                for updated in lock.packs
-            )
+            entries.extend(lock.packs)
         except InstallError as exc:
             raise InstallError(
                 f"updating installed {entry.pack}@{entry.version} "
@@ -1094,27 +1113,32 @@ def plan_registry_sources(
     variant: str,
     base_id: str,
     index: StaticPackIndex,
+    errors: list[str] | None = None,
 ) -> tuple[Lockfile, tuple[PackLock, ...]]:
     """Select sources and bound locks from metadata without acquiring pack archives."""
     entries: list[LockedPack] = []
-    errors: list[str] = []
+    failures: list[str] = []
     for pack, minimum in minimums.items():
         try:
             entries.append(
                 resolve_compatible_release(registry, pack, minimum, engine_version, index=index)
             )
         except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
-            errors.append(f"{pack}: {exc}")
+            failures.append(f"{pack}: {exc}")
     sources = Lockfile.of(entries)
-    locks: tuple[PackLock, ...] = ()
-    try:
-        locks = read_registry_pack_locks(
-            config, sources, variant=variant, base_id=base_id, selected=registry, index=index
-        )
-    except InstallError as exc:
-        errors.append(str(exc))
-    if errors:
-        raise InstallError("registry plan refused:\n" + "\n".join(errors))
+    locks = read_registry_pack_locks(
+        config,
+        sources,
+        variant=variant,
+        base_id=base_id,
+        selected=registry,
+        index=index,
+        errors=failures,
+    )
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise InstallError("registry plan refused:\n" + "\n".join(failures))
     return sources, locks
 
 
@@ -1186,8 +1210,6 @@ def plan_registry_changes(
                 entry = resolve_release(
                     registry, name, version, engine_version=engine_version, index=index
                 )
-            if previous is not None and previous.source.startswith("registry:"):
-                entry = replace(entry, source=previous.source)
             replacements.append(entry)
         except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
             failures.append(f"{name}: {exc}")

@@ -17,13 +17,32 @@
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
+  Selected file records retain their issuing origins and distribution versions;
+  changing acquisition mirrors or registry aliases cannot change those origins.
+  Base-owned replacements retain the base issuer even when engine metadata
+  also lists the same wheel bytes.
+  Custom bases retain engine dependency origins from their selected published
+  dependency variant, independently of the custom base's name.
 - Managed generation pack selection checks cached notices against sealed library
-  identities and transitive pack sources. A malicious dependency blocks its
-  consumer as affected, not malicious. Missing or changed wheel provenance refuses
+  identities, transitive pack sources and their selected libraries. A malicious
+  dependency blocks its consumer as affected, not malicious. Missing or changed wheel provenance refuses
   selection when security checking is configured. Generation selection refreshes
   before checking. Catalog preparation also checks before importing pack code,
   using the provisioned wheel receipts before the generation is sealed. Sealed
   generations continue to require the recorded receipt hashes.
+  Dependency vulnerability advice matches the exact issuing registry, distribution,
+  version and file digest, preserving pending continuation and explicit denial.
+  Missing issuing origins refuse security-checked selection rather than guessing
+  authority from download URLs, local cache paths or the pack's registry.
+- Security repair planning can offer one compatible published pack release or
+  dependency-lock change excluding refused files. It checks engine, Python,
+  accelerator-specific, shared-library and pack dependency constraints for the
+  entire proposed selection. No offer retains a blocked release or dependency.
+  Unknown candidate constraints refuse an offer. Already installed vulnerable
+  releases can remain pending; a changed release requires its own approval.
+  Planning downloads metadata only: it does not import packs, acquire payloads,
+  change current software or approve an installation. An offer requires a separate
+  host-owned approval plan; no compatible offer leaves the refusal in effect.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.
@@ -150,6 +169,10 @@
   does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
+  Unpublished selected wheels submit together as one admission set. Already
+  published archives and locks must match exactly and are not resubmitted;
+  changed bindings require a new version. Success requires every submitted
+  member to become publicly active with its expected archive digest.
   Engine-only pushes select no pack. PR, fork and tag events build and
   preflight without submission; only trusted main may submit to the registry.
   A queued submission is not an admission verdict.
@@ -176,6 +199,8 @@
   including local development packs. Updates keep recorded registry provenance
   and do not downgrade; missing releases and invalid published locks are reported
   together without acquiring pack payloads or changing the project.
+  Resolved selections retain the issuing endpoint, so changing or removing a
+  local registry name cannot redirect their acquisition or security matching.
 - Published pack install/update commands on an active managed project display
   the retained engine/base/variant, old/new identities, proposed generation,
   published locks, verified cached versus downloadable payloads, wheel-byte
@@ -423,7 +448,15 @@
   requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
   acquires their verified pack archives, and builds and activates a managed
   generation. `--yes` skips the prompt, not the plan or identity checks.
-  Offline application is refused; `--offline --plan` remains read-only.
+  `--offline --yes` uses retained release and registry metadata, runtime inputs
+  and locked pack wheels without acquisition. Missing or corrupt inputs refuse
+  before installation state changes. `--offline --plan` remains read-only.
+- Pack wheel and dependency-metadata downloads retry dropped connections,
+  TLS transport failures, timeouts and HTTP 5xx responses up to three times.
+  Every attempt has a 30-second network timeout, with a wait between attempts.
+  Exhausted failures name the pack, URL and attempt count. HTTP 4xx,
+  certificate failures and completed size/hash mismatches refuse without retry;
+  offline pack provisioning makes no download request.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -757,6 +790,10 @@ selection, or an explicit local pack, labels both command output and the node
 catalog as development and not reproducible from ranges. A registry-only
 selection does not gain that label, and standalone install refuses a registry
 version rather than resolving it as development.
+Standalone provisioning, including range resolution, grouped environments and
+captured-pin restore, is only used by development inputs. Published packs use managed
+generation plan/apply; registry archive acquisition only verifies recorded bytes
+and never provisions a standalone environment.
 
 Select local software explicitly; nothing needs publishing first:
 

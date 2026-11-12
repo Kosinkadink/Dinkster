@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-llm"
-version = "0.0.3"
+version = "0.0.4"
 description = "Dinkster llm nodes"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-vision-moge"
-version = "0.0.3"
+version = "0.0.4"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.vision.moge"]

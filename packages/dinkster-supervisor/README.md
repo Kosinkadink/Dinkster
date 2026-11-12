@@ -28,7 +28,7 @@ ComfyUI or comfy-runner allocation.
 
 ## Signed security feed refresh
 
-The shared `dinkster_security.host.SecurityHost` reads independently provisioned
+The supervisor-owned `dinkster_supervisor.security.host.SecurityHost` reads independently provisioned
 trust from `<root>/security.sqlite3`. Refresh requests the complete signed
 `/v1/security/blocks` document from each trusted issuer. A local
 `<root>/security.toml` can select a mirror without changing the issuing identity:
@@ -43,6 +43,7 @@ refresh_interval_seconds = 60.0
 "https://registry.example.org" = "https://mirror.example.org/security/index.json"
 ```
 
+The API and supervisor wheels also expose the same source as `dinkster_security`.
 Overrides require independently provisioned trust for the exact issuer. Feed
 responses cannot provision keys. Refresh failures retain the accepted checkpoint
 and decisions; downloads are limited to 32 MiB and do not send registry bearer

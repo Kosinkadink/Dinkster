@@ -338,8 +338,7 @@ def _finish(
     if stuck:
         raise InstallError(
             f"artifacts are not available locally for: {', '.join(stuck)}, "
-            f"and their recorded provenance cannot be fetched (registry "
-            f"sources need --registry or $DINKSTER_REGISTRY)"
+            f"and their recorded development provenance cannot be fetched"
         )
     if steps.empty:
         print("plan: restage the current lockfile with the declared venv topology")
@@ -639,7 +638,7 @@ def _cmd_update(args: argparse.Namespace) -> None:
             refreshed, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
             entries.append(refreshed)
         else:
-            entries.append(entry)  # registry sources: resolution needs the service
+            entries.append(entry)
     _finish(args, installer, Lockfile.of(entries))
 
 
@@ -1146,9 +1145,8 @@ def _cmd_reproduce(args: argparse.Namespace) -> None:
     if stuck:
         raise InstallError(
             f"recorded bytes are not available locally for: {', '.join(stuck)}, "
-            f"and their stamped provenance cannot be re-fetched (registry "
-            f"sources need --registry or $DINKSTER_REGISTRY) - stage those "
-            f"artifacts first; "
+            f"and their stamped development provenance cannot be re-fetched - "
+            f"stage those artifacts first; "
             f"newer bytes are never silently substituted"
         )
     target = Lockfile.of(provisional)
@@ -1310,6 +1308,28 @@ def _cmd_gc(args: argparse.Namespace) -> None:
 
 def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
+
+
+def _cmd_plan_security_repair(args: argparse.Namespace) -> None:
+    from dinkster_security.host import SecurityHost
+
+    from .security_repair import plan_security_repair
+
+    security = SecurityHost(args.generation.parent.parent)
+    security.refresh()
+    print(
+        json.dumps(
+            plan_security_repair(
+                args.generation,
+                args.pack,
+                _registry_config(args),
+                index=StaticPackIndex(read_only=True),
+                security=security,
+                accelerator=args.accelerator,
+            ),
+            sort_keys=True,
+        )
+    )
 
 
 def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
@@ -1739,6 +1759,14 @@ def main() -> None:
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
     archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
+
+    repair = commands.add_parser(
+        "plan-security-repair",
+        help="compute an approval-required repair without acquiring payloads",
+    )
+    repair.add_argument("--generation", type=Path, required=True)
+    repair.add_argument("--pack", required=True)
+    repair.set_defaults(handler=_cmd_plan_security_repair)
 
     source_plan = commands.add_parser(
         "plan-registry-sources",

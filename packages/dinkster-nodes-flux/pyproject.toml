@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-flux"
-version = "0.0.6"
+version = "0.0.7"
 description = "Dinkster flux nodes"
 requires-python = ">=3.12"
 dependencies = [

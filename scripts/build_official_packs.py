@@ -146,6 +146,23 @@ def build(
             manifest.name: manifest.requires_for(accelerator) if accelerator else manifest.requires
             for _, manifest in manifests
         }
+        manifests_by_name = {manifest.name: manifest for _, manifest in manifests}
+        for _, manifest in manifests:
+            requirements = list(requirements_by_name[manifest.name])
+            reachable = {manifest.name}
+            pending_helpers = list(manifest.dependencies)
+            for dependency in pending_helpers:
+                if dependency.pack in reachable:
+                    continue
+                helper = manifests_by_name.get(dependency.pack)
+                if helper is None:
+                    raise ValueError(f"unknown official helper pack: {dependency.pack}")
+                reachable.add(dependency.pack)
+                requirements.extend(
+                    helper.requires_for(accelerator) if accelerator else helper.requires
+                )
+                pending_helpers.extend(helper.dependencies)
+            requirements_by_name[manifest.name] = tuple(dict.fromkeys(requirements))
         for path in sorted(packages.glob("*/pyproject.toml")):
             project = tomllib.loads(path.read_text(encoding="utf-8"))
             if identity := official_library(project):
@@ -280,7 +297,7 @@ def build(
                 )
             )
             payloads.append(payload)
-            requirements = manifest.requires_for(accelerator) if accelerator else manifest.requires
+            requirements = requirements_by_name[manifest.name]
             for requirement in requirements:
                 if canonicalize_name(Requirement(requirement).name) in pack_names:
                     raise ValueError("wheel.requires-pack: Requires-Dist names a node pack")

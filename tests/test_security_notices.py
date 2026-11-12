@@ -17,16 +17,16 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import Request, urlopen
 from uuid import UUID
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from dinkster_registry import InstallError, LockedPack, Lockfile, build_artifact
+from dinkster_registry import InstallError, LockedPack, Lockfile, artifact_digest, build_artifact
 from dinkster_security.documents import Release, SecurityError
 from dinkster_security.host import SecurityHost
-from dinkster_security.policy import Artifact, assess
+from dinkster_security.policy import Artifact, Dependency, assess
 from dinkster_security.store import SecurityStore
 
 REGISTRY = "https://registry.example.test"
@@ -485,13 +485,15 @@ def _execution_generation(
     entries: list[LockedPack],
     archives: dict[str, Path],
     in_process: tuple[str, ...],
+    *,
+    number: int = 1,
 ) -> Path:
     from dinkster_supervisor.environment_state import interpreter
     from test_environment_generations import _workspace_tree
 
     from dinkster.generation_packs import stage_generation_packs
 
-    generation = root / "generations/1"
+    generation = root / "generations" / str(number)
     generation.mkdir(parents=True)
     _workspace_tree(generation / "python")
     stage_generation_packs(
@@ -534,7 +536,7 @@ def _execution_generation(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
-                "generation": 1,
+                "generation": number,
                 "base": "sha256:" + "a" * 64,
                 "engine": {"version": "test", "release": "sha256:" + "b" * 64},
                 "constraints": files["constraints.txt"],
@@ -545,8 +547,266 @@ def _execution_generation(
             }
         )
     )
-    (root / "current").write_text("1\n")
+    (root / "current").write_text(f"{number}\n")
     return generation
+
+
+@pytest.mark.parametrize("placement", ["root", "shared", "isolated", "transitive"])
+def test_cached_dependency_cannot_reenter_through_retained_rehosted_or_failed_update(
+    tmp_path: Path,
+    security_feed: tuple[str, dict[str, Any]],
+    execution_artifacts: tuple[list[LockedPack], dict[str, Path], dict[str, Path]],
+    placement: str,
+):
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from dinkster_supervisor.environment_state import (
+        EnvironmentError,
+        Generation,
+        Journal,
+        content_digest,
+        interpreter,
+        read_current,
+        set_current,
+    )
+    from dinkster_supervisor.environment_transactions import (
+        activate,
+        begin_activation,
+        recover_activation,
+    )
+    from dinkster_workers.pack_environment import fetch_wheel
+    from dinkster_workers.pack_lock import LockedWheel
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments.build import wheel
+
+    entries, archives, markers = execution_artifacts
+    provider = "control-pack" if placement in {"shared", "transitive"} else "test-pack"
+    hosting = (
+        ("control-pack",)
+        if placement in {"shared", "isolated"}
+        else (("test-pack", "control-pack") if placement == "root" else ())
+    )
+    source = tmp_path / provider
+    module = source / (provider.replace("-", "_") + "_security_nodes.py")
+    module.write_text(
+        module.read_text().replace(
+            "        (ROOT / 'started').touch()",
+            "        import fixture_dependency\n"
+            "        (ROOT / 'started').touch()\n"
+            "        (ROOT / 'dependency-value').write_text(str(fixture_dependency.VALUE))",
+        )
+    )
+    if placement == "transitive":
+        manifest = tmp_path / "test-pack/dinkster-pack.toml"
+        manifest.write_text(manifest.read_text() + '[pack.dependencies]\ncontrol-pack=">=1"\n')
+    for index, entry in enumerate(entries):
+        archive = tmp_path / f"{entry.pack}-with-dependency.zip"
+        identity = build_artifact(tmp_path / entry.pack, archive)
+        entries[index] = replace(entry, artifact_digest=identity)
+        archives[identity] = archive
+    root = tmp_path / "managed"
+    cache = tmp_path / "wheel-cache"
+    cache.mkdir()
+    wheels = {}
+    for version, value in (("1.0", 31), ("2.0", 79)):
+        path = wheel(tmp_path, "fixture_dependency", version, value)
+        locked = LockedWheel(
+            path.name, path.stat().st_size, content_digest(path)[7:], path.as_uri(), REGISTRY
+        )
+        wheels[version] = (locked, fetch_wheel(locked, cache))
+
+    def build(number: int, version: str, registry: str = REGISTRY) -> Path:
+        generation = _execution_generation(root, entries, archives, hosting, number=number)
+        locked, cached = wheels[version]
+        rehosted = replace(locked, registry=registry, url="http://127.0.0.1:1/unavailable")
+        assert fetch_wheel(rehosted, cache, offline=True) == cached
+        python = (
+            interpreter(generation)
+            if placement in {"root", "shared"}
+            else (
+                generation
+                / "packs"
+                / provider
+                / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            )
+        )
+        site = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-B",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--target",
+                site,
+                "--no-index",
+                "--no-deps",
+                str(cached),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        receipt = generation / (
+            "installed-wheels.json"
+            if placement == "root"
+            else f"packs/{provider}/installed-wheels.json"
+        )
+        receipt.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "inherited": [],
+                    "wheels": [
+                        {
+                            "filename": locked.filename,
+                            "size": locked.size,
+                            "sha256": locked.sha256,
+                            "registry": registry,
+                        }
+                    ],
+                }
+            )
+        )
+        record = Generation.read(generation / "generation.json")
+        replace(
+            record,
+            files=tuple(
+                (path.relative_to(generation).as_posix(), content_digest(path))
+                for path in sorted(generation.rglob("*"))
+                if path.is_file()
+                and path.name != "generation.json"
+                and "__pycache__" not in path.parts
+                and (
+                    path.relative_to(generation).parts[0] != "packs"
+                    or path.name == "installed-wheels.json"
+                )
+            ),
+        ).write(generation / "generation.json")
+        assert not Generation.read(generation / "generation.json").drift(generation)
+        return generation
+
+    def execute(port: int, job: str, expected: int) -> None:
+        base = f"http://127.0.0.1:{port}"
+        request = Request(
+            base + "/api/jobs",
+            data=json.dumps(
+                {
+                    "clientId": "security",
+                    "jobId": job,
+                    "graph": graph_to_wire(
+                        Graph(nodes={"marker": GraphNode(f"{provider}.run", {"nonce": job})})
+                    ),
+                    "targets": ["marker"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=5) as response:  # noqa: S310
+            assert response.status == 202
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            with urlopen(base + f"/api/jobs/security/{job}", timeout=5) as response:  # noqa: S310
+                state = json.load(response)
+            if state["state"] in {"completed", "failed", "cancelled"}:
+                assert state["state"] == "completed", state
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("dependency control job did not finish")
+        assert (markers[provider] / "dependency-value").read_text() == str(expected)
+
+    build(1, "1.0")
+    port = free_port()
+    try:
+        start_engine(root, 1, "main", port)
+        execute(port, "before-notice", 31)
+    finally:
+        stop_engine(root, "main", generation=1)
+    build(2, "2.0")
+    key = Ed25519PrivateKey.generate()
+    store = _store(root, key)
+    feed = _feed("malicious")
+    feed["notices"][0]["release"].update(
+        pack="fixture-dependency",
+        version="1.0",
+        artifactDigest="sha256:" + wheels["1.0"][0].sha256,
+    )
+    store.import_feed(REGISTRY, _signed(feed, key))
+    url, response = security_feed
+    response.update(status=503)
+    (root / "security.toml").write_text(
+        f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
+    for marker in markers.values():
+        for path in marker.iterdir():
+            path.unlink()
+    try:
+        blocked = "test-pack" if placement == "isolated" else "control-pack"
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}") as refused:
+            start_engine(root, 1, "retained", free_port())
+        if placement == "transitive":
+            assert "Security affected: test-pack" in str(refused.value)
+        assert all(not (marker / "imported").exists() for marker in markers.values())
+        start_engine(root, 2, "main", port)
+        execute(port, "unaffected-version", 79)
+        journal = begin_activation(root, 3, "update")
+        build(3, "1.0", "https://rehost.example.test")
+        set_current(root, 2)
+        for marker in markers.values():
+            (marker / "imported").unlink(missing_ok=True)
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}"):
+            activate(root, journal, revalidate=lambda: None)
+        assert read_current(root) == 2
+        assert Journal.read(journal).stage == "rolled-back"
+        assert not (root / "generations/3").exists()
+        assert all(not (marker / "imported").exists() for marker in markers.values())
+        execute(port, "after-update-refusal", 79)
+        rollback = root / "journal/9999999999999999999.json"
+        replace(
+            Journal.read(journal),
+            operation="rollback",
+            target=1,
+            stage="starting",
+            history_entry=None,
+            error=None,
+        ).write(rollback)
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}"):
+            activate(root, rollback, revalidate=lambda: None)
+        assert read_current(root) == 2
+        assert Journal.read(rollback).stage == "rolled-back"
+        execute(port, "after-rollback-refusal", 79)
+        stop_engine(root, "main", generation=2)
+        for marker in markers.values():
+            (marker / "imported").unlink(missing_ok=True)
+        interrupted = root / "journal/9999999999999999998.json"
+        replace(
+            Journal.read(journal),
+            previous=1,
+            target=2,
+            stage="starting",
+            history_entry=None,
+            error="candidate failed after old generation was stopped",
+        ).write(interrupted)
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}"):
+            recover_activation(root, interrupted)
+        assert read_current(root) == 1
+        assert all(not (marker / "imported").exists() for marker in markers.values())
+        assert not (markers[provider] / "dependency-value").read_text() == "31"
+        set_current(root, 2)
+        start_engine(root, 2, "main", port)
+        execute(port, "after-recovery-refusal", 79)
+    finally:
+        for number, name in ((1, "retained"), (1, "main"), (2, "main"), (3, "main")):
+            stop_engine(root, name, generation=number)
 
 
 @pytest.mark.parametrize(
@@ -1116,7 +1376,11 @@ def test_malicious_bytes_block_rehosting_and_dependencies_without_misclassifying
     inventory = (
         Artifact(REGISTRY, bad),
         Artifact("https://another.example.test", rehosted),
-        Artifact(REGISTRY, good, (bad.artifact_digest,)),
+        Artifact(
+            REGISTRY,
+            good,
+            (Dependency(REGISTRY, bad.pack, bad.version, bad.artifact_digest),),
+        ),
         Artifact(REGISTRY, good),
     )
     result = assess(SecurityStore(store.path), inventory)
@@ -1131,6 +1395,43 @@ def test_malicious_bytes_block_rehosting_and_dependencies_without_misclassifying
     feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
     assert assess(store, inventory).allowed
+
+
+@pytest.mark.parametrize("changed", [None, "registry", "name", "version", "digest"])
+def test_dependency_vulnerability_advice_requires_exact_issuing_file(
+    tmp_path: Path, changed: str | None
+):
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    document = store.import_feed(REGISTRY, _signed(_feed(), key), now=VERIFIED_AT)
+    release = document.notices[0].release
+    dependency = Dependency(REGISTRY, release.pack, release.version, release.artifact_digest)
+    if changed is not None:
+        dependency = replace(
+            dependency,
+            **{
+                changed: {
+                    "registry": "https://other.example.test",
+                    "name": "another-library",
+                    "version": "1.2.4",
+                    "digest": "sha256:" + "b" * 64,
+                }[changed]
+            },
+        )
+    consumer = Artifact(
+        "https://consumer.example.test",
+        Release.model_validate(
+            {"pack": "consumer", "version": "2.0", "artifactDigest": "sha256:" + "c" * 64}
+        ),
+        (dependency,),
+    )
+    installed = assess(store, (consumer,))
+    installation = assess(store, (consumer,), installing=True)
+    assert installed.allowed
+    assert installation.allowed is (changed is not None)
+    assert len(installed.findings) == (1 if changed is None else 0)
+    store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    assert assess(store, (consumer,)).allowed is (changed is not None)
 
 
 def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback(
@@ -1254,8 +1555,11 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     assert acquisition.current_number() is None
 
 
-@pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused"])
-def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: Path, cause: str):
+@pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused", "foreign"])
+@pytest.mark.parametrize("state", ["malicious", "vulnerable"])
+def test_generation_selection_uses_sealed_installed_dependency_bytes(
+    tmp_path: Path, cause: str, state: str
+):
     from dinkster.compose import CompositionError
     from dinkster.generation_packs import load_generation_packs, stage_generation_packs
 
@@ -1285,7 +1589,12 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: P
     )
     python.parent.mkdir(parents=True)
     python.write_bytes(b"interpreter not launched by selection")
-    bad = {"filename": "bad_library-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
+    bad = {
+        "filename": "bad_library-1.0-py3-none-any.whl",
+        "size": 7,
+        "sha256": "a" * 64,
+        "registry": "https://other.example.test" if cause == "foreign" else REGISTRY,
+    }
     receipts = {
         "installed-wheels.json": {
             "format": "dinkster.installed-wheels/1",
@@ -1303,9 +1612,10 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: P
             "inherited": [],
         },
     }
-    if cause in {"root", "shared", "isolated"}:
+    if cause in {"root", "shared", "isolated", "foreign"}:
         name = {
             "root": "installed-wheels.json",
+            "foreign": "installed-wheels.json",
             "shared": "packs/z-provider/installed-wheels.json",
             "isolated": "packs/alpha-consumer/installed-wheels.json",
         }[cause]
@@ -1335,18 +1645,360 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: P
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
     assert len(load_generation_packs(generation)[1]) == 2
-    feed = _feed("malicious")
+    feed = _feed(state)
+    feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
     if cause == "source":
         feed["notices"][0]["release"].update(
-            pack="z-provider", artifactDigest=entries[1].artifact_digest
+            pack="z-provider", version="1.2.3", artifactDigest=entries[1].artifact_digest
         )
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
-    if cause == "unused":
+    if state == "vulnerable":
+        assert len(load_generation_packs(generation)[1]) == 2
+        store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    if cause == "unused" or (cause == "foreign" and state == "vulnerable"):
         assert len(load_generation_packs(generation)[1]) == 2
     else:
-        with pytest.raises(CompositionError, match="security affected: alpha-consumer"):
+        classification = "affected" if state == "malicious" else "vulnerable"
+        with pytest.raises(CompositionError, match=f"security {classification}: alpha-consumer"):
             load_generation_packs(generation)
     receipt_path = generation / "packs/alpha-consumer/installed-wheels.json"
     receipt_path.write_text("{}\n")
     with pytest.raises(SecurityError, match="sealed provenance"):
         load_generation_packs(generation)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "release",
+        "lock",
+        "transitive",
+        "rehost",
+        "engine",
+        "python",
+        "incoming",
+        "outgoing",
+        "root",
+        "requirements",
+        "identity",
+        "retained-engine",
+        "retained-accelerator",
+        "candidate-accelerator",
+        "missing-accelerator",
+        "other-blocked",
+        "other-accelerator",
+        "pending-retained",
+        "unnormalized-retained",
+    ],
+)
+def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
+    tmp_path: Path, case: str
+):
+    from dinkster_supervisor.environment_state import Generation, content_digest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_environment_generations import _standalone_tree
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
+
+    from dinkster.registries import RegistryConfig, StaticPackIndex
+    from dinkster.security_repair import plan_security_repair
+
+    generation = tmp_path / "generations/1"
+    generation.mkdir(parents=True)
+    _standalone_tree(generation / "python")
+    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "history").mkdir()
+    (tmp_path / "history/unchanged").write_bytes(b"retained history")
+    (generation / "constraints.txt").write_text("")
+    requests: list[tuple[str, str | None]] = []
+    documents: dict[str, bytes] = {}
+    server = _serve_artifacts(documents, requests)
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    bad_sha, good_sha = "a" * 64, "b" * 64
+
+    def dependency(sha: str, registry: str = REGISTRY) -> LockedDistribution:
+        return LockedDistribution(
+            "bad-library",
+            "1.0",
+            (
+                LockedWheel(
+                    "bad_library-1.0-py3-none-any.whl",
+                    7,
+                    sha,
+                    endpoint + "/payload-never-fetch",
+                    registry,
+                ),
+            ),
+        )
+
+    entries = [
+        LockedPack(name, "1.0.0", "blake3:" + digest * 64, "publisher", (), "registry:" + endpoint)
+        for name, digest in (
+            (("consumer", "c"), ("provider", "d"), ("unrelated", "9"))
+            if case in {"other-blocked", "pending-retained"}
+            else (("consumer", "c"), ("provider", "d"))
+        )
+    ]
+    old_lock = PackLock(
+        "provider", "fixture-cpu", ">=3.12", ("bad-library>=1",), (), (dependency(bad_sha),)
+    )
+    for entry in entries:
+        source = generation / "pack-sources" / entry.pack
+        source.mkdir(parents=True)
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{entry.pack}"\n'
+            + (
+                'requires=["bad-library >= 1"]\n'
+                if case == "unnormalized-retained" and entry.pack == "consumer"
+                else ""
+            )
+            + (
+                'version="1.0.0"\nengine=">=2"\n'
+                if case == "retained-engine" and entry.pack == "consumer"
+                else ""
+            )
+            + '[pack.entry]\nnodes="nodes:NODES"\n'
+            + (
+                '[pack.dependencies]\nprovider="<1.1"\n'
+                if case == "incoming" and entry.pack == "consumer"
+                else '[pack.dependencies]\nprovider=">=1"\n'
+                if entry.pack == "consumer"
+                else ""
+            )
+            + (
+                '[pack.extra-requires]\ncpu=["absent-helper>=2"]\n'
+                if case == "retained-accelerator" and entry.pack == "consumer"
+                else ""
+            )
+        )
+        (source / "nodes.py").write_text("raise AssertionError('pack code must not be imported')\n")
+        pack_root = generation / "packs" / entry.pack
+        pack_root.mkdir(parents=True)
+        lock = (
+            old_lock
+            if entry.pack == "provider"
+            else PackLock(
+                "unrelated",
+                "fixture-cpu",
+                ">=3.12",
+                ("other-library>=1",),
+                (),
+                (
+                    LockedDistribution(
+                        "other-library",
+                        "1.0",
+                        (
+                            LockedWheel(
+                                "other_library-1.0-py3-none-any.whl",
+                                7,
+                                "c" * 64,
+                                endpoint + "/payload-never-fetch",
+                                REGISTRY,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            if entry.pack == "unrelated"
+            else PackLock(
+                entry.pack, "fixture-cpu", ">=3.12", ("bad-library>=1",), (), (dependency(bad_sha),)
+            )
+            if case == "unnormalized-retained"
+            else PackLock(entry.pack, "fixture-cpu", ">=3.12", (), (), ())
+        )
+        lock.write(pack_root / "pack-lock.json")
+        (pack_root / "installed-wheels.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "inherited": [],
+                    "wheels": [
+                        {
+                            "filename": "other_library-1.0-py3-none-any.whl"
+                            if entry.pack == "unrelated"
+                            else "bad_library-1.0-py3-none-any.whl",
+                            "size": 7,
+                            "sha256": "c" * 64 if entry.pack == "unrelated" else bad_sha,
+                            "registry": REGISTRY,
+                        }
+                    ]
+                    if entry.pack == "unrelated" or (entry.pack == "provider" and case != "root")
+                    else [],
+                }
+            )
+        )
+    (generation / "installed-wheels.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.installed-wheels/1",
+                "inherited": [],
+                "wheels": [
+                    {
+                        "filename": "bad_library-1.0-py3-none-any.whl",
+                        "size": 7,
+                        "sha256": bad_sha,
+                        "registry": REGISTRY,
+                    }
+                ]
+                if case == "root"
+                else [],
+            }
+        )
+    )
+    (generation / "dinkster.lock").write_text(Lockfile.of(entries).record_json())
+    record = Generation(
+        1,
+        "sha256:" + "e" * 64,
+        "1.0.0",
+        "sha256:" + "f" * 64,
+        content_digest(generation / "constraints.txt"),
+        "fixture-cpu",
+        1,
+        tuple(
+            (path.relative_to(generation).as_posix(), content_digest(path))
+            for path in generation.rglob("*")
+            if path.is_file()
+        ),
+        () if case == "transitive" else ("provider",),
+    )
+    record.write(generation / "generation.json")
+    rows = []
+    for version, sha in (
+        ("1.0.0", good_sha if case == "lock" else bad_sha),
+        ("1.1.0", bad_sha if case == "rehost" else good_sha),
+        ("1.2.0", bad_sha),
+    ):
+        if case == "lock" and version != "1.0.0":
+            continue
+        entry = replace(
+            entries[1],
+            version=version,
+            artifact_digest=entries[1].artifact_digest
+            if version == "1.0.0"
+            else "blake3:" + ("1" if version == "1.1.0" else "2") * 64,
+        )
+        row = _static_release(entry, version.encode())
+        row["engine"] = ">=2" if case == "engine" and version != "1.0.0" else ">=1,<2"
+        lock = replace(
+            old_lock,
+            requires_python=">=99" if case == "python" and version != "1.0.0" else ">=3.12",
+            packages=(
+                dependency(sha, "https://rehost.example.test" if case == "rehost" else REGISTRY),
+            ),
+        )
+        payload = lock.to_json().encode()
+        digest = artifact_digest(payload)
+        url = "locks/" + digest.replace(":", "/") + ".json"
+        row["installLocks"] = {
+            "fixture-cpu": {
+                "baseId": record.base,
+                "artifactDigest": entry.artifact_digest,
+                "digest": digest,
+                "size": len(payload),
+                "url": url,
+            }
+        }
+        rows.append(row)
+        documents["/static/" + url] = payload
+        documents[f"/v1/packs/provider/versions/{version}"] = json.dumps(
+            {
+                "packName": "provider",
+                "version": version,
+                "state": "active",
+                "artifact": {
+                    "digest": "blake3:" + "0" * 64 if case == "identity" else entry.artifact_digest
+                },
+                "manifest": {
+                    "dinkster": ">=1,<2",
+                    "pythonRequirements": [
+                        "bad-library>=2" if case == "requirements" else "bad-library>=1"
+                    ],
+                    **(
+                        {}
+                        if case == "missing-accelerator"
+                        else {
+                            "pythonExtraRequirements": {
+                                "cuda" if case == "other-accelerator" else "cpu": [
+                                    "absent-helper>=2"
+                                ]
+                            }
+                            if case in {"candidate-accelerator", "other-accelerator"}
+                            else {},
+                        }
+                    ),
+                    "dependencies": [{"packName": "absent", "versionRange": ">=1"}]
+                    if case == "outgoing"
+                    else [],
+                },
+            }
+        ).encode()
+    documents.update(_static_indexes(rows))
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    feed = _feed("malicious")
+    feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
+    if case in {"other-blocked", "pending-retained"}:
+        other = copy.deepcopy(feed["notices"][0])
+        other["id"] = "636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"
+        other["release"]["pack"] = "other-library"
+        other["release"]["artifactDigest"] = "sha256:" + "c" * 64
+        if case == "pending-retained":
+            other["state"] = "vulnerable"
+        feed["notices"].append(other)
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    host = SecurityHost(tmp_path)
+    before = {
+        path: content_digest(path)
+        for path in tmp_path.rglob("*")
+        if path.is_file() and "security.sqlite3" not in path.name
+    }
+    try:
+        result = plan_security_repair(
+            generation,
+            "consumer",
+            RegistryConfig(),
+            index=StaticPackIndex(read_only=True),
+            security=host,
+            accelerator="cpu",
+        )
+        assert result["status"] == (
+            "approval-required"
+            if case
+            in {
+                "release",
+                "lock",
+                "transitive",
+                "other-accelerator",
+                "pending-retained",
+                "unnormalized-retained",
+            }
+            else "no-compatible-fix"
+        ), result
+        if result["status"] == "approval-required":
+            offer = cast("dict[str, Any]", result["offer"])
+            assert offer["approvalRequired"] is True
+            assert offer["accelerator"] == "cpu"
+            assert offer["changedPack"] == "provider"
+            proposed = Lockfile.from_record_json(json.dumps(offer["sources"]))
+            provider = proposed.get("provider")
+            assert provider is not None
+            assert provider.version == ("1.0.0" if case == "lock" else "1.1.0")
+            assert proposed.get("consumer") == entries[0]
+            selected = PackLock.from_json(json.dumps(offer["dependencyLocks"]["provider"]))
+            assert selected.packages[0].wheels[0].sha256 == good_sha
+        else:
+            assert result["offer"] is None
+        assert all(content_digest(path) == data for path, data in before.items())
+        assert {
+            path
+            for path in tmp_path.rglob("*")
+            if path.is_file() and "security.sqlite3" not in path.name
+        } == set(before)
+        assert (tmp_path / "current").read_text() == "1\n"
+        assert not (tmp_path / "generations/2").exists()
+        assert not (tmp_path / "store").exists()
+        assert not any(
+            "/static/wheels/" in path or "payload-never-fetch" in path for path, _ in requests
+        )
+    finally:
+        server.shutdown()
+        server.server_close()

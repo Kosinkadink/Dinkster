@@ -11,13 +11,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from dinkster_store import object_path, readable_label
-from dinkster_values import MEBIBYTE
 from packaging.requirements import Requirement
 from packaging.tags import parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -25,6 +23,7 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 from .boundary import PROTOCOL_VERSION
 from .pack_lock import GenerationPackages, LockedWheel, PackLock, PackPlan, plan_pack
 from .provision import ProvisionError
+from .wheel_download import download_wheel
 
 
 def venv_python(directory: Path) -> Path:
@@ -92,14 +91,9 @@ def fetch_wheel(wheel: LockedWheel, store: Path, *, offline: bool = False) -> Pa
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(dir=target.parent, suffix=".partial")
     staging = Path(name)
+    os.close(descriptor)
     try:
-        with os.fdopen(descriptor, "wb") as output, urllib.request.urlopen(wheel.url) as source:
-            remaining = wheel.size
-            while block := source.read(min(MEBIBYTE, remaining + 1)):
-                remaining -= len(block)
-                if remaining < 0:
-                    raise ProvisionError(f"wheel exceeds locked size: {wheel.filename}")
-                output.write(block)
+        download_wheel(wheel.url, staging, max_size=wheel.size)
         if not _verify(staging, wheel):
             raise ProvisionError(f"wheel hash or size mismatch: {wheel.filename}")
         os.replace(staging, target)
@@ -198,7 +192,12 @@ def provision_pack(
                 {
                     "format": "dinkster.installed-wheels/1",
                     "wheels": [
-                        {"filename": wheel.filename, "size": wheel.size, "sha256": wheel.sha256}
+                        {
+                            "filename": wheel.filename,
+                            "size": wheel.size,
+                            "sha256": wheel.sha256,
+                            "registry": wheel.registry,
+                        }
                         for wheel in plan.wheels
                     ],
                     "inherited": sorted(

@@ -52,6 +52,7 @@ def pytest_terminal_summary(terminalreporter) -> None:
                     if name in {
                         "Supervisor child operation timings",
                         "Captured Published pack resolver trap call",
+                        "Captured Folded engine CPU environment call",
                     }:
                         terminalreporter.section(name)
                         terminalreporter.write_line(text)

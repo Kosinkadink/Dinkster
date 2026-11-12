@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-utilities"
-version = "0.0.5"
+version = "0.0.6"
 description = "Dinkster primitive, logic, list and loop nodes"
 requires-python = ">=3.12"
 dependencies = [

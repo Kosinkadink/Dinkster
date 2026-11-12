@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-vision-depth-anything-3"
-version = "0.0.3"
+version = "0.0.4"
 description = "ComfyUI-origin vision-depth-anything-3 nodes"
 requires-python = ">=3.12"
 dependencies = [
