@@ -56,7 +56,7 @@ jobs:
   torch-cpu:
     needs: checks
     if: startsWith(github.ref, 'refs/tags/v')
-    name: CPU comfy gate (shard ${{ matrix.shard }})
+    name: node pack tests gate (CPU, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -186,7 +186,10 @@ jobs:
           cache-dependency-glob: uv.lock
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
-      - run: uv run --no-sync python -m pytest -q --durations=5 tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release
+      - run: >-
+          uv run --no-sync python -m pytest -q --durations=5
+          tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release
+          tests/test_environment_history.py::test_installed_wheel_pack_add_and_update_without_index_resolution
 
   tests:
     needs: [checks, torch-cpu]
@@ -227,6 +230,14 @@ jobs:
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
+      - name: Provision installed-wheel host dependencies before offline validation
+        if: needs.checks.outputs.engine == 'true'
+        run: |
+          for package in dinkster dinkster-api dinkster-engine; do
+            uv build --package "$package" --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
+          done
+          uv venv --python .venv/bin/python "$RUNNER_TEMP/fast-wheel-host"
+          uv pip install --python "$RUNNER_TEMP/fast-wheel-host/bin/python" --no-sources "$RUNNER_TEMP/fast-build-setup/"*.whl
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
         run: uv run --no-sync python tools/verify_pinned_inference.py
