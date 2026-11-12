@@ -248,6 +248,57 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             (("install", "healthy@1.0.0"), 2, entries[0], 31),
             (("update", "healthy"), 3, entries[1], 79),
         ):
+            store = Path((root / "store").read_text().strip())
+            base_id = initial["base"]["fixture-cpu"]["id"]
+            base = object_path(store / "bases", base_id)
+            unavailable_base = tmp_path / f"unavailable-base-{number}"
+            source_url = "/static/" + releases[entries.index(entry)]["wheels"][0]["url"]
+            source_bytes = files[source_url]
+            dependency = tmp_path / f"fixture_helper-{entry.version}-py3-none-any.whl"
+            dependency_bytes = dependency.read_bytes()
+            base.rename(unavailable_base)
+            files[source_url] = bytes([source_bytes[0] ^ 1]) + source_bytes[1:]
+            dependency.write_bytes(bytes([dependency_bytes[0] ^ 1]) + dependency_bytes[1:])
+            before = {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            }
+            try:
+                refused = subprocess.run(
+                    [
+                        str(python),
+                        "-I",
+                        "-m",
+                        "dinkster.cli",
+                        "pack",
+                        "--root",
+                        str(root),
+                        *args,
+                        "--yes",
+                    ],
+                    cwd=tmp_path,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                assert refused.returncode != 0
+                assert {
+                    path: content_digest(path)
+                    for directory in (root, store)
+                    for path in directory.rglob("*")
+                    if path.is_file() and not path.is_symlink()
+                } == before
+                diagnostic = refused.stdout + refused.stderr
+                assert base_id in diagnostic, diagnostic
+                assert entry.artifact_digest in diagnostic, diagnostic
+                assert dependency.name in diagnostic, diagnostic
+            finally:
+                unavailable_base.rename(base)
+                files[source_url] = source_bytes
+                dependency.write_bytes(dependency_bytes)
             command = subprocess.run(
                 [
                     str(python),
