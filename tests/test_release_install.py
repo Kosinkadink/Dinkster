@@ -101,6 +101,57 @@ def test_disposable_scan_timings_preserve_candidates_attempts_and_admission(tmp_
     assert database.read_bytes() == before
 
 
+def test_disposable_scan_timings_normalize_postgresql_values(monkeypatch) -> None:
+    import importlib
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    from scripts.check_disposable_publication import read_scan_timings
+
+    candidate_id = UUID("00000000-0000-0000-0000-0000000000aa")
+
+    class Connection:
+        def execute(self, query, parameters=()):
+            if query.startswith("SELECT id,"):
+                return [
+                    dict(
+                        id=candidate_id,
+                        release_id=None,
+                        pack_name="postgres-pack",
+                        status="scanning",
+                        submitted_at=datetime(2026, 11, 12, 7, tzinfo=UTC),
+                    )
+                ]
+            if query.startswith("SELECT created_at,"):
+                return [
+                    dict(
+                        created_at=datetime(2026, 11, 12, 7, 0, 2, tzinfo=UTC),
+                        data={"attempt": 2, "secret": "must-not-appear"},
+                    )
+                ]
+            if query.startswith("SELECT stage,"):
+                return [
+                    dict(
+                        stage="executable_probe",
+                        attempt=2,
+                        accepted=False,
+                        created_at=datetime(2026, 11, 12, 7, 0, 9, tzinfo=UTC),
+                    )
+                ]
+            return []
+
+        def close(self):
+            pass
+
+    adapter = SimpleNamespace(connect=lambda *args, **kwargs: Connection(), dict_row=object())
+    monkeypatch.setattr(importlib, "import_module", lambda name: adapter)
+    result = read_scan_timings("postgresql://postgres@database/registry")
+    assert result[0]["candidateId"] == candidate_id.hex
+    assert result[0]["stages"][0]["intervalSeconds"] == 7
+    assert result[0]["stages"][0]["accepted"] is False
+    assert "must-not-appear" not in json.dumps(result)
+
+
 @pytest.mark.parametrize("failure", [None, "publication", "capture"])
 def test_disposable_publication_retains_timings_without_changing_verdict(
     tmp_path: Path, monkeypatch, capsys, failure: str | None
