@@ -2074,7 +2074,7 @@ def test_official_publication_declarations_match_archive_admission(
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.4",
+                "0.0.5",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
                     "dinkster-inference",
@@ -2182,7 +2182,7 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
             assert composition.packs["dinkster-text"].version == "0.0.3"
-            assert composition.packs["dinkster-image"].version == "0.0.9"
+            assert composition.packs["dinkster-image"].version == "0.0.10"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )
@@ -2294,6 +2294,7 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
     manifest.write_text(
         MANIFEST.replace('version = "1.0"', 'version = "2.3.0"')
         + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+        + '[pack.extra-requires]\ncpu=["helper>=2"]\ncuda=["cuda-helper>=3"]\n'
     )
     result = run_manifest_admission(root, "archive-test", "2.3.0", engine_version=engine)
     assert result.blocked is (engine in {"0.8.9", "1.0.0"})
@@ -2302,6 +2303,10 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
         assert "archive-test@2.3.0" in message and ">=0.9,<1" in message and engine in message
     else:
         assert result.data is not None and result.data["dinkster"] == ">=0.9,<1"
+        assert result.data["pythonExtraRequirements"] == {
+            "cpu": ["helper>=2"],
+            "cuda": ["cuda-helper>=3"],
+        }
     mismatch = run_manifest_admission(root, "archive-test", "2.3.1")
     assert mismatch.blocked and "does not match submission" in mismatch.findings[0].message
 

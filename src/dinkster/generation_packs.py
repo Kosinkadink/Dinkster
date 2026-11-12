@@ -28,6 +28,7 @@ from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.host import SecurityHost
 from dinkster_security.inventory import generation_dependencies
 from dinkster_security.policy import Artifact as SecurityArtifact
+from dinkster_security.policy import Dependency as SecurityDependency
 from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
@@ -38,7 +39,6 @@ from dinkster_workers.provision import ProvisionError
 from . import __version__ as engine_version
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
-from .registries import RegistryConfig, load_registries
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
@@ -296,23 +296,30 @@ def generation_pack_specs(
                 for name in receipts
             }
         libraries = generation_dependencies(generation, files, tuple(entries), in_process_packs)
-        config = project / "registries.toml"
-        registries = load_registries(config) if config.is_file() else RegistryConfig()
+
+        def issuing_registry(entry: LockedPack) -> str:
+            if entry.source.startswith(("registry:http://", "registry:https://")):
+                return entry.source.removeprefix("registry:")
+            if entry.source == "registry" or entry.source.startswith("registry:"):
+                raise CompositionError("security inventory requires a resolved issuing registry")
+            return entry.source
+
         artifacts: list[SecurityArtifact] = []
         for index, (entry, spec) in enumerate(zip(lock.packs, specs, strict=True)):
             dependencies = {
-                entries[Path(path).name].artifact_digest
+                SecurityDependency(
+                    issuing_registry(provider),
+                    provider.pack,
+                    provider.version,
+                    provider.artifact_digest,
+                )
                 for path in spec.env["PYTHONPATH"].split(os.pathsep)
                 if Path(path).name != entry.pack
+                for provider in (entries[Path(path).name],)
             }
-            registry = (
-                registries.registry_for(entry).endpoint
-                if entry.source == "registry" or entry.source.startswith("registry:")
-                else entry.source
-            )
             artifacts.append(
                 SecurityArtifact(
-                    registry,
+                    issuing_registry(entry),
                     SecurityRelease.model_validate(
                         {
                             "pack": entry.pack,
@@ -320,7 +327,17 @@ def generation_pack_specs(
                             "artifactDigest": entry.artifact_digest,
                         }
                     ),
-                    tuple(sorted(dependencies | set(libraries[entry.pack]))),
+                    tuple(
+                        sorted(
+                            dependencies
+                            | {
+                                dependency
+                                for path in spec.env["PYTHONPATH"].split(os.pathsep)
+                                for dependency in libraries[Path(path).name]
+                            },
+                            key=lambda item: (item.registry, item.name, item.version, item.digest),
+                        )
+                    ),
                 )
             )
             specs[index] = replace(spec, security_artifacts=(artifacts[-1],))

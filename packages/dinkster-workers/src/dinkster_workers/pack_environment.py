@@ -192,7 +192,12 @@ def provision_pack(
                 {
                     "format": "dinkster.installed-wheels/1",
                     "wheels": [
-                        {"filename": wheel.filename, "size": wheel.size, "sha256": wheel.sha256}
+                        {
+                            "filename": wheel.filename,
+                            "size": wheel.size,
+                            "sha256": wheel.sha256,
+                            "registry": wheel.registry,
+                        }
                         for wheel in plan.wheels
                     ],
                     "inherited": sorted(
