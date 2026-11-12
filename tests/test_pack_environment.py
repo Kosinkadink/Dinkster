@@ -897,6 +897,75 @@ def test_generation_preflight_never_silently_omits_packs(tmp_path: Path) -> None
     ].conflicts
 
 
+def test_collection_lists_unreadable_locks_and_valid_sibling_wheel_failures(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "source"
+    for name in ("absent", "corrupt", "healthy"):
+        (source / "packs" / name).mkdir(parents=True)
+    (source / "packs/corrupt/pack-lock.json").write_text("not a lock")
+    extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 73\n")
+    (tmp_path / extra.filename).write_bytes(b"corrupt wheel")
+    PackLock(
+        "healthy",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (extra,)),),
+    ).write(source / "packs/healthy/pack-lock.json")
+    target = tmp_path / "target"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+    arguments = [
+        "--generation",
+        str(target),
+        "--generation-python",
+        str(python),
+        "--constraints",
+        str(constraints),
+        "--variant",
+        "linux-cpu",
+        "--worker-protocol",
+        str(PROTOCOL_VERSION),
+        "--wheel-store",
+        str(tmp_path / "wheels"),
+        "--uv-cache",
+        str(tmp_path / "cache"),
+        "--own-environment-size",
+        "1000",
+        "--source-generation",
+        str(source),
+        "--in-process-pack",
+        "absent",
+    ]
+    assert main(["collect", *arguments]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "pack absent: recorded dependency lock missing" in diagnostic
+    assert "pack corrupt:" in diagnostic and "corrupt/pack-lock.json" in diagnostic.replace(
+        "\\", "/"
+    )
+    assert "in-process packs have no dependency lock: absent" in diagnostic
+    assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
+    observed = GenerationPackages.inspect(python)
+    recorded = json.dumps(
+        {"tags": [str(tag) for tag in observed.tags], "markers": dict(observed.markers)}
+    )
+    unavailable = list(arguments)
+    unavailable[unavailable.index("--generation-python") + 1] = str(tmp_path / "absent-python")
+    assert main(["collect", *unavailable, "--compatibility", recorded]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "pack absent: recorded dependency lock missing" in diagnostic
+    assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
+    assert "cannot inspect generation interpreter" not in diagnostic
+    assert {path: path.read_bytes() for path in source.rglob("*") if path.is_file()} == before
+    assert not (target / "packs").exists()
+    assert main(["preflight", *arguments]) == 1
+    assert "pack absent: recorded dependency lock missing" in capsys.readouterr().err
+
+
 def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1004,6 +1073,46 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     assert main(["doctor", *args]) == 1
     drift = json.loads(capsys.readouterr().out)["changes"]
     assert any("in-process: fixture-extra: expected 1.2, found 9.0" in item for item in drift)
+
+
+def test_collection_replaces_in_process_versions_before_layering_siblings(tmp_path: Path) -> None:
+    old = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    updated = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 79\n")
+    target = tmp_path / "generations/2"
+    python = _generation(target / "python", [old])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    paths = []
+    for name in ("a-isolated", "z-parent"):
+        path = tmp_path / f"{name}.json"
+        PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            ("fixture-extra==2.0",),
+            (),
+            (LockedDistribution("fixture-extra", "2.0", (updated,)),),
+        ).write(path)
+        paths.append(path)
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        1000,
+        in_process_packs=("z-parent",),
+    )
+    before = {path: path.read_bytes() for path in target.rglob("*") if path.is_file()}
+    plans = preflight_generation(context, locks=paths, engine_only=True)
+    assert [plan.lock.pack for plan in plans] == ["z-parent", "a-isolated"]
+    assert [plan.wheels for plan in plans] == [(updated,), ()]
+    assert all(not plan.conflicts for plan in plans)
+    assert {path: path.read_bytes() for path in target.rglob("*") if path.is_file()} == before
+    assert not context.wheel_store.exists()
+    assert not (target / "packs").exists()
 
 
 def test_in_process_dependencies_conflict_before_downloads(tmp_path: Path) -> None:

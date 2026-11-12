@@ -184,6 +184,20 @@
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
   or selection metadata; successful add and update activate fresh generations
   without package-index resolution, retaining the engine and base.
+  After confirmation, a missing retained base is reported alongside unavailable
+  source and dependency wheels, without changing retained project or store bytes.
+  Missing or modified retained dependency locks do not hide other pack payload
+  failures. An unreadable lock cannot identify its unknown dependency wheels.
+  Missing or modified engine metadata, source locks and constraints still refuse;
+  exact software-history copies allow other input failures to be diagnosed without
+  repairing the retained files or activating the damaged generation.
+  The pip command also lists other known unavailable inputs when the target
+  interpreter is unavailable. Missing history or metadata is reported, never
+  silently replaced with another engine or dependency version. A damaged
+  generation cannot be constructed or activated.
+  An absent retained-base interpreter or unreadable history does not hide
+  independent source and wheel failures. Refusal creates no external pack plan.
+  Engine wheel checks use the retained exact constraints, not a package index.
   A verified vulnerable notice requires approval for that exact notice revision
   before a new release is installed; a pending or denied answer refuses.
   Already retained vulnerable releases may remain while a different pack is added
@@ -192,7 +206,6 @@
   Initial refusal does not activate a generation or consume the reviewed plan.
   A security change that refuses activation requires a new plan and keeps the
   previous generation selected.
-  Missing retained bases refuse early rather than listing later payload failures.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
   saved plans, snapshots, workflow stamps and rollback targets refuse instead of
