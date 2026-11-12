@@ -286,6 +286,16 @@ environments have separate dependency checks. Recorded files remain checked even
 inside excluded directories; only unexpected files are sorted for diagnostics.
 Pack reviews retain their integrity checks before and after registry preparation.
 
+`packs-plan --progress /absolute/host-owned/progress.json` atomically publishes
+stage-local `{sequence, stage, completed, total}` observations without changing
+its JSON result on stdout. Integrity scans report batches of 128 checked files
+and discovered directories; runtime, registry and preflight transitions report
+their actual starts. This is not a timer heartbeat or overall percentage. Writes
+within a stage are coalesced to at most four per second, except stage completion.
+Creating `progress.json.cancel` requests cancellation at the next observation;
+it never authorizes apply. The host retains the scratch directory until the
+command has actually exited, including while an uninterruptible child finishes.
+
 The channel format is `dinkster.channel/1`, with
 `engine: {version, release, locations}`, `base: {variant: {id, locations}}`,
 `minimumDesktopVersion`, and `signature`. Locations are a nonempty ordered array:

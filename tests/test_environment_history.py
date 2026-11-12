@@ -480,8 +480,35 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             run_cli("--root", str(root), "apply", str(review))
             assert "activated generation 3" in capsys.readouterr().out
         else:
-            code, planned = _run(root, "packs-plan", "healthy@1.0.0", "--output", str(review))
+            progress = tmp_path / "progress.json"
+            code, planned = _run(
+                root,
+                "packs-plan",
+                "healthy@1.0.0",
+                "--output",
+                str(review),
+                "--progress",
+                str(progress),
+            )
             assert code == 0, planned
+            observation = json.loads(progress.read_text())
+            assert observation["sequence"] > 1
+            assert observation["stage"] == "retaining-review"
+            assert "approval" not in observation
+            assert len(history(root)) == 2
+            progress.with_name(progress.name + ".cancel").touch()
+            cancelled_review = tmp_path / "cancelled-review"
+            code, refused = _run(
+                root,
+                "packs-plan",
+                "healthy@1.0.0",
+                "--output",
+                str(cancelled_review),
+                "--progress",
+                str(progress),
+            )
+            assert code != 0 and "cancelled" in refused["error"], refused
+            assert not cancelled_review.exists()
             assert len(history(root)) == 2
             code, result = _run(
                 root,

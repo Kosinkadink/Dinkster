@@ -46,6 +46,14 @@
   it never installs or activates packs. HTTP application is Desktop-gateway-owned.
   Remote, agent and delegated callers cannot use these routes. Authenticated
   loopback callers require a nondelegated human with settings-write authority.
+- Pack review preparation can continue beyond a metadata request deadline.
+  Starting a preparation acknowledges the selection immediately; separate status
+  requests report actual checked-file and preparation-stage progress, then the
+  complete review. Cancellation prevents a late review from becoming usable and
+  never installs software. A preparation with no observed progress for 120 seconds
+  reports a stall; preparation expires after 30 minutes overall. A stalled or
+  cancelled worker can finish its current uninterruptible child in the background;
+  another preparation remains blocked until its scratch cleanup finishes.
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
