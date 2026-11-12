@@ -3812,6 +3812,75 @@ def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
         assert Version(minimum) <= Version(compatibility.version)
 
 
+@pytest.mark.parametrize("issuer", [None, "https://dependency-issuer.example.test/simple"])
+def test_published_dependency_origins_are_not_replaced_by_pack_registry(
+    tmp_path: Path, issuer: str | None
+) -> None:
+    from dinkster_registry import artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+
+    from dinkster.registries import RegistryConfig, read_registry_pack_locks
+
+    entry = LockedPack("demo", "1.2.3", "blake3:" + "a" * 64, "publisher", ())
+    dependency = LockedWheel(
+        "helper-1.0-py3-none-any.whl",
+        7,
+        "b" * 64,
+        "https://mirror.example.test/helper-1.0-py3-none-any.whl",
+        issuer,
+    )
+    payload = (
+        PackLock(
+            "demo",
+            "linux-cpu",
+            ">=3.12",
+            ("helper>=1",),
+            (),
+            (LockedDistribution("helper", "1.0", (dependency,)),),
+        )
+        .to_json()
+        .encode()
+    )
+    identity = artifact_digest(payload)
+    lock_path = "locks/" + identity.replace(":", "/") + ".json"
+    release = _static_release(entry, b"pack archive")
+    release["installLocks"] = {
+        "linux-cpu": {
+            "baseId": "sha256:" + "c" * 64,
+            "artifactDigest": entry.artifact_digest,
+            "digest": identity,
+            "size": len(payload),
+            "url": lock_path,
+        }
+    }
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(
+        {
+            "/static/packs/index.json": json.dumps(
+                {"schemaVersion": 1, "items": [release]}
+            ).encode(),
+            "/static/" + lock_path: payload,
+        },
+        requests,
+    )
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    try:
+        locks = read_registry_pack_locks(
+            RegistryConfig(),
+            Lockfile.of([replace(entry, source="registry:" + endpoint)]),
+            variant="linux-cpu",
+            base_id="sha256:" + "c" * 64,
+        )
+        helper = next(package for package in locks[0].packages if package.name == "helper")
+        assert helper.wheels == (dependency,)
+        outer = next(package for package in locks[0].packages if package.name == "demo")
+        assert outer.wheels[0].registry == endpoint
+        assert requests == [("/static/packs/index.json", None), ("/static/" + lock_path, None)]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 @pytest.mark.parametrize(
     "problem",
     [

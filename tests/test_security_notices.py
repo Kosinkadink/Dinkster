@@ -1681,6 +1681,14 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(
         "root",
         "requirements",
         "identity",
+        "retained-engine",
+        "retained-accelerator",
+        "candidate-accelerator",
+        "missing-accelerator",
+        "other-blocked",
+        "other-accelerator",
+        "pending-retained",
+        "unnormalized-retained",
     ],
 )
 def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
@@ -1724,7 +1732,11 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
 
     entries = [
         LockedPack(name, "1.0.0", "blake3:" + digest * 64, "publisher", (), "registry:" + endpoint)
-        for name, digest in (("consumer", "c"), ("provider", "d"))
+        for name, digest in (
+            (("consumer", "c"), ("provider", "d"), ("unrelated", "9"))
+            if case in {"other-blocked", "pending-retained"}
+            else (("consumer", "c"), ("provider", "d"))
+        )
     ]
     old_lock = PackLock(
         "provider", "fixture-cpu", ">=3.12", ("bad-library>=1",), (), (dependency(bad_sha),)
@@ -1733,12 +1745,28 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         source = generation / "pack-sources" / entry.pack
         source.mkdir(parents=True)
         (source / "dinkster-pack.toml").write_text(
-            f'[pack]\nname="{entry.pack}"\n[pack.entry]\nnodes="nodes:NODES"\n'
+            f'[pack]\nname="{entry.pack}"\n'
+            + (
+                'requires=["bad-library >= 1"]\n'
+                if case == "unnormalized-retained" and entry.pack == "consumer"
+                else ""
+            )
+            + (
+                'version="1.0.0"\nengine=">=2"\n'
+                if case == "retained-engine" and entry.pack == "consumer"
+                else ""
+            )
+            + '[pack.entry]\nnodes="nodes:NODES"\n'
             + (
                 '[pack.dependencies]\nprovider="<1.1"\n'
                 if case == "incoming" and entry.pack == "consumer"
                 else '[pack.dependencies]\nprovider=">=1"\n'
                 if entry.pack == "consumer"
+                else ""
+            )
+            + (
+                '[pack.extra-requires]\ncpu=["absent-helper>=2"]\n'
+                if case == "retained-accelerator" and entry.pack == "consumer"
                 else ""
             )
         )
@@ -1748,7 +1776,34 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         lock = (
             old_lock
             if entry.pack == "provider"
-            else PackLock("consumer", "fixture-cpu", ">=3.12", (), (), ())
+            else PackLock(
+                "unrelated",
+                "fixture-cpu",
+                ">=3.12",
+                ("other-library>=1",),
+                (),
+                (
+                    LockedDistribution(
+                        "other-library",
+                        "1.0",
+                        (
+                            LockedWheel(
+                                "other_library-1.0-py3-none-any.whl",
+                                7,
+                                "c" * 64,
+                                endpoint + "/payload-never-fetch",
+                                REGISTRY,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            if entry.pack == "unrelated"
+            else PackLock(
+                entry.pack, "fixture-cpu", ">=3.12", ("bad-library>=1",), (), (dependency(bad_sha),)
+            )
+            if case == "unnormalized-retained"
+            else PackLock(entry.pack, "fixture-cpu", ">=3.12", (), (), ())
         )
         lock.write(pack_root / "pack-lock.json")
         (pack_root / "installed-wheels.json").write_text(
@@ -1758,13 +1813,15 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     "inherited": [],
                     "wheels": [
                         {
-                            "filename": "bad_library-1.0-py3-none-any.whl",
+                            "filename": "other_library-1.0-py3-none-any.whl"
+                            if entry.pack == "unrelated"
+                            else "bad_library-1.0-py3-none-any.whl",
                             "size": 7,
-                            "sha256": bad_sha,
+                            "sha256": "c" * 64 if entry.pack == "unrelated" else bad_sha,
                             "registry": REGISTRY,
                         }
                     ]
-                    if entry.pack == "provider" and case != "root"
+                    if entry.pack == "unrelated" or (entry.pack == "provider" and case != "root")
                     else [],
                 }
             )
@@ -1855,6 +1912,19 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     "pythonRequirements": [
                         "bad-library>=2" if case == "requirements" else "bad-library>=1"
                     ],
+                    **(
+                        {}
+                        if case == "missing-accelerator"
+                        else {
+                            "pythonExtraRequirements": {
+                                "cuda" if case == "other-accelerator" else "cpu": [
+                                    "absent-helper>=2"
+                                ]
+                            }
+                            if case in {"candidate-accelerator", "other-accelerator"}
+                            else {},
+                        }
+                    ),
                     "dependencies": [{"packName": "absent", "versionRange": ">=1"}]
                     if case == "outgoing"
                     else [],
@@ -1866,6 +1936,14 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     store = _store(tmp_path, key)
     feed = _feed("malicious")
     feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
+    if case in {"other-blocked", "pending-retained"}:
+        other = copy.deepcopy(feed["notices"][0])
+        other["id"] = "636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"
+        other["release"]["pack"] = "other-library"
+        other["release"]["artifactDigest"] = "sha256:" + "c" * 64
+        if case == "pending-retained":
+            other["state"] = "vulnerable"
+        feed["notices"].append(other)
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
     host = SecurityHost(tmp_path)
     before = {
@@ -1880,15 +1958,25 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             RegistryConfig(),
             index=StaticPackIndex(read_only=True),
             security=host,
+            accelerator="cpu",
         )
         assert result["status"] == (
             "approval-required"
-            if case in {"release", "lock", "transitive"}
+            if case
+            in {
+                "release",
+                "lock",
+                "transitive",
+                "other-accelerator",
+                "pending-retained",
+                "unnormalized-retained",
+            }
             else "no-compatible-fix"
         ), result
-        if case in {"release", "lock", "transitive"}:
+        if result["status"] == "approval-required":
             offer = cast("dict[str, Any]", result["offer"])
             assert offer["approvalRequired"] is True
+            assert offer["accelerator"] == "cpu"
             assert offer["changedPack"] == "provider"
             proposed = Lockfile.from_record_json(json.dumps(offer["sources"]))
             provider = proposed.get("provider")

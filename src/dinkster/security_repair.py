@@ -15,6 +15,7 @@ from dinkster_security.host import SecurityHost
 from dinkster_security.inventory import generation_dependencies
 from dinkster_security.policy import Artifact, Dependency
 from dinkster_workers import load_manifest
+from dinkster_workers.accelerator import resolve_accelerator
 from dinkster_workers.manifest import PackDependency
 from dinkster_workers.pack_lock import (
     GenerationPackages,
@@ -39,12 +40,14 @@ def plan_security_repair(
     *,
     index: StaticPackIndex,
     security: SecurityHost,
+    accelerator: str,
 ) -> dict[str, object]:
     """Offer one validated change, never download payloads, import packs or apply it.
 
     The offer is input to a host-owned approval plan, not authorization to apply.
     Root interpreter dependencies cannot be repaired by changing a pack lock.
     """
+    accelerator = resolve_accelerator(accelerator)
     state = importlib.import_module("dinkster_supervisor.environment_state")
     wheel_compatibility = importlib.import_module(
         "dinkster_supervisor.environment_constraints"
@@ -194,7 +197,10 @@ def plan_security_repair(
                 candidate = cast("LockedPack", sources.get(name))
                 requirements = dict(constraints)
                 python_requirements = {
-                    key: manifest.requires for key, manifest in manifests.items()
+                    key: tuple(
+                        normalize_requirement(value) for value in manifest.requires_for(accelerator)
+                    )
+                    for key, manifest in manifests.items()
                 }
                 if (candidate.version, candidate.artifact_digest) != (
                     entry.version,
@@ -217,14 +223,32 @@ def plan_security_repair(
                         not isinstance(value, str) for value in raw_python
                     ):
                         raise InstallError("candidate release has no Python dependency constraints")
+                    extras = manifest.get("pythonExtraRequirements")
+                    if not isinstance(extras, dict) or any(
+                        not isinstance(values, list)
+                        or any(not isinstance(value, str) for value in values)
+                        for values in extras.values()
+                    ):
+                        raise InstallError(
+                            "candidate release has no accelerator dependency constraints"
+                        )
                     python_requirements[name] = tuple(
-                        normalize_requirement(value) for value in raw_python
+                        normalize_requirement(value)
+                        for value in [*raw_python, *extras.get(accelerator, [])]
                     )
                 else:
                     candidate = replace(candidate, claims=entry.claims)
                     sources = Lockfile.of(
                         [candidate if item.pack == name else item for item in sources.packs]
                     )
+                for key, retained in manifests.items():
+                    if key == name and (candidate.version, candidate.artifact_digest) != (
+                        entry.version,
+                        entry.artifact_digest,
+                    ):
+                        continue
+                    if retained.compatibility is not None:
+                        retained.compatibility.require_engine(key, record.engine_version)
                 replacement = replacements[0]
                 if any(
                     "sha256:" + wheel.sha256 in refused_files
@@ -278,16 +302,8 @@ def plan_security_repair(
                 }
                 proposed_artifacts = artifacts(sources, dependencies, requirements)
                 result = security.assess(proposed_artifacts)
-                blocked = {
-                    item.artifact.release.pack for item in result.findings if not item.allowed
-                }
                 changed = tuple(item for item in proposed_artifacts if item.release.pack == name)
-                if (
-                    result.stale_registries
-                    or pack in blocked
-                    or blocked - affected
-                    or not security.assess(changed, installing=True).allowed
-                ):
+                if not result.allowed or not security.assess(changed, installing=True).allowed:
                     raise InstallError("candidate still contains blocked or unapproved files")
                 if "sha256:" + hashlib.sha256(
                     (generation / "generation.json").read_bytes()
@@ -303,6 +319,7 @@ def plan_security_repair(
                         "approvalRequired": True,
                         "generation": record.number,
                         "software": software,
+                        "accelerator": accelerator,
                     },
                 }
             except (InstallError, ProvisionError, OSError, ValueError, KeyError, TypeError) as exc:

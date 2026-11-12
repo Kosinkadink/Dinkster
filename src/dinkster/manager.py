@@ -1317,6 +1317,7 @@ def _cmd_plan_security_repair(args: argparse.Namespace) -> None:
                 _registry_config(args),
                 index=StaticPackIndex(read_only=True),
                 security=security,
+                accelerator=args.accelerator,
             ),
             sort_keys=True,
         )

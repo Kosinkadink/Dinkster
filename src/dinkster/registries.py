@@ -1088,16 +1088,7 @@ def read_registry_pack_locks(
                     lock,
                     indexes=(registry.endpoint + f"/static/{variant}/simple/",),
                     packages=(
-                        *(
-                            replace(
-                                package,
-                                wheels=tuple(
-                                    replace(wheel, registry=wheel.registry or registry.endpoint)
-                                    for wheel in package.wheels
-                                ),
-                            )
-                            for package in lock.packages
-                        ),
+                        *lock.packages,
                         LockedDistribution(entry.pack, entry.version, (wheel,)),
                     ),
                 )
