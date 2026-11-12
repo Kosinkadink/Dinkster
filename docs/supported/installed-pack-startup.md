@@ -167,6 +167,8 @@
   including local development packs. Updates keep recorded registry provenance
   and do not downgrade; missing releases and invalid published locks are reported
   together without acquiring pack payloads or changing the project.
+  Resolved selections retain the issuing endpoint, so changing or removing a
+  local registry name cannot redirect their acquisition or security matching.
 - Published pack install/update commands on an active managed project display
   the retained engine/base/variant, old/new identities, proposed generation,
   published locks, verified cached versus downloadable payloads, wheel-byte

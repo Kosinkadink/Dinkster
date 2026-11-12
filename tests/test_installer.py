@@ -3196,7 +3196,7 @@ def test_registries_config_loads_and_refuses_loudly(tmp_path: Path) -> None:
     assert public.endpoint == "https://reg.example.org"  # trailing slash normalized
     corp = config.get("corp")
     assert corp is not None and corp.token_env == "CORP_TOKEN"
-    assert corp.source == "registry:corp"
+    assert corp.source == "registry:http://reg.corp.internal"
     assert config.get("Corp") is corp  # canonical lookup, one grammar
 
     for body, complaint in (
@@ -3295,7 +3295,7 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
     cross-checks the answer: a 404 names the miss, a substituted or
     malformed record refuses - the index can confess or refuse, never
     redirect."""
-    from dinkster.registries import NamedRegistry, resolve_release
+    from dinkster.registries import NamedRegistry, RegistryConfig, resolve_release
 
     installer = make_installer(tmp_path)
     demo = write_pack(tmp_path / "demo", "demo")
@@ -3314,7 +3314,11 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         assert resolved.pack == "demo" and resolved.version == "1.0.0"
         assert resolved.artifact_digest == entry.artifact_digest
         assert resolved.publisher == "acme"
-        assert resolved.source == "registry:corp"
+        assert resolved.source == "registry:" + registry.endpoint
+        retained = Lockfile.from_record_json(Lockfile.of([resolved]).record_json())
+        rebound = RegistryConfig((NamedRegistry("corp", "https://another.example.test"),))
+        assert rebound.registry_for(retained.packs[0]).endpoint == registry.endpoint
+        assert RegistryConfig().registry_for(retained.packs[0]).endpoint == registry.endpoint
         assert requests[-1] == (good, None)  # token env unset: no header
 
         with pytest.raises(InstallError, match="publishes no release demo@0.0.1"):
@@ -3726,7 +3730,7 @@ def test_registry_source_identity_comes_from_verified_archive(
         else:
             entry = registry_source_lock(selected, cached, engine_version=engine)
             assert entry == LockedPack(
-                "demo", "2.3.1", digest, "audit-actor", ("demo-tools",), "registry:official"
+                "demo", "2.3.1", digest, "audit-actor", ("demo-tools",), registry.source
             )
             assert entry.publisher == selected.publisher
             assert cached.read_bytes() == archive.read_bytes()
@@ -4045,7 +4049,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                     assert target.get("local-only") == local
                     demo = target.get("demo")
                     assert demo is not None and demo.version == "1.2.3"
-                    assert demo.source == "registry:original"
+                    assert demo.source == "registry:" + args[3]
                     assert set(changed["dependencyLocks"]) == {"demo"}
                     assert changed["maximumPackPayloadBytes"] == 12
                 assert {path: path.read_bytes() for path in root.iterdir()} == project_inputs
@@ -4388,9 +4392,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
             assert result.packs == (
                 replace(
                     added,
-                    source="registry:original"
-                    if problem == "replacement"
-                    else f"registry:http://127.0.0.1:{server.server_port}",
+                    source=f"registry:http://127.0.0.1:{server.server_port}",
                 ),
                 old,
             )
@@ -4669,7 +4671,7 @@ def test_cli_reresolves_installed_sources_without_mutating_project(
                         release,
                         publisher="dinkster",
                         claims=("std",),
-                        source=f"registry:{endpoint}" if mode == "url" else "registry:official",
+                        source=f"registry:{endpoint}",
                     ),
                     local,
                     git,

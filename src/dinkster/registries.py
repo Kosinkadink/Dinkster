@@ -11,8 +11,9 @@ design, enforced here so no caller can weaken them:
   private one). With multiple registries configured and no default,
   resolution refuses loudly and names the choices.
 - THE REGISTRY IS PROVENANCE, NEVER IDENTITY. Resolution records
-  ``registry:<name>`` (configured) or ``registry:<url>`` (ad-hoc) as the
-  entry's source; identity stays the artifact digest, and acquisition
+  ``registry:<url>`` as the entry's source, even when selected by a local
+  name, so later configuration cannot change its issuing registry.
+  Identity stays the artifact digest, and acquisition
   verifies the bytes against it, so even a lying index cannot
   substitute content - only refuse or confess.
 - CREDENTIALS ARE PER REGISTRY ENDPOINT, NEVER IN THE CONFIG FILE.
@@ -232,10 +233,8 @@ class NamedRegistry:
 
     @property
     def source(self) -> str:
-        """The provenance qualifier resolution records: the NAME when
-        configured (portable across machines that configure the same
-        label), the URL for ad-hoc endpoints."""
-        return f"registry:{self.name or self.endpoint}"
+        """Pin the issuing endpoint independently of mutable local labels."""
+        return f"registry:{self.endpoint}"
 
     @property
     def label(self) -> str:
@@ -994,10 +993,7 @@ def prepare_registry_update_sources(
                 engine_version=engine_version,
                 index=index,
             )
-            entries.extend(
-                replace(updated, source=entry.source) if entry.source != "registry" else updated
-                for updated in lock.packs
-            )
+            entries.extend(lock.packs)
         except InstallError as exc:
             raise InstallError(
                 f"updating installed {entry.pack}@{entry.version} "
@@ -1187,8 +1183,6 @@ def plan_registry_changes(
                 entry = resolve_release(
                     registry, name, version, engine_version=engine_version, index=index
                 )
-            if previous is not None and previous.source.startswith("registry:"):
-                entry = replace(entry, source=previous.source)
             replacements.append(entry)
         except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
             errors.append(f"{name}: {exc}")
