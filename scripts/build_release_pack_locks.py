@@ -9,17 +9,13 @@ import tempfile
 import tomllib
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 from urllib.parse import quote, unquote, urlsplit
 
 from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_archives import extract_base
 from dinkster_supervisor.environment_artifacts import engine_constraints
 from dinkster_supervisor.environment_channels import engine_publication_names
-from dinkster_supervisor.environment_constraints import (
-    effective_constraints,
-    installed_wheel_origins,
-)
+from dinkster_supervisor.environment_constraints import effective_constraints
 from dinkster_supervisor.environment_downloads import fetch_artifact
 from dinkster_workers.pack_lock import PackLock
 
@@ -134,33 +130,18 @@ def build_locks(
         for path in built:
             if path in locks:
                 lock = PackLock.read(path)
-                origins = {
-                    (row["filename"], row["size"], row["sha256"]): row["registry"]
-                    for row in installed_wheel_origins(
-                        [
-                            {"filename": wheel.filename, "size": wheel.size, "sha256": wheel.sha256}
-                            for package in lock.packages
-                            for wheel in package.wheels
-                        ],
-                        base,
-                        engine,
-                        variant,
-                    )
-                }
                 packages = []
                 for package in lock.packages:
                     wheels = []
                     for wheel in package.wheels:
-                        key = (wheel.filename, wheel.size, wheel.sha256)
                         if urlsplit(wheel.url).scheme == "file":
+                            key = (wheel.filename, wheel.size, wheel.sha256)
                             if key not in wheel_urls:
                                 raise ValueError(
                                     "local wheel has no verified portable URL provenance: "
                                     f"{wheel.filename}"
                                 )
                             wheel = replace(wheel, url=wheel_urls[key])
-                        if origins[key] is not None:
-                            wheel = replace(wheel, registry=cast("str", origins[key]))
                         wheels.append(wheel)
                     packages.append(replace(package, wheels=tuple(wheels)))
                 replace(

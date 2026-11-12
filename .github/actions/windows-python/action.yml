@@ -3,6 +3,11 @@ description: Acquire CPython 3.14.10 with the pinned SQLite mapped-shm fix
 runs:
   using: composite
   steps:
+    - name: Restore the pinned private interpreter
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/dinkster-windows-python
+        key: windows-sqlite-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare_windows_python.py', 'packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py', '.github/actions/windows-python/action.yml') }}
     - shell: pwsh
       run: |
         uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py `
