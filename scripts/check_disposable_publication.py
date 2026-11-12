@@ -17,22 +17,47 @@ from pathlib import Path
 
 def read_scan_timings(database: str) -> list[dict]:
     """Account for time between persisted claim and stage-completion boundaries."""
+    import importlib
     import json
     import sqlite3
     from datetime import UTC, datetime
+    from uuid import UUID
 
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
+    postgres = database.startswith("postgresql://")
+    if postgres:
+        psycopg = importlib.import_module("psycopg")
+        connection = psycopg.connect(
+            database, autocommit=True, row_factory=importlib.import_module("psycopg.rows").dict_row
+        )
+    else:
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+
+    def rows(query, parameters=()):
+        for row in connection.execute(query.replace("?", "%s") if postgres else query, parameters):
+            yield {
+                key: value.isoformat()
+                if isinstance(value, datetime)
+                else value.hex
+                if isinstance(value, UUID)
+                else json.dumps(value)
+                if isinstance(value, dict)
+                else value
+                for key, value in dict(row).items()
+            }
+
     try:
-        connection.execute("BEGIN")
+        connection.execute(
+            "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY" if postgres else "BEGIN"
+        )
         candidates = []
-        for candidate in connection.execute(
+        for candidate in rows(
             "SELECT id, release_id, pack_name, status, submitted_at FROM release_candidates "
             "ORDER BY submitted_at, id"
         ):
             claims = {
                 json.loads(row["data"])["attempt"]: row["created_at"]
-                for row in connection.execute(
+                for row in rows(
                     "SELECT created_at, data FROM audit_events "
                     "WHERE event_type = 'release_candidate.claimed' "
                     "AND replace(subject_id, '-', '') = ? ORDER BY created_at, id",
@@ -41,7 +66,7 @@ def read_scan_timings(database: str) -> list[dict]:
             }
             boundaries = dict(claims)
             stages = []
-            for row in connection.execute(
+            for row in rows(
                 "SELECT stage, attempt, accepted, created_at FROM release_scan_runs "
                 "WHERE candidate_id = ? OR (release_id = ? AND stage = 'admission') "
                 "ORDER BY created_at, id",
@@ -155,6 +180,7 @@ def check_publication(
 
     service_id = docker("image", "inspect", service_image, "--format", "{{.Id}}")
     publisher_id = docker("image", "inspect", publisher_image, "--format", "{{.Id}}")
+    database_id = docker("image", "inspect", "postgres:16-alpine", "--format", "{{.Id}}")
     bases = sorted(inputs.glob("bases/*/manifest.json"))
     locks = sorted(inputs.glob("locks/*.pack-lock.json"))
     if not bases or not locks or not (inputs / "sources/official-packs.lock").is_file():
@@ -193,7 +219,7 @@ def check_publication(
         ):
             raise ValueError("disposable API wheel differs from its engine manifest")
 
-    def run_container(role: str, image: str, *arguments: str) -> str:
+    def run_container(role: str, image: str, *arguments: str, command: tuple[str, ...] = ()) -> str:
         container = name + "-" + role
         # Register before starting so a failed start cannot leave an owned container behind.
         containers.append(container)
@@ -211,6 +237,7 @@ def check_publication(
             "127.0.0.1",
             *arguments,
             image,
+            *command,
         )
         return container
 
@@ -219,11 +246,28 @@ def check_publication(
         network_created = True
         docker("volume", "create", name)
         volume_created = True
+        database = run_container(
+            "database",
+            database_id,
+            "--tmpfs",
+            "/var/lib/postgresql/data",
+            "--env",
+            "POSTGRES_HOST_AUTH_METHOD=trust",
+            "--env",
+            "POSTGRES_DB=registry",
+        )
+        docker(
+            "exec",
+            database,
+            "sh",
+            "-c",
+            "until pg_isready -U postgres -d registry; do sleep .2; done",
+        )
         common = (
             "--mount",
             f"type=volume,src={name},dst=/data",
             "--env",
-            "DINKSTER_DATABASE_URL=sqlite:////data/registry.sqlite",
+            "DINKSTER_DATABASE_URL=postgresql+psycopg://postgres@database/registry",
             "--env",
             "DINKSTER_OBJECT_STORE_ROOT=/data/objects",
             "--env",
@@ -248,6 +292,11 @@ def check_publication(
             *common,
             "--user",
             "root",
+            "--env",
+            "DINKSTER_SEED_FIXTURES=0",
+            "--entrypoint",
+            "/app/scripts/start-dev.sh",
+            command=("serve",),
         )
         wheels = name + "-wheels"
         containers.append(wheels)
@@ -306,26 +355,31 @@ def check_publication(
             "--expires",
             (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         )
-        scanner = name + "-scanner"
-        containers.append(scanner)
-        docker(
-            "run",
-            "--detach",
-            "--pull=never",
-            "--name",
-            scanner,
-            "--network",
-            name,
-            "--dns",
-            "127.0.0.1",
-            "--user",
-            "root",
-            "--privileged",
-            *common,
-            service_id,
-            "dinkster-registry",
-            "scanner",
-        )
+        scanners = []
+        for index in range(2):
+            scanner = name + f"-scanner-{index}"
+            containers.append(scanner)
+            scanners.append(scanner)
+            docker(
+                "run",
+                "--detach",
+                "--pull=never",
+                "--name",
+                scanner,
+                "--network",
+                name,
+                "--dns",
+                "127.0.0.1",
+                "--user",
+                "root",
+                "--privileged",
+                *common,
+                service_id,
+                "dinkster-registry",
+                "scanner",
+                "--worker-id",
+                scanner,
+            )
         publisher = name + "-publisher"
         containers.append(publisher)
         pythonpath = ":".join(
@@ -371,7 +425,7 @@ def check_publication(
             "except OSError: pass\n"
             "else: raise RuntimeError('external network is reachable')\n"
         )
-        for container in (registry, scanner, publisher, wheels):
+        for container in (registry, *scanners, publisher, wheels):
             docker("exec", container, "python", "-c", denied)
         arguments = [
             "--sources",
@@ -426,6 +480,7 @@ def check_publication(
         return {
             "serviceImage": service_id,
             "publisherImage": publisher_id,
+            "databaseImage": database_id,
             "externalNetworkDenied": True,
             "submissions": submissions,
             "elapsedSeconds": time.monotonic() - start,
@@ -437,7 +492,7 @@ def check_publication(
         phase = "failure-diagnostics"
         # Retain scanner diagnostics before deleting the disposable database.
         report = (
-            "import json,sqlite3; db=sqlite3.connect('/data/registry.sqlite'); "
+            "import json,psycopg; db=psycopg.connect('postgresql://postgres@database/registry'); "
             "print(json.dumps(db.execute('SELECT stage,operator_details,doctor "
             "FROM release_scan_runs ORDER BY created_at DESC LIMIT 10').fetchall()))"
         )
@@ -473,7 +528,7 @@ def check_publication(
                     "python",
                     "-c",
                     inspect.getsource(read_scan_timings) + "\nimport json; "
-                    "print(json.dumps(read_scan_timings('/data/registry.sqlite')))",
+                    "print(json.dumps(read_scan_timings('postgresql://postgres@database/registry')))",
                 ],
                 env=environment,
                 capture_output=True,
