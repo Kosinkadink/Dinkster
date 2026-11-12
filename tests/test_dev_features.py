@@ -84,6 +84,16 @@ def test_dev_features_catalog_and_content() -> None:
                     )
                     assert response.status == 200
                     document = await response.json()
+                    root = document["graphs"][document["root"]]
+                    if kind == "blueprints":
+                        assert root["boundary"] == {"inputs": [], "outputs": []}
+                    else:
+                        assert "boundary" not in root
+                    assert root["links"]["image"] == {
+                        "id": "image",
+                        "from": {"node": "source", "port": "image"},
+                        "to": {"node": "mirror", "port": "image"},
+                    }
                     assert (
                         document["graphs"]["root"]["nodes"]["mirror"]["type"]
                         == "dev.features.mirror"

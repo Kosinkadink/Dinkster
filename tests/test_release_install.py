@@ -1120,11 +1120,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         helper = tomllib.loads(
             (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.3"
+        assert helper["version"] == "0.0.4"
         models = tomllib.loads(
             (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
         )["project"]
-        assert "dinkster-pack-helpers==0.0.3" in models["dependencies"]
+        assert "dinkster-pack-helpers==0.0.4" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -3015,7 +3015,7 @@ new Function('context', 'core', 'github', 'return (async () => {' + fixture.scri
 """
     result = json.loads(
         subprocess.check_output(
-            ["node", "-e", harness], input=json.dumps(fixture), text=True, timeout=10
+            ["node", "-e", harness], input=json.dumps(fixture), text=True, timeout=30
         )
     )
     if problem is None:

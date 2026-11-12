@@ -268,6 +268,15 @@ def run_selected_tests(
             flush=True,
         )
         work = Path(directory)
+        wheel_store = work / "wheels"
+        wheel_store.mkdir()
+        # Candidate archives need not be public yet; each consumer lock still
+        # verifies the staged wheel's filename, size and digest before use.
+        for pack in catalog.packs:
+            filename = f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+            shutil.copyfile(
+                pack_archive_path(artifacts, pack.artifact_digest), wheel_store / filename
+            )
         checkout = work / "engine"
         tracked = subprocess.check_output(
             ["git", "-C", str(root), "ls-files", "-z"], text=True

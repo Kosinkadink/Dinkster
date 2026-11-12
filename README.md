@@ -102,6 +102,9 @@ installation and runtime use do not require that checkout.
   the tool never guesses output names or projections.
 - `uv run --no-sync dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
+- `dinkster-pack prepare-registry-sources` and `prepare-registry-locks` prepare
+  reviewed installation inputs without loading serving composition. Serving specs
+  and pack presentation are loaded only when the installer prepares a serving host.
 - `uv run --no-sync dinkster-pack prepare-catalogs --defaults` - prepare installed
   default-pack dependencies and persist their schemas before serving; run it
   after installation and rerun it after checkout or dependency changes
