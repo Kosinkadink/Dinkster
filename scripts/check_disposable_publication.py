@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -12,6 +13,71 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+
+def read_scan_timings(database: str) -> list[dict]:
+    """Account for time between persisted claim and stage-completion boundaries."""
+    import json
+    import sqlite3
+    from datetime import UTC, datetime
+
+    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("BEGIN")
+        candidates = []
+        for candidate in connection.execute(
+            "SELECT id, release_id, pack_name, status, submitted_at FROM release_candidates "
+            "ORDER BY submitted_at, id"
+        ):
+            claims = {
+                json.loads(row["data"])["attempt"]: row["created_at"]
+                for row in connection.execute(
+                    "SELECT created_at, data FROM audit_events "
+                    "WHERE event_type = 'release_candidate.claimed' "
+                    "AND replace(subject_id, '-', '') = ? ORDER BY created_at, id",
+                    (candidate["id"],),
+                )
+            }
+            boundaries = dict(claims)
+            stages = []
+            for row in connection.execute(
+                "SELECT stage, attempt, accepted, created_at FROM release_scan_runs "
+                "WHERE candidate_id = ? OR (release_id = ? AND stage = 'admission') "
+                "ORDER BY created_at, id",
+                (candidate["id"], candidate["release_id"]),
+            ):
+                start = boundaries.get(row["attempt"])
+                end = row["created_at"]
+                stages.append(
+                    {
+                        "stage": row["stage"],
+                        "attempt": row["attempt"],
+                        "accepted": bool(row["accepted"]),
+                        "intervalStartAt": start,
+                        "recordedAt": end,
+                        "intervalSeconds": (
+                            datetime.fromisoformat(end) - datetime.fromisoformat(start)
+                        ).total_seconds()
+                        if start is not None
+                        else None,
+                    }
+                )
+                boundaries[row["attempt"]] = end
+            candidates.append(
+                {
+                    "candidateId": candidate["id"],
+                    "pack": candidate["pack_name"],
+                    "status": candidate["status"],
+                    "submittedAt": candidate["submitted_at"],
+                    "claimedAt": claims,
+                    "stages": stages,
+                    "observedAt": datetime.now(UTC).isoformat(),
+                }
+            )
+        return candidates
+    finally:
+        connection.close()
 
 
 def verify_active(inputs: Path, rows: list[dict], timeout: float) -> None:
@@ -59,6 +125,18 @@ def check_publication(
     network_created = volume_created = False
     token: str | None = None
     environment = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+    timings: dict = {"phases": [], "candidates": []}
+    phase = "startup"
+    phase_start = start
+    failed = False
+
+    def finish_phase() -> None:
+        nonlocal phase_start
+        end = time.monotonic()
+        timings["phases"].append(
+            {"phase": phase, "startSeconds": phase_start - start, "endSeconds": end - start}
+        )
+        phase_start = end
 
     def docker(*arguments: str, token: str | None = None) -> str:
         env = environment | ({"DINKSTER_REGISTRY_TOKEN": token} if token else {})
@@ -309,7 +387,9 @@ def check_publication(
         for path in locks:
             arguments.extend(["--pack-lock", "/inputs/" + str(path.relative_to(inputs))])
         submissions = []
+        finish_phase()
         for attempt in ("submitted", "already-active"):
+            phase = attempt
             submissions.append(
                 json.loads(
                     docker(
@@ -325,6 +405,8 @@ def check_publication(
                     )
                 )
             )
+            finish_phase()
+            phase = attempt + "-verify-active"
             verify = (
                 "import json,sys; from pathlib import Path; "
                 "from scripts.check_disposable_publication import verify_active; "
@@ -340,14 +422,19 @@ def check_publication(
                 str(max(1, deadline - time.monotonic())),
                 token=token,
             )
+            finish_phase()
         return {
             "serviceImage": service_id,
             "publisherImage": publisher_id,
             "externalNetworkDenied": True,
             "submissions": submissions,
             "elapsedSeconds": time.monotonic() - start,
+            "timings": timings,
         }
     except Exception:
+        failed = True
+        finish_phase()
+        phase = "failure-diagnostics"
         # Retain scanner diagnostics before deleting the disposable database.
         report = (
             "import json,sqlite3; db=sqlite3.connect('/data/registry.sqlite'); "
@@ -373,6 +460,37 @@ def check_publication(
             pass
         raise
     finally:
+        if failed:
+            finish_phase()
+        phase = "scan-timing-capture"
+        # Diagnostics have an independent bound, not more time for publication work.
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    name + "-registry",
+                    "python",
+                    "-c",
+                    inspect.getsource(read_scan_timings) + "\nimport json; "
+                    "print(json.dumps(read_scan_timings('/data/registry.sqlite')))",
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if result.returncode == 0:
+                timings["candidates"] = json.loads(result.stdout)
+            else:
+                timings["captureError"] = "scan timing reader exited " + str(result.returncode)
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            timings["captureError"] = type(exc).__name__
+        finish_phase()
+        if failed:
+            print(json.dumps({"timings": timings}), flush=True)
+        phase = "cleanup"
         # Cleanup has its own bound even when the publication deadline expired.
         deadline = time.monotonic() + 60
         for container in reversed(containers):
@@ -381,6 +499,7 @@ def check_publication(
             docker("volume", "rm", name)
         if network_created:
             docker("network", "rm", name)
+        finish_phase()
 
 
 if __name__ == "__main__":
