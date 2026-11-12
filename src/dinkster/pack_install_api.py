@@ -255,8 +255,10 @@ def add_pack_install_routes(
             return failure(404, "preparation-not-found")
         if request.path.endswith("/cancel"):
             preparation.cancel()
+        snapshot = preparation.snapshot()
+        if snapshot["state"] in {"cancelled", "failed"}:
             pending.pop(owner, None)
-        return web.json_response(preparation.snapshot(), headers={"Cache-Control": "no-store"})
+        return web.json_response(snapshot, headers={"Cache-Control": "no-store"})
 
     async def handle_apply(request: web.Request) -> web.Response:
         owner, confirmation = await body_for(request, "confirmation")

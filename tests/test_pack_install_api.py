@@ -158,11 +158,13 @@ def test_preparation_status_outlives_metadata_deadline_without_resurrecting_canc
     from dinkster_supervisor.environment_progress import preparation_progress
 
     started, finish = threading.Event(), threading.Event()
+    scratch: list[Path] = []
     clock = [0.0]
     monkeypatch.setattr(preparation_state, "monotonic", lambda: clock[0])
 
     def plan(_root: Path, _selections: tuple[str, ...], output: Path) -> dict[str, object]:
         output.mkdir()
+        scratch.append(output)
         preparation_progress("checking-software", 128, 256)
         started.set()
         assert finish.wait(10)
@@ -228,7 +230,7 @@ def test_preparation_status_outlives_metadata_deadline_without_resurrecting_canc
                         "/api/packs/install/preparation/status", json=identity
                     )
                     snapshot = await status.json()
-                    if snapshot["state"] != "preparing":
+                    if snapshot["state"] != "preparing" and not scratch[0].exists():
                         break
                     await asyncio.sleep(0)
             if outcome == "ready":
