@@ -487,7 +487,7 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
         assert previous_units == 32768
 
     def sync(command, **kwargs):
-        if command[1:3] == ["-I", "-S"]:
+        if command[1:4] == ["-I", "-B", "-S"]:
             return subprocess.CompletedProcess(
                 command, 0, json.dumps({"tags": ["py3-none-any"], "markers": {}}), ""
             )
@@ -853,11 +853,11 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             )
             module = target / "pack_environment.py"
             text = module.read_text()
-            text = text.replace(
-                'choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")',
-                'choices=("preflight", "rebuild", "doctor", "terminal", "references")',
-            )
-            module.write_text(text)
+            start = text.index("choices=(")
+            end = text.index(")", start)
+            choices = text[start:end]
+            assert '"acquire", ' in choices
+            module.write_text(text[:start] + choices.replace('"acquire", ', "") + text[end:])
 
     monkeypatch.setattr(publisher, "standalone_tree", standalone)
     monkeypatch.setattr(publisher, "canonical_json", canonical_json)
