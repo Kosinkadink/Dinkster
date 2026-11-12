@@ -51,7 +51,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -193,7 +193,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         releases.append(release)
         files["/static/" + lock_url] = lock
         files["/static/" + release["wheels"][0]["url"]] = payload
-    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": releases}).encode()
+    files.update(_static_indexes(releases))
     requests = []
     server = _serve_artifacts(files, requests)
     trap = tmp_path / "trap"
