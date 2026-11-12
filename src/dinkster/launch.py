@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from .setup import default_project
 
 
 def main(argv: list[str] | None = None) -> int:
-    from dinkster_supervisor.environment import argument_parser, run
+    environment = importlib.import_module("dinkster_supervisor.environment")
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     operation = "start"
@@ -21,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
         browser = False
         if operation == "serve":
             operation = "start"
-    parser = argument_parser(operation)
+    parser = environment.argument_parser(operation)
     parser.prog = program
     parser.description = "Use the active managed generation; run dinkster setup first"
     parser.allow_abbrev = False
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     args.root = args.root.expanduser().resolve()
     if operation in {"start", "stop"} and not args.plan:
         args.yes = True
-    return run(args)
+    return environment.run(args)
 
 
 def serve_main() -> int:
