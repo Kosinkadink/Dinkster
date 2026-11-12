@@ -8,8 +8,10 @@ import copy
 import hashlib
 import json
 import os
+import sys
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -237,8 +239,9 @@ def test_host_refuses_invalid_local_policy_before_transport(tmp_path: Path, conf
 
 
 @pytest.mark.parametrize("stop_reason", ["malicious", "denied"])
+@pytest.mark.parametrize("shared", [False, True])
 def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_control(
-    tmp_path: Path, stop_reason: str
+    tmp_path: Path, stop_reason: str, shared: bool
 ):
     from dinkster_protocol import Invocation
     from dinkster_workers.doctor import prepare_catalog
@@ -250,7 +253,10 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
     host = SecurityHost(tmp_path)
     specs = []
     roots = []
-    for name in ("test-pack", "control-pack"):
+    names = (
+        ("test-pack", "shared-pack", "control-pack") if shared else ("test-pack", "control-pack")
+    )
+    for name in names:
         root = tmp_path / name
         root.mkdir()
         marker = tmp_path / f"{name}-markers"
@@ -303,6 +309,13 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
                 security_artifacts=(artifact,),
             )
         )
+    if shared:
+        manifests = tuple(Path(spec.manifest) for spec in specs[:2])
+        environment = {"PYTHONPATH": os.pathsep.join(str(path.parent) for path in manifests)}
+        specs[:2] = [
+            replace(spec, env=environment, worker_group="shared", group_manifests=manifests)
+            for spec in specs[:2]
+        ]
     feed = _feed("malicious")
     feed["notices"][0]["release"]["artifactDigest"] = (
         specs[0].security_artifacts[0].release.artifact_digest
@@ -315,11 +328,13 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             with pytest.raises(SecurityError, match="security malicious"):
                 await composer.add_pack(specs[0])
             assert not (roots[0] / "imported").exists()
-            await composer.add_pack(specs[1])
+            await composer.add_pack(specs[-1])
             feed["revision"] = 2
             feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
             store.import_feed(REGISTRY, _signed(feed, key))
             await composer.add_pack(specs[0])
+            if shared:
+                await composer.add_pack(specs[1])
             assert not (roots[0] / "imported").exists()
             pinned = composer.composition._pin_execution()
 
@@ -340,6 +355,13 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             async with asyncio.timeout(15):
                 while not (roots[0] / "started").exists():
                     await asyncio.sleep(0.01)
+            sibling = None
+            if shared:
+                (roots[1] / "hold").touch()
+                sibling = asyncio.create_task(invoke("shared-pack"))
+                async with asyncio.timeout(15):
+                    while not (roots[1] / "started").exists():
+                        await asyncio.sleep(0.01)
             feed["revision"] = 3
             feed["notices"][0].update(
                 revision=3, previousRevision=2, status="active", state="vulnerable"
@@ -361,13 +383,16 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
                 store.import_feed(REGISTRY, _signed(feed, key))
             assert not await composer.enforce_security()
             await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), 10)
+            if sibling is not None:
+                await asyncio.wait_for(asyncio.gather(sibling, return_exceptions=True), 10)
+                assert not (roots[1] / "finished").exists()
             assert not (roots[0] / "finished").exists()
             with pytest.raises(SecurityError):
                 await invoke("test-pack")
             control = await invoke("control-pack")
             assert control.error is None and control.outputs is not None
             assert control.outputs["value"].resolve() == "control-pack"
-            assert (roots[1] / "finished").read_text() == "finished\nfinished\n"
+            assert (roots[-1] / "finished").read_text() == "finished\nfinished\n"
             feed["revision"] = 5
             previous = feed["notices"][0]["revision"]
             feed["notices"][0].update(revision=5, previousRevision=previous, status="cleared")
@@ -379,6 +404,241 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             assert not (roots[0] / "finished").exists()
         finally:
             await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "in_process"), [("malicious", False), ("denied", False), ("malicious", True)]
+)
+def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
+    tmp_path: Path,
+    security_feed: tuple[str, dict[str, Any]],
+    stop_reason: str,
+    in_process: bool,
+    capfd: pytest.CaptureFixture[str],
+):
+    import aiohttp
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_supervisor.supervisor import EngineLink, EngineProcess
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.installer import Installer
+
+    installer = Installer(tmp_path / "installed", accelerator="cpu", runtime_probe=lambda _: ())
+    entries = []
+    archives = {}
+    markers = {}
+    for name in ("test-pack", "control-pack"):
+        source = tmp_path / name
+        source.mkdir()
+        marker = tmp_path / f"{name}-markers"
+        marker.mkdir()
+        markers[name] = marker
+        module = name.replace("-", "_") + "_security_nodes"
+        manifest = source / "dinkster-pack.toml"
+        manifest.write_text(f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "{module}:NODES"\n')
+        (source / f"{module}.py").write_text(
+            "import asyncio\nfrom pathlib import Path\n"
+            "from dinkster_schema import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr\n"
+            "from dinkster_values import CORE_STRING\n"
+            f"ROOT = Path({str(marker)!r})\n"
+            "(ROOT / 'imported').touch()\n"
+            "class Marker(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            f"        return NodeSchema(node_type='{name}.run', display_name='Marker', "
+            "category='test', inputs=(InputSpec('nonce', TypeExpr.concrete(CORE_STRING)),), "
+            "outputs=(OutputSpec('value', "
+            "TypeExpr.concrete(CORE_STRING)),), io_bound=True)\n"
+            "    @classmethod\n"
+            "    async def execute(cls, nonce):\n"
+            "        (ROOT / 'started').touch()\n"
+            "        while (ROOT / 'hold').exists():\n"
+            "            await asyncio.sleep(0.01)\n"
+            "        with (ROOT / 'finished').open('a') as stream:\n"
+            "            stream.write('finished\\n')\n"
+            f"        return cls.outputs(value='{name}')\n"
+            "NODES = [Marker]\n"
+        )
+        assert prepare_catalog(manifest, environment={"PYTHONPATH": str(source)}).ok
+        (marker / "imported").unlink()
+        archive = tmp_path / f"{name}.zip"
+        digest = build_artifact(source, archive)
+        entries.append(
+            LockedPack(name, "1.2.3", digest, "publisher", (name,), "registry:" + REGISTRY)
+        )
+        archives[digest] = archive
+    installer.apply(
+        Lockfile.of(entries),
+        archives,
+        venvs=False,
+        hosting_in_process=("test-pack",) if in_process else (),
+        hosting_runtime_pins=installer.serving_runtime_pins() if in_process else {},
+    )
+    key = Ed25519PrivateKey.generate()
+    store = _store(installer.root, key)
+    url, response = security_feed
+    (installer.root / "security.toml").write_text(
+        "refresh_interval_seconds = 0.05\n[feed_urls]\n"
+        f'"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
+    feed = _feed()
+    feed["notices"][0]["release"]["artifactDigest"] = entries[0].artifact_digest
+    response.update(status=200, body=_signed(feed, key))
+
+    async def scenario() -> None:
+        link = EngineLink()
+        engine = EngineProcess(
+            [
+                sys.executable,
+                "-m",
+                "dinkster.serve",
+                "--no-default-packs",
+                "--library-root",
+                "",
+                "--install-root",
+                str(installer.root),
+            ],
+            link,
+            probe_interval=0.05,
+        )
+        async with aiohttp.ClientSession() as client:
+
+            async def ready() -> None:
+                async with asyncio.timeout(60):
+                    while True:
+                        assert link.state != "failed", link.detail
+                        if link.state == "ready":
+                            async with client.get(link.base_url + "/api/nodes") as result:
+                                nodes = await result.json()
+                            if all(f"{name}.run" in nodes["nodes"] for name in markers):
+                                return
+                        await asyncio.sleep(0.02)
+
+            async def submit(name: str, job: str) -> None:
+                graph = Graph(nodes={"marker": GraphNode(f"{name}.run", {"nonce": job})})
+                async with client.post(
+                    link.base_url + "/api/jobs",
+                    json={
+                        "clientId": "security",
+                        "jobId": job,
+                        "graph": graph_to_wire(graph),
+                        "targets": ["marker"],
+                    },
+                ) as result:
+                    assert result.status == 202, await result.text()
+
+            async def completed(job: str) -> None:
+                async with asyncio.timeout(15):
+                    while True:
+                        async with client.get(
+                            link.base_url + f"/api/jobs/security/{job}"
+                        ) as result:
+                            state = await result.json()
+                        if state["state"] in {"completed", "failed", "cancelled"}:
+                            assert state["state"] == "completed", state
+                            return
+                        await asyncio.sleep(0.02)
+
+            try:
+                await engine.start()
+                await ready()
+                async with client.get(link.base_url + "/api/security") as result:
+                    status = await result.json()
+                assert status["findings"][0]["decision"] == "pending"
+                await submit("test-pack", "before-restart")
+                await completed("before-restart")
+                assert (markers["test-pack"] / "finished").read_text() == "finished\n"
+                await engine.restart()
+                await ready()
+                await submit("test-pack", "after-restart")
+                await completed("after-restart")
+                assert (markers["test-pack"] / "finished").read_text() == "finished\nfinished\n"
+                assert "decision pending, execution allowed" in capfd.readouterr().err
+                await submit("control-pack", "before-block")
+                await completed("before-block")
+                assert (markers["control-pack"] / "finished").read_text() == "finished\n"
+                (markers["test-pack"] / "started").unlink()
+                (markers["test-pack"] / "hold").touch()
+                await submit("test-pack", "running")
+                async with asyncio.timeout(15):
+                    while not (markers["test-pack"] / "started").exists():
+                        await asyncio.sleep(0.02)
+                if stop_reason == "denied":
+                    store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+                else:
+                    feed["revision"] = 2
+                    feed["notices"][0].update(revision=2, previousRevision=1, state="malicious")
+                    response["body"] = _signed(feed, key)
+                if in_process:
+                    async with asyncio.timeout(15):
+                        while link.state != "failed":
+                            await asyncio.sleep(0.02)
+                    assert link.exit_code not in (None, 0)
+                    assert (markers["test-pack"] / "finished").read_text() == "finished\nfinished\n"
+                    assert (markers["control-pack"] / "finished").read_text() == "finished\n"
+                    (markers["test-pack"] / "hold").unlink()
+                    feed["revision"] = 3
+                    feed["notices"][0].update(revision=3, previousRevision=2, status="cleared")
+                    response["body"] = _signed(feed, key)
+                    assert link.state == "failed"
+                    await engine.restart()
+                    await ready()
+                    async with client.get(link.base_url + "/api/security") as result:
+                        assert not (await result.json())["findings"]
+                    await submit("test-pack", "explicit-restart")
+                    await completed("explicit-restart")
+                    assert (
+                        markers["test-pack"] / "finished"
+                    ).read_text() == "finished\nfinished\nfinished\n"
+                    return
+                async with asyncio.timeout(15):
+                    while True:
+                        async with client.get(link.base_url + "/api/security") as result:
+                            status = await result.json()
+                        if status["findings"] and not status["findings"][0]["allowed"]:
+                            break
+                        await asyncio.sleep(0.02)
+                await submit("control-pack", "control")
+                await completed("control")
+                assert (markers["control-pack"] / "finished").read_text() == "finished\nfinished\n"
+                async with asyncio.timeout(15):
+                    while True:
+                        async with client.get(
+                            link.base_url + "/api/jobs/security/running"
+                        ) as result:
+                            state = await result.json()
+                        if state["state"] in {"failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0.02)
+                (markers["test-pack"] / "hold").unlink()
+                feed["revision"] = 3
+                previous = feed["notices"][0]["revision"]
+                feed["notices"][0].update(revision=3, previousRevision=previous, status="cleared")
+                response["body"] = _signed(feed, key)
+                async with asyncio.timeout(15):
+                    while True:
+                        async with client.get(link.base_url + "/api/security") as result:
+                            status = await result.json()
+                        if not status["findings"]:
+                            break
+                        await asyncio.sleep(0.02)
+                assert (markers["test-pack"] / "finished").read_text() == "finished\nfinished\n"
+                await submit("test-pack", "after-lift")
+                async with asyncio.timeout(15):
+                    while True:
+                        async with client.get(
+                            link.base_url + "/api/jobs/security/after-lift"
+                        ) as result:
+                            state = await result.json()
+                        if state["state"] in {"completed", "failed", "cancelled"}:
+                            assert state["state"] == "failed", state
+                            break
+                        await asyncio.sleep(0.02)
+                assert (markers["test-pack"] / "finished").read_text() == "finished\nfinished\n"
+            finally:
+                await engine.close()
 
     asyncio.run(scenario())
 
