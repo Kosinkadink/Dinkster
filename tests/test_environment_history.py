@@ -904,7 +904,7 @@ def test_managed_pack_install_requires_exact_security_approval(
         PackLock("sibling", "fixture-cpu", ">=3.12", (), (), ()).write(lock_path)
         lock = lock_path.read_bytes()
         lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
-        index = json.loads(registry_files["/static/packs/index.json"])
+        index = json.loads(registry_files["/static/packs/healthy/index.json"])
         release = {
             **test_installer._static_release(entry, payload),
             "engine": ">=1,<3",
@@ -918,8 +918,7 @@ def test_managed_pack_install_requires_exact_security_approval(
                 }
             },
         }
-        index["items"].append(release)
-        registry_files["/static/packs/index.json"] = json.dumps(index).encode()
+        registry_files.update(test_installer._static_indexes([*index["items"], release]))
         registry_files["/static/" + lock_url] = lock
         registry_files["/static/" + release["wheels"][0]["url"]] = payload
         retained_review = tmp_path / "retained-review"
