@@ -467,6 +467,7 @@ _PACK_CODEC_EXPORTS = {
     "register_voxel_type": "dinkster_inference_wire.voxel_wire",
 }
 _PACK_MEDIA_EXPORTS = {
+    "parse_color": "dinkster_video_runtime.image_math",
     "MAX_COMPOSITOR_DIMENSION": "dinkster_image_document.compositor",
     "MAX_COMPOSITOR_LAYERS": "dinkster_image_document.compositor",
     "CompositorLayer": "dinkster_image_document.compositor",
@@ -634,6 +635,7 @@ if TYPE_CHECKING:
     from dinkster_video_runtime import document as timeline_document
     from dinkster_video_runtime import image_math, timeline_runtime
     from dinkster_video_runtime import timeline as timeline_render
+    from dinkster_video_runtime.image_math import parse_color
     from dinkster_workers.execution import current_execution_context
 
 __all__ = [
@@ -720,6 +722,7 @@ __all__ = [
     "timeline_video",
     "video_document",
     "image_math",
+    "parse_color",
     "timeline_document",
     "timeline_render",
     "timeline_runtime",
