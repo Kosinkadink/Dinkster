@@ -1318,6 +1318,17 @@ def test_official_publication_requires_complete_supported_base_bindings(
         problem = problem.removeprefix("preflight-")
     sources = tmp_path / "sources"
     sources.mkdir()
+    engine_manifest = tmp_path / "release-manifest.json"
+    engine_manifest.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.engine/1",
+                "repository": "Kosinkadink/Dinkster",
+                "commit": "c" * 40,
+                "version": "0.3.1",
+            }
+        )
+    )
     packs = []
     published_helper = None
     versions = [
@@ -1659,6 +1670,23 @@ def test_official_publication_requires_complete_supported_base_bindings(
             respond(handler)
 
     monkeypatch.setattr(server.RequestHandlerClass, "respond", registry_response)
+    engine_bindings = []
+    if problem is None:
+        from email import policy
+        from email.parser import BytesParser
+
+        def receive(handler):
+            body = handler.rfile.read(int(handler.headers["Content-Length"]))
+            message = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {handler.headers['Content-Type']}\r\n\r\n".encode() + body
+            )
+            parts = list(message.iter_parts())
+            payload = parts[2].get_payload(decode=True)
+            assert isinstance(payload, bytes)
+            engine_bindings.append(json.loads(payload))
+            handler.respond()
+
+        monkeypatch.setattr(server.RequestHandlerClass, "do_POST", receive)
     output = tmp_path / "publication"
     before = {path: path.read_bytes() for path in [*sources.iterdir(), *locks, *bases]}
     try:
@@ -1834,6 +1862,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 preflight_registry=registry.endpoint
                 if preflight or problem == "check-published"
                 else None,
+                engine_manifest=engine_manifest if problem is None else None,
             )
             assert len(result) == 2
             assert [row["version"] for row in result] == [version for _, version in versions]
@@ -1863,6 +1892,18 @@ def test_official_publication_requires_complete_supported_base_bindings(
             )
         if preflight:
             assert submitted == []
+        if problem is None:
+            assert (
+                engine_bindings
+                == [
+                    {
+                        "commit": "c" * 40,
+                        "manifestDigest": "sha256:"
+                        + hashlib.sha256(engine_manifest.read_bytes()).hexdigest(),
+                    }
+                ]
+                * 2
+            )
         assert {path: path.read_bytes() for path in before} == before
         assert not list(tmp_path.glob("official-publication-*"))
     finally:
@@ -1878,6 +1919,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
         ("locks", "scanning"),
         ("locks", "retrying"),
         ("locks", "accepted"),
+        ("engine", "queued"),
         ("missing", "queued"),
         ("refused", "queued"),
         ("invalid", "rejected"),
@@ -1902,6 +1944,7 @@ def test_publication_client_preserves_archive_and_lock_bytes(
     archive, locks = tmp_path / "demo-1.2.3-py3-none-any.whl", tmp_path / "locks.json"
     archive.write_bytes(b"exact archive\x00\xff\r\n")
     lock_bytes = b'{"win-cpu":{"baseId":"exact binding"}}\n'
+    engine = {"commit": "a" * 40, "manifestDigest": "sha256:" + "b" * 64}
     if mode != "missing":
         locks.write_bytes(lock_bytes)
     requests = []
@@ -1943,7 +1986,12 @@ def test_publication_client_preserves_archive_and_lock_bytes(
                 publish_release(registry, archive, "demo", "1.2.3", locks=locks)
         else:
             result = publish_release(
-                registry, archive, "demo", "1.2.3", locks=locks if mode == "locks" else None
+                registry,
+                archive,
+                "demo",
+                "1.2.3",
+                locks=locks if mode in {"locks", "engine"} else None,
+                engine=engine if mode == "engine" else None,
             )
             assert result.state == state and result.candidate_id == "candidate-1"
         if mode == "missing":
@@ -1962,9 +2010,13 @@ def test_publication_client_preserves_archive_and_lock_bytes(
             assert [part.get_param("name", header="content-disposition") for part in parts] == [
                 "archive",
                 "locks",
-            ]
+            ] + (["engine"] if mode == "engine" else [])
             assert parts[0].get_payload(decode=True) == archive.read_bytes()
             assert parts[1].get_payload(decode=True) == lock_bytes
+            if mode == "engine":
+                payload = parts[2].get_payload(decode=True)
+                assert isinstance(payload, bytes)
+                assert json.loads(payload) == engine
     finally:
         server.shutdown()
         server.server_close()

@@ -153,9 +153,12 @@ def publish_release(
     version: str,
     *,
     locks: Path | None = None,
+    engine: Mapping[str, str] | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
 ) -> PublishVerdict:
-    """Submit exact artifact bytes and optional publisher-produced base locks."""
+    """Submit exact artifact bytes with optional base locks and scan engine identity."""
+    if engine is not None and locks is None:
+        raise RegistryPublishError("engine binding requires publication locks")
     try:
         data = archive.read_bytes()
         lock_data = locks.read_bytes() if locks is not None else None
@@ -176,8 +179,14 @@ def publish_release(
             + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="locks"\r\n'
             "Content-Type: application/json\r\n\r\n".encode("ascii")
             + lock_data
-            + f"\r\n--{boundary}--\r\n".encode("ascii")
         )
+        if engine is not None:
+            data += (
+                f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="engine"\r\n'
+                "Content-Type: application/json\r\n\r\n".encode("ascii")
+                + json.dumps(dict(engine), sort_keys=True, separators=(",", ":")).encode("ascii")
+            )
+        data += f"\r\n--{boundary}--\r\n".encode("ascii")
     headers = {"User-Agent": "dinkster-pack"}
     token = registry.token()
     if token:
