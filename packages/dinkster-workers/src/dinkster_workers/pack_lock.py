@@ -6,6 +6,7 @@ import argparse
 import email
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -157,6 +158,10 @@ class PackLock:
 
     def to_json(self) -> str:
         data = asdict(self)
+        for package in data["packages"]:
+            for wheel in package["wheels"]:
+                if wheel["registry"] is None:
+                    wheel.pop("registry")
         data["format"] = (
             "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
         )
@@ -343,10 +348,12 @@ def resolve_pack_lock(
         output = root / "pylock.toml"
         sources = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in find_links)
         source.write_text(sources + "\n".join(normalized) + "\n", encoding="ascii")
+        resolved_indexes = tuple(indexes) or (() if find_links else ("https://pypi.org/simple",))
         command = [
             uv,
             "pip",
             "compile",
+            "--no-config",
             str(source),
             "--python",
             str(python),
@@ -360,15 +367,40 @@ def resolve_pack_lock(
             str(output),
             "--no-header",
         ]
-        if indexes:
-            command.extend(["--default-index", indexes[0]])
-            for index in indexes[1:]:
+        if resolved_indexes:
+            command.extend(["--default-index", resolved_indexes[0]])
+            for index in resolved_indexes[1:]:
                 command.extend(["--index", index])
-        elif find_links:
+        else:
             command.append("--no-index")
-        result = subprocess.run(command, capture_output=True, text=True)
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "UV_INDEX",
+                "UV_INDEX_URL",
+                "UV_EXTRA_INDEX_URL",
+                "UV_DEFAULT_INDEX",
+                "UV_FIND_LINKS",
+                "UV_TORCH_BACKEND",
+                "UV_CONSTRAINT",
+                "UV_OVERRIDE",
+                "UV_CONFIG_FILE",
+            }
+        }
+        result = subprocess.run(command, capture_output=True, text=True, env=environment)
         if result.returncode:
             raise ProvisionError(f"pack {pack} dependency conflict: {result.stderr.strip()}")
+        index_origin = (
+            resolved_indexes[0]
+            if len(resolved_indexes) == 1
+            and not any(
+                line.lstrip().startswith("-") and not line.lstrip().startswith("--hash=")
+                for line in constraints.read_text(encoding="utf-8").splitlines()
+            )
+            else None
+        )
         data = tomllib.loads(output.read_text(encoding="utf-8"))
         packages: list[LockedDistribution] = []
         for item in cast("list[dict[str, Any]]", data.get("packages", [])):
@@ -410,7 +442,10 @@ def resolve_pack_lock(
                         size,
                         digest,
                         url,
-                        item.get("index"),
+                        # uv's pylock omits the index; only one configured index is unambiguous.
+                        index_origin
+                        if wheel not in archives and urlparse(url).scheme in {"https", "http"}
+                        else None,
                     )
                 )
             if not candidates:
