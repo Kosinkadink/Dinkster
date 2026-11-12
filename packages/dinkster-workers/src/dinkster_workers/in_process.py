@@ -448,9 +448,7 @@ class InProcessWorker:
                 if authority is not None and result.outputs is not None:
                     await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
                     if result.image_documents:
-                        documents = await _run_sync(
-                            image_document_values, self.registry, result.image_documents
-                        )
+                        documents = await _run_sync(image_document_values, result.image_documents)
                         await _run_sync(authority.capture, documents, None, invocation.inputs)
                 return result
             except (AssetError, OSError) as error:

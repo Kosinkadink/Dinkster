@@ -1254,7 +1254,17 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
 
 
 @pytest.mark.parametrize(
-    "invalid", ("json", "noncanonical", "missing", "size", "dimensions", "corrupt")
+    "invalid",
+    (
+        "json",
+        "noncanonical",
+        "missing",
+        "size",
+        "dimensions",
+        "corrupt",
+        "inline-dimensions",
+        "inline-decode",
+    ),
 )
 def test_original_document_publisher_validates_entire_batch_before_writing(
     tmp_path: Path, invalid: str
@@ -1278,6 +1288,15 @@ def test_original_document_publisher_validates_entire_batch_before_writing(
         resource["byteSize"] = len(source) + 1
     if invalid == "dimensions":
         resource["width"] = 2
+    if invalid.startswith("inline-"):
+        record["formatVersion"] = 2
+        if invalid == "inline-dimensions":
+            resource["width"] = 2
+        else:
+            source = b"not a raster"
+            resource["digest"] = digest_bytes(source)
+            resource["byteSize"] = len(source)
+        resource["inline"] = base64.b64encode(source).decode("ascii")
     if invalid == "corrupt":
         path = vault.resolve(digest_bytes(source))
         assert path is not None

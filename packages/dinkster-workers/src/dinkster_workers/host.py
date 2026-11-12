@@ -1565,9 +1565,7 @@ async def serve_connection(
                 await result_transfer_lock.acquire()
                 result_send_locked = True
             document_sources: dict[str, Value] = (
-                await run_sync_resource(
-                    image_document_values, selected_worker.registry, result.image_documents
-                )
+                await run_sync_resource(image_document_values, result.image_documents)
                 if result.image_documents
                 else {}
             )

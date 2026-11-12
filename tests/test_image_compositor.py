@@ -250,15 +250,17 @@ def test_pack_compositor_codec_is_independent_of_registration_order() -> None:
             spec.validate_encoded(b'{"version":2,"documentDigest":null,"commands":{}}', {})
 
 
-def test_pack_compositor_executes_tensor_layers_through_separate_worker() -> None:
+def test_pack_compositor_executes_tensor_layers_through_separate_worker(tmp_path) -> None:
     from pathlib import Path
 
+    from dinkster_assets import AssetVault, LibraryStore, digest_bytes
     from dinkster_caches import MemoryLRUCache
-    from dinkster_engine import Engine
+    from dinkster_engine import Engine, ExecutionRuntime
     from dinkster_graph import Graph, GraphNode, Link
     from dinkster_image import register_types
     from dinkster_inference_wire import register_inference_types
     from dinkster_protocol import Invocation
+    from dinkster_server.library import ServerLibrary
     from dinkster_values import EncodedPayload, Value, ValueMeta, register_core_types
     from dinkster_workers import IsolatedWorker
 
@@ -273,6 +275,9 @@ def test_pack_compositor_executes_tensor_layers_through_separate_worker() -> Non
             Path(__file__).resolve().parents[1]
             / "packages/dinkster-nodes-image/dinkster-pack.toml",
             registry,
+        )
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"), store=LibraryStore(tmp_path / "library.sqlite")
         )
         await worker.start()
         try:
@@ -308,9 +313,19 @@ def test_pack_compositor_executes_tensor_layers_through_separate_worker() -> Non
                     schemas=dict(worker.schemas),
                     registry=registry,
                     worker=worker,
+                    pin_execution=lambda: ExecutionRuntime(
+                        worker=worker, publish_image_documents=library.publish_image_documents
+                    ),
                     cache=MemoryLRUCache(),
                 )
                 result = await engine.run(graph, ["create"])
+                assert len(result.artifacts) == 1
+                artifact = result.artifacts[0]
+                retained = library.vault.resolve(artifact.digest)
+                assert retained is not None
+                original = retained.read_bytes()
+                assert digest_bytes(original) == artifact.digest
+                assert ImageDocument(original).to_record()["canvas"]["width"] == 7
                 image = result.outputs["create"]["IMAGE"].resolve()
                 np.testing.assert_array_equal(image, _solid((1.0, 0.0, 0.0), width=width, height=3))
                 np.testing.assert_array_equal(
@@ -357,6 +372,7 @@ def test_pack_compositor_executes_tensor_layers_through_separate_worker() -> Non
                 assert reason in refused.error.message
         finally:
             await worker.close()
+            library.store.close()
 
     run_scenario(scenario())
 

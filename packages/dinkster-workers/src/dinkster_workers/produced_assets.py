@@ -53,16 +53,28 @@ def rendition_values(registry: TypeRegistry, rendition: Rendition) -> dict[str, 
     return {"document": value}
 
 
-def image_document_values(
-    registry: TypeRegistry, documents: Sequence[ImageDocumentArtifact]
-) -> dict[str, Value]:
-    """Project original documents through their declared codec for source handoff."""
+def image_document_values(documents: Sequence[ImageDocumentArtifact]) -> dict[str, Value]:
+    """Validate canonical attachments independently of a pack's output codecs."""
+    from dinkster_image_document.document import (
+        ImageDocument,
+        document_meta,
+        validate_image_document_encoded,
+    )
+
     values: dict[str, Value] = {}
     try:
         for index, document in enumerate(documents):
-            values[str(index)] = rendition_values(
-                registry, Rendition("document", DOCUMENT_RENDITION_MIME, document.data)
-            )["document"]
+            decoded = ImageDocument(document.data)
+            if decoded.data != document.data:
+                raise AssetError("original image document is not canonical")
+            metadata = document_meta(decoded)
+            validate_image_document_encoded(document.data, metadata)
+            values[str(index)] = Value(
+                IMAGE_DOCUMENT_TYPE,
+                digest_bytes(document.data),
+                ValueMeta(metadata),
+                EncodedPayload(IMAGE_DOCUMENT_TYPE, document.data, None),
+            )
     except (KeyError, TypeError, ValueError) as exc:
         raise AssetError(f"invalid original image document: {exc}") from exc
     return values

@@ -1278,7 +1278,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-image"
-version = "0.0.9"
+version = "0.0.10"
 source = { editable = "packages/dinkster-nodes-image" }
 dependencies = [
     { name = "av" },
@@ -2155,6 +2155,7 @@ source = { editable = "packages/dinkster-workers" }
 dependencies = [
     { name = "dinkster-assets" },
     { name = "dinkster-caches" },
+    { name = "dinkster-image-document" },
     { name = "dinkster-inference-wire" },
     { name = "dinkster-memory" },
     { name = "dinkster-protocol" },
@@ -2167,6 +2168,7 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-caches", editable = "packages/dinkster-caches" },
+    { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
     { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },

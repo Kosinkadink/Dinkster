@@ -276,6 +276,9 @@
 - Current Add Layer and Image Compositor graphs preserve source pixels across
   separate worker processes, including empty, default and edited compositor values
   with cold catalog-based serving.
+- Both compositor nodes retain the canonical original input document for
+  digest-based retrieval after successful execution, independently of edited
+  previews and without requiring a selected output folder.
 - Received image documents validate every non-inline resource against declared
   source references without reading or publishing raster files; auxiliary
   references are retained. Legacy layer stacks validate without publishing,
