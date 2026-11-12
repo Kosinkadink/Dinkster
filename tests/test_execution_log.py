@@ -305,13 +305,16 @@ def test_unconfigured_logger_warning_is_captured_via_stderr() -> None:
     assert "orphan warning" in str(events[0]["message"])
 
 
-def test_malformed_logging_call_does_not_raise() -> None:
+def test_malformed_logging_call_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     # A bad %-format call is handled by logging itself for the terminal
     # write; forwarding must be equally forgiving and never raise into
     # whatever logged it - under production settings (raiseExceptions
     # True) and with the handler writing through the stderr proxy, whose
     # capture must not pick up the stdlib's error diagnostic either.
     assert logging.raiseExceptions
+    # Pytest capture handlers raise on malformed records; exercise only the
+    # standard handler, regardless of logging configured by earlier tests.
+    monkeypatch.setattr(logging.getLogger(ROOT_LOGGER_NAME), "handlers", [])
     captured: list[Captured] = []
     with proxied_streams():
         configure_logging("info", stream=sys.stderr)

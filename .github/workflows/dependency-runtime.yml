@@ -11,7 +11,6 @@ on:
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
-      - tests/first_party_runtime/test_model_advanced_torch.py
       - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
@@ -189,9 +188,8 @@ jobs:
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
           print('Published CPU base, installed inventory and NMS passed:', manifest['id'])
           PY
-      - name: Test public CPU sampler and attention contracts
+      - name: Test the public sampler cold import
         shell: bash
         run: |
           uv run --no-sync python -m pytest -q \
-            packages/dinkster-nodes-void/tests/test_void_sampler_torch.py \
-            tests/first_party_runtime/test_model_advanced_torch.py
+            packages/dinkster-nodes-void/tests/test_void_sampler_torch.py

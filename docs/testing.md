@@ -73,9 +73,10 @@ unchanged by parallel execution.
 Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
 Do not use retries to hide a parallel-only failure. Package suites launched
 from their own project directory retain that project's pytest settings.
-Selected-archive admission is an explicit serial group: its inline plugin
-tracks unavailable exports and executed tests in the launcher's process.
-The selected tests and minimum-executed-test guard remain unchanged.
+Selected-archive admission with multiple test files splits whole files between
+two serial pytest processes after shared catalog preparation. Each process
+tracks unavailable exports and executed tests with its inline plugin. Any test
+or collection failure fails admission, and at least one selected test must pass.
 
 Full-validation jobs run serially inside each matrix shard with
 `PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
