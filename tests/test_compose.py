@@ -991,7 +991,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ("dinkster-text", "dinkster-nodes-text", "0.0.3"),
         ("dinkster-image", "dinkster-nodes-image", "0.0.10"),
         ("dinkster-audio", "dinkster-nodes-audio", "0.0.5"),
-        ("dinkster-3d", "dinkster-nodes-3d", "0.0.5"),
+        ("dinkster-3d", "dinkster-nodes-3d", "0.0.6"),
         ("dinkster-models", "dinkster-nodes-models", "0.0.8"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.5"),
     ],

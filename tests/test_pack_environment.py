@@ -483,6 +483,9 @@ def test_resolved_wheel_issuer_uses_only_explicit_unambiguous_index(
         (tmp_path / "uv.toml").write_text(
             f'[[index]]\nurl = "{endpoint}/ambient"\n', encoding="ascii"
         )
+        # The offline CI gate must still reach this test's loopback index.
+        monkeypatch.delenv("UV_OFFLINE", raising=False)
+        monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("UV_INDEX", endpoint + "/ambient")
         monkeypatch.setenv("UV_EXTRA_INDEX_URL", endpoint + "/ambient")
