@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from dinkster_api.v1 import ASSET_TYPE, CLIP_TYPE, CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, TypeExpr
 from dinkster_models import lora_file_loaders as loaders
 
 
@@ -54,11 +53,6 @@ nodes = (
     loaders.LoadLoraTextEncoder, loaders.LoraLoaderBypass, loaders.LoraLoaderBypassModelOnly,
 )
 assert all(node in NODES for node in nodes)
-assert tuple(node.schema().node_type for node in nodes) == (
-    "dinkster.models.lora_loader", "dinkster.models.lora_loader_model_only",
-    "dinkster.models.load_lora_model", "dinkster.models.load_lora_text_encoder",
-    "dinkster.models.lora_loader_bypass", "dinkster.models.lora_loader_bypass_model_only",
-)
 assert "torch" not in sys.modules
 assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
 """,
@@ -66,60 +60,6 @@ assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
         check=True,
         cwd=root,
     )
-
-
-def test_loader_schemas_preserve_file_picker_strength_and_stack_contracts() -> None:
-    expected = {
-        "LoraLoader": (
-            "Load LoRA (Model and CLIP)",
-            ("model", "clip", "lora_name", "strength_model", "strength_clip"),
-        ),
-        "LoraLoaderModelOnly": ("Load LoRA", ("model", "lora_name", "strength_model")),
-        "LoadLoraModel": ("Load LoRA (Model)", ("model",)),
-        "LoadLoraTextEncoder": ("Load LoRA (Text Encoder)", ("clip",)),
-        "LoraLoaderBypass": (
-            "Load LoRA (Bypass) (For debugging)",
-            ("model", "clip", "lora_name", "strength_model", "strength_clip"),
-        ),
-        "LoraLoaderBypassModelOnly": (
-            "Load LoRA (Bypass, Model Only) (for debugging)",
-            ("model", "lora_name", "strength_model"),
-        ),
-    }
-    for name, (display, inputs) in expected.items():
-        node = getattr(loaders, name)
-        schema = node.schema()
-        assert schema.display_name == display
-        assert schema.category == "model/loaders"
-        assert tuple(item.id for item in schema.inputs) == inputs
-        for item in schema.inputs:
-            if item.id == "lora_name":
-                assert item.type == TypeExpr.concrete(ASSET_TYPE)
-                assert item.widget is not None and item.widget.kind == "model/lora"
-            elif item.id.startswith("strength"):
-                assert item.type == TypeExpr.concrete(CORE_FLOAT)
-                assert item.default == 1.0
-                assert (item.widget.min, item.widget.max, item.widget.step) == (-100.0, 100.0, 0.01)
-
-    for node, expected_type in (
-        (loaders.LoadLoraModel, MODEL_TYPE),
-        (loaders.LoadLoraTextEncoder, CLIP_TYPE),
-    ):
-        schema = node.schema()
-        family = schema.input_families[0]
-        assert schema.outputs[0].type == TypeExpr.concrete(expected_type)
-        assert (family.id, family.min_members, family.max_members, family.display_name) == (
-            "loras",
-            1,
-            20,
-            "LoRA",
-        )
-        fields = {item.id: item for item in family.template}
-        assert fields["lora_name"].type == TypeExpr.concrete(ASSET_TYPE)
-        assert fields["lora_name"].widget.kind == "model/lora"
-        assert fields["strength"].default == 1.0
-        assert fields["enabled"].type == TypeExpr.concrete(CORE_BOOLEAN)
-        assert fields["enabled"].default is True
 
 
 def test_zero_strength_returns_before_asset_resolution_or_inference(

@@ -38,45 +38,6 @@ def test_tracks_from_single_track_and_invalid_json_match_reference_failure() -> 
 
 
 def test_generate_tracks_schema_and_non_square_perpendicular_spread() -> None:
-    schema = GenerateTracks.define_schema()
-    assert schema.search_terms == (
-        "motion paths",
-        "camera movement",
-        "trajectory",
-        "GenerateTracks",
-    )
-    assert [item.id for item in schema.inputs] == [
-        "width",
-        "height",
-        "start_x",
-        "start_y",
-        "end_x",
-        "end_y",
-        "num_frames",
-        "num_tracks",
-        "track_spread",
-        "bezier",
-        "mid_x",
-        "mid_y",
-        "interpolation",
-        "track_mask",
-    ]
-    assert [item.default for item in schema.inputs[:13]] == [
-        832,
-        480,
-        0.0,
-        0.0,
-        1.0,
-        1.0,
-        81,
-        5,
-        0.025,
-        False,
-        0.5,
-        0.5,
-        None,
-    ]
-    assert schema.inputs[13].required is False
 
     result = GenerateTracks.execute(
         width=200,

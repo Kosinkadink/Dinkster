@@ -1,8 +1,0 @@
-[pack]
-name = "model-patch-fixture"
-publisher = "dinkster"
-namespaces = ["model-patch-fixture"]
-
-[pack.entry]
-nodes = "model_patch_fixture:MODEL_PATCH_FIXTURES"
-types = "model_patch_fixture:register_inference_types"

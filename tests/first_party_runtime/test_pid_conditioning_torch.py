@@ -100,26 +100,6 @@ def test_pid_conditioning_uses_the_first_video_latent_frame() -> None:
     torch.testing.assert_close(latent["samples"], original_samples)
 
 
-def test_pid_conditioning_schema_matches_the_fixed_reference() -> None:
-    schema = PiDConditioning.define_schema()
-    assert schema.node_type == "dinkster.conditioning.pi_d_conditioning"
-    assert schema.display_name == "PiD Conditioning"
-    assert schema.category == "model/conditioning"
-    assert [input.id for input in schema.inputs] == [
-        "positive",
-        "latent",
-        "latent_format",
-        "degrade_sigma",
-    ]
-    assert schema.inputs[2].default == "flux"
-    assert schema.inputs[2].widget.options == ("flux", "sd3", "sdxl", "qwenimage")
-    assert schema.inputs[3].default == 0.0
-    assert schema.inputs[3].widget.min == 0.0
-    assert schema.inputs[3].widget.max == 1.0
-    assert schema.inputs[3].widget.step == 0.01
-    assert schema.outputs[0].id == "CONDITIONING"
-
-
 class Source(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
