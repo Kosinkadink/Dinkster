@@ -17,10 +17,10 @@ from .documents import SecurityError
 from .policy import Artifact, Assessment, assess
 from .store import SecurityStore
 
-if TYPE_CHECKING:
+if TYPE_CHECKING or __package__ == "dinkster_supervisor.security":
     from ..limits import SECURITY_FEED_LIMIT_BYTES
 else:
-    from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES
+    from .limits import SECURITY_FEED_LIMIT_BYTES
 
 logger = logging.getLogger(__name__)
 

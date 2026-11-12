@@ -254,6 +254,8 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
             str(python),
             "-I",
             "-c",
+            "import importlib.util; "
+            "assert importlib.util.find_spec('dinkster_supervisor') is None; "
             "from dinkster_api.v1 import Node; "
             "from dinkster_security.host import SecurityHost; "
             "print(Node.__name__, SecurityHost.__name__)",

@@ -30,3 +30,4 @@ packages = ["src/dinkster_supervisor", "shared/dinkster_store"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/dinkster_supervisor/security" = "dinkster_security"
+"src/dinkster_supervisor/limits.py" = "dinkster_security/limits.py"
