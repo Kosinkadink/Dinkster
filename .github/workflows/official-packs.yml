@@ -30,7 +30,8 @@ concurrency:
 jobs:
   registry-service-image:
     name: Build disposable registry image
-    if: github.event_name == 'pull_request'
+    needs: select
+    if: github.event_name == 'pull_request' && needs.select.outputs.packs != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

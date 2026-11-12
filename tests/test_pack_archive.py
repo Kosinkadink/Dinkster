@@ -1284,6 +1284,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "source-version",
         "publisher",
         "declaration",
+        "preflight-published-digest",
+        "preflight-published-lock",
+        "preflight-helper-change",
+        "preflight-lookup-failed",
+        "preflight-unpublished",
+        "preflight-version-raised",
     ],
 )
 def test_official_publication_requires_complete_supported_base_bindings(
@@ -1301,14 +1307,23 @@ def test_official_publication_requires_complete_supported_base_bindings(
     )
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_installer import _serve_artifacts
+    from test_pack_environment import _wheel
 
     from dinkster.registries import NamedRegistry, RegistryPublishError
     from scripts.publish_official_packs import publish_official_packs
 
+    preflight = bool(problem and problem.startswith("preflight-"))
+    if preflight:
+        assert problem is not None
+        problem = problem.removeprefix("preflight-")
     sources = tmp_path / "sources"
     sources.mkdir()
     packs = []
-    versions = [("first-pack", "1.2.3"), ("second-pack", "7.4.0rc1")]
+    published_helper = None
+    versions = [
+        ("first-pack", "1.2.3"),
+        ("second-pack", "7.4.1" if problem == "version-raised" else "7.4.0rc1"),
+    ]
     chained = problem in {"dependency-levels", "dependency-levels-timeout"}
     if chained:
         versions.extend([("third-pack", "2.0"), ("fourth-pack", "3.0")])
@@ -1346,6 +1361,24 @@ def test_official_publication_requires_complete_supported_base_bindings(
             built.rename(archive)
         else:
             build_artifact(tree, archive)
+        if name == "second-pack" and problem in {"helper-change", "version-raised"}:
+            old = _wheel(
+                tmp_path,
+                name,
+                "7.4.0rc1",
+                module.name,
+                "VALUE = 1\n",
+                requires=("dinkster-inference==0.1.1",),
+            )
+            published_helper = (tmp_path / old.filename).read_bytes()
+            _wheel(
+                sources,
+                name,
+                version,
+                module.name,
+                "VALUE = 1\n",
+                requires=("dinkster-inference",),
+            )
         digest = artifact_digest(archive.read_bytes())
         packs.append(LockedPack(name, version, digest, "dinkster", ()))
     (sources / "official-packs.lock").write_text(Lockfile.of(packs).record_json())
@@ -1454,7 +1487,10 @@ def test_official_publication_requires_complete_supported_base_bindings(
         files["/v1/packs/third-pack/versions/2.3"] = json.dumps(
             {"packName": "third-pack", "version": "2.3", "state": "active"}
         ).encode()
-    if problem and (problem.startswith("published-") or problem == "check-published"):
+    if problem and (
+        problem.startswith("published-")
+        or problem in {"check-published", "helper-change", "version-raised"}
+    ):
         for pack in packs:
             record = {
                 "packName": pack.pack,
@@ -1496,7 +1532,13 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     del record["installLocks"]["win-nvidia"]
                 elif problem == "published-publisher":
                     record["publishedBy"]["principalId"] = "other"
-            files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(record).encode()
+            if published_helper is not None and pack.pack == "second-pack":
+                record["version"] = "7.4.0rc1"
+                record["artifact"]["digest"] = artifact_digest(published_helper)
+                record["artifact"]["size"] = len(published_helper)
+            files[f"/v1/packs/{pack.pack}/versions/{record['version']}"] = json.dumps(
+                record
+            ).encode()
     server = _serve_artifacts(files, requests)
     respond = vars(server.RequestHandlerClass)["respond"]
     submitted = []
@@ -1739,19 +1781,44 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     else "not retried.*bump the pack version"
                 ),
             ):
-                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+                publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=None if preflight else registry,
+                    preflight_registry=registry.endpoint if preflight else None,
+                )
             assert [path for path, _ in requests] == (
                 lookup_paths[:1]
                 if problem == "lookup-failed"
                 else lookup_paths + ["/v1/publish/first-pack/versions/1.2.3"]
             )
-        elif problem and problem.startswith("published-") and problem != "published-identical":
+        elif problem == "helper-change" or (
+            problem and problem.startswith("published-") and problem != "published-identical"
+        ):
             with pytest.raises(
                 RegistryPublishError, match="second-pack@7.4.0rc1.*bump the pack version"
             ):
-                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+                publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=None if preflight else registry,
+                    preflight_registry=registry.endpoint if preflight else None,
+                )
             assert [path for path, _ in requests] == lookup_paths
-        elif problem not in {None, "prepare-only", "published-identical", "check-published"}:
+        elif problem not in {
+            None,
+            "prepare-only",
+            "published-identical",
+            "check-published",
+            "unpublished",
+            "version-raised",
+        }:
             with pytest.raises((ValueError, ArtifactError)):
                 publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
             assert not output.exists()
@@ -1764,10 +1831,12 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 locks,
                 output,
                 registry=registry if problem in {None, "published-identical"} else None,
-                preflight_registry=registry.endpoint if problem == "check-published" else None,
+                preflight_registry=registry.endpoint
+                if preflight or problem == "check-published"
+                else None,
             )
             assert len(result) == 2
-            assert [row["version"] for row in result] == ["1.2.3", "7.4.0rc1"]
+            assert [row["version"] for row in result] == [version for _, version in versions]
             for pack, row in zip(packs, result, strict=True):
                 lock_map = row["locks"]
                 assert isinstance(lock_map, str)
@@ -1789,9 +1858,11 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 + lookup_paths
                 if problem is None
                 else lookup_paths
-                if problem in {"check-published", "published-identical"}
+                if preflight or problem in {"check-published", "published-identical"}
                 else []
             )
+        if preflight:
+            assert submitted == []
         assert {path: path.read_bytes() for path in before} == before
         assert not list(tmp_path.glob("official-publication-*"))
     finally:
