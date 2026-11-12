@@ -107,6 +107,36 @@ registry. Other installed selections are preserved for admission. Update
 preparation refuses unavailable compatible releases and does not allow
 `--allow-missing`.
 
+For metadata-only review, `plan-registry-sources` takes `--engine-manifest`,
+`--engine-release`, `--variant` and `--base-id`. Add `--installed-lock` and
+repeat `--add PACK@VERSION` to inspect exact additions or replacements, or
+use `--update [PACK ...]` for compatible installed registry updates. No names
+means all installed registry packs. Unselected sources remain unchanged;
+updates use their recorded registry and never downgrade. The JSON plan includes
+published dependency locks and a pack payload size upper bound, but acquires
+no pack archives and does not create a generation or write a cache.
+
+For an active managed project, `dinkster pack --root PROJECT install PACK@VERSION`
+reviews published pack additions or replacements against its retained engine,
+base and variant. `update [PACK ...]` reviews compatible installed registry
+updates. The terminal displays old/new source identities, the proposed generation,
+published dependency-lock identities, verified cached versus downloadable payloads,
+wheel-byte upper bounds and worker cost before confirmation. Use `--yes` for unattended
+application, or `--plan FILE` to save the review outside the project and store.
+`dinkster pack --root PROJECT apply FILE` rechecks that review before using the
+shared generation builder and activation. Saved reviews expire after 15 minutes;
+changed project or selected release metadata requires a new review. Local/git
+sources cannot be mixed with published selections; use `dinkster develop` for
+explicit unlocked development.
+
+Both confirmed commands acquire the selected archives and their published
+dependency locks, then build and activate a fresh generation without package-index
+resolution. The retained engine and base do not change. Release and lock metadata
+failures are reported together; confirmed source and dependency-wheel acquisition
+failures are also collected together. A missing retained base refuses before
+source or dependency-wheel acquisition, so that refusal does not list later
+payload failures.
+
 For a source lock containing registry packs, `prepare-registry-locks` accepts
 `--catalog-lock`, a new `--output` directory, `--variant` and the exact
 `--base-id sha256:...`. It downloads the dependency locks already published
@@ -273,6 +303,11 @@ and not reproducible from ranges. Serve that selection explicitly with
 `python -m dinkster.serve --no-default-packs --install-root ROOT`; the terminal
 and node catalog carry the development label. A published registry spec is
 refused on the standalone install route, never silently resolved as development.
+Published entries in standalone saved plans, snapshots, workflow stamps and
+rollback targets also refuse, as does serving a standalone published inventory.
+Use the managed project's pack install/update and software history instead;
+there is no automatic conversion of a standalone root. Catalog preparation
+cannot range-resolve a published pack missing its generation interpreter.
 
 Use the explicit development command when an engine, pack or helper library has
 not been published. The source engine must be a Dinkster checkout. Select a new
