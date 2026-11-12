@@ -49,7 +49,10 @@ def pytest_terminal_summary(terminalreporter) -> None:
         for report in reports:
             if isinstance(report, pytest.TestReport):
                 for name, text in report.sections:
-                    if name == "Supervisor child operation timings":
+                    if name in {
+                        "Supervisor child operation timings",
+                        "Captured Published pack resolver trap call",
+                    }:
                         terminalreporter.section(name)
                         terminalreporter.write_line(text)
 
