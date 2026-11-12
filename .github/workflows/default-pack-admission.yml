@@ -84,7 +84,7 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     outputs:
       groups: ${{ steps.sources.outputs.groups }}
     env:
@@ -160,7 +160,7 @@ jobs:
     needs: [select, prepare]
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 26
     strategy:
       fail-fast: false
       matrix:

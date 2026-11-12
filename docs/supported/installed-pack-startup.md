@@ -51,9 +51,10 @@
   `dinkster[inference]` for in-process inference packs; missing inference
   dependencies report that extra rather than installing them implicitly.
   Managed generations and contributor setup retain inference support.
-- Static-only registry installs support both the release catalog and the split
-  catalog with per-pack version files. Selection and acquisition share a snapshot
-  within each operation; the next operation reads current publication state.
+- Static-only registry installs require the schema 2 split catalog with per-pack
+  version files; schema 1 all-releases indexes are refused. Selection and
+  acquisition share a snapshot within each operation; the next operation reads
+  current publication state.
   Unknown index schemas refuse with an instruction to update Dinkster.
 - Managed generation hosts can opt into local human pack previews with
   `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
@@ -65,6 +66,14 @@
   it never installs or activates packs. HTTP application is Desktop-gateway-owned.
   Remote, agent and delegated callers cannot use these routes. Authenticated
   loopback callers require a nondelegated human with settings-write authority.
+- Pack review preparation can continue beyond a metadata request deadline.
+  Starting a preparation acknowledges the selection immediately; separate status
+  requests report actual checked-file and preparation-stage progress, then the
+  complete review. Cancellation prevents a late review from becoming usable and
+  never installs software. A preparation with no observed progress for 120 seconds
+  reports a stall; preparation expires after 30 minutes overall. A stalled or
+  cancelled worker can finish its current uninterruptible child in the background;
+  another preparation remains blocked until its scratch cleanup finishes.
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
@@ -196,7 +205,28 @@
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
   or selection metadata; successful add and update activate fresh generations
   without package-index resolution, retaining the engine and base.
-  Missing retained bases refuse early rather than listing later payload failures.
+  After confirmation, a missing retained base is reported alongside unavailable
+  source and dependency wheels, without changing retained project or store bytes.
+  Missing or modified retained dependency locks do not hide other pack payload
+  failures. An unreadable lock cannot identify its unknown dependency wheels.
+  Missing or modified engine metadata, source locks and constraints still refuse;
+  exact software-history copies allow other input failures to be diagnosed without
+  repairing the retained files or activating the damaged generation.
+  The pip command also lists other known unavailable inputs when the target
+  interpreter is unavailable. Missing history or metadata is reported, never
+  silently replaced with another engine or dependency version. A damaged
+  generation cannot be constructed or activated.
+  An absent retained-base interpreter or unreadable history does not hide
+  independent source and wheel failures. Refusal creates no external pack plan.
+  Engine wheel checks use the retained exact constraints, not a package index.
+  A verified vulnerable notice requires approval for that exact notice revision
+  before a new release is installed; a pending or denied answer refuses.
+  Already retained vulnerable releases may remain while a different pack is added
+  with the answer pending. Malicious releases refuse regardless of approval.
+  Security refusal names the release digest, notice revision and decision.
+  Initial refusal does not activate a generation or consume the reviewed plan.
+  A security change that refuses activation requires a new plan and keeps the
+  previous generation selected.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
   saved plans, snapshots, workflow stamps and rollback targets refuse instead of
@@ -415,6 +445,12 @@
   acquires their verified pack archives, and builds and activates a managed
   generation. `--yes` skips the prompt, not the plan or identity checks.
   Offline application is refused; `--offline --plan` remains read-only.
+- Pack wheel and dependency-metadata downloads retry dropped connections,
+  TLS transport failures, timeouts and HTTP 5xx responses up to three times.
+  Every attempt has a 30-second network timeout, with a wait between attempts.
+  Exhausted failures name the pack, URL and attempt count. HTTP 4xx,
+  certificate failures and completed size/hash mismatches refuse without retry;
+  offline pack provisioning makes no download request.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -748,6 +784,10 @@ selection, or an explicit local pack, labels both command output and the node
 catalog as development and not reproducible from ranges. A registry-only
 selection does not gain that label, and standalone install refuses a registry
 version rather than resolving it as development.
+Standalone provisioning, including range resolution, grouped environments and
+captured-pin restore, is only used by development inputs. Published packs use managed
+generation plan/apply; registry archive acquisition only verifies recorded bytes
+and never provisions a standalone environment.
 
 Select local software explicitly; nothing needs publishing first:
 

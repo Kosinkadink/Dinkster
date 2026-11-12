@@ -15,6 +15,11 @@ from typing import cast
 
 from dinkster_store import object_path
 
+from .environment_constraints import (
+    requirement_hashes,
+    selected_wheel_requirements,
+    wheel_compatibility,
+)
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -22,6 +27,8 @@ from .environment_generations import (
     restore_pack_sources,
     retained_pack_archive,
 )
+from .environment_history import history, is_software_metadata
+from .environment_progress import preparation_progress
 from .environment_runtime import engine_status
 from .environment_state import (
     EnvironmentError,
@@ -41,6 +48,10 @@ from .environment_transactions import (
     next_generation,
     recover_activation,
 )
+from .security.documents import Release as SecurityRelease
+from .security.policy import Artifact as SecurityArtifact
+from .security.policy import assess
+from .security.store import SecurityStore
 
 
 def _approval(record: dict[str, object]) -> str:
@@ -62,7 +73,9 @@ def _project_inputs(root: Path) -> dict[str, str | None]:
     return inputs
 
 
-def _current(root: Path) -> tuple[Path, Generation, Path]:
+def _current(
+    root: Path, *, allow_metadata_drift: bool = False, allow_runtime_drift: bool = False
+) -> tuple[Path, Generation, Path]:
     number = read_current(root)
     if number is None:
         raise EnvironmentError("pack installation requires an active generation")
@@ -70,16 +83,61 @@ def _current(root: Path) -> tuple[Path, Generation, Path]:
     generation = Generation.read(source / "generation.json")
     pointer = root / "store"
     store = Path(pointer.read_text(encoding="utf-8").strip())
+    allowed_drift: set[str] = (
+        {
+            f"{kind}: {name}"
+            for name, _ in generation.files
+            if is_software_metadata(name)
+            for kind in ("missing", "modified")
+        }
+        if allow_metadata_drift
+        else set()
+    )
     if (
         generation.number != number
         or pointer.is_symlink()
         or not store.is_absolute()
         or store.is_symlink()
         or source.is_symlink()
-        or generation.drift(source)
+        or (
+            not allow_runtime_drift
+            and any(change not in allowed_drift for change in generation.drift(source))
+        )
     ):
         raise EnvironmentError("pack installation requires intact current software and store")
     return source, generation, store
+
+
+def _metadata_text(
+    entries: list[dict[str, object]],
+    source: Path,
+    generation: Generation,
+    name: str,
+    errors: list[str] | None = None,
+) -> str:
+    """Read sealed current or history bytes without repairing retained software."""
+    expected = dict(generation.files).get(name)
+    path = source / name
+    if path.is_file() and not path.is_symlink():
+        data = path.read_bytes()
+        if "sha256:" + hashlib.sha256(data).hexdigest() == expected:
+            return data.decode("utf-8")
+    for entry in reversed(entries):
+        if entry.get("generation") != generation.number:
+            continue
+        snapshot = cast("dict[str, object]", entry["snapshot"])
+        metadata = snapshot.get("metadata")
+        text = cast("dict[str, object]", metadata).get(name) if isinstance(metadata, dict) else None
+        if (
+            isinstance(text, str)
+            and "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest() == expected
+        ):
+            return text
+    message = f"recorded software input unavailable: {name}"
+    if errors is None:
+        raise EnvironmentError(message)
+    errors.append(message)
+    return ""
 
 
 def inspect_pack_install(
@@ -88,10 +146,14 @@ def inspect_pack_install(
     *,
     updates: tuple[str, ...] | None = None,
     registry_arguments: tuple[str, ...] = (),
+    diagnostic_python: Path | None = None,
 ) -> dict[str, object]:
-    """Read the active engine's published metadata without acquiring payloads or writing state."""
+    """Inspect published metadata against sealed target identities without acquiring payloads."""
     root = root.resolve()
-    source, generation, store = _current(root)
+    source, generation, store = _current(
+        root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
+    )
+    drift = generation.drift(source)
     inputs = _project_inputs(root)
     registry_inputs: dict[str, str] = {}
     for flag, value in zip(registry_arguments[::2], registry_arguments[1::2], strict=True):
@@ -102,7 +164,7 @@ def inspect_pack_install(
             registry_inputs[str(path)] = content_digest(path)
     software = content_digest(source / "generation.json")
     command = [
-        str(interpreter(source)),
+        str(diagnostic_python or interpreter(source)),
         "-I",
         "-B",
         "-m",
@@ -126,19 +188,37 @@ def inspect_pack_install(
         command.extend(["--add", selection])
     if updates is not None:
         command.extend(["--update", *updates])
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-    )
+    preparation_progress("checking-registry-metadata")
     errors: list[str] = []
+    try:
+        entries = history(root)
+    except (OSError, ValueError) as exc:
+        if diagnostic_python is None:
+            raise
+        errors.append(f"recorded software history unavailable: {exc}")
+        entries = []
+    if diagnostic_python is not None:
+        command.extend(["--collect-errors", "--engine-version", generation.engine_version])
+    with tempfile.TemporaryDirectory(prefix="dinkster-pack-metadata-") as directory:
+        for flag, name in (
+            ("--engine-manifest", "engine-manifest.json"),
+            ("--installed-lock", "dinkster.lock"),
+        ):
+            path = Path(directory) / name
+            path.write_bytes(
+                _metadata_text(
+                    entries, source, generation, name, errors if diagnostic_python else None
+                ).encode("utf-8")
+            )
+            command[command.index(flag) + 1] = str(path)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
     if result.returncode:
         errors.append(result.stderr.strip() or result.stdout.strip())
-    base = object_path(store / "bases", generation.base) / "python"
-    if not base.is_dir() or base.is_symlink():
-        errors.append(f"retained base {generation.base} is missing or linked")
-    if errors:
         raise EnvironmentError("published pack review refused:\n" + "\n".join(errors))
     try:
         raw: object = json.loads(result.stdout)
@@ -157,6 +237,56 @@ def inspect_pack_install(
             raise ValueError("target engine returned inconsistent identities")
     except ValueError as exc:
         raise EnvironmentError(f"published pack review returned invalid metadata: {exc}") from exc
+    metadata["constraints"] = _metadata_text(
+        entries, source, generation, "constraints.txt", errors if diagnostic_python else None
+    )
+    compatibility: dict[str, object] | None = None
+    if diagnostic_python is not None:
+        if all(is_software_metadata(change.split(": ", 1)[1]) for change in drift):
+            try:
+                compatibility = wheel_compatibility(interpreter(source))
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                errors.append(f"target interpreter unavailable: {exc}")
+        if compatibility is None:
+            for entry in reversed(entries):
+                if entry.get("generation") != generation.number:
+                    continue
+                host = cast("dict[str, object]", entry["snapshot"]).get("host")
+                if not isinstance(host, dict):
+                    continue
+                host = cast("dict[str, object]", host)
+                tags, markers = host.get("wheelTags"), host.get("markers")
+                if (
+                    isinstance(tags, list)
+                    and bool(cast("list[object]", tags))
+                    and all(isinstance(tag, str) for tag in cast("list[object]", tags))
+                    and isinstance(markers, dict)
+                    and all(
+                        isinstance(key, str) and isinstance(value, str)
+                        for key, value in cast("dict[object, object]", markers).items()
+                    )
+                    and isinstance(
+                        cast("dict[str, object]", markers).get("python_full_version"), str
+                    )
+                ):
+                    compatibility = {"tags": tags, "markers": markers}
+                    break
+            if compatibility is None:
+                errors.append("recorded target wheel compatibility unavailable")
+    metadata["compatibility"] = compatibility
+    cast("list[str]", metadata.setdefault("errors", [])).extend(errors)
+    cast("list[str]", metadata.setdefault("errors", [])).extend(
+        change for change in drift if "/pack-lock.json" not in change
+    )
+    base = object_path(store / "bases", generation.base) / "python"
+    if not base.is_dir() or base.is_symlink():
+        cast("list[str]", metadata.setdefault("errors", [])).append(
+            f"retained base {generation.base} is missing or linked"
+        )
+    elif not interpreter(base.parent).is_file():
+        cast("list[str]", metadata.setdefault("errors", [])).append(
+            f"retained base {generation.base} interpreter unavailable: {interpreter(base.parent)}"
+        )
     source_costs: list[dict[str, object]] = []
     for entry in cast(
         "list[dict[str, object]]", cast("dict[str, object]", metadata["sources"])["packs"]
@@ -177,10 +307,34 @@ def inspect_pack_install(
         )
     metadata["sourceCosts"] = source_costs
     dependency_costs: dict[tuple[str, str], dict[str, object]] = {}
-    retained_locks = {
-        path.parent.name: read_document(path)
-        for path in sorted((source / "packs").glob("*/pack-lock.json"))
-    } | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
+    retained_locks: dict[str, dict[str, object]] = {}
+    lock_paths = {
+        name
+        for name, _ in generation.files
+        if name.startswith("packs/") and name.endswith("/pack-lock.json")
+    } | {
+        path.relative_to(source).as_posix() for path in (source / "packs").glob("*/pack-lock.json")
+    }
+    for name in sorted(lock_paths):
+        path = source / name
+        try:
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or content_digest(path) != dict(generation.files).get(name)
+            ):
+                raise EnvironmentError("recorded dependency lock missing or modified")
+            if path.parent.name in cast("dict[str, object]", metadata["dependencyLocks"]):
+                continue
+            retained_locks[path.parent.name] = read_document(path)
+        except (OSError, ValueError) as exc:
+            cast("list[str]", metadata.setdefault("errors", [])).append(
+                f"pack {path.parent.name}: {exc}"
+            )
+    metadata["retainedDependencyLocks"] = retained_locks
+    retained_locks = retained_locks | cast(
+        "dict[str, dict[str, object]]", metadata["dependencyLocks"]
+    )
     for lock in retained_locks.values():
         for package in cast("list[dict[str, object]]", lock["packages"]):
             for wheel in cast("list[dict[str, object]]", package["wheels"]):
@@ -204,7 +358,7 @@ def inspect_pack_install(
         _project_inputs(root) != inputs
         or any(content_digest(Path(path)) != digest for path, digest in registry_inputs.items())
         or content_digest(source / "generation.json") != software
-        or generation.drift(source)
+        or generation.drift(source) != drift
     ):
         raise EnvironmentError("project changed after planning; request a new plan")
     return {
@@ -213,6 +367,7 @@ def inspect_pack_install(
         "current": generation.number,
         "next": next_generation(root),
         "software": software,
+        "softwareDrift": list(drift),
         "projectInputs": inputs,
         "registryInputs": registry_inputs,
         "metadata": metadata,
@@ -227,19 +382,31 @@ def plan_pack_install(
     selections: tuple[str, ...],
     output: Path,
     *,
+    updates: tuple[str, ...] | None = None,
     registry_arguments: tuple[str, ...] = (),
+    diagnostic_python: Path | None = None,
 ) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
-    if not selections or len(selections) > 64:
+    if updates is None and (not selections or len(selections) > 64):
         raise EnvironmentError("pack installation requires 1 to 64 exact selections")
-    source, generation, store = _current(root)
+    source, generation, store = _current(
+        root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
+    )
     if output.is_relative_to(root) or output.is_relative_to(store):
         raise EnvironmentError("pack review inputs must be outside project and shared store")
-    review = inspect_pack_install(root, selections, registry_arguments=registry_arguments)
+    review = inspect_pack_install(
+        root,
+        selections,
+        updates=updates,
+        registry_arguments=registry_arguments,
+        diagnostic_python=diagnostic_python,
+    )
     metadata = cast("dict[str, object]", review["metadata"])
     with writer_lock(store), writer_lock(root):
-        source, generation, actual_store = _current(root)
+        source, generation, actual_store = _current(
+            root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
+        )
         if actual_store != store:
             raise EnvironmentError("project changed after planning; request a new plan")
         inputs = _project_inputs(root)
@@ -248,6 +415,7 @@ def plan_pack_install(
             inputs != review["projectInputs"]
             or software != review["software"]
             or generation.number != review["current"]
+            or list(generation.drift(source)) != review["softwareDrift"]
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
         size = cast("int", review["ownEnvironmentBytes"])
@@ -260,43 +428,45 @@ def plan_pack_install(
             for name, lock in cast("dict[str, object]", metadata["dependencyLocks"]).items():
                 write_document(lock_root / f"{name}.json", cast("dict[str, object]", lock))
             locks = tuple(sorted(lock_root.glob("*.json")))
-            engine = scratch / "engine"
-            prepare_engine_interpreter(
-                engine,
-                store=store,
-                base=generation.base,
-                constraints=source / "constraints.txt",
-                uv_cache=scratch / "uv-cache",
-            )
-            preflight = pack_operation(
-                "preflight",
-                generation=engine,
-                store=store,
-                variant=generation.variant,
-                worker_protocol=generation.worker_protocol,
-                own_environment_size=size,
-                source_generation=source,
-                locks=locks,
-                in_process_packs=generation.in_process_packs,
-            )
-            errors: list[str] = []
+            errors = list(cast("list[str]", metadata.get("errors", [])))
+            constraints = cast("str", metadata["constraints"])
+            (scratch / "constraints.txt").write_bytes(constraints.encode("utf-8"))
+            try:
+                if diagnostic_python is not None and metadata["compatibility"] is None:
+                    raise EnvironmentError("recorded target wheel compatibility unavailable")
+                selected_wheel_requirements(
+                    interpreter(source),
+                    constraints,
+                    [
+                        store / "wheels",
+                        *(
+                            object_path(store / "wheels", "sha256:" + identity)
+                            for identity in requirement_hashes(constraints)
+                        ),
+                    ],
+                    errors=errors,
+                    compatibility=cast("dict[str, object] | None", metadata["compatibility"]),
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(f"engine {generation.engine_release}: {exc}")
+            preparation_progress("preparing-pack-sources")
             try:
                 restore_pack_sources(
-                    engine,
+                    source,
                     catalog_lock=catalog,
                     artifacts=artifacts,
                     project=root,
                     store=store,
                     registry_arguments=registry_arguments,
+                    python=diagnostic_python,
                 )
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
             wheels = scratch / "store" / "wheels"
             wheels.mkdir(parents=True)
-            all_locks = {
-                path.parent.name: read_document(path)
-                for path in sorted((source / "packs").glob("*/pack-lock.json"))
-            } | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
+            all_locks = cast(
+                "dict[str, dict[str, object]]", metadata["retainedDependencyLocks"]
+            ) | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
             for lock in all_locks.values():
                 for package in cast("list[dict[str, object]]", lock["packages"]):
                     for wheel in cast("list[dict[str, object]]", package["wheels"]):
@@ -311,7 +481,52 @@ def plan_pack_install(
                             target = wheels / identity / filename
                             target.parent.mkdir(exist_ok=True)
                             shutil.copyfile(cached, target)
-            try:
+            if diagnostic_python is not None:
+                preparation_progress("acquiring-pack-inputs")
+                try:
+                    if metadata["compatibility"] is None:
+                        raise EnvironmentError("recorded target wheel compatibility unavailable")
+                    pack_operation(
+                        "collect",
+                        generation=source,
+                        store=scratch / "store",
+                        variant=generation.variant,
+                        worker_protocol=generation.worker_protocol,
+                        own_environment_size=size,
+                        source_generation=source,
+                        constraints=scratch / "constraints.txt",
+                        collection_python=diagnostic_python,
+                        compatibility=cast("dict[str, object] | None", metadata["compatibility"]),
+                        locks=locks,
+                        in_process_packs=generation.in_process_packs,
+                    )
+                except (OSError, ValueError) as exc:
+                    errors.append(str(exc))
+            if errors:
+                raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
+            engine = scratch / "engine"
+            preparation_progress("preparing-runtime")
+            prepare_engine_interpreter(
+                engine,
+                store=store,
+                base=generation.base,
+                constraints=source / "constraints.txt",
+                uv_cache=scratch / "uv-cache",
+            )
+            preparation_progress("checking-pack-requirements")
+            preflight = pack_operation(
+                "preflight",
+                generation=engine,
+                store=store,
+                variant=generation.variant,
+                worker_protocol=generation.worker_protocol,
+                own_environment_size=size,
+                source_generation=source,
+                locks=locks,
+                in_process_packs=generation.in_process_packs,
+            )
+            if diagnostic_python is None:
+                preparation_progress("acquiring-pack-inputs")
                 pack_operation(
                     "acquire",
                     generation=engine,
@@ -323,10 +538,7 @@ def plan_pack_install(
                     locks=locks,
                     in_process_packs=generation.in_process_packs,
                 )
-            except (OSError, ValueError) as exc:
-                errors.append(str(exc))
-            if errors:
-                raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
+            preparation_progress("checking-pack-admission")
             admitted = subprocess.run(
                 [
                     str(interpreter(engine)),
@@ -362,6 +574,7 @@ print(Lockfile.of(entries).record_json())
                 or generation.drift(source)
             ):
                 raise EnvironmentError("project changed after planning; request a new plan")
+            preparation_progress("retaining-review")
             output.mkdir()
             try:
                 shutil.copyfile(catalog, output / "dinkster.lock")
@@ -386,14 +599,8 @@ print(Lockfile.of(entries).record_json())
                     "constraints": generation.constraints,
                     "inProcessPacks": list(generation.in_process_packs),
                     "sources": read_document(catalog),
-                    "dependencyLocks": {
-                        path.parent.name: read_document(path)
-                        for path in sorted((source / "packs").glob("*/pack-lock.json"))
-                    }
-                    | {
-                        cast("str", read_document(path)["pack"]): read_document(path)
-                        for path in locks
-                    },
+                    "securityRegistries": metadata["securityRegistries"],
+                    "dependencyLocks": all_locks,
                     "preflight": preflight,
                     "ownEnvironmentBytes": size,
                     "files": {
@@ -453,8 +660,52 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
                 or content_digest(path) != expected
             ):
                 raise EnvironmentError("reviewed pack inputs changed; request a new plan")
+        database = root / "security.sqlite3"
+        if database.is_file():
+            retained: set[tuple[object, ...]] = set()
+            for path in (root / "generations").glob("*/dinkster.lock"):
+                if path.parent.name == str(target):
+                    continue
+                sealed = Generation.read(path.parent / "generation.json")
+                if (
+                    path.is_symlink()
+                    or path.parent.is_symlink()
+                    or content_digest(path) != dict(sealed.files).get(path.name)
+                ):
+                    raise EnvironmentError("security requires intact retained source locks")
+                for entry in cast("list[dict[str, object]]", read_document(path)["packs"]):
+                    retained.add(
+                        tuple(entry[key] for key in ("pack", "version", "artifactDigest", "source"))
+                    )
+            security = SecurityStore(database)
+            registries = cast("dict[str, str]", record["securityRegistries"])
+            for entry in cast(
+                "list[dict[str, object]]", cast("dict[str, object]", record["sources"])["packs"]
+            ):
+                artifact = SecurityArtifact(
+                    registries[cast("str", entry["source"])],
+                    SecurityRelease.model_validate(
+                        {key: entry[key] for key in ("pack", "version", "artifactDigest")}
+                    ),
+                )
+                result = assess(
+                    security,
+                    (artifact,),
+                    installing=tuple(
+                        entry[key] for key in ("pack", "version", "artifactDigest", "source")
+                    )
+                    not in retained,
+                )
+                if not result.allowed:
+                    finding = next(item for item in result.findings if not item.allowed)
+                    raise EnvironmentError(
+                        f"security {finding.state}: {entry['pack']}=={entry['version']} "
+                        f"({entry['artifactDigest']}), notice {finding.notice.id} "
+                        f"revision {finding.notice.revision}, decision {finding.decision}"
+                    )
 
     with writer_lock(store), writer_lock(root):
+        target = next_generation(root)
         revalidate()
         if time.time() >= cast("float", record["expires"]) or (inputs / "consumed").exists():
             raise EnvironmentError("pack installation confirmation expired or was already used")
@@ -465,7 +716,6 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             shutil.copyfile(wheel, destination)
         with (inputs / "consumed").open("x", encoding="ascii") as handle:
             handle.write(approval)
-        target = next_generation(root)
         journal = begin_activation(root, target, "update")
         try:
             replace(Journal.read(journal), stage="building").write(journal)

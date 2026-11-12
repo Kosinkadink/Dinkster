@@ -41,6 +41,118 @@ from scripts.download_frontend import verify_and_extract
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_disposable_scan_timings_preserve_candidates_attempts_and_admission(tmp_path: Path) -> None:
+    import inspect
+    import sqlite3
+
+    from scripts.check_disposable_publication import read_scan_timings
+
+    database = tmp_path / "registry.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            "CREATE TABLE release_candidates (id, release_id, pack_name, status, submitted_at);"
+            "CREATE TABLE audit_events (id, event_type, subject_id, created_at, data);"
+            "CREATE TABLE release_scan_runs "
+            "(id, candidate_id, release_id, stage, attempt, accepted, created_at);"
+            "INSERT INTO release_candidates VALUES "
+            "('aabb', 'release-a', 'first', 'accepted', '2026-11-12 07:00:00'),"
+            "('ccdd', NULL, 'second', 'scanning', '2026-11-12 07:00:01');"
+            "INSERT INTO audit_events VALUES "
+            "(1, 'release_candidate.claimed', 'aa-bb', '2026-11-12 07:00:02', "
+            '\'{"attempt": 1, "secret": "must-not-appear"}\'),'
+            "(2, 'release_candidate.claimed', 'cc-dd', '2026-11-12 07:00:04', "
+            "'{\"attempt\": 1}'),"
+            "(3, 'release_candidate.claimed', 'cc-dd', '2026-11-12 07:00:12', "
+            "'{\"attempt\": 2}');"
+            "INSERT INTO release_scan_runs VALUES "
+            "(1, 'aabb', NULL, 'ingest_integrity', 1, 1, '2026-11-12 07:00:03'),"
+            "(2, 'ccdd', NULL, 'ingest_integrity', 1, 1, '2026-11-12 07:00:06'),"
+            "(3, 'aabb', NULL, 'executable_probe', 1, 1, '2026-11-12 07:00:10'),"
+            "(4, NULL, 'release-a', 'admission', 1, 1, '2026-11-12 07:00:11'),"
+            "(5, 'ccdd', NULL, 'ingest_integrity', 2, 0, '2026-11-12 07:00:15');"
+        )
+    before = database.read_bytes()
+    # Run the same self-contained reader sent to the container, without host imports.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            inspect.getsource(read_scan_timings)
+            + f"\nimport json; print(json.dumps(read_scan_timings({str(database)!r})))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    first, second = json.loads(result.stdout)
+    assert (first["pack"], second["pack"]) == ("first", "second")
+    assert [row["stage"] for row in first["stages"]] == [
+        "ingest_integrity",
+        "executable_probe",
+        "admission",
+    ]
+    assert [row["intervalSeconds"] for row in first["stages"]] == [1, 7, 1]
+    assert [row["intervalSeconds"] for row in second["stages"]] == [2, 3]
+    assert second["stages"][-1]["accepted"] is False
+    assert second["stages"][-1]["intervalStartAt"] == "2026-11-12 07:00:12"
+    assert "must-not-appear" not in result.stdout
+    assert database.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", [None, "publication", "capture"])
+def test_disposable_publication_retains_timings_without_changing_verdict(
+    tmp_path: Path, monkeypatch, capsys, failure: str | None
+) -> None:
+    from scripts.check_disposable_publication import check_publication
+
+    inputs = tmp_path / "inputs"
+    for name in (
+        "bases/cpu/manifest.json",
+        "locks/cpu.pack-lock.json",
+        "sources/official-packs.lock",
+    ):
+        path = inputs / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+    index = tmp_path / "index"
+    index.mkdir()
+
+    def run(command, **kwargs):
+        stdout = ""
+        if "mint-token" in command:
+            stdout = "private-token"
+        elif "scripts.publish_official_packs" in command:
+            if failure == "publication":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            stdout = "[]"
+        elif "-c" in command and "def read_scan_timings" in command[-1]:
+            if failure == "capture":
+                return subprocess.CompletedProcess(command, 1, "", "private-token")
+            stdout = '[{"pack": "timed-candidate"}]'
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if failure == "publication":
+        with pytest.raises(subprocess.TimeoutExpired):
+            check_publication(tmp_path, inputs, index, "service", "publisher")
+        report = json.loads(capsys.readouterr().out)
+    else:
+        report = check_publication(tmp_path, inputs, index, "service", "publisher")
+        assert report["externalNetworkDenied"] is True
+        assert report["submissions"] == [[], []]
+    phases = report["timings"]["phases"]
+    assert phases[0]["phase"] == "startup"
+    assert phases[-1]["phase"] == "cleanup"
+    assert all(row["endSeconds"] >= row["startSeconds"] >= 0 for row in phases)
+    if failure == "capture":
+        assert report["timings"]["captureError"] == "scan timing reader exited 1"
+    else:
+        assert report["timings"]["candidates"] == [{"pack": "timed-candidate"}]
+    assert "private-token" not in json.dumps(report)
+
+
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
     direct = tmp_path / "direct"
     subprocess.run(
@@ -85,6 +197,15 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+        if project in {"dinkster-api", "dinkster-supervisor"}:
+            security = ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security"
+            for path in security.glob("*.py"):
+                assert actual.read(f"dinkster_security/{path.name}") == path.read_bytes()
+                if project == "dinkster-supervisor":
+                    assert (
+                        actual.read(f"dinkster_supervisor/security/{path.name}")
+                        == path.read_bytes()
+                    )
     if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [
@@ -133,12 +254,14 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
             str(python),
             "-I",
             "-c",
-            "from dinkster_api.v1 import Node; print(Node.__name__)",
+            "from dinkster_api.v1 import Node; "
+            "from dinkster_security.host import SecurityHost; "
+            "print(Node.__name__, SecurityHost.__name__)",
         ],
         cwd=tmp_path,
         text=True,
     )
-    assert result.strip() == "Node"
+    assert result.strip() == "Node SecurityHost"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:

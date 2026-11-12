@@ -48,11 +48,13 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ):
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_supervisor.environment_constraints import requirement_hashes
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from packaging.utils import parse_wheel_filename
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -129,34 +131,40 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     assert _run(root, "stop", "--yes")[0] == 0
     files: dict[str, bytes] = {}
     releases, entries = [], []
-    for version, value in (("1.0.0", 31), ("1.1.0", 79)):
-        pack = tmp_path / version
+    for name, version, value in (
+        ("healthy", "1.0.0", 31),
+        ("healthy", "1.1.0", 79),
+        ("a-unlocked", "2.0.0", 53),
+        ("z-badlock", "3.0.0", 97),
+    ):
+        module = name.replace("-", "_")
+        pack = tmp_path / f"{name}-{version}"
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
-            HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
-            .replace("healthy_nodes:", "healthy:")
+            HEALTHY_MANIFEST.replace('name = "healthy-nodes"', f'name = "{name}"')
+            .replace("healthy_nodes:", f"{module}:")
             .replace('requires = ["numpy>=1.26"]', 'requires = ["fixture-helper>=1"]')
             .replace("[pack]\n", f'[pack]\nversion = "{version}"\nengine = ">=1,<3"\n')
         )
-        (pack / "healthy").mkdir()
-        (pack / "healthy/__init__.py").write_text(HEALTHY_NODES + f"\nVALUE = {value}\n")
-        (pack / "pyproject.toml").write_text(f'[project]\nname="healthy"\nversion="{version}"\n')
-        archive = tmp_path / f"healthy-{version}-py3-none-any.whl"
+        (pack / module).mkdir()
+        (pack / module / "__init__.py").write_text(HEALTHY_NODES + f"\nVALUE = {value}\n")
+        (pack / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="{version}"\n')
+        archive = tmp_path / f"{module}-{version}-py3-none-any.whl"
         build_pack_archive(pack, archive)
         payload = archive.read_bytes()
         entry = LockedPack(
-            "healthy",
+            name,
             version,
             artifact_digest(payload),
             "dinkster",
-            ("healthy",),
+            (module,),
             "registry:official",
         )
         entries.append(entry)
-        lock_path = tmp_path / f"{version}.pack-lock.json"
+        lock_path = tmp_path / f"{name}-{version}.pack-lock.json"
         dependency = wheel(tmp_path, "fixture_helper", version, value + 7)
         PackLock(
-            "healthy",
+            name,
             "fixture-cpu",
             ">=3.12",
             ("fixture-helper>=1",),
@@ -194,7 +202,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         releases.append(release)
         files["/static/" + lock_url] = lock
         files["/static/" + release["wheels"][0]["url"]] = payload
-    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": releases}).encode()
+    files.update(_static_indexes(releases))
     requests = []
     server = _serve_artifacts(files, requests)
     trap = tmp_path / "trap"
@@ -249,6 +257,479 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             (("install", "healthy@1.0.0"), 2, entries[0], 31),
             (("update", "healthy"), 3, entries[1], 79),
         ):
+            store = Path((root / "store").read_text().strip())
+            base_id = initial["base"]["fixture-cpu"]["id"]
+            base = object_path(store / "bases", base_id)
+            unavailable_base = tmp_path / f"unavailable-base-{number}"
+            source_url = "/static/" + releases[entries.index(entry)]["wheels"][0]["url"]
+            source_bytes = files[source_url]
+            dependency = tmp_path / f"fixture_helper-{entry.version}-py3-none-any.whl"
+            dependency_bytes = dependency.read_bytes()
+            constraints = (root / "generations" / str(number - 1) / "constraints.txt").read_text()
+            engine_hashes = requirement_hashes(constraints)
+            engine_wheels = [
+                path
+                for path in (store / "wheels").rglob("*.whl")
+                if content_digest(path)[7:] in engine_hashes
+            ][:2]
+            assert len(engine_wheels) == 2
+            held_wheels = tmp_path / f"unavailable-engine-wheels-{number}"
+            held_wheels.mkdir()
+            for index, path in enumerate(engine_wheels):
+                path.rename(held_wheels / str(index))
+            base.rename(unavailable_base)
+            files[source_url] = bytes([source_bytes[0] ^ 1]) + source_bytes[1:]
+            dependency.write_bytes(bytes([dependency_bytes[0] ^ 1]) + dependency_bytes[1:])
+            before = {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            }
+            try:
+                refused = subprocess.run(
+                    [
+                        str(python),
+                        "-I",
+                        "-m",
+                        "dinkster.cli",
+                        "pack",
+                        "--root",
+                        str(root),
+                        *args,
+                        "--yes",
+                    ],
+                    cwd=tmp_path,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                assert refused.returncode != 0
+                assert {
+                    path: content_digest(path)
+                    for directory in (root, store)
+                    for path in directory.rglob("*")
+                    if path.is_file() and not path.is_symlink()
+                } == before
+                diagnostic = refused.stdout + refused.stderr
+                assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                assert "target exact source restore refused:" in diagnostic, diagnostic
+                assert entry.artifact_digest in diagnostic, diagnostic
+                assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                for path in engine_wheels:
+                    name = parse_wheel_filename(path.name)[0]
+                    assert f"offline generation wheel missing or corrupt: {name}" in diagnostic, (
+                        diagnostic
+                    )
+                if number == 2:
+                    external_plan = tmp_path / "refused-pack-plan"
+                    external_refusal = subprocess.run(
+                        [
+                            str(python),
+                            "-I",
+                            "-c",
+                            "import sys; from pathlib import Path; "
+                            "from dinkster_supervisor.environment_pack_install import "
+                            "plan_pack_install; "
+                            "plan_pack_install(Path(sys.argv[1]), ('healthy@1.0.0',), "
+                            "Path(sys.argv[2]), diagnostic_python=Path(sys.executable))",
+                            str(root),
+                            str(external_plan),
+                        ],
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert external_refusal.returncode != 0
+                    assert not external_plan.exists()
+                    assert {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    } == before
+                    diagnostic = external_refusal.stdout + external_refusal.stderr
+                    assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                    assert entry.artifact_digest in diagnostic, diagnostic
+                    assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                    unavailable_base.rename(base)
+                    base_python = interpreter(base)
+                    held_base_python = tmp_path / "unavailable-base-python"
+                    base_python.rename(held_base_python)
+                    partial_before = {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    }
+                    try:
+                        partial_base = subprocess.run(
+                            refused.args,
+                            cwd=tmp_path,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        assert partial_base.returncode != 0
+                        diagnostic = partial_base.stdout + partial_base.stderr
+                        assert f"retained base {base_id} interpreter unavailable" in diagnostic, (
+                            diagnostic
+                        )
+                        assert entry.artifact_digest in diagnostic, diagnostic
+                        assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                        for path in engine_wheels:
+                            name = parse_wheel_filename(path.name)[0]
+                            assert (
+                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                            ), diagnostic
+                        assert {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        } == partial_before
+                    finally:
+                        held_base_python.rename(base_python)
+                        base.rename(unavailable_base)
+                    engine_python = interpreter(root / "generations/1")
+                    held_python = tmp_path / "unavailable-generation-python"
+                    engine_python.rename(held_python)
+                    engine_before = {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    }
+                    try:
+                        unavailable_engine = subprocess.run(
+                            refused.args,
+                            cwd=tmp_path,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        assert unavailable_engine.returncode != 0
+                        diagnostic = unavailable_engine.stdout + unavailable_engine.stderr
+                        assert {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        } == engine_before
+                        assert (
+                            "missing: "
+                            + engine_python.relative_to(root / "generations/1").as_posix()
+                            in diagnostic
+                        ), diagnostic
+                        assert f"retained base {base_id} is missing or linked" in diagnostic, (
+                            diagnostic
+                        )
+                        assert entry.artifact_digest in diagnostic, diagnostic
+                        assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                        for path in engine_wheels:
+                            name = parse_wheel_filename(path.name)[0]
+                            assert (
+                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                            ), diagnostic
+                        history_paths = list((root / "history").glob("*.json"))
+                        history_bytes = {path: path.read_bytes() for path in history_paths}
+                        try:
+                            for path in history_paths:
+                                document = json.loads(history_bytes[path])
+                                document["snapshot"]["host"] = {"wheelTags": 0, "markers": {}}
+                                path.write_text(json.dumps(document))
+                            malformed_before = {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            }
+                            malformed_host = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert malformed_host.returncode != 0
+                            diagnostic = malformed_host.stdout + malformed_host.stderr
+                            assert "recorded target wheel compatibility unavailable" in diagnostic
+                            assert f"retained base {base_id} is missing or linked" in diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert "TypeError" not in diagnostic, diagnostic
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == malformed_before
+                        finally:
+                            for path, data in history_bytes.items():
+                                path.write_bytes(data)
+                    finally:
+                        held_python.rename(engine_python)
+                metadata_paths = [
+                    root / "generations" / str(number - 1) / name
+                    for name in ("engine-manifest.json", "constraints.txt", "dinkster.lock")
+                ]
+                metadata_bytes = {path: path.read_bytes() for path in metadata_paths}
+                for path in metadata_paths:
+                    if number == 2:
+                        path.unlink()
+                    else:
+                        path.write_bytes(b"corrupt metadata")
+                damaged_before = {
+                    path: content_digest(path)
+                    for directory in (root, store)
+                    for path in directory.rglob("*")
+                    if path.is_file() and not path.is_symlink()
+                }
+                try:
+                    damaged = subprocess.run(
+                        refused.args,
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert damaged.returncode != 0
+                    assert {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    } == damaged_before
+                    diagnostic = damaged.stdout + damaged.stderr
+                    for path in metadata_paths:
+                        change = "missing" if number == 2 else "modified"
+                        assert f"{change}: {path.name}" in diagnostic, diagnostic
+                    assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                    assert entry.artifact_digest in diagnostic, diagnostic
+                    assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                    for path in engine_wheels:
+                        name = parse_wheel_filename(path.name)[0]
+                        assert (
+                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                        ), diagnostic
+                    if number == 2:
+                        for path in metadata_paths[1:]:
+                            path.write_bytes(metadata_bytes[path])
+                        held_history = tmp_path / "unavailable-history"
+                        (root / "history").rename(held_history)
+                        no_history_before = {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        }
+                        try:
+                            no_history = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert no_history.returncode != 0
+                            diagnostic = no_history.stdout + no_history.stderr
+                            assert (
+                                "recorded software input unavailable: engine-manifest.json"
+                                in diagnostic
+                            )
+                            assert f"retained base {base_id} is missing or linked" in diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                            for path in engine_wheels:
+                                name = parse_wheel_filename(path.name)[0]
+                                assert (
+                                    f"offline generation wheel missing or corrupt: {name}"
+                                    in diagnostic
+                                )
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == no_history_before
+                        finally:
+                            held_history.rename(root / "history")
+                        history_file = next((root / "history").glob("*.json"))
+                        history_bytes = history_file.read_bytes()
+                        history_file.write_bytes(b"{")
+                        corrupt_history_before = {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        }
+                        try:
+                            corrupt_history = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert corrupt_history.returncode != 0
+                            diagnostic = corrupt_history.stdout + corrupt_history.stderr
+                            assert "recorded software history unavailable:" in diagnostic, (
+                                diagnostic
+                            )
+                            assert f"retained base {base_id} is missing or linked" in diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                            for path in engine_wheels:
+                                name = parse_wheel_filename(path.name)[0]
+                                assert (
+                                    f"offline generation wheel missing or corrupt: {name}"
+                                    in diagnostic
+                                )
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == corrupt_history_before
+                        finally:
+                            history_file.write_bytes(history_bytes)
+                finally:
+                    for path, data in metadata_bytes.items():
+                        path.write_bytes(data)
+                lock_url = (
+                    "/static/"
+                    + releases[entries.index(entry)]["installLocks"]["fixture-cpu"]["url"]
+                )
+                lock_bytes = files.pop(lock_url)
+                try:
+                    missing_lock = subprocess.run(
+                        refused.args,
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert missing_lock.returncode != 0
+                    assert {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    } == before
+                    diagnostic = missing_lock.stdout + missing_lock.stderr
+                    assert "healthy@" + entry.version + " dependency lock" in diagnostic, diagnostic
+                    assert "target exact source restore refused:" in diagnostic, diagnostic
+                    assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                    for path in engine_wheels:
+                        name = parse_wheel_filename(path.name)[0]
+                        assert (
+                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                        ), diagnostic
+                finally:
+                    files[lock_url] = lock_bytes
+                if number == 2:
+                    missing_url, corrupt_url = (
+                        "/static/" + sibling["installLocks"]["fixture-cpu"]["url"]
+                        for sibling in releases[2:]
+                    )
+                    missing_bytes = files.pop(missing_url)
+                    corrupt_bytes = files[corrupt_url]
+                    files[corrupt_url] = b"x" * len(corrupt_bytes)
+                    try:
+                        siblings = subprocess.run(
+                            [
+                                *refused.args[:-1],
+                                "a-unlocked@2.0.0",
+                                "z-badlock@3.0.0",
+                                "--yes",
+                            ],
+                            cwd=tmp_path,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        assert siblings.returncode != 0
+                        diagnostic = siblings.stdout + siblings.stderr
+                        assert "a-unlocked@2.0.0 dependency lock" in diagnostic, diagnostic
+                        assert "z-badlock@3.0.0 dependency lock" in diagnostic, diagnostic
+                        assert entry.artifact_digest in diagnostic, diagnostic
+                        assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                        assert f"retained base {base_id} is missing or linked" in diagnostic, (
+                            diagnostic
+                        )
+                        assert {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        } == before
+                    finally:
+                        files[missing_url] = missing_bytes
+                        files[corrupt_url] = corrupt_bytes
+                if number == 3:
+                    retained_lock = root / "generations/2/packs/healthy/pack-lock.json"
+                    retained_bytes = retained_lock.read_bytes()
+                    try:
+                        for damaged in (b"invalid lock", None):
+                            if damaged is None:
+                                retained_lock.unlink()
+                            else:
+                                retained_lock.write_bytes(damaged)
+                            damaged_before = {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            }
+                            retained_failure = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert retained_failure.returncode != 0
+                            diagnostic = retained_failure.stdout + retained_failure.stderr
+                            assert (
+                                "pack healthy: recorded dependency lock missing or modified"
+                                in diagnostic
+                            ), diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                            assert f"retained base {base_id} is missing or linked" in diagnostic, (
+                                diagnostic
+                            )
+                            for path in engine_wheels:
+                                name = parse_wheel_filename(path.name)[0]
+                                assert (
+                                    f"offline generation wheel missing or corrupt: {name}"
+                                    in diagnostic
+                                ), diagnostic
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == damaged_before
+                    finally:
+                        retained_lock.write_bytes(retained_bytes)
+            finally:
+                unavailable_base.rename(base)
+                for index, path in enumerate(engine_wheels):
+                    (held_wheels / str(index)).rename(path)
+                files[source_url] = source_bytes
+                dependency.write_bytes(dependency_bytes)
             command = subprocess.run(
                 [
                     str(python),
@@ -318,6 +799,162 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         review_temp.cleanup()
 
 
+@pytest.mark.parametrize("notice_state", ["vulnerable", "malicious"])
+def test_managed_pack_install_requires_exact_security_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    notice_state: str,
+):
+    import tomllib
+    from uuid import UUID
+
+    import test_installer
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_security.store import SecurityStore
+    from dinkster_workers.pack_lock import PackLock
+    from test_security_notices import NOTICE, _feed, _signed, _trust
+
+    from dinkster.pack_archive import build_pack_archive
+
+    original_run = _run
+    original_server = test_installer._serve_artifacts
+    registry_files: dict[str, bytes] = {}
+
+    def serve(files, requests):
+        nonlocal registry_files
+        registry_files = files
+        return original_server(files, requests)
+
+    class Observed(Exception):
+        pass
+
+    def run(root: Path, *arguments, **kwargs):
+        if not arguments or arguments[0] != "packs-apply":
+            return original_run(root, *arguments, **kwargs)
+        registry = tomllib.loads((root / "registries.toml").read_text())["registries"]["official"][
+            "endpoint"
+        ]
+        identity = artifact_digest((tmp_path / "healthy-1.0.0-py3-none-any.whl").read_bytes())
+        key = Ed25519PrivateKey.generate()
+        trust = _trust(key)
+        trust["registry"] = registry
+        security = SecurityStore(root / "security.sqlite3")
+        security.provision_trust(json.dumps(trust).encode())
+        feed = _feed(notice_state)
+        feed["registry"] = registry
+        feed["notices"][0]["release"].update(
+            pack="healthy", version="1.0.0", artifactDigest=identity
+        )
+        security.import_feed(registry, _signed(feed, key))
+        review = Path(arguments[arguments.index("--input") + 1])
+        store = Path((root / "store").read_text().strip())
+        for decision in ("pending", "denied") if notice_state == "vulnerable" else ("blocked",):
+            if decision == "denied":
+                security.answer(registry, UUID(NOTICE), 1, approved=False)
+            before = {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            }
+            code, result = original_run(root, *arguments, **kwargs)
+            assert code != 0, result
+            diagnostic = json.dumps(result)
+            for expected in ("healthy", "1.0.0", identity, NOTICE, "revision 1", decision):
+                assert expected in diagnostic, diagnostic
+            assert (root / "current").read_text() == "2\n"
+            assert not (root / "generations/3").exists()
+            assert not (review / "consumed").exists()
+            assert {
+                path: content_digest(path)
+                for directory in (root, store)
+                for path in directory.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            } == before
+        if notice_state == "malicious":
+            raise Observed
+        security.answer(registry, UUID(NOTICE), 1, approved=True)
+        code, result = original_run(root, *arguments, **kwargs)
+        assert code == 0 and result["current"] == 3, result
+
+        feed["revision"] = 2
+        feed["notices"][0].update(revision=2, previousRevision=1)
+        security.import_feed(registry, _signed(feed, key))
+        assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+        sibling = tmp_path / "sibling"
+        shutil.copytree(tmp_path / "pack", sibling)
+        manifest = sibling / "dinkster-pack.toml"
+        manifest.write_text(manifest.read_text().replace("healthy", "sibling"))
+        (sibling / "healthy").rename(sibling / "sibling")
+        nodes = sibling / "sibling/__init__.py"
+        nodes.write_text(nodes.read_text().replace("healthy.", "sibling."))
+        (sibling / "pyproject.toml").write_text('[project]\nname="sibling"\nversion="1.0.0"\n')
+        archive = tmp_path / "sibling-1.0.0-py3-none-any.whl"
+        build_pack_archive(sibling, archive)
+        payload = archive.read_bytes()
+        entry = LockedPack(
+            "sibling",
+            "1.0.0",
+            artifact_digest(payload),
+            "dinkster",
+            ("sibling",),
+            "registry:official",
+        )
+        lock_path = tmp_path / "sibling-lock.json"
+        PackLock("sibling", "fixture-cpu", ">=3.12", (), (), ()).write(lock_path)
+        lock = lock_path.read_bytes()
+        lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
+        index = json.loads(registry_files["/static/packs/healthy/index.json"])
+        release = {
+            **test_installer._static_release(entry, payload),
+            "engine": ">=1,<3",
+            "installLocks": {
+                "fixture-cpu": {
+                    **index["items"][0]["installLocks"]["fixture-cpu"],
+                    "artifactDigest": entry.artifact_digest,
+                    "digest": artifact_digest(lock),
+                    "size": len(lock),
+                    "url": lock_url,
+                }
+            },
+        }
+        registry_files.update(test_installer._static_indexes([*index["items"], release]))
+        registry_files["/static/" + lock_url] = lock
+        registry_files["/static/" + release["wheels"][0]["url"]] = payload
+        retained_review = tmp_path / "retained-review"
+        code, plan = original_run(
+            root, "packs-plan", "sibling@1.0.0", "--output", str(retained_review)
+        )
+        assert code == 0, plan
+        code, result = original_run(
+            root,
+            "packs-apply",
+            "--input",
+            str(retained_review),
+            "--approval",
+            plan["approval"],
+            timeout=120,
+        )
+        assert code == 0 and result["current"] == 4, result
+        assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+        assert {
+            entry.pack
+            for entry in Lockfile.from_record_json(
+                (root / "generations/4/dinkster.lock").read_text()
+            ).packs
+        } == {"healthy", "sibling"}
+        raise Observed
+
+    monkeypatch.setattr(test_installer, "_serve_artifacts", serve)
+    monkeypatch.setattr(sys.modules[__name__], "_run", run)
+    with pytest.raises(Observed):
+        test_fresh_install_engine_update_pack_install_and_exact_restore(
+            tmp_path, monkeypatch, capsys, "supervisor", "pack"
+        )
+
+
 @pytest.mark.parametrize(
     ("pack_route", "notice_kind"),
     [("supervisor", "pack"), ("command", "pack"), ("supervisor", "dependency")],
@@ -338,7 +975,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
-    from test_installer import _serve_artifacts, _static_release, run_cli
+    from test_installer import _serve_artifacts, _static_indexes, _static_release, run_cli
     from test_security_notices import _feed, _signed, _trust
 
     from dinkster.pack_archive import build_pack_archive
@@ -433,11 +1070,12 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         },
     }
     registry_files: dict[str, bytes | Callable[[], bytes]] = {
-        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        **_static_indexes([release]),
         "/static/" + lock_url: lock,
         "/static/" + release["wheels"][0]["url"]: payload,
     }
-    server = _serve_artifacts(registry_files, [])
+    registry_requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(registry_files, registry_requests)
     try:
         setup = fixture["commands"]["setup"]
         code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
@@ -493,6 +1131,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             } == before
             run_cli(*command, "--plan", str(review))
             capsys.readouterr()
+            assert registry_requests and all(
+                "/wheels/" not in path for path, _ in registry_requests
+            ), registry_requests
             saved = json.loads(review.read_bytes())
             registry_config.write_text(registry_text + "\n# changed configuration\n")
             with pytest.raises(SystemExit):
@@ -513,8 +1154,35 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             run_cli("--root", str(root), "apply", str(review))
             assert "activated generation 3" in capsys.readouterr().out
         else:
-            code, planned = _run(root, "packs-plan", "healthy@1.0.0", "--output", str(review))
+            progress = tmp_path / "progress.json"
+            code, planned = _run(
+                root,
+                "packs-plan",
+                "healthy@1.0.0",
+                "--output",
+                str(review),
+                "--progress",
+                str(progress),
+            )
             assert code == 0, planned
+            observation = json.loads(progress.read_text())
+            assert observation["sequence"] > 1
+            assert observation["stage"] == "retaining-review"
+            assert "approval" not in observation
+            assert len(history(root)) == 2
+            progress.with_name(progress.name + ".cancel").touch()
+            cancelled_review = tmp_path / "cancelled-review"
+            code, refused = _run(
+                root,
+                "packs-plan",
+                "healthy@1.0.0",
+                "--output",
+                str(cancelled_review),
+                "--progress",
+                str(progress),
+            )
+            assert code != 0 and "cancelled" in refused["error"], refused
+            assert not cancelled_review.exists()
             assert len(history(root)) == 2
             code, result = _run(
                 root,
@@ -1015,7 +1683,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _wheel, _workspace_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -1137,9 +1805,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     outer_wheel = release["wheels"][0]
     registry = _serve_artifacts(
         {
-            "/static/packs/index.json": json.dumps(
-                {"schemaVersion": 1, "items": [release]}
-            ).encode(),
+            **_static_indexes([release]),
             "/static/" + lock_url: extra_lock,
             "/static/" + outer_wheel["url"]: extra_archive,
         },
@@ -2260,6 +2926,30 @@ def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_pat
         publish_entry(tmp_path, {**first, "reason": "rewritten"})
     assert history(tmp_path) == [first, second]
     assert _run(tmp_path, "history", "show", "99")[0] == 1
+
+
+def test_pack_review_refuses_history_metadata_that_differs_from_sealed_input(tmp_path: Path):
+    from dinkster_supervisor.environment_pack_install import inspect_pack_install
+
+    record = _generation(tmp_path, 1)
+    source = record.parent
+    manifest = source / "engine-manifest.json"
+    manifest.write_bytes(b'{"version":"0.3.1"}')
+    document = json.loads(record.read_bytes())
+    document["files"][manifest.name] = content_digest(manifest)
+    record.write_text(json.dumps(document))
+    set_current(tmp_path, 1)
+    (tmp_path / "store").write_text(str(tmp_path / "shared-store"))
+    entry = prepare_entry(tmp_path, source, operation="install", reason="setup")
+    cast("dict", entry["snapshot"])["metadata"][manifest.name] = '{"version":"9.9.9"}'
+    publish_entry(tmp_path, entry)
+    manifest.unlink()
+    before = {path: content_digest(path) for path in tmp_path.rglob("*") if path.is_file()}
+    with pytest.raises(
+        EnvironmentError, match="recorded software input unavailable: engine-manifest.json"
+    ):
+        inspect_pack_install(tmp_path, ("healthy@1.0.0",))
+    assert {path: content_digest(path) for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
 def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Path):

@@ -338,8 +338,7 @@ def _finish(
     if stuck:
         raise InstallError(
             f"artifacts are not available locally for: {', '.join(stuck)}, "
-            f"and their recorded provenance cannot be fetched (registry "
-            f"sources need --registry or $DINKSTER_REGISTRY)"
+            f"and their recorded development provenance cannot be fetched"
         )
     if steps.empty:
         print("plan: restage the current lockfile with the declared venv topology")
@@ -427,22 +426,25 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
             selections,
             updates=tuple(cast("list[str]", updates)) if updates is not None else None,
             registry_arguments=registry_arguments,
+            diagnostic_python=Path(sys.executable),
         )
         if observed != approved:
             raise InstallError("pack plan is stale; request a new plan")
         metadata = cast("dict[str, object]", approved["metadata"])
         selected = cast("dict[str, object]", metadata["dependencyLocks"])
         sources = Lockfile.from_record_json(json.dumps(metadata["sources"]))
-        additions = tuple(
-            f"{entry.pack}@{entry.version}" for entry in sources.packs if entry.pack in selected
-        )
-        if not additions:
+        if not selected and not metadata.get("errors"):
             print("nothing to do; no registry packs selected")
             return
         with tempfile.TemporaryDirectory(prefix="dinkster-pack-review-") as directory:
             retained = Path(directory) / "inputs"
             result = operations.plan_pack_install(
-                root, additions, retained, registry_arguments=registry_arguments
+                root,
+                selections,
+                retained,
+                updates=tuple(cast("list[str]", updates)) if updates is not None else None,
+                registry_arguments=registry_arguments,
+                diagnostic_python=Path(sys.executable),
             )
             prepared = result["packPlan"]
             acquired = Lockfile.from_record_json(json.dumps(prepared["sources"]))
@@ -458,6 +460,7 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
                     selections,
                     updates=tuple(cast("list[str]", updates)) if updates is not None else None,
                     registry_arguments=registry_arguments,
+                    diagnostic_python=Path(sys.executable),
                 )
                 != approved
             ):
@@ -491,7 +494,11 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
     updates = tuple(args.packs) if update else None
     try:
         review = operations.inspect_pack_install(
-            root, selections, updates=updates, registry_arguments=tuple(registry_arguments)
+            root,
+            selections,
+            updates=updates,
+            registry_arguments=tuple(registry_arguments),
+            diagnostic_python=Path(sys.executable),
         )
     except (OSError, ValueError) as exc:
         raise InstallError(str(exc)) from exc
@@ -500,6 +507,8 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
         f"Project: {root}\nStore: {review['store']}\n"
         f"Current generation: {review['current']} -> proposed generation: {review['next']}"
     )
+    for error in cast("list[str]", metadata.get("errors", [])):
+        print(f"Unavailable input: {error}")
     print(
         f"Retain engine {metadata['engineVersion']} ({metadata['engineRelease']}); "
         f"base {metadata['baseId']}; variant {metadata['variant']}"
@@ -629,7 +638,7 @@ def _cmd_update(args: argparse.Namespace) -> None:
             refreshed, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
             entries.append(refreshed)
         else:
-            entries.append(entry)  # registry sources: resolution needs the service
+            entries.append(entry)
     _finish(args, installer, Lockfile.of(entries))
 
 
@@ -1136,9 +1145,8 @@ def _cmd_reproduce(args: argparse.Namespace) -> None:
     if stuck:
         raise InstallError(
             f"recorded bytes are not available locally for: {', '.join(stuck)}, "
-            f"and their stamped provenance cannot be re-fetched (registry "
-            f"sources need --registry or $DINKSTER_REGISTRY) - stage those "
-            f"artifacts first; "
+            f"and their stamped development provenance cannot be re-fetched - "
+            f"stage those artifacts first; "
             f"newer bytes are never silently substituted"
         )
     target = Lockfile.of(provisional)
@@ -1329,10 +1337,14 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
         "dinkster_supervisor.environment_artifacts"
     ).validate_manifest
 
+    errors: list[str] = []
     try:
         engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)
     except (OSError, ValueError) as exc:
-        raise InstallError(f"target engine metadata refused: {exc}") from exc
+        if not args.collect_errors or args.engine_version is None:
+            raise InstallError(f"target engine metadata refused: {exc}") from exc
+        errors.append(f"target engine metadata refused: {exc}")
+        engine = {"version": args.engine_version}
     defaults = engine.get("defaultPacks")
     if args.installed_lock is None and (not isinstance(defaults, dict) or not defaults):
         raise InstallError("target engine has no default pack declaration")
@@ -1343,19 +1355,28 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     if args.installed_lock is not None:
         try:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise InstallError(f"installed sources cannot be read: {exc}") from exc
-        sources, locks = plan_registry_changes(
-            config,
-            installed,
-            selections=tuple(args.add),
-            updates=tuple(args.update) if args.update is not None else None,
-            engine_version=cast("str", engine["version"]),
-            variant=args.variant,
-            base_id=args.base_id,
-            selected=select_registry(config, args.registry) if args.registry else None,
-            index=index,
-        )
+        except (InstallError, OSError, ValueError) as exc:
+            if not args.collect_errors:
+                raise InstallError(f"installed sources cannot be read: {exc}") from exc
+            errors.append(f"installed sources cannot be read: {exc}")
+        try:
+            sources, locks = plan_registry_changes(
+                config,
+                installed,
+                selections=tuple(args.add),
+                updates=tuple(args.update) if args.update is not None else None,
+                engine_version=cast("str", engine["version"]),
+                variant=args.variant,
+                base_id=args.base_id,
+                selected=select_registry(config, args.registry) if args.registry else None,
+                index=index,
+                errors=errors if args.collect_errors else None,
+            )
+        except InstallError as exc:
+            if not args.collect_errors:
+                raise
+            errors.append(str(exc))
+            sources, locks = installed, ()
     else:
         if args.add or args.update is not None:
             raise InstallError("pack changes require --installed-lock")
@@ -1377,7 +1398,7 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     source_wheels: dict[str, object] = {}
     selected_registry = select_registry(config, args.registry) if args.registry else None
     for entry in sources.packs:
-        if entry.pack not in {lock.pack for lock in locks}:
+        if entry in installed.packs and entry.pack not in {lock.pack for lock in locks}:
             continue
         registry = config.registry_for(entry, selected_registry)
         wheel, identity = static_release_wheel(
@@ -1403,7 +1424,14 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                 if args.installed_lock is not None
                 else {"packs": []},
                 "sourceWheels": source_wheels,
+                "securityRegistries": {
+                    entry.source: config.registry_for(entry, selected_registry).endpoint
+                    if entry.source == "registry" or entry.source.startswith("registry:")
+                    else entry.source
+                    for entry in sources.packs
+                },
                 "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+                "errors": errors,
                 "maximumPackPayloadBytes": sum(payloads.values()),
                 "plan": [
                     (
@@ -1746,11 +1774,13 @@ def main() -> None:
     )
     source_plan.add_argument("--engine-manifest", type=Path, required=True)
     source_plan.add_argument("--engine-release", required=True)
+    source_plan.add_argument("--engine-version", help="recorded version for diagnostic collection")
     source_plan.add_argument("--variant", required=True)
     source_plan.add_argument("--base-id", required=True)
     source_plan.add_argument("--index-snapshot", type=Path)
     source_plan.add_argument("--offline", action="store_true")
     source_plan.add_argument("--installed-lock", type=Path)
+    source_plan.add_argument("--collect-errors", action="store_true")
     source_plan.add_argument("--add", action="append", default=[], metavar="PACK@VERSION")
     source_plan.add_argument(
         "--update", nargs="*", metavar="PACK", help="update selected registry packs; default: all"

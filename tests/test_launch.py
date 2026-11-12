@@ -79,7 +79,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     from dinkster_supervisor.environment_artifacts import acquire, discover
     from dinkster_workers.pack_lock import PackLock
     from test_environment_artifacts import _json, _mirror
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.registries import (
         NamedRegistry,
@@ -131,7 +131,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         )
         files["/static/" + path] = lock_bytes
         releases.append(row)
-    files["/static/packs/index.json"] = _json({"schemaVersion": 1, "items": releases})
+    files.update(_static_indexes(releases))
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -258,7 +258,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     from dinkster_workers.pack_lock import PackLock
     from dinkster_workers.pack_wheel import build_pack_archive
     from test_environment_runtime import free_port
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
     from test_pack_wheel import wheel_pack
 
     from tests.fixtures.environments import build as publisher
@@ -338,7 +338,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     }
     wheel_path = "/static/" + cast("list[dict[str, str]]", row["wheels"])[0]["url"]
     files = {
-        "/static/packs/index.json": canonical_json({"schemaVersion": 1, "items": [row]}),
+        **_static_indexes([row]),
         "/static/" + lock_path: lock_bytes,
         wheel_path: payload,
     }
