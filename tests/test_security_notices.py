@@ -543,7 +543,14 @@ def _execution_generation(
 
 
 @pytest.mark.parametrize(
-    ("stop_reason", "in_process"), [("malicious", False), ("denied", False), ("malicious", True)]
+    ("stop_reason", "in_process"),
+    [
+        ("malicious", False),
+        ("denied", False),
+        ("refuse", False),
+        ("age", False),
+        ("malicious", True),
+    ],
 )
 def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
     tmp_path: Path,
@@ -565,10 +572,11 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
     key = Ed25519PrivateKey.generate()
     store = _store(root, key)
     url, response = security_feed
-    (root / "security.toml").write_text(
+    transport_config = (
         "refresh_interval_seconds = 0.05\n[feed_urls]\n"
         f'"{REGISTRY}" = "{url}/security/index.json"\n'
     )
+    (root / "security.toml").write_text(transport_config)
     feed = _feed()
     feed["notices"][0]["release"]["artifactDigest"] = entries[0].artifact_digest
     response.update(status=200, body=_signed(feed, key))
@@ -615,7 +623,7 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 ) as result:
                     assert result.status == 202, await result.text()
 
-            async def completed(job: str) -> None:
+            async def completed(job: str, expected: str = "completed") -> None:
                 async with asyncio.timeout(15):
                     while True:
                         async with client.get(
@@ -623,7 +631,7 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                         ) as result:
                             state = await result.json()
                         if state["state"] in {"completed", "failed", "cancelled"}:
-                            assert state["state"] == "completed", state
+                            assert state["state"] == expected, state
                             return
                         await asyncio.sleep(0.02)
 
@@ -653,6 +661,15 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                         await asyncio.sleep(0.02)
                 if stop_reason == "denied":
                     store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+                elif stop_reason in {"refuse", "age"}:
+                    policy = (
+                        "refuse_vulnerable = true\n"
+                        if stop_reason == "refuse"
+                        else "maximum_feed_age_seconds = 1\n"
+                    )
+                    settings = root / "security.toml.tmp"
+                    settings.write_text(policy + transport_config)
+                    settings.replace(root / "security.toml")
                 else:
                     feed["revision"] = 2
                     feed["notices"][0].update(revision=2, previousRevision=1, state="malicious")
@@ -683,12 +700,17 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                     while True:
                         async with client.get(link.base_url + "/api/security") as result:
                             status = await result.json()
-                        if status["findings"] and not status["findings"][0]["allowed"]:
+                        if status["staleRegistries"] or (
+                            status["findings"] and not status["findings"][0]["allowed"]
+                        ):
                             break
                         await asyncio.sleep(0.02)
                 await submit("control-pack", "control")
-                await completed("control")
-                assert (markers["control-pack"] / "finished").read_text() == "finished\nfinished\n"
+                await completed("control", "failed" if stop_reason == "age" else "completed")
+                control_runs = 1 if stop_reason == "age" else 2
+                assert (
+                    markers["control-pack"] / "finished"
+                ).read_text() == "finished\n" * control_runs
                 async with asyncio.timeout(15):
                     while True:
                         async with client.get(
@@ -703,11 +725,15 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 previous = feed["notices"][0]["revision"]
                 feed["notices"][0].update(revision=3, previousRevision=previous, status="cleared")
                 response["body"] = _signed(feed, key)
+                if stop_reason in {"refuse", "age"}:
+                    settings = root / "security.toml.tmp"
+                    settings.write_text(transport_config)
+                    settings.replace(root / "security.toml")
                 async with asyncio.timeout(15):
                     while True:
                         async with client.get(link.base_url + "/api/security") as result:
                             status = await result.json()
-                        if not status["findings"]:
+                        if not status["findings"] and not status["staleRegistries"]:
                             break
                         await asyncio.sleep(0.02)
                 assert (markers["test-pack"] / "finished").read_text() == "finished\nfinished\n"
