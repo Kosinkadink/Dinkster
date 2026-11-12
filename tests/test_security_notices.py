@@ -1697,7 +1697,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     from dinkster_supervisor.environment_state import Generation, content_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_environment_generations import _standalone_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.registries import RegistryConfig, StaticPackIndex
     from dinkster.security_repair import plan_security_repair
@@ -1931,7 +1931,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 },
             }
         ).encode()
-    documents["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": rows}).encode()
+    documents.update(_static_indexes(rows))
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
     feed = _feed("malicious")
