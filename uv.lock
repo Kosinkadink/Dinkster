@@ -1509,7 +1509,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-models"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "packages/dinkster-nodes-models" }
 dependencies = [
     { name = "comfy-kitchen" },
