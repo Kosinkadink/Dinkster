@@ -992,7 +992,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ("dinkster-image", "dinkster-nodes-image", "0.0.9"),
         ("dinkster-audio", "dinkster-nodes-audio", "0.0.4"),
         ("dinkster-3d", "dinkster-nodes-3d", "0.0.4"),
-        ("dinkster-models", "dinkster-nodes-models", "0.0.6"),
+        ("dinkster-models", "dinkster-nodes-models", "0.0.7"),
         ("dinkster-nodes-remote", "dinkster-nodes-remote", "0.0.4"),
     ],
 )
@@ -2183,6 +2183,50 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
         )
         try:
             assert composition.node_packs["iso.chatty"] == "isopack"
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
+def test_composed_cpu_device_choices_without_tensor_initialization(tmp_path: Path) -> None:
+    (tmp_path / "sitecustomize.py").write_text(
+        "import importlib.abc\nimport sys\n"
+        "class NoTensorRuntime(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:\n"
+        "            raise AssertionError('device enumeration imported ' + fullname)\n"
+        "sys.meta_path.insert(0, NoTensorRuntime())\n",
+        encoding="ascii",
+    )
+
+    async def scenario() -> None:
+        composition = await compose_serving(
+            [default_pack_spec("dinkster-models")],
+            include_default_packs=False,
+            worker_env={
+                **WORKER_ENV,
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+                "DINKSTER_ACCELERATOR": "cpu",
+            },
+        )
+        app = create_app(
+            composition.make_engine,
+            composition.schemas,
+            choices=composition.choices,
+            lazy_choices=composition.lazy_choices,
+        )
+        try:
+            async with TestClient(TestServer(app)) as client:
+                for _ in range(2):
+                    for name, expected in (
+                        ("devices.gpu", ["default", "cpu"]),
+                        ("devices.vae", ["default"]),
+                    ):
+                        response = await client.get(f"/api/choices/{name}")
+                        assert response.status == 200, await response.text()
+                        assert await response.json() == expected
+                assert (await client.get("/api/choices/missing")).status == 404
         finally:
             await composition.close()
 
