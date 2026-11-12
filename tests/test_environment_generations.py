@@ -242,6 +242,7 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
                                 len(payloads["added"]),
                                 hashlib.sha256(payloads["added"]).hexdigest(),
                                 endpoint + "/static/" + wheel_record["url"],
+                                endpoint,
                             ),
                         ),
                     ),

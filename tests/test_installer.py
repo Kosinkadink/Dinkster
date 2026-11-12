@@ -3883,7 +3883,11 @@ def test_published_dependency_origins_are_not_replaced_by_pack_registry(
         assert helper.wheels == (dependency,)
         outer = next(package for package in locks[0].packages if package.name == "demo")
         assert outer.wheels[0].registry == endpoint
-        assert requests == [("/static/packs/demo/index.json", None), ("/static/" + lock_path, None)]
+        assert requests == [
+            ("/static/packs/index.json", None),
+            ("/static/packs/demo/index.json", None),
+            ("/static/" + lock_path, None),
+        ]
     finally:
         server.shutdown()
         server.server_close()
