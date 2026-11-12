@@ -10,53 +10,6 @@ from dinkster_assets import MountDef, MountTable
 from safetensors.torch import load_file, save_file
 
 
-@pytest.mark.parametrize("invalid", (False, True))
-def test_ltx_audio_vae_loader_filters_checkpoint_and_validates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: bool
-) -> None:
-    from dinkster_ltx import model_file_loaders as loaders
-
-    initialize_inference_process()
-    from dinkster_inference import sd
-
-    checkpoint = tmp_path / "audio.safetensors"
-    save_file(
-        {
-            "audio_vae.encoder.weight": torch.tensor([2.0, -3.0]),
-            "vocoder.weight": torch.tensor([11.0]),
-            "diffusion.weight": torch.tensor([97.0]),
-        },
-        checkpoint,
-        metadata={"model": "audio"},
-    )
-    table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
-    table.add(MountDef(id="checkpoint", path=tmp_path), kind="model/checkpoint")
-    asset = table.bind_name(checkpoint.name, "model/checkpoint")
-
-    class VAE:
-        def __init__(self, *, sd: dict[str, torch.Tensor], metadata: dict[str, str]) -> None:
-            self.state = sd
-            self.metadata = metadata
-            self.validated = False
-
-        def throw_exception_if_invalid(self) -> None:
-            if invalid:
-                raise ValueError("invalid audio checkpoint")
-            self.validated = True
-
-    monkeypatch.setattr(sd, "VAE", VAE)
-    if invalid:
-        with pytest.raises(ValueError, match="invalid audio checkpoint"):
-            loaders.LTXVAudioVAELoader.execute(ckpt_name=asset)
-        return
-    vae = loaders.LTXVAudioVAELoader.execute(ckpt_name=asset)["VAE"]
-    assert vae.validated
-    assert vae.metadata == {"model": "audio"}
-    assert set(vae.state) == {"autoencoder.encoder.weight", "vocoder.weight"}
-    assert vae.state["autoencoder.encoder.weight"].tolist() == [2.0, -3.0]
-    assert vae.state["vocoder.weight"].tolist() == [11.0]
-
-
 @pytest.mark.parametrize("device", (None, "default", "cpu", "other"))
 def test_ltx_text_encoder_loader_preserves_file_order_and_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str | None

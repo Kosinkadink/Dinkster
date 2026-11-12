@@ -1278,7 +1278,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-image"
-version = "0.0.7"
+version = "0.0.8"
 source = { editable = "packages/dinkster-nodes-image" }
 dependencies = [
     { name = "av" },
@@ -1530,7 +1530,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-nodes-dev"
-version = "0.0.4"
+version = "0.0.3"
 source = { editable = "packages/dinkster-nodes-dev" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1853,7 +1853,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-utilities"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "packages/dinkster-nodes-utilities" }
 dependencies = [
     { name = "dinkster-api" },

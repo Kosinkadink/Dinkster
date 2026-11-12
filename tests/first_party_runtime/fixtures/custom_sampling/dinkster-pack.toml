@@ -1,8 +1,0 @@
-[pack]
-name = "custom-sampling-fixture"
-publisher = "dinkster"
-namespaces = ["custom-sampling-fixture"]
-
-[pack.entry]
-nodes = "custom_sampling_fixture:NODES"
-types = "custom_sampling_fixture:register_inference_types"

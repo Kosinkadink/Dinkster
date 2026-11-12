@@ -264,6 +264,10 @@ def test_tools_publication_uses_supervisor_version_and_exact_native_payloads(
         "partial-corrupt",
         "asset-size",
         "extra-asset",
+        "tag-conflict",
+        "annotated-tag",
+        "annotated-tag-conflict",
+        "tag-read-error",
     ],
 )
 def test_tools_publication_exposes_channel_only_after_both_sources_verify(
@@ -373,7 +377,48 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
             if corrupt == "mirror" and key.endswith(".zip"):
                 destination.write_bytes(b"corruption")
 
+    tag_exists = github.exists() or corrupt in {
+        "tag-conflict",
+        "annotated-tag",
+        "annotated-tag-conflict",
+    }
+    tag_verified = False
+
     def release_command(command, **kwargs):
+        nonlocal tag_exists, tag_verified
+        if command[:2] == ["git", "push"]:
+            assert not tag_exists
+            assert command == [
+                "git",
+                "push",
+                "origin",
+                f"{manifest['commit']}:refs/tags/tools-{label}",
+            ]
+            tag_exists = True
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:2] == ["gh", "api"]:
+            if command[2].endswith("ref/tags/tools-" + label):
+                if corrupt == "tag-read-error":
+                    return subprocess.CompletedProcess(command, 1, '{"status":"403"}', "denied")
+                if not tag_exists:
+                    return subprocess.CompletedProcess(command, 1, '{"status":"404"}', "absent")
+                target = (
+                    {
+                        "type": "tag" if corrupt.startswith("annotated") else "commit",
+                        "sha": "f" * 40 if corrupt == "tag-conflict" else manifest["commit"],
+                    }
+                    if corrupt
+                    else {"type": "commit", "sha": manifest["commit"]}
+                )
+            else:
+                assert "/tags/" in command[2] and corrupt and corrupt.startswith("annotated")
+                target = {
+                    "type": "commit",
+                    "sha": "f" * 40 if corrupt.endswith("conflict") else manifest["commit"],
+                }
+            tag_verified = target == {"type": "commit", "sha": manifest["commit"]}
+            return subprocess.CompletedProcess(command, 0, json.dumps({"object": target}), "")
+        assert tag_verified
         if command[:3] == ["gh", "release", "view"]:
             if github.exists():
                 return subprocess.CompletedProcess(
@@ -382,7 +427,7 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
                     json.dumps(
                         {
                             "tagName": "tools-" + label,
-                            "targetCommitish": manifest["commit"],
+                            "targetCommitish": "main",
                             "assets": [
                                 {"name": path.name, "size": path.stat().st_size}
                                 for path in github.iterdir()
@@ -401,7 +446,7 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
             return subprocess.CompletedProcess(command, 0, "", "")
         assert command[:3] == ["gh", "release", "create"]
         assert command[3] == "tools-" + label
-        assert command[command.index("--target") + 1] == manifest["commit"]
+        assert "--target" not in command and "--verify-tag" in command
         github.mkdir()
         for path in output.iterdir():
             shutil.copyfile(path, github / path.name)
@@ -424,6 +469,14 @@ def test_tools_publication_exposes_channel_only_after_both_sources_verify(
         return io.BytesIO(json.dumps({"status": status}).encode("ascii"))
 
     monkeypatch.setattr(publisher, "urlopen", compare)
+    if corrupt in {"tag-conflict", "annotated-tag-conflict", "tag-read-error"}:
+        error = subprocess.CalledProcessError if corrupt == "tag-read-error" else ValueError
+        with pytest.raises(error):
+            publisher.publish(output)
+        assert not github.exists()
+        assert (public / "channels/main.json").read_bytes() == before
+        assert not (public / "tools").exists()
+        return
     if corrupt in {"github", "mirror", "partial-corrupt"}:
         with pytest.raises(DownloadError):
             publisher.publish(output)

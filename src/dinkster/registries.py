@@ -153,9 +153,12 @@ def publish_release(
     version: str,
     *,
     locks: Path | None = None,
+    engine: Mapping[str, str] | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
 ) -> PublishVerdict:
-    """Submit exact artifact bytes and optional publisher-produced base locks."""
+    """Submit exact artifact bytes with optional base locks and scan engine identity."""
+    if engine is not None and locks is None:
+        raise RegistryPublishError("engine binding requires publication locks")
     try:
         data = archive.read_bytes()
         lock_data = locks.read_bytes() if locks is not None else None
@@ -176,8 +179,14 @@ def publish_release(
             + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="locks"\r\n'
             "Content-Type: application/json\r\n\r\n".encode("ascii")
             + lock_data
-            + f"\r\n--{boundary}--\r\n".encode("ascii")
         )
+        if engine is not None:
+            data += (
+                f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="engine"\r\n'
+                "Content-Type: application/json\r\n\r\n".encode("ascii")
+                + json.dumps(dict(engine), sort_keys=True, separators=(",", ":")).encode("ascii")
+            )
+        data += f"\r\n--{boundary}--\r\n".encode("ascii")
     headers = {"User-Agent": "dinkster-pack"}
     token = registry.token()
     if token:
@@ -1109,6 +1118,96 @@ def plan_registry_sources(
     if errors:
         raise InstallError("registry plan refused:\n" + "\n".join(errors))
     return sources, locks
+
+
+def plan_registry_changes(
+    config: RegistryConfig,
+    installed: Lockfile,
+    *,
+    selections: tuple[str, ...] = (),
+    updates: tuple[str, ...] | None = None,
+    engine_version: str,
+    variant: str,
+    base_id: str,
+    selected: NamedRegistry | None = None,
+    index: StaticPackIndex,
+) -> tuple[Lockfile, tuple[PackLock, ...]]:
+    """Inspect published replacements, retaining every unselected source verbatim."""
+    if selections and updates is not None:
+        raise InstallError("exact selections and compatible updates are mutually exclusive")
+    current = {entry.pack: entry for entry in installed.packs}
+    requested: dict[str, str | None] = {}
+    if updates is not None:
+        for name in updates or tuple(
+            entry.pack
+            for entry in installed.packs
+            if entry.source == "registry" or entry.source.startswith("registry:")
+        ):
+            if name != canonical_name(name) or name in requested:
+                raise InstallError("updates require distinct canonical installed pack names")
+            entry = current.get(name)
+            if entry is None or not (
+                entry.source == "registry" or entry.source.startswith("registry:")
+            ):
+                raise InstallError(f"{name}: update requires an installed registry pack")
+            requested[name] = None
+    else:
+        for raw in selections:
+            parsed = parse_registry_spec(raw)
+            if parsed is None or raw != f"{parsed[0]}@{parsed[1]}":
+                raise InstallError("installation requires canonical PACK@VERSION selections")
+            name, version = parsed
+            if name in requested:
+                raise InstallError(f"{name}: selections require a distinct pack")
+            requested[name] = version
+        if not requested:
+            raise InstallError("installation requires at least one exact selection")
+    replacements: list[LockedPack] = []
+    errors: list[str] = []
+    for name, version in requested.items():
+        try:
+            previous = current.get(name)
+            registry = (
+                config.registry_for(previous, selected)
+                if previous is not None
+                and (previous.source == "registry" or previous.source.startswith("registry:"))
+                else selected
+                or select_registry(
+                    config, "" if config.registries else "https://registry.dinkster.org"
+                )
+            )
+            if selected is not None and registry.endpoint != selected.endpoint:
+                raise InstallError("selection cannot change the installed registry")
+            if version is None:
+                assert previous is not None
+                entry = resolve_compatible_release(
+                    registry, name, previous.version, engine_version, index=index
+                )
+            else:
+                entry = resolve_release(
+                    registry, name, version, engine_version=engine_version, index=index
+                )
+            if previous is not None and previous.source.startswith("registry:"):
+                entry = replace(entry, source=previous.source)
+            replacements.append(entry)
+        except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
+            errors.append(f"{name}: {exc}")
+    sources = Lockfile.of(replacements)
+    locks: tuple[PackLock, ...] = ()
+    try:
+        locks = read_registry_pack_locks(
+            config, sources, variant=variant, base_id=base_id, selected=selected, index=index
+        )
+    except InstallError as exc:
+        errors.append(str(exc))
+    if errors:
+        raise InstallError("registry pack changes refused:\n" + "\n".join(errors))
+    return (
+        Lockfile.of(
+            [entry for entry in installed.packs if entry.pack not in requested] + replacements
+        ),
+        locks,
+    )
 
 
 def prepare_registry_pack_locks(

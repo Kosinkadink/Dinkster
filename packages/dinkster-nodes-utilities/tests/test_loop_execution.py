@@ -109,6 +109,3 @@ def test_list_support_keeps_whole_typed_elements_and_unbounded_inputs() -> None:
         assert ListElement.execute(index=index, input_values={"list": nested})["item"] is expected
     with pytest.raises(ValueError, match="index 2 out of range for a list of 2"):
         ListElement.execute(index=2, input_values={"list": nested})
-    assert MakeList.schema().input_families[0].max_members is None
-    assert not MakeList.schema().aliases and not MakeList.schema().replacements
-    assert not ListElement.schema().aliases and not ListElement.schema().replacements

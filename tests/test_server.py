@@ -31,6 +31,8 @@ from dinkster_engine import (
     ProviderResolutionError,
 )
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_image.bounding_boxes import CreateBoundingBoxes
+from dinkster_image.compositor import LayersFromBoundingBoxes
 from dinkster_memory import (
     ConsumerItem,
     MeasuredMemory,
@@ -93,6 +95,7 @@ from dinkster_server import (
 from dinkster_server.app import handle_submit
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
 from dinkster_utilities.math import ComfyMathExpression
+from dinkster_utilities.utilities import ComfyNumberConvert
 from dinkster_values import (
     CURVE_TYPE,
     PNG_CONTAINER_VERSION,
@@ -1783,8 +1786,8 @@ def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[s
     return body
 
 
-def test_math_expression_serves_connection_only_numeric_family() -> None:
-    nodes = [ComfyMathExpression]
+def test_primitive_union_inputs_serve_connection_only_sockets() -> None:
+    nodes = [ComfyMathExpression, ComfyNumberConvert, CreateBoundingBoxes, LayersFromBoundingBoxes]
     schemas = build_schemas(nodes)
 
     def make_engine(on_event: EventListener | None = None) -> Engine:
@@ -1811,6 +1814,32 @@ def test_math_expression_serves_connection_only_numeric_family() -> None:
             assert "widget" not in template
             expression = next(entry for entry in interface if entry["id"] == "expression")
             assert expression["widget"] == {"type": "STRING", "multiline": True}
+            for node_type, input_id, types, required in (
+                (
+                    "dinkster.utilities.comfy_number_convert",
+                    "value",
+                    ["INT", "FLOAT", "STRING", "BOOLEAN"],
+                    True,
+                ),
+                (
+                    "dinkster.image.create_bounding_boxes",
+                    "bboxes",
+                    ["BOUNDING_BOX", "ARRAY", "STRING"],
+                    False,
+                ),
+                (
+                    "dinkster.layers.from_bounding_boxes",
+                    "bboxes",
+                    ["STRING", "BOUNDING_BOX", "comfy.ARRAY"],
+                    False,
+                ),
+            ):
+                interface = catalog["nodes"][node_type]["interface"]
+                socket = next(entry for entry in interface if entry["id"] == input_id)
+                assert socket.get("forceInput") is True, (node_type, input_id)
+                assert socket["type"] == {"kind": "union", "types": types}
+                assert socket["required"] is required
+                assert "widget" not in socket
 
     run_scenario(scenario())
 
