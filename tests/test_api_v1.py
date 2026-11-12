@@ -101,6 +101,7 @@ GOLDEN_V1_SURFACE = (
     "timeline_video",
     "video_document",
     "image_math",
+    "parse_color",
     "timeline_document",
     "timeline_render",
     "timeline_runtime",
@@ -987,9 +988,11 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_values
     import dinkster_values.resident as resident_codec
     import dinkster_video_runtime
+    import dinkster_video_runtime.image_math as image_math
     import dinkster_workers.execution as worker_execution
 
     document_sources = {
+        "parse_color": image_math,
         "MAX_COMPOSITOR_DIMENSION": compositor,
         "MAX_COMPOSITOR_LAYERS": compositor,
         "CompositorLayer": compositor,
@@ -1057,6 +1060,17 @@ def test_reexports_are_the_internal_objects() -> None:
         assert all(getattr(owner, name) is exported for owner in owners), (
             f"{name} is a wrapper/copy"
         )
+
+
+def test_color_parser_through_v1() -> None:
+    import numpy as np
+
+    np.testing.assert_array_equal(
+        api.parse_color("#12345678"), np.array([18, 52, 86, 120], dtype=np.float32) / 255
+    )
+    np.testing.assert_array_equal(api.parse_color("blue"), [0, 0, 1, 1])
+    with pytest.raises(ValueError, match="color"):
+        api.parse_color("#12345")
 
 
 def test_image_document_round_trip_through_v1() -> None:
