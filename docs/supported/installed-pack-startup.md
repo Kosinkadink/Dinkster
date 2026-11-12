@@ -219,6 +219,14 @@
   An absent retained-base interpreter or unreadable history does not hide
   independent source and wheel failures. Refusal creates no external pack plan.
   Engine wheel checks use the retained exact constraints, not a package index.
+  A verified vulnerable notice requires approval for that exact notice revision
+  before a new release is installed; a pending or denied answer refuses.
+  Already retained vulnerable releases may remain while a different pack is added
+  with the answer pending. Malicious releases refuse regardless of approval.
+  Security refusal names the release digest, notice revision and decision.
+  Initial refusal does not activate a generation or consume the reviewed plan.
+  A security change that refuses activation requires a new plan and keeps the
+  previous generation selected.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
   saved plans, snapshots, workflow stamps and rollback targets refuse instead of
