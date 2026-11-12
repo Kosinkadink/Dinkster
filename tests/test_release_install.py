@@ -2655,11 +2655,15 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         }
 
 
-def test_disposable_registry_acquisition_uses_public_source_for_all_pull_requests() -> None:
+@pytest.mark.parametrize("selected", [False, True])
+def test_disposable_registry_acquisition_uses_public_source_for_all_pull_requests(
+    selected: bool,
+) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
     assert "pull_request_target" not in workflow[True]
-    assert "packages/**/pyproject.toml" in workflow[True]["pull_request"]["paths"]
+    assert "paths" not in workflow[True]["pull_request"]
     job = workflow["jobs"]["registry-service-image"]
+    assert job["needs"] == "select"
     assert "registry-service-unavailable" not in workflow["jobs"]
     assert "secrets." not in yaml.safe_dump(job)
     for event in ("pull_request", "workflow_run", "workflow_dispatch", "push"):
@@ -2672,12 +2676,15 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
                     else "Kosinkadink/Dinkster",
                     "github.repository": "Kosinkadink/Dinkster",
                     "github.actor": actor,
+                    "needs.select.outputs.packs": '["dinkster-test"]' if selected else "[]",
                 }
                 condition = job["if"]
                 for name, value in values.items():
                     condition = condition.replace(name, repr(value))
                 condition = condition.replace("&&", " and ").replace("||", " or ")
-                assert eval(condition, {"__builtins__": {}}) is (event == "pull_request")
+                assert eval(condition, {"__builtins__": {}}) is (
+                    event == "pull_request" and selected
+                )
     checkout = next(step for step in job["steps"] if step.get("uses") == "actions/checkout@v4")
     assert checkout["with"]["repository"] == "Kosinkadink/dinkster-registry-service"
     pin = checkout["with"]["ref"]
@@ -2762,6 +2769,16 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
         "main-substitution",
         "main-error",
         "workflow_dispatch",
+        "pr-source",
+        "pr-pack-source",
+        "pr-api-source",
+        "pr-package-docs",
+        "pr-build-input",
+        "pr-dependency",
+        "pr-unknown",
+        "pr-docs",
+        "pr-tests",
+        "pr-markdown",
     ],
 )
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
@@ -2793,7 +2810,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         'version = "2.7rc1"\nengine = ">=0.2,<1"\n'
         '[pack.entry]\nnodes = "nodes:NODES"\n'
     )
-    if event.startswith("main-"):
+    if event.startswith(("main-", "pr-")):
         library = tmp_path / "packages/dinkster-pack-helpers/pyproject.toml"
         library.parent.mkdir()
         library.write_text(
@@ -2804,6 +2821,29 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
     (tmp_path / ".git/HEAD").write_text(tree + "\n")
     after = tree
+    if event.startswith("pr-"):
+        changed = (
+            tmp_path
+            / {
+                "pr-source": "packages/dinkster-pack-helpers/src/helpers.py",
+                "pr-pack-source": "packages/dinkster-nodes-foundation/src/nodes.py",
+                "pr-api-source": "packages/dinkster-api/src/api.py",
+                "pr-package-docs": "packages/dinkster-pack-helpers/README.md",
+                "pr-build-input": "scripts/base_bundles.json",
+                "pr-dependency": "uv.lock",
+                "pr-unknown": "unknown-input",
+                "pr-docs": "docs/usage.md",
+                "pr-tests": "tests/test_helpers.py",
+                "pr-markdown": "README.md",
+            }[event]
+        )
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text("changed\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        after = subprocess.check_output(
+            ["git", "-C", str(tmp_path), "write-tree"], text=True
+        ).strip()
+        (tmp_path / ".git/HEAD").write_text(after + "\n")
     if event == "lockstep" or event.startswith("main-"):
         changed = tmp_path / (
             ".github/workflows/official-packs.yml"
@@ -2923,11 +2963,20 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert json.loads(outputs["packs"]) == (
         []
-        if event in {"engine-only", "main-failure", "main-skipped", "main-served"}
+        if event
+        in {
+            "engine-only",
+            "main-failure",
+            "main-skipped",
+            "main-served",
+            "pr-docs",
+            "pr-tests",
+            "pr-markdown",
+        }
         else ["dinkster-pack-helpers"]
         if event == "main-schema1"
         else ["dinkster-nodes-foundation", "dinkster-pack-helpers"]
-        if event.startswith("main-") and event != "main-other-versions"
+        if event.startswith(("main-", "pr-")) and event != "main-other-versions"
         else ["dinkster-nodes-foundation"]
     )
     assert outputs["applicable"] == (
@@ -2998,6 +3047,33 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "--publish" not in preflight["run"]
     assert "--check-published" in preflight["run"]
     assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize(
+    ("selection", "packs", "comparison", "passes"),
+    [
+        ("success", "[]", "skipped", True),
+        ("success", '["dinkster-pack-helpers"]', "success", True),
+        ("success", '["dinkster-pack-helpers"]', "failure", False),
+        ("success", '["dinkster-pack-helpers"]', "skipped", False),
+        ("failure", "[]", "skipped", False),
+    ],
+)
+def test_published_version_check_refuses_failed_or_missing_comparison(
+    monkeypatch: pytest.MonkeyPatch, selection: str, packs: str, comparison: str, passes: bool
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    job = workflow["jobs"]["published-pack-versions"]
+    assert "github.event.pull_request.draft != true" in job["if"]
+    assert "github.event.pull_request.draft != true" in workflow["jobs"]["select"]["if"]
+    monkeypatch.setenv("SELECTION", selection)
+    monkeypatch.setenv("PACKS", packs)
+    monkeypatch.setenv("COMPARISON", comparison)
+    if passes:
+        exec(compile(job["steps"][0]["run"], "official-packs.yml", "exec"), {})
+    else:
+        with pytest.raises(SystemExit, match="failed"):
+            exec(compile(job["steps"][0]["run"], "official-packs.yml", "exec"), {})
 
 
 @pytest.mark.parametrize(

@@ -19,20 +19,6 @@ on:
     tags: ["pack/**"]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - .github/workflows/official-packs.yml
-      - scripts/select_official_packs.py
-      - scripts/prepare_official_publication.py
-      - scripts/recover_official_publication.py
-      - scripts/build_official_packs.py
-      - scripts/build_release_pack_locks.py
-      - scripts/publish_official_packs.py
-      - scripts/check_disposable_publication.py
-      - scripts/check_publication_controls.py
-      - scripts/stage_publication_probe_index.py
-      - scripts/base_bundles.json
-      - packages/**/dinkster-pack.toml
-      - packages/**/pyproject.toml
 
 permissions:
   contents: read
@@ -44,7 +30,8 @@ concurrency:
 jobs:
   registry-service-image:
     name: Build disposable registry image
-    if: github.event_name == 'pull_request'
+    needs: select
+    if: github.event_name == 'pull_request' && needs.select.outputs.packs != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -178,7 +165,7 @@ jobs:
           uv run --no-sync python - <<'PY'
           import json, os, subprocess
           from pathlib import Path
-          from scripts.select_official_packs import publication_selection, select_packs
+          from scripts.select_official_packs import publication_selection, pull_request_selection, select_packs
           root = Path.cwd()
           tag = os.environ['PACK_TAG']
           event = os.environ['EVENT']
@@ -193,6 +180,8 @@ jobs:
               packs, applicable = select_packs(root, tag=tag), True
           elif event == 'workflow_run':
               packs, applicable = select_packs(root, unpublished_at='https://registry.dinkster.org'), True
+          elif event == 'pull_request':
+              packs, applicable = pull_request_selection(root, before), True
           else:
               packs, applicable = publication_selection(root, before), True
           if event not in {'workflow_run', 'workflow_dispatch'}:
@@ -475,15 +464,21 @@ jobs:
         shell: bash
         env:
           CANDIDATE: ${{ github.event_name != 'workflow_run' && github.event_name != 'workflow_dispatch' }}
+          PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
         run: |
           arguments=()
-          if [ "$CANDIDATE" != true ]; then arguments+=(--check-published); fi
+          if [ "$CANDIDATE" != true ] || [ "$PULL_REQUEST" = true ]; then arguments+=(--check-published); fi
           for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
           uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
             --engine-manifest .official-publication/engine/release-manifest.json \
-            --output .official-publication/preflight
+            --output .official-publication/preflight || {
+              if [ "$PULL_REQUEST" = true ]; then
+                echo '::error::Public pack comparison failed. If published archive or install locks differ, raise the version; registry lookup errors must be resolved.'
+              fi
+              exit 1
+            }
       - name: Submit own-version packs to the official registry
         if: github.repository == 'Kosinkadink/Dinkster' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success'))
         shell: bash
@@ -533,3 +528,26 @@ jobs:
           name: publication-completed-${{ needs.select.outputs.recovery_run || github.run_id }}
           path: .official-publication/completed-run
           if-no-files-found: error
+
+  published-pack-versions:
+    name: Published pack versions
+    needs: [select, publish]
+    if: always() && !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require exact-head public comparison for affected pull requests
+        env:
+          SELECTION: ${{ needs.select.result }}
+          PACKS: ${{ needs.select.outputs.packs }}
+          COMPARISON: ${{ needs.publish.result }}
+        shell: python
+        run: |
+          import json
+          import os
+          if os.environ['SELECTION'] != 'success':
+              raise SystemExit('Official pack input selection failed')
+          packs = json.loads(os.environ['PACKS'])
+          if packs and os.environ['COMPARISON'] != 'success':
+              raise SystemExit('Published pack comparison failed; read publish diagnostics and raise the version when published bytes differ')
+          print('Every built public version matches' if packs else 'Unrelated changes: no registry read required')
