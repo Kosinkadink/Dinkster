@@ -74,8 +74,8 @@ such as `packs/my-pack/index.json`. That per-pack file has `schemaVersion: 2`,
 Each release contains engine requirements, install lock pointers and a `wheels` array with
 `filename`, `sha256`, `url`, `size`, `digest` and `tags` on its single wheel.
 The host selects compatible tags and verifies the selected wheel's hashes.
-The reader also accepts the schema 1 all-releases catalog during the registry
-transition. Each operation caches its catalog and reads only selected per-pack
+Only schema 2 is supported; schema 1 all-releases indexes refuse.
+Each operation caches its catalog and reads only selected per-pack
 files; no dynamic API is needed, including on a static file-copy mirror.
 Managed preparation shares the snapshot between source selection and dependency
 lock acquisition in disposable scratch storage, removed when preparation ends.

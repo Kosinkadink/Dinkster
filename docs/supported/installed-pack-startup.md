@@ -32,9 +32,10 @@
   `dinkster[inference]` for in-process inference packs; missing inference
   dependencies report that extra rather than installing them implicitly.
   Managed generations and contributor setup retain inference support.
-- Static-only registry installs support both the release catalog and the split
-  catalog with per-pack version files. Selection and acquisition share a snapshot
-  within each operation; the next operation reads current publication state.
+- Static-only registry installs require the schema 2 split catalog with per-pack
+  version files; schema 1 all-releases indexes are refused. Selection and
+  acquisition share a snapshot within each operation; the next operation reads
+  current publication state.
   Unknown index schemas refuse with an instruction to update Dinkster.
 - Managed generation hosts can opt into local human pack previews with
   `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
