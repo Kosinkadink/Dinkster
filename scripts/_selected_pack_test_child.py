@@ -269,7 +269,11 @@ def main() -> int:
             if not self.passed and session.exitstatus == pytest.ExitCode.OK:
                 session.exitstatus = pytest.ExitCode.NO_TESTS_COLLECTED
 
-    with admission_timing(identity, "pytest"):
+    # Cache creation renames temporary directories; keep them outside sibling collection roots.
+    with (
+        tempfile.TemporaryDirectory(prefix="dinkster-pytest-cache-") as cache,
+        admission_timing(identity, "pytest"),
+    ):
         return int(
             pytest.main(
                 # The inline plugin owns per-test unavailable-export state in this process.
@@ -278,6 +282,8 @@ def main() -> int:
                     "-n",
                     "0",
                     "--import-mode=importlib",
+                    "-o",
+                    f"cache_dir={cache}",
                     *(
                         [nodeid]
                         if nodeid
