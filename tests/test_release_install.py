@@ -168,8 +168,11 @@ def test_disposable_publication_retains_timings_without_changing_verdict(
         path.write_text("{}")
     index = tmp_path / "index"
     index.mkdir()
+    (index / "runtime/wheels").mkdir(parents=True)
+    commands = []
 
     def run(command, **kwargs):
+        commands.append(command)
         stdout = ""
         if "mint-token" in command:
             stdout = "private-token"
@@ -201,6 +204,29 @@ def test_disposable_publication_retains_timings_without_changing_verdict(
     else:
         assert report["timings"]["candidates"] == [{"pack": "timed-candidate"}]
     assert "private-token" not in json.dumps(report)
+    scanners = [command for command in commands if "scanner" in command]
+    assert len(scanners) == 2
+    mounts = [
+        [command[i + 1] for i, arg in enumerate(command) if arg == "--mount"]
+        for command in scanners
+    ]
+    shared = [next(mount for mount in row if mount.endswith("dst=/data")) for row in mounts]
+    private = [
+        next(mount for mount in row if mount.endswith("dst=/data/objects/.probe-runtime"))
+        for row in mounts
+    ]
+    assert shared[0] == shared[1]
+    assert private[0] != private[1]
+    for mount in private:
+        seeds = [
+            command
+            for command in commands
+            if mount in command and "/seed,readonly" in " ".join(command)
+        ]
+        assert len(seeds) == 1
+        assert str(index / "runtime/wheels") in " ".join(seeds[0])
+        volume = mount.split("src=", 1)[1].split(",", 1)[0]
+        assert ["docker", "volume", "rm", volume] in commands
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:

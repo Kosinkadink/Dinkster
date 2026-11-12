@@ -148,6 +148,7 @@ def check_publication(
     deadline = start + timeout
     name = "dinkster-publication-" + uuid.uuid4().hex
     containers: list[str] = []
+    runtime_volumes: list[str] = []
     network_created = volume_created = False
     token: str | None = None
     environment = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
@@ -247,6 +248,10 @@ def check_publication(
         network_created = True
         docker("volume", "create", name)
         volume_created = True
+        for index in range(2):
+            volume = name + f"-runtime-{index}"
+            docker("volume", "create", volume)
+            runtime_volumes.append(volume)
         database = run_container(
             "database",
             database_id,
@@ -297,8 +302,10 @@ def check_publication(
                 "--env",
                 "DINKSTER_PROBE_RUNTIME_MIRROR=/runtime",
             )
-            if (runtime / "wheels").is_dir():
-                seed = name + "-seed"
+            for index, volume in enumerate(runtime_volumes):
+                if not (runtime / "wheels").is_dir():
+                    break
+                seed = name + f"-seed-{index}"
                 containers.append(seed)
                 docker(
                     "run",
@@ -311,7 +318,7 @@ def check_publication(
                     "--user",
                     "root",
                     "--mount",
-                    f"type=volume,src={name},dst=/data",
+                    f"type=volume,src={volume},dst=/data/objects/.probe-runtime",
                     "--mount",
                     f"type=bind,src={(runtime / 'wheels').resolve()},dst=/seed,readonly",
                     "--entrypoint",
@@ -391,7 +398,7 @@ def check_publication(
             (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         )
         scanners = []
-        for index in range(2):
+        for index, volume in enumerate(runtime_volumes):
             scanner = name + f"-scanner-{index}"
             containers.append(scanner)
             scanners.append(scanner)
@@ -409,6 +416,8 @@ def check_publication(
                 "root",
                 "--privileged",
                 *common,
+                "--mount",
+                f"type=volume,src={volume},dst=/data/objects/.probe-runtime",
                 service_id,
                 "dinkster-registry",
                 "scanner",
@@ -591,6 +600,8 @@ def check_publication(
                 subprocess.run(
                     ["docker", "rm", "--force", container], capture_output=True, timeout=15
                 )
+            for volume in reversed(runtime_volumes):
+                docker("volume", "rm", volume)
             if volume_created:
                 docker("volume", "rm", name)
             if network_created:
