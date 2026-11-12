@@ -338,8 +338,7 @@ def _finish(
     if stuck:
         raise InstallError(
             f"artifacts are not available locally for: {', '.join(stuck)}, "
-            f"and their recorded provenance cannot be fetched (registry "
-            f"sources need --registry or $DINKSTER_REGISTRY)"
+            f"and their recorded development provenance cannot be fetched"
         )
     if steps.empty:
         print("plan: restage the current lockfile with the declared venv topology")
@@ -639,7 +638,7 @@ def _cmd_update(args: argparse.Namespace) -> None:
             refreshed, _ = lock_local_pack(pack_dir, installer.artifacts_dir)
             entries.append(refreshed)
         else:
-            entries.append(entry)  # registry sources: resolution needs the service
+            entries.append(entry)
     _finish(args, installer, Lockfile.of(entries))
 
 
@@ -1146,9 +1145,8 @@ def _cmd_reproduce(args: argparse.Namespace) -> None:
     if stuck:
         raise InstallError(
             f"recorded bytes are not available locally for: {', '.join(stuck)}, "
-            f"and their stamped provenance cannot be re-fetched (registry "
-            f"sources need --registry or $DINKSTER_REGISTRY) - stage those "
-            f"artifacts first; "
+            f"and their stamped development provenance cannot be re-fetched - "
+            f"stage those artifacts first; "
             f"newer bytes are never silently substituted"
         )
     target = Lockfile.of(provisional)
