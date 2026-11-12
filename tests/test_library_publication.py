@@ -725,8 +725,9 @@ def test_locked_default_admission_uses_verified_unpublished_library(
 
 
 @pytest.mark.parametrize("dependent", [False, True])
+@pytest.mark.parametrize("selected_engine", [False, True])
 def test_probe_index_stages_selected_library_dependency_without_public_lookup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dependent: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dependent: bool, selected_engine: bool
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from test_pack_environment import _wheel
@@ -755,9 +756,23 @@ def test_probe_index_stages_selected_library_dependency_without_public_lookup(
         )
     )
     (sources / "official-packs.lock").write_text(Lockfile.of(entries).record_json())
+    engine = None
+    if selected_engine:
+        engine = tmp_path / "engine"
+        engine.mkdir()
+        api = _wheel(
+            engine,
+            "dinkster-api",
+            "0.0.3",
+            "dinkster_api",
+            "raise RuntimeError('API metadata must not execute')\n",
+            requires=("test-helper==0.0.1",),
+        )
+        with ZipFile(engine / api.filename, "a") as archive:
+            archive.writestr("dinkster_workers/scaffold/dinkster-pack.toml", "[pack]\n")
     output = tmp_path / "index"
-    result = stage_index(sources, output)
-    if dependent:
+    result = stage_index(sources, output, engine=engine)
+    if dependent or selected_engine:
         assert result["distributions"] == 1
         assert result["wheels"] == [
             {

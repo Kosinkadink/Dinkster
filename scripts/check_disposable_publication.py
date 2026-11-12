@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -82,6 +83,37 @@ def check_publication(
         raise ValueError("disposable publication requires sources, bases and native locks")
     if not package_index.is_dir():
         raise ValueError("a staged package index is required")
+    engine_directory = inputs / "engine"
+    engine_manifest = engine_directory / "release-manifest.json"
+    if engine_manifest.is_file():
+        engine = json.loads(engine_manifest.read_bytes())
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+        if (
+            not isinstance(engine, dict)
+            or engine.get("format") != "dinkster.engine/1"
+            or engine.get("repository") != "Kosinkadink/Dinkster"
+            or engine.get("commit") != head
+        ):
+            raise ValueError("disposable scan engine must match the exact candidate checkout")
+        artifacts = engine.get("artifacts")
+        if not isinstance(artifacts, list):
+            raise ValueError("disposable scan engine requires artifact records")
+        apis = [
+            row
+            for row in artifacts
+            if isinstance(row, dict) and str(row.get("name", "")).startswith("dinkster_api-")
+        ]
+        if len(apis) != 1:
+            raise ValueError("disposable scan engine requires exactly one API wheel")
+        api = apis[0]
+        wheel = engine_directory / api["name"]
+        if wheel.resolve().parent != engine_directory.resolve():
+            raise ValueError("disposable API wheel must stay inside the engine directory")
+        payload = wheel.read_bytes()
+        if len(payload) != api.get("size") or hashlib.sha256(payload).hexdigest() != api.get(
+            "sha256"
+        ):
+            raise ValueError("disposable API wheel differs from its engine manifest")
 
     def run_container(role: str, image: str, *arguments: str) -> str:
         container = name + "-" + role
@@ -123,10 +155,10 @@ def check_publication(
             "--env",
             "DINKSTER_PROBE_DEPENDENCY_SOURCE=index",
         )
-        if (inputs / "engine/release-manifest.json").is_file():
+        if engine_manifest.is_file():
             common += (
                 "--mount",
-                f"type=bind,src={(inputs / 'engine').resolve()},dst=/engine,readonly",
+                f"type=bind,src={engine_directory.resolve()},dst=/engine,readonly",
                 "--env",
                 "DINKSTER_ENV=development",
                 "--env",
@@ -270,7 +302,7 @@ def check_publication(
             "http://registry:8000",
             "--publish",
         ]
-        if (inputs / "engine/release-manifest.json").is_file():
+        if engine_manifest.is_file():
             arguments.extend(["--engine-manifest", "/inputs/engine/release-manifest.json"])
         for path in bases:
             arguments.extend(["--base-manifest", "/inputs/" + str(path.relative_to(inputs))])
