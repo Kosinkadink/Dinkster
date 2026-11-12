@@ -482,6 +482,7 @@ jobs:
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
           uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
+            --engine-manifest .official-publication/engine/release-manifest.json \
             --output .official-publication/preflight
       - name: Submit own-version packs to the official registry
         if: github.repository == 'Kosinkadink/Dinkster' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success'))
@@ -498,6 +499,7 @@ jobs:
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
           timeout --kill-after=30s 12m uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
+            --engine-manifest .official-publication/engine/release-manifest.json \
             --output .official-publication/submitted --publish
       - name: Summarize publication verdicts
         if: always()

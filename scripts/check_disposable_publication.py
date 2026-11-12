@@ -123,6 +123,15 @@ def check_publication(
             "--env",
             "DINKSTER_PROBE_DEPENDENCY_SOURCE=index",
         )
+        if (inputs / "engine/release-manifest.json").is_file():
+            common += (
+                "--mount",
+                f"type=bind,src={(inputs / 'engine').resolve()},dst=/engine,readonly",
+                "--env",
+                "DINKSTER_ENV=development",
+                "--env",
+                "DINKSTER_PROBE_ENGINE_RELEASE=/engine",
+            )
         registry = run_container(
             "registry",
             service_id,
@@ -261,6 +270,8 @@ def check_publication(
             "http://registry:8000",
             "--publish",
         ]
+        if (inputs / "engine/release-manifest.json").is_file():
+            arguments.extend(["--engine-manifest", "/inputs/engine/release-manifest.json"])
         for path in bases:
             arguments.extend(["--base-manifest", "/inputs/" + str(path.relative_to(inputs))])
         for path in locks:
