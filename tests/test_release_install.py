@@ -1167,6 +1167,25 @@ def test_windows_runtime_admits_the_pinned_interpreter_before_installing_depende
     assert setup_index < admission_index < sync_index
     assert "if" not in steps[admission_index]
 
+    action = yaml.safe_load((ROOT / ".github/actions/windows-python/action.yml").read_text())
+    restore, admission = action["runs"]["steps"]
+    assert restore["uses"] == "actions/cache@v4"
+    assert restore["with"]["path"] == "${{ runner.temp }}/dinkster-windows-python"
+    key = restore["with"]["key"]
+    for identity in (
+        "runner.os",
+        "runner.arch",
+        "scripts/prepare_windows_python.py",
+        "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py",
+        ".github/actions/windows-python/action.yml",
+    ):
+        assert identity in key
+    assert "restore-keys" not in restore["with"]
+    assert "if" not in admission
+    assert "scripts/prepare_windows_python.py" in admission["run"]
+    assert '--output "$env:RUNNER_TEMP/dinkster-windows-python"' in admission["run"]
+    assert "--github-env" in admission["run"]
+
 
 def test_probe_jail_is_configured_before_live_tests_and_required_by_main() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
