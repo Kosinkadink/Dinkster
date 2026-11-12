@@ -763,6 +763,10 @@ selection, or an explicit local pack, labels both command output and the node
 catalog as development and not reproducible from ranges. A registry-only
 selection does not gain that label, and standalone install refuses a registry
 version rather than resolving it as development.
+Standalone provisioning, including range resolution, grouped environments and
+captured-pin restore, is only used by development inputs. Published packs use managed
+generation plan/apply; registry archive acquisition only verifies recorded bytes
+and never provisions a standalone environment.
 
 Select local software explicitly; nothing needs publishing first:
 

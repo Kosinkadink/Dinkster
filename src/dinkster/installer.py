@@ -1217,7 +1217,7 @@ class Installer:
             if entry.pack in in_process:
                 self._validate_in_process_runtime(entry.pack, manifest, runtime_pins or {})
             report = diagnose(manifest.path, interpreter=interpreter)
-            if not report.ok and entry.source.startswith(("local:", "git:")):
+            if not report.ok:
                 rendered = render_text(report)
                 if not allow_doctor_findings:
                     raise InstallError(f"doctor refused staged pack {entry.pack!r}:\n{rendered}")
