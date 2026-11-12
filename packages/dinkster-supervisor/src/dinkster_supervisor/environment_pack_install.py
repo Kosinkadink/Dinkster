@@ -22,6 +22,7 @@ from .environment_generations import (
     restore_pack_sources,
     retained_pack_archive,
 )
+from .environment_progress import preparation_progress
 from .environment_runtime import engine_status
 from .environment_state import (
     EnvironmentError,
@@ -126,6 +127,7 @@ def inspect_pack_install(
         command.extend(["--add", selection])
     if updates is not None:
         command.extend(["--update", *updates])
+    preparation_progress("checking-registry-metadata")
     result = subprocess.run(
         command,
         capture_output=True,
@@ -261,6 +263,7 @@ def plan_pack_install(
                 write_document(lock_root / f"{name}.json", cast("dict[str, object]", lock))
             locks = tuple(sorted(lock_root.glob("*.json")))
             engine = scratch / "engine"
+            preparation_progress("preparing-runtime")
             prepare_engine_interpreter(
                 engine,
                 store=store,
@@ -268,6 +271,7 @@ def plan_pack_install(
                 constraints=source / "constraints.txt",
                 uv_cache=scratch / "uv-cache",
             )
+            preparation_progress("checking-pack-requirements")
             preflight = pack_operation(
                 "preflight",
                 generation=engine,
@@ -280,6 +284,7 @@ def plan_pack_install(
                 in_process_packs=generation.in_process_packs,
             )
             errors: list[str] = []
+            preparation_progress("preparing-pack-sources")
             try:
                 restore_pack_sources(
                     engine,
@@ -311,6 +316,7 @@ def plan_pack_install(
                             target = wheels / identity / filename
                             target.parent.mkdir(exist_ok=True)
                             shutil.copyfile(cached, target)
+            preparation_progress("acquiring-pack-inputs")
             try:
                 pack_operation(
                     "acquire",
@@ -327,6 +333,7 @@ def plan_pack_install(
                 errors.append(str(exc))
             if errors:
                 raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
+            preparation_progress("checking-pack-admission")
             admitted = subprocess.run(
                 [
                     str(interpreter(engine)),
@@ -362,6 +369,7 @@ print(Lockfile.of(entries).record_json())
                 or generation.drift(source)
             ):
                 raise EnvironmentError("project changed after planning; request a new plan")
+            preparation_progress("retaining-review")
             output.mkdir()
             try:
                 shutil.copyfile(catalog, output / "dinkster.lock")

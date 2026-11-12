@@ -15,6 +15,8 @@ from typing import cast
 
 from dinkster_store import StorePathError, relative_path
 
+from .environment_progress import preparation_progress
+
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -348,14 +350,18 @@ class Generation:
         """Compare the complete owned tree, not just installed package versions."""
         expected = dict(self.files)
         changes: list[str] = []
-        for name, sha in expected.items():
+        for index, (name, sha) in enumerate(expected.items()):
+            if index % 128 == 0:
+                preparation_progress("checking-software", index, len(expected))
             path = root / name
             if not path.is_file():
                 changes.append(f"missing: {name}")
             elif path.is_symlink() or content_digest(path) != sha:
                 changes.append(f"modified: {name}")
+        preparation_progress("checking-software", len(expected), len(expected))
         unexpected: list[Path] = []
-        for directory, directories, filenames in os.walk(root):
+        for index, (directory, directories, filenames) in enumerate(os.walk(root)):
+            preparation_progress("checking-unexpected-files", index, 0)
             relative = Path(directory).relative_to(root).as_posix()
             # Pack venvs have their own doctor; do not traverse their runtime output.
             directories[:] = [

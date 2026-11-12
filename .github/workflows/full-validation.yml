@@ -275,7 +275,7 @@ jobs:
         run: |
           uv export --locked --all-packages --no-hashes --no-annotate --no-header \
             | sed '/^nvidia-/d; /^triton==/d' > "$RUNNER_TEMP/linux-root-requirements.txt"
-          uv venv --python '${{ matrix.python-version }}'
+          uv venv --clear --python '${{ matrix.python-version }}'
           uv pip sync --python .venv/bin/python --torch-backend cpu "$RUNNER_TEMP/linux-root-requirements.txt"
           echo 'UV_NO_SYNC=1' >> "$GITHUB_ENV"
           .venv/bin/python - <<'PY'

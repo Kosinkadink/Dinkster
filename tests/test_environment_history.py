@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -324,12 +325,15 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
 ):
     from importlib.metadata import version
 
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_security.store import SecurityStore
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from dinkster_workers.pack_lock import PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
     from test_installer import _serve_artifacts, _static_indexes, _static_release, run_cli
+    from test_security_notices import _feed, _signed, _trust
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -367,7 +371,10 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=1,<3"\n')
     )
     (pack / "healthy").mkdir()
-    (pack / "healthy/__init__.py").write_text(HEALTHY_NODES)
+    marker = tmp_path / "healthy-imported"
+    (pack / "healthy/__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n" + HEALTHY_NODES
+    )
     (pack / "pyproject.toml").write_text('[project]\nname="healthy"\nversion="1.0.0"\n')
     archive = tmp_path / "healthy-1.0.0-py3-none-any.whl"
     build_pack_archive(pack, archive)
@@ -392,7 +399,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             }
         },
     }
-    registry_files = {
+    registry_files: dict[str, bytes | Callable[[], bytes]] = {
         **_static_indexes([release]),
         "/static/" + lock_url: lock,
         "/static/" + release["wheels"][0]["url"]: payload,
@@ -473,8 +480,35 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             run_cli("--root", str(root), "apply", str(review))
             assert "activated generation 3" in capsys.readouterr().out
         else:
-            code, planned = _run(root, "packs-plan", "healthy@1.0.0", "--output", str(review))
+            progress = tmp_path / "progress.json"
+            code, planned = _run(
+                root,
+                "packs-plan",
+                "healthy@1.0.0",
+                "--output",
+                str(review),
+                "--progress",
+                str(progress),
+            )
             assert code == 0, planned
+            observation = json.loads(progress.read_text())
+            assert observation["sequence"] > 1
+            assert observation["stage"] == "retaining-review"
+            assert "approval" not in observation
+            assert len(history(root)) == 2
+            progress.with_name(progress.name + ".cancel").touch()
+            cancelled_review = tmp_path / "cancelled-review"
+            code, refused = _run(
+                root,
+                "packs-plan",
+                "healthy@1.0.0",
+                "--output",
+                str(cancelled_review),
+                "--progress",
+                str(progress),
+            )
+            assert code != 0 and "cancelled" in refused["error"], refused
+            assert not cancelled_review.exists()
             assert len(history(root)) == 2
             code, result = _run(
                 root,
@@ -590,6 +624,32 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         for name, content in snapshots[0]["metadata"].items():
             assert (root / "generations/4" / name).read_bytes() == content.encode("utf-8")
         assert all(path.read_bytes() == payload for path, payload in preserved.items())
+        assert _run(root, "stop", "--yes")[0] == 0
+        marker.unlink()
+        registry = f"http://127.0.0.1:{server.server_port}"
+        key = Ed25519PrivateKey.generate()
+        trust = _trust(key)
+        trust["registry"] = registry
+        SecurityStore(root / "security.sqlite3").provision_trust(json.dumps(trust).encode())
+        feed = _feed("malicious")
+        feed["registry"] = registry
+        feed["notices"][0]["release"].update(
+            pack=entry.pack, version=entry.version, artifactDigest=entry.artifact_digest
+        )
+        (root / "security.toml").write_text(
+            f'[feed_urls]\n"{registry}" = "{registry}/security/index.json"\n'
+        )
+        registry_files["/security/index.json"] = lambda: _signed(feed, key)
+        code, result = _run(root, "restore", "3", "--yes", timeout=120)
+        assert code != 0 and "security malicious" in str(result), result
+        assert not marker.exists()
+        assert (root / "current").read_text() == "4\n"
+        assert len(history(root)) == 4
+        feed["revision"] = 2
+        feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
+        code, result = _run(root, "restore", "3", "--yes", timeout=120)
+        assert code == 0 and result["exact"] is True, result
+        assert marker.exists()
     finally:
         _run(root, "stop", "--yes")
         server.shutdown()
