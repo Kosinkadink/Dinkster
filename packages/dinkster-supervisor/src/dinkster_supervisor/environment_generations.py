@@ -21,7 +21,6 @@ from dinkster_store import object_entries, object_path, pack_archive_path, pack_
 
 from .environment_constraints import requirement_hashes, selected_wheel_requirements
 from .environment_downloads import fetch_artifact
-from .environment_progress import preparation_progress
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -671,7 +670,6 @@ def prepare_registry_inputs(
         raise EnvironmentError("additive registry preparation requires installed sources")
     with tempfile.TemporaryDirectory(dir=store, prefix=".registry-") as directory:
         scratch = Path(directory)
-        preparation_progress("preparing-runtime")
         python = prepare_engine_interpreter(
             scratch / "engine", store=store, base=base, constraints=constraints
         )
@@ -681,7 +679,6 @@ def prepare_registry_inputs(
         command = [str(python), "-I", "-B", "-m", "dinkster.manager", "--root", str(project)]
 
         def run(arguments: list[str]) -> dict[str, object]:
-            preparation_progress(arguments[0])
             completed = subprocess.run([*command, *arguments], capture_output=True, text=True)
             if completed.returncode:
                 raise EnvironmentError(
@@ -708,7 +705,6 @@ def prepare_registry_inputs(
         snapshot: list[str] = []
         if not pack_locks and prepare_locks is None:
             # Historical target engines do not expose operation-owned snapshots.
-            preparation_progress("checking-registry-capabilities")
             help_result = subprocess.run(
                 [*command, "prepare-registry-sources", "--help"],
                 capture_output=True,
