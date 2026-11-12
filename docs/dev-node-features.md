@@ -44,7 +44,7 @@ Examples**, and open it. The node palette also finds these nodes under
 | --- | --- | --- |
 | Node help | Select **Feature: Widget Kinds** and press F1 or use its help button. | Help explains the five inputs and the frontend-only button action. |
 | Guide | Open **Learn**, search for **Try the node features**, then open it. | The pack's guide appears. Its English fallback remains readable in another locale. |
-| Blueprint | Double-click empty canvas and search **Node Feature Examples**; choose the blueprint result and place it. | The pack workflow inserts as a blueprint, separate from template opening. |
+| Blueprint | Double-click empty canvas and search **Node Feature Examples**; choose the blueprint result and place it. | An independent subgraph node contains all eight examples and the source-to-mirror image link. Editing its contents does not change the existing workflow examples. Undo removes the insertion in one step. |
 | Pack setting | Open **Settings**, select the **dinkster-nodes-dev** pack category, toggle **Show example tips**, close and reopen. | The saved boolean retains its value. This demonstration preference deliberately does not affect execution. |
 | Translation catalog | Change the application locale to Chinese and find **Feature: Widget Kinds** in the node palette. | Its name and description use the pack's Chinese catalog; untranslated nodes fall back to their schema text. |
 | Template | Open **Browse starter templates**, then **Node Feature Examples**. | A new workflow contains all examples, including a connected image source and mirror. Templates require the server feature flag above. |

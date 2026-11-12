@@ -24,6 +24,9 @@ def test_box_schemas_match_reference_except_frozen_id(node: type[Node], node_id:
         (Path(__file__).parents[3] / "tools/data/comfy_core_reference.json").read_text()
     )
     row = next(item for item in reference["nodes"] if item["class_name"] == node.__name__)
+    if node is CreateBoundingBoxes:
+        # Plain MultiType strings are socket-only in ComfyUI without an explicit flag.
+        row["input_types"]["optional"]["bboxes"][1]["forceInput"] = True
     schema = node.define_schema()
     assert schema.node_type == node_id
     assert node.__name__ in schema.search_terms

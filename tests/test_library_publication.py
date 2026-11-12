@@ -476,7 +476,7 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
     probe = admission.run_locked_probe
 
     def executable_probe(root, lock, **kwargs):
-        return probe(root, lock, require_isolation=False, **kwargs)
+        return probe(root, lock, require_isolation=sys.platform == "win32", **kwargs)
 
     monkeypatch.setattr(
         admission,
@@ -540,12 +540,12 @@ def test_default_admission_probes_and_tests_selected_library_dependency(
         assert "not satisfied by the pack lock" in str(refusal.value)
         assert ordinary_requests == []
         return
-    # The service probe requires POSIX process groups and resource limits.
+    # Windows retains the service's isolation refusal instead of running a POSIX-only probe.
     with (
         pytest.raises(
             ValueError,
             match=r"default dinkster-text@0\.0\.1 admission refused: "
-            r"probe\.dependencies-unavailable: Dependency provisioning failed\.",
+            r"probe\.isolation-unavailable: A full Linux probe jail is unavailable\.",
         )
         if sys.platform == "win32"
         else nullcontext()

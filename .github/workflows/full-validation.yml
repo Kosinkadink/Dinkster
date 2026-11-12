@@ -400,7 +400,7 @@ jobs:
   torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true' && needs.validation-plan.outputs.run-torch == 'true'
-    name: torch-cpu (${{ matrix.suite }}${{ matrix.shard }})
+    name: ${{ matrix.suite == 'vision' && 'vision pack tests' || 'node pack tests' }} (CPU${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 20
     strategy:
