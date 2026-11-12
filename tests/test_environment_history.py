@@ -1933,18 +1933,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         PackLock.read(dependencies / "extra.pack-lock.json"),
                         indexes=(endpoint + "/static/fixture-cpu/simple/",),
                         packages=(
-                            *(
-                                replace(
-                                    package,
-                                    wheels=tuple(
-                                        replace(wheel, registry=endpoint)
-                                        for wheel in package.wheels
-                                    ),
-                                )
-                                for package in PackLock.read(
-                                    dependencies / "extra.pack-lock.json"
-                                ).packages
-                            ),
+                            *PackLock.read(dependencies / "extra.pack-lock.json").packages,
                             LockedDistribution(
                                 "extra",
                                 "1.0.0",
