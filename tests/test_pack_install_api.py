@@ -20,6 +20,7 @@ from dinkster_server import PathRedactor, create_app
 from dinkster_server.auth import PRINCIPAL_KEY, Principal, StaticBearerAuthenticator
 
 import dinkster.pack_install_api as routes
+import dinkster.pack_preparation as preparation_state
 from dinkster.compose import ServingComposer
 from dinkster.installer import Installer, lock_local_pack
 from tests.async_scenarios import run_scenario
@@ -148,6 +149,102 @@ def test_managed_preview_and_terminal_commands_never_apply(
     )
     assert failed.returncode != 0
     assert failed.stdout == b""
+
+
+@pytest.mark.parametrize("outcome", ["ready", "cancelled", "stalled", "expired", "failed"])
+def test_preparation_status_outlives_metadata_deadline_without_resurrecting_cancelled_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    from dinkster_supervisor.environment_progress import preparation_progress
+
+    started, finish = threading.Event(), threading.Event()
+    clock = [0.0]
+    monkeypatch.setattr(preparation_state, "monotonic", lambda: clock[0])
+
+    def plan(_root: Path, _selections: tuple[str, ...], output: Path) -> dict[str, object]:
+        output.mkdir()
+        preparation_progress("checking-software", 128, 256)
+        started.set()
+        assert finish.wait(10)
+        if outcome == "failed":
+            raise OSError("private host path must not leak")
+        return {"packPlan": {"current": 7}, "plan": ["add demo@1.0.0"], "expiresInSeconds": 900}
+
+    monkeypatch.setattr("dinkster_supervisor.environment_pack_install.plan_pack_install", plan)
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        app = create_app(
+            composer.composition.make_engine,
+            composer.composition.schemas,
+            authenticator=StaticBearerAuthenticator(
+                {
+                    name: Principal(name, grants={"local": frozenset({"settings:write"})})
+                    for name in ("operator", "other")
+                }
+            ),
+        )
+        routes.add_pack_install_routes(app, tmp_path, redactor=PathRedactor())
+        client = TestClient(TestServer(app), headers={"Authorization": "Bearer operator"})
+        await client.start_server()
+        try:
+            selection = {"packs": [{"pack": "demo", "version": "1.0.0"}]}
+            response = await client.post("/api/packs/install/prepare", json=selection)
+            assert response.status == 202
+            identity = {"preparation": (await response.json())["preparation"]}
+            assert await asyncio.to_thread(started.wait, 10)
+            assert (await client.post("/api/packs/install/prepare", json=selection)).status == 409
+            denied = await client.post(
+                "/api/packs/install/preparation/status",
+                json=identity,
+                headers={"Authorization": "Bearer other"},
+            )
+            assert denied.status == 404
+            clock[0] = 45
+            status = await client.post("/api/packs/install/preparation/status", json=identity)
+            snapshot = await status.json()
+            assert snapshot["state"] == "preparing"
+            assert snapshot["progress"] == {
+                "sequence": 1,
+                "stage": "checking-software",
+                "completed": 128,
+                "total": 256,
+            }
+            assert "result" not in snapshot
+            if outcome == "cancelled":
+                status = await client.post("/api/packs/install/preparation/cancel", json=identity)
+                assert (await status.json())["state"] == "cancelled"
+                assert (
+                    await client.post("/api/packs/install/prepare", json=selection)
+                ).status == 409
+            elif outcome in {"stalled", "expired"}:
+                clock[0] = 120 if outcome == "stalled" else 1800
+                status = await client.post("/api/packs/install/preparation/status", json=identity)
+                assert (await status.json())["error"] == f"preparation-{outcome}"
+            finish.set()
+            async with asyncio.timeout(10):
+                while True:
+                    status = await client.post(
+                        "/api/packs/install/preparation/status", json=identity
+                    )
+                    snapshot = await status.json()
+                    if snapshot["state"] != "preparing":
+                        break
+                    await asyncio.sleep(0)
+            if outcome == "ready":
+                assert snapshot["result"]["plan"] == {"current": 7}
+                assert "confirmation" not in snapshot["result"]
+                assert len(snapshot["result"]["commands"]) == 2
+            else:
+                assert snapshot["state"] == ("cancelled" if outcome == "cancelled" else "failed")
+                assert "result" not in snapshot
+                assert "private host path" not in str(snapshot)
+        finally:
+            finish.set()
+            await client.close()
+            await composer.close()
+
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cancel", [1, 2, "shutdown"])

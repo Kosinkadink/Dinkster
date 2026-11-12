@@ -17,6 +17,7 @@ from typing import cast
 from aiohttp import web
 from dinkster_server import PathRedactor, principal_for
 
+from .pack_preparation import PackPreparation, PreparationStopped
 from .registries import parse_registry_spec
 
 
@@ -32,12 +33,18 @@ def add_pack_install_routes(
     environment_error = importlib.import_module(
         "dinkster_supervisor.environment_state"
     ).EnvironmentError
+    observe_preparation = importlib.import_module(
+        "dinkster_supervisor.environment_progress"
+    ).observe_preparation
 
     pending: dict[str, tuple[float, list[str]]] = {}
+    preparations: dict[str, PackPreparation] = {}
     busy = asyncio.Lock()
     operations: set[asyncio.Task[dict[str, object]]] = set()
 
     async def drain_previews(_: web.Application) -> None:
+        for preparation in preparations.values():
+            preparation.cancel()
         await asyncio.gather(*operations, return_exceptions=True)
 
     app.on_cleanup.insert(0, drain_previews)
@@ -159,9 +166,64 @@ def add_pack_install_routes(
         if owner not in pending and len(pending) >= 64:
             return failure(503, "too-many-plans")
 
+        preparation = PackPreparation(owner) if request.path.endswith("/prepare") else None
+
         def preview() -> dict[str, object]:
             with tempfile.TemporaryDirectory(prefix="dinkster-pack-preview-") as directory:
-                return plan_pack_install(project, tuple(selections), Path(directory) / "inputs")
+                if preparation is None:
+                    return plan_pack_install(project, tuple(selections), Path(directory) / "inputs")
+                with observe_preparation(preparation.progress):
+                    return plan_pack_install(project, tuple(selections), Path(directory) / "inputs")
+
+        def reviewed(result: dict[str, object]) -> dict[str, object]:
+            commands = commands_for(selections)
+            pending[owner] = (time.monotonic() + 900, commands)
+            return {
+                "plan": result["packPlan"],
+                "review": redactor.redact_text("\n".join(cast("list[str]", result["plan"]))),
+                "expiresInSeconds": result["expiresInSeconds"],
+                "commands": commands,
+            }
+
+        if preparation is not None:
+            for key in tuple(preparations):
+                if preparations[key].snapshot()["state"] in {"failed", "cancelled"}:
+                    del preparations[key]
+            if owner not in preparations and len(preparations) >= 64:
+                return failure(503, "too-many-plans")
+            preparations[owner] = preparation
+            pending.pop(owner, None)
+            await busy.acquire()
+
+            async def prepare() -> dict[str, object]:
+                worker = asyncio.create_task(asyncio.to_thread(preview))
+                try:
+                    while True:
+                        try:
+                            result = await asyncio.shield(worker)
+                            break
+                        except asyncio.CancelledError:
+                            preparation.cancel()
+                            if worker.cancelled():
+                                raise
+                    if preparation.snapshot()["state"] == "preparing":
+                        preparation.complete(reviewed(result))
+                except PreparationStopped:
+                    pass
+                except Exception:
+                    preparation.fail("plan-failed")
+                finally:
+                    if preparation.snapshot()["state"] != "ready":
+                        pending.pop(owner, None)
+                    busy.release()
+                return preparation.snapshot()
+
+            operation = asyncio.create_task(prepare())
+            operations.add(operation)
+            operation.add_done_callback(operations.discard)
+            return web.json_response(
+                preparation.snapshot(), status=202, headers={"Cache-Control": "no-store"}
+            )
 
         async with busy:
             operation = asyncio.create_task(asyncio.to_thread(preview))
@@ -181,17 +243,20 @@ def add_pack_install_routes(
                     raise asyncio.CancelledError
             except (environment_error, OSError, ValueError) as exc:
                 return failure(422, "plan-failed", str(exc))
-        commands = commands_for(selections)
-        pending[owner] = (time.monotonic() + 900, commands)
         return web.json_response(
-            {
-                "plan": result["packPlan"],
-                "review": redactor.redact_text("\n".join(cast("list[str]", result["plan"]))),
-                "expiresInSeconds": result["expiresInSeconds"],
-                "commands": commands,
-            },
+            reviewed(result),
             headers={"Cache-Control": "no-store"},
         )
+
+    async def handle_preparation(request: web.Request) -> web.Response:
+        owner, identity = await body_for(request, "preparation")
+        preparation = preparations.get(owner)
+        if not isinstance(identity, str) or preparation is None or preparation.identity != identity:
+            return failure(404, "preparation-not-found")
+        if request.path.endswith("/cancel"):
+            preparation.cancel()
+            pending.pop(owner, None)
+        return web.json_response(preparation.snapshot(), headers={"Cache-Control": "no-store"})
 
     async def handle_apply(request: web.Request) -> web.Response:
         owner, confirmation = await body_for(request, "confirmation")
@@ -210,4 +275,7 @@ def add_pack_install_routes(
         )
 
     app.router.add_post("/api/packs/install/plan", handle_plan)
+    app.router.add_post("/api/packs/install/prepare", handle_plan)
+    app.router.add_post("/api/packs/install/preparation/status", handle_preparation)
+    app.router.add_post("/api/packs/install/preparation/cancel", handle_preparation)
     app.router.add_post("/api/packs/install/apply", handle_apply)

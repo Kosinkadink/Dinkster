@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from .environment_generations import build_generation, pack_operation, prepare_registry_inputs
+from .environment_progress import preparation_progress
 from .environment_runtime import engine_status
 from .environment_state import (
     EnvironmentError,
@@ -99,6 +100,7 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
             installed_lock=source / "dinkster.lock",
             additions=selections,
         ) as (catalog, artifacts, locks, _unavailable):
+            preparation_progress("checking-pack-requirements")
             preflight = pack_operation(
                 "preflight",
                 generation=catalog.parent / "engine",
@@ -116,6 +118,7 @@ def plan_pack_install(root: Path, selections: tuple[str, ...], output: Path) -> 
                 or generation.drift(source)
             ):
                 raise EnvironmentError("project changed after planning; request a new plan")
+            preparation_progress("retaining-review")
             output.mkdir()
             try:
                 shutil.copyfile(catalog, output / "dinkster.lock")
