@@ -252,7 +252,7 @@ def inspect_pack_install(
                 tags, markers = host.get("wheelTags"), host.get("markers")
                 if (
                     isinstance(tags, list)
-                    and bool(tags)
+                    and bool(cast("list[object]", tags))
                     and all(isinstance(tag, str) for tag in cast("list[object]", tags))
                     and isinstance(markers, dict)
                     and all(
