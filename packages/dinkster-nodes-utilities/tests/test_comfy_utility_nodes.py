@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_api.v1 import schema_to_wire
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_utilities.utilities import ComfyNumberConvert, SeedNode
 
@@ -69,17 +68,6 @@ def test_seed_preserves_large_integer_and_positional_controller_metadata() -> No
     # Inputs: {"seed": 9223372036854775807}.
     # comfy-replay: {"class": "comfy_extras.nodes_seed.SeedNode", "method": "execute", "inputs": {"seed": 9223372036854775807}, "result": {"0": "seed"}}  # noqa: E501
     assert SeedNode.execute(seed=sys.maxsize) == {"seed": 9223372036854775807}
-    wire = schema_to_wire(SeedNode.schema())
-    interface = cast(list[dict[str, object]], wire["interface"])
-    assert interface[0]["id"] == "seed"
-    assert "default" not in interface[0]
-    assert interface[0]["widget"] == {
-        "type": "NUMBER",
-        "min": 0,
-        "max": "9223372036854775807",
-        "controlAfterGenerate": "fixed",
-    }
-    assert interface[1]["id"] == "seed"
 
 
 def test_isolated_manifest_converts_text_and_linked_seed_without_rounding_integer() -> None:

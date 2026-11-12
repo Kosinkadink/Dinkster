@@ -1,8 +1,0 @@
-[pack]
-name = "checkpoint-hooks-fixture"
-publisher = "dinkster"
-namespaces = ["checkpoint-hooks-fixture"]
-
-[pack.entry]
-nodes = "checkpoint_hooks_fixture:CHECKPOINT_HOOK_FIXTURES"
-types = "checkpoint_hooks_fixture:register_inference_types"

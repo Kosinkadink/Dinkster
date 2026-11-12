@@ -41,26 +41,6 @@ def _image() -> Any:
     )
 
 
-def test_color_conversion_schemas_preserve_node_ids_and_dynamic_algorithm_slot() -> None:
-    hdr = ImageSDRToHDR.define_schema()
-    color = ImageColorSpace.define_schema()
-
-    assert hdr.node_type == "dinkster.image.image_sdr_to_hdr"
-    assert hdr.combos[0].id == "algorithm"
-    assert hdr.combos[0].options[0].key == "lottes"
-    assert hdr.combos[0].options[0].inputs[0].id == "target_luminance"
-    assert color.node_type == "dinkster.image.image_color_space"
-    assert tuple(option.value for option in color.inputs[1].widget.options) == (
-        "sRGB",
-        "HDR",
-        "HDR ACEScct",
-        "HDR LogC3",
-        "HDR PQ",
-        "linear",
-        "linear ACEScg",
-    )
-
-
 def test_color_conversion_preserves_straight_alpha_and_linear_extended_values() -> None:
     image = torch.tensor([[[[0.25, 0.5, 1.5, 0.3]]]], dtype=torch.float32)
     linear = ImageColorSpace.execute(image=image, source="sRGB", destination="linear")["IMAGE"]

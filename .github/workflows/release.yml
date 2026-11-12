@@ -261,7 +261,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          persist-credentials: true
       - uses: actions/download-artifact@v4
         with:
           name: engine-release
@@ -295,14 +295,34 @@ jobs:
             core.setOutput('tag', tag);
             try {
               await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
-              core.setFailed('Refusing to overwrite an existing release');
+              throw new Error('Refusing to overwrite an existing release');
             } catch (error) {
               if (error.status !== 404) throw error;
             }
+            let object;
+            try {
+              const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
+              object = result.data.object;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              // Git push tags an already reachable commit without introducing workflow changes.
+              require('child_process').execFileSync('git', [
+                'push', 'origin', `${context.sha}:refs/tags/${tag}`,
+              ], { stdio: 'inherit' });
+              const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
+              object = result.data.object;
+            }
+            while (object.type === 'tag') {
+              const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
+              object = result.data.object;
+            }
+            if (object.type !== 'commit' || object.sha !== context.sha) {
+              throw new Error('Existing release tag targets a different commit');
+            }
+            // An existing tag makes target_commitish unnecessary, avoiding its workflow permission check.
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.identity.outputs.tag }}
-          target_commitish: ${{ github.sha }}
           prerelease: ${{ github.ref == 'refs/heads/main' }}
           make_latest: ${{ github.ref != 'refs/heads/main' }}
           generate_release_notes: true

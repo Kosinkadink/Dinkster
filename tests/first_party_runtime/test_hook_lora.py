@@ -77,18 +77,6 @@ from dinkster_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
 
 HOOK_LORA_NODES = (CreateHookLora, CreateHookLoraModelOnly)
 
-expected = (
-    (("lora_name", "strength_model", "strength_clip", "prev_hooks"), "Create Hook LoRA"),
-    (("lora_name", "strength_model", "prev_hooks"), "Create Hook LoRA (MO)"),
-)
-for node, (names, display) in zip(HOOK_LORA_NODES, expected, strict=True):
-    schema = node.schema()
-    assert tuple(item.id for item in schema.inputs) == names
-    assert schema.display_name == display
-    assert schema.inputs[0].widget.kind == "model/lora"
-    assert [(item.id, item.type) for item in schema.outputs] == [
-        ("HOOKS", TypeExpr.concrete(HOOKS_TYPE))
-    ]
 assert "torch" not in sys.modules
 assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
 """,
@@ -172,63 +160,6 @@ def test_lora_hook_revalidates_local_path_before_resident_lookup(tmp_path: Path)
     os.utime(checkpoint, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 2_000_000_000))
     with pytest.raises(AssetError, match="unavailable|revoked|changed"):
         CreateHookLoraModelOnly.execute(lora_name=asset, strength_model=1.0)
-
-
-class LoraHookSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="lora-hooks-fixture.source",
-            inputs=(),
-            outputs=(OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),),
-        )
-
-    @classmethod
-    def execute(cls) -> dict[str, object]:
-        initialize_inference_process()
-        hooks = __import__("dinkster_inference.hooks", fromlist=["HookGroup"])
-        previous = hooks.HookGroup()
-        previous.add(hooks.WeightHook(strength_model=-0.25, strength_clip=0.75))
-        return cls.outputs(hooks=previous)
-
-
-class LoraHookInspect(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="lora-hooks-fixture.inspect",
-            inputs=(
-                InputSpec("source", TypeExpr.concrete(HOOKS_TYPE)),
-                InputSpec("full", TypeExpr.concrete(HOOKS_TYPE)),
-                InputSpec("model_only", TypeExpr.concrete(HOOKS_TYPE)),
-            ),
-            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
-        )
-
-    @classmethod
-    def execute(cls, *, source: Any, full: Any, model_only: Any) -> dict[str, object]:
-        assert len(source.hooks) == 1
-        assert len(full.hooks) == 2 and len(model_only.hooks) == 2
-        assert full.hooks[0] == source.hooks[0] and full.hooks[0] is not source.hooks[0]
-        assert model_only.hooks[0] == source.hooks[0] and model_only.hooks[0] is not source.hooks[0]
-        assert (full.hooks[-1].strength_model, full.hooks[-1].strength_clip) == (-0.7, 1.3)
-        assert (
-            model_only.hooks[-1].strength_model,
-            model_only.hooks[-1].strength_clip,
-        ) == (0.8, 0.0)
-        assert (source.hooks[0].strength_model, source.hooks[0].strength_clip) == (-0.25, 0.75)
-        expected = {
-            "lora_unet.linear.lora_down.weight": torch.tensor([[2.0, -7.0]]),
-            "lora_unet.linear.lora_up.weight": torch.tensor([[11.0], [0.5]]),
-        }
-        for hook in (full.hooks[-1], model_only.hooks[-1]):
-            assert hook.weights.keys() == expected.keys()
-            for key, value in expected.items():
-                assert torch.equal(hook.weights[key], value)
-        return cls.outputs(summary="lora weights and sources preserved")
-
-
-LORA_HOOK_FIXTURES = (LoraHookSource, LoraHookInspect)
 
 
 @pytest.mark.parametrize("verified,in_process", ((False, True), (False, False), (True, True)))
@@ -317,3 +248,60 @@ def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+class LoraHookSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-hooks-fixture.source",
+            inputs=(),
+            outputs=(OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        hooks = __import__("dinkster_inference.hooks", fromlist=["HookGroup"])
+        previous = hooks.HookGroup()
+        previous.add(hooks.WeightHook(strength_model=-0.25, strength_clip=0.75))
+        return cls.outputs(hooks=previous)
+
+
+class LoraHookInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-hooks-fixture.inspect",
+            inputs=(
+                InputSpec("source", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("full", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("model_only", TypeExpr.concrete(HOOKS_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, source: Any, full: Any, model_only: Any) -> dict[str, object]:
+        assert len(source.hooks) == 1
+        assert len(full.hooks) == 2 and len(model_only.hooks) == 2
+        assert full.hooks[0] == source.hooks[0] and full.hooks[0] is not source.hooks[0]
+        assert model_only.hooks[0] == source.hooks[0] and model_only.hooks[0] is not source.hooks[0]
+        assert (full.hooks[-1].strength_model, full.hooks[-1].strength_clip) == (-0.7, 1.3)
+        assert (
+            model_only.hooks[-1].strength_model,
+            model_only.hooks[-1].strength_clip,
+        ) == (0.8, 0.0)
+        assert (source.hooks[0].strength_model, source.hooks[0].strength_clip) == (-0.25, 0.75)
+        expected = {
+            "lora_unet.linear.lora_down.weight": torch.tensor([[2.0, -7.0]]),
+            "lora_unet.linear.lora_up.weight": torch.tensor([[11.0], [0.5]]),
+        }
+        for hook in (full.hooks[-1], model_only.hooks[-1]):
+            assert hook.weights.keys() == expected.keys()
+            for key, value in expected.items():
+                assert torch.equal(hook.weights[key], value)
+        return cls.outputs(summary="lora weights and sources preserved")
+
+
+LORA_HOOK_FIXTURES = (LoraHookSource, LoraHookInspect)

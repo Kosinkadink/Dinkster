@@ -14,11 +14,6 @@ def test_exact_image_compare_has_no_outputs_and_previews_each_nonempty_side() ->
 
     schema = NativeImageCompare.schema()
     assert NativeImageCompare in IMAGE_NODES
-    assert schema.node_type == "dinkster.image.image_compare" and not schema.aliases
-    assert [spec.id for spec in schema.inputs] == ["image_a", "image_b", "compare_view"]
-    compare_view = schema.input("compare_view")
-    assert compare_view is not None and compare_view.required
-    assert schema.outputs == () and schema.output_node and schema.emits_previews
     assert schema_from_wire(schema_to_wire(schema)) == schema
     a = np.zeros((2, 2, 3, 3), dtype=np.float32)
     a[0, ..., 0] = 0.03

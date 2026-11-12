@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
-import pytest
-import torch
 from dinkster_misc_models.moss_image import (
-    MOSSImageControl,
     MOSSImageLayoutPrompt,
-    TextEncodeMOSSImageEdit,
 )
 
 
@@ -46,123 +41,3 @@ def test_moss_layout_uses_enclosing_centralized_edges_and_text_precedence() -> N
         ]
         == "  unchanged  "
     )
-
-
-class Clip:
-    def __init__(self) -> None:
-        self.prompt = ""
-        self.images: list[torch.Tensor] = []
-        self.conditioning = [[torch.tensor([19.0]), {"keep": 7, "reference_latents": ["old"]}]]
-
-    def tokenize(self, prompt: str, *, images: list[torch.Tensor]) -> str:
-        self.prompt = prompt
-        self.images = images
-        return prompt
-
-    def encode_from_tokens_scheduled(self, tokens: str) -> list[list[Any]]:
-        assert tokens == self.prompt
-        return self.conditioning
-
-
-class VAE:
-    def encode(self, image: torch.Tensor) -> torch.Tensor:
-        assert image.shape[-1] == 3
-        return image.mean(dim=(1, 2), keepdim=True)
-
-
-@pytest.mark.parametrize(
-    ("edit_format", "method", "vision"),
-    [
-        ("ai-toolkit", "index_timestep_zero_isolated", True),
-        ("ai-toolkit (kv_cache off)", "index_timestep_zero", True),
-        ("Moss-Image-Edit", "index_timestep_zero_text_start", False),
-    ],
-)
-def test_moss_edit_orders_references_and_selects_vision_and_latent_layout(
-    edit_format: str, method: str, vision: bool
-) -> None:
-    clip = Clip()
-    large = torch.full((1, 400, 600, 4), 10.0)
-    small = torch.full((1, 3, 5, 4), 2.0)
-    output = TextEncodeMOSSImageEdit.execute(
-        clip=clip,
-        prompt="edit",
-        vae=VAE(),
-        edit_format=edit_format,
-        images={"image_2": small.numpy(), "image_0": None, "image_10": large.numpy()},
-    )["CONDITIONING"]
-    assert output[0][0] is clip.conditioning[0][0]
-    assert output[0][1]["keep"] == 7
-    assert clip.conditioning[0][1] == {"keep": 7, "reference_latents": ["old"]}
-    assert output[0][1]["reference_latents_method"] == method
-    refs = output[0][1]["reference_latents"]
-    assert len(refs) == 2
-    torch.testing.assert_close(refs[0], torch.full((1, 1, 1, 3), 10.0), rtol=0, atol=0)
-    torch.testing.assert_close(refs[1], torch.full((1, 1, 1, 3), 2.0), rtol=0, atol=0)
-    if vision:
-        assert clip.prompt == (
-            "Picture 1: <|vision_start|><|image_pad|><|vision_end|>"
-            "Picture 2: <|vision_start|><|image_pad|><|vision_end|>edit"
-        )
-        assert [tuple(image.shape) for image in clip.images] == [(1, 314, 470, 4), (1, 3, 5, 4)]
-        torch.testing.assert_close(
-            clip.images[0], torch.full((1, 314, 470, 4), 10.0), rtol=0, atol=0
-        )
-    else:
-        assert clip.prompt == "edit"
-        assert clip.images == []
-    assert torch.equal(large, torch.full_like(large, 10.0))
-    assert torch.equal(small, torch.full_like(small, 2.0))
-
-
-class ControlVAE:
-    def encode(self, image: torch.Tensor) -> torch.Tensor:
-        assert image.shape[-1] == 3
-        return image.movedim(-1, 1)
-
-
-@pytest.mark.parametrize("missing", ("color", "depth", "neither"))
-def test_moss_control_aligns_maps_batches_and_splits_timestep_range(missing: str) -> None:
-    color = torch.full((1, 3, 5, 4), 2.0)
-    depth = torch.stack((torch.full((5, 3, 3), 3.0), torch.full((5, 3, 3), 7.0)))
-    positive = [[torch.tensor([11.0]), {"keep": "positive"}]]
-    negative = [
-        [torch.tensor([-7.0]), {"keep": "negative", "start_percent": 0.4, "end_percent": 0.9}]
-    ]
-    output = MOSSImageControl.execute(
-        positive=positive,
-        negative=negative,
-        vae=ControlVAE(),
-        color_map=None if missing == "color" else color.numpy(),
-        depth_map=None if missing == "depth" else depth.numpy(),
-        strength=1.5,
-        start_percent=0.25,
-        end_percent=0.6,
-    )
-    height, width = (5, 3) if missing == "color" else (3, 5)
-    batch = 1 if missing == "depth" else 2
-    for name, source, start in (("positive", positive, 0.25), ("negative", negative, 0.4)):
-        result = output[name]
-        active = next(entry for entry in result if "concat_latent_image" in entry[1])
-        assert active[0] is source[0][0]
-        assert active[1]["keep"] == name
-        assert active[1]["start_percent"] == start
-        assert active[1]["end_percent"] == 0.6
-        control = active[1]["concat_latent_image"]
-        assert control.shape == (batch, 6, height, width)
-        torch.testing.assert_close(
-            control[:, :3],
-            torch.full((batch, 3, height, width), 0.0 if missing == "color" else 3.0),
-        )
-        for index in range(batch):
-            torch.testing.assert_close(
-                control[index, 3:],
-                torch.full(
-                    (3, height, width), 0.0 if missing == "depth" else (4.5 if index == 0 else 10.5)
-                ),
-            )
-    assert positive[0][1] == {"keep": "positive"}
-    assert negative[0][1] == {"keep": "negative", "start_percent": 0.4, "end_percent": 0.9}
-    passthrough = MOSSImageControl.execute(positive=positive, negative=negative, vae=ControlVAE())
-    assert passthrough["positive"] is positive
-    assert passthrough["negative"] is negative

@@ -16,11 +16,9 @@ from dinkster_api.v1 import (
     NumberWidget,
     SlotValue,
     TypeExpr,
-    image_math,
+    parse_color,
 )
 from PIL import Image
-
-parse_color = image_math.parse_color
 
 MAX_IMAGE_BYTES = IMAGE_WORKING_SET_LIMIT_BYTES
 MAX_DIMENSION = 16_384

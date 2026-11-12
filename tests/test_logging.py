@@ -27,7 +27,7 @@ from dinkster_schema import (
     core_logger,
     pack_logger,
 )
-from dinkster_schema.log import ROOT_LOGGER_NAME
+from dinkster_schema.log import ROOT_LOGGER_NAME, _overridden_loggers
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +35,7 @@ def _reset_dinkster_logging():
     """Restore the dinkster logger tree after each test."""
     root = logging.getLogger(ROOT_LOGGER_NAME)
     saved = (list(root.handlers), root.level, root.propagate)
+    saved_overrides = _overridden_loggers.copy()
     manager = logging.Logger.manager
     saved_children = {
         name: logging.getLogger(name).level
@@ -44,8 +45,11 @@ def _reset_dinkster_logging():
     }
     yield
     root.handlers[:], root.level, root.propagate = saved[0], saved[1], saved[2]
-    for name, level in saved_children.items():
-        logging.getLogger(name).setLevel(level)
+    for name, logger in list(manager.loggerDict.items()):
+        if name.startswith(ROOT_LOGGER_NAME + ".") and isinstance(logger, logging.Logger):
+            logger.setLevel(saved_children.get(name, logging.NOTSET))
+    _overridden_loggers.clear()
+    _overridden_loggers.update(saved_overrides)
 
 
 # -- names are origins ------------------------------------------------------

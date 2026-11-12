@@ -50,6 +50,8 @@ Layered-image packs use `ImageDocument`, `empty_document`, `append_raster`,
 `apply_commands`, `flatten`, and the document import/export and blend helpers
 through the same door. VIDEO values, codecs, timeline modules and streaming
 helpers are also public. These exports are the original objects, not wrappers.
+`parse_color` parses supported color names, hex RGB/RGBA and comma-separated
+RGB/RGBA into normalized float32 RGBA channels.
 Media implementations load only when their exports are requested, so importing
 the node-authoring API does not initialize numpy, PyAV, or an inference runtime.
 Remote clients use `current_execution_context()` to read the worker's current
