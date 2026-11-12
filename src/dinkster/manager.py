@@ -1402,12 +1402,6 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                 if args.installed_lock is not None
                 else {"packs": []},
                 "sourceWheels": source_wheels,
-                "securityRegistries": {
-                    entry.source: config.registry_for(entry, selected_registry).endpoint
-                    if entry.source == "registry" or entry.source.startswith("registry:")
-                    else entry.source
-                    for entry in sources.packs
-                },
                 "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
                 "errors": errors,
                 "maximumPackPayloadBytes": sum(payloads.values()),

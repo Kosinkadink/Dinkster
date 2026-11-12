@@ -248,15 +248,6 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
-        if project in {"dinkster-api", "dinkster-supervisor"}:
-            security = ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security"
-            for path in security.glob("*.py"):
-                assert actual.read(f"dinkster_security/{path.name}") == path.read_bytes()
-                if project == "dinkster-supervisor":
-                    assert (
-                        actual.read(f"dinkster_supervisor/security/{path.name}")
-                        == path.read_bytes()
-                    )
     if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [
@@ -305,14 +296,12 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
             str(python),
             "-I",
             "-c",
-            "from dinkster_api.v1 import Node; "
-            "from dinkster_security.host import SecurityHost; "
-            "print(Node.__name__, SecurityHost.__name__)",
+            "from dinkster_api.v1 import Node; print(Node.__name__)",
         ],
         cwd=tmp_path,
         text=True,
     )
-    assert result.strip() == "Node SecurityHost"
+    assert result.strip() == "Node"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:

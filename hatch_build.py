@@ -32,7 +32,7 @@ class CustomBuildHook(BuildHookInterface):
         directories = self.build_config.dev_mode_dirs
         directories.extend(str(Path(self.root, path).parent) for path in self.build_config.packages)
         for source, destination in list(self.build_config.force_include.items()):
-            if len(Path(destination).parts) == 1 and Path(source).name == destination:
+            if len(Path(destination).parts) == 1:
                 directories.append(str(Path(source).parent))
                 del self.build_config.force_include[source]
 
