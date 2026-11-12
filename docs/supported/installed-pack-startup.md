@@ -166,6 +166,9 @@
   source and dependency wheels, without changing retained project or store bytes.
   Missing or modified retained dependency locks do not hide other pack payload
   failures. An unreadable lock cannot identify its unknown dependency wheels.
+  Missing or modified engine metadata, source locks and constraints still refuse;
+  exact software-history copies allow other input failures to be diagnosed without
+  repairing the retained files or activating the damaged generation.
   Engine wheel checks use the retained exact constraints, not a package index.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing

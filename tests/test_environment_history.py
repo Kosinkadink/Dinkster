@@ -321,6 +321,53 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     assert f"offline generation wheel missing or corrupt: {name}" in diagnostic, (
                         diagnostic
                     )
+                metadata_paths = [
+                    root / "generations" / str(number - 1) / name
+                    for name in ("engine-manifest.json", "constraints.txt", "dinkster.lock")
+                ]
+                metadata_bytes = {path: path.read_bytes() for path in metadata_paths}
+                for path in metadata_paths:
+                    if number == 2:
+                        path.unlink()
+                    else:
+                        path.write_bytes(b"corrupt metadata")
+                damaged_before = {
+                    path: content_digest(path)
+                    for directory in (root, store)
+                    for path in directory.rglob("*")
+                    if path.is_file() and not path.is_symlink()
+                }
+                try:
+                    damaged = subprocess.run(
+                        refused.args,
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert damaged.returncode != 0
+                    assert {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    } == damaged_before
+                    diagnostic = damaged.stdout + damaged.stderr
+                    for path in metadata_paths:
+                        change = "missing" if number == 2 else "modified"
+                        assert f"{change}: {path.name}" in diagnostic, diagnostic
+                    assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                    assert entry.artifact_digest in diagnostic, diagnostic
+                    assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                    for path in engine_wheels:
+                        name = parse_wheel_filename(path.name)[0]
+                        assert (
+                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                        ), diagnostic
+                finally:
+                    for path, data in metadata_bytes.items():
+                        path.write_bytes(data)
                 lock_url = (
                     "/static/"
                     + releases[entries.index(entry)]["installLocks"]["fixture-cpu"]["url"]
@@ -2375,6 +2422,30 @@ def test_history_preserves_software_and_diffs_after_generation_is_pruned(tmp_pat
         publish_entry(tmp_path, {**first, "reason": "rewritten"})
     assert history(tmp_path) == [first, second]
     assert _run(tmp_path, "history", "show", "99")[0] == 1
+
+
+def test_pack_review_refuses_history_metadata_that_differs_from_sealed_input(tmp_path: Path):
+    from dinkster_supervisor.environment_pack_install import inspect_pack_install
+
+    record = _generation(tmp_path, 1)
+    source = record.parent
+    manifest = source / "engine-manifest.json"
+    manifest.write_bytes(b'{"version":"0.3.1"}')
+    document = json.loads(record.read_bytes())
+    document["files"][manifest.name] = content_digest(manifest)
+    record.write_text(json.dumps(document))
+    set_current(tmp_path, 1)
+    (tmp_path / "store").write_text(str(tmp_path / "shared-store"))
+    entry = prepare_entry(tmp_path, source, operation="install", reason="setup")
+    cast("dict", entry["snapshot"])["metadata"][manifest.name] = '{"version":"9.9.9"}'
+    publish_entry(tmp_path, entry)
+    manifest.unlink()
+    before = {path: content_digest(path) for path in tmp_path.rglob("*") if path.is_file()}
+    with pytest.raises(
+        EnvironmentError, match="recorded software input unavailable: engine-manifest.json"
+    ):
+        inspect_pack_install(tmp_path, ("healthy@1.0.0",))
+    assert {path: content_digest(path) for path in tmp_path.rglob("*") if path.is_file()} == before
 
 
 def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Path):
