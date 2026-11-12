@@ -105,7 +105,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "  if mode.startswith('document'):\n"
         "   publish_image_document(DOCUMENT)\n"
         "   publish_image_document(empty_document(7, 3).data)\n"
-        "   publish_preview_artifact(DATA, name='preview.mp4', media_type='video/mp4')\n"
+        "   if mode != 'document-only':\n"
+        "    publish_preview_artifact(DATA, name='preview.mp4', media_type='video/mp4')\n"
         "   if mode == 'document-fail': raise ValueError('document fixture failed')\n"
         "   return cls.outputs(out='document')\n"
         "  if mode == 'mounted-stale':\n"
@@ -1148,6 +1149,210 @@ def test_image_document_attachment_rejects_closed_copied_context() -> None:
 def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:
     with pytest.raises(RuntimeError, match="active invocation"):
         publish_preview_artifact(mp4, name="preview.mp4", media_type="video/mp4")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_original_documents_publish_without_output_folder_and_survive_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes, in_process: bool
+) -> None:
+    from dinkster_image_document import ImageDocument
+    from dinkster_image_document.document import empty_document
+    from test_image_document_rendering import _png, _resource
+
+    source = _png([[(73, 21, 190, 255)]])
+    record = empty_document(3, 2).to_record()
+    record["allocation"]["nextOrdinal"] = 1
+    record["resources"] = {"r0": _resource("r0", source, 1, 1)}
+    original = ImageDocument.from_record(record).data
+    expected = {digest_bytes(original): original}
+    second = empty_document(7, 3).data
+    expected[digest_bytes(second)] = second
+    manifest = _write_preview_pack(tmp_path, mp4, document=original)
+    vault = AssetVault(tmp_path / "vault")
+    with vault.writer(digest_bytes(source)) as writer:
+        writer.write(source)
+        writer.commit()
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(tmp_path)})
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process))
+            client = TestClient(
+                TestServer(
+                    create_app(
+                        composer.composition.make_engine,
+                        composer.composition.schemas,
+                        asset_export=vault,
+                        library=library,
+                    )
+                )
+            )
+            await client.start_server()
+            try:
+                graph = Graph(
+                    nodes={"original": GraphNode("preview-fixture.emit", {"mode": "document-only"})}
+                )
+                artifacts = None
+                for job_id in ("first", "cached"):
+                    response = await client.post(
+                        "/api/jobs",
+                        json={
+                            "clientId": "documents",
+                            "jobId": job_id,
+                            "project": "film",
+                            "graph": graph_to_wire(graph),
+                            "targets": ["original"],
+                        },
+                    )
+                    assert response.status == 202
+                    async with asyncio.timeout(10):
+                        while True:
+                            status = await (
+                                await client.get(f"/api/jobs/documents/{job_id}")
+                            ).json()
+                            if status["state"] not in ("pending", "running"):
+                                break
+                            await asyncio.sleep(0)
+                    assert status["state"] == "completed", status
+                    result = status
+                    assert {item["digest"] for item in result["artifacts"]} == set(expected)
+                    if artifacts is not None:
+                        assert result["artifacts"] == artifacts
+                        assert result["cached"] == ["original"]
+                    artifacts = result["artifacts"]
+                    for digest, data in expected.items():
+                        asset = await client.get(f"/assets/{digest}")
+                        assert asset.status == 200
+                        assert await asset.read() == data
+                observations = library.store.query_assets("local", project="film")
+                assert {item.asset.digest for group in observations for item in group} == set(
+                    expected
+                )
+                assert list(library.vault.root.glob(".upload-observations/*.json")) == []
+                assert library.store.get_dependencies(digest_bytes(original)) == [
+                    {
+                        "resourceId": "r0",
+                        "digest": digest_bytes(source),
+                        "byteSize": len(source),
+                        "mediaType": "image/png",
+                        "width": 1,
+                        "height": 1,
+                        "colorSpace": "srgb",
+                        "channelDepth": 8,
+                        "alphaMode": "straight",
+                    }
+                ]
+            finally:
+                await client.close()
+        finally:
+            await composer.close()
+            library.store.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize(
+    "invalid", ("json", "noncanonical", "missing", "size", "dimensions", "corrupt")
+)
+def test_original_document_publisher_validates_entire_batch_before_writing(
+    tmp_path: Path, invalid: str
+) -> None:
+    from dinkster_image_document import ImageDocument, InvalidDocument
+    from dinkster_image_document.document import empty_document
+    from dinkster_schema.reporting import ImageDocumentArtifact
+    from test_image_document_rendering import _png, _resource
+
+    source = _png([[(73, 21, 190, 255)]])
+    record = empty_document(3, 2).to_record()
+    record["allocation"]["nextOrdinal"] = 1
+    resource = _resource("r0", source, 1, 1)
+    record["resources"] = {"r0": resource}
+    vault = AssetVault(tmp_path / "vault")
+    if invalid != "missing":
+        with vault.writer(digest_bytes(source)) as writer:
+            writer.write(source)
+            writer.commit()
+    if invalid == "size":
+        resource["byteSize"] = len(source) + 1
+    if invalid == "dimensions":
+        resource["width"] = 2
+    if invalid == "corrupt":
+        path = vault.resolve(digest_bytes(source))
+        assert path is not None
+        path.write_bytes(b"not the declared image")
+    data = ImageDocument.from_record(record).data
+    if invalid == "json":
+        data = b"not JSON"
+    if invalid == "noncanonical":
+        data = data.replace(b'{"', b'{ "', 1)
+    library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+    valid = empty_document(8, 5).data
+
+    async def scenario() -> None:
+        try:
+            with pytest.raises((InvalidDocument, AssetError)):
+                await library.publish_image_documents(
+                    "node",
+                    (
+                        ImageDocumentArtifact(valid),
+                        ImageDocumentArtifact(data),
+                    ),
+                )
+            assert vault.resolve(digest_bytes(valid)) is None
+            assert vault.resolve(digest_bytes(data)) is None
+            assert library.store.get_dependencies(digest_bytes(valid)) is None
+            assert list(vault.root.glob(".ingest-*")) == []
+        finally:
+            library.store.close()
+
+    run_scenario(scenario())
+
+
+def test_original_document_cancellation_discards_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_image_document.document import empty_document
+    from dinkster_schema.reporting import ImageDocumentArtifact
+
+    vault = AssetVault(tmp_path / "vault")
+    library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+    data = empty_document(8, 5).data
+    entered = threading.Event()
+    release = threading.Event()
+    write = VaultWriter.write
+
+    def blocked_write(self: VaultWriter, data: bytes) -> None:
+        write(self, data)
+        entered.set()
+        assert release.wait(10)
+
+    monkeypatch.setattr(VaultWriter, "write", blocked_write)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            library.publish_image_documents("node", (ImageDocumentArtifact(data),))
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 10)
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert not inactive
+            task.cancel()
+        finally:
+            release.set()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert vault.digests() == []
+            assert library.store.get_dependencies(digest_bytes(data)) is None
+            assert list(vault.root.glob(".ingest-*")) == []
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
+        finally:
+            library.store.close()
+
+    run_scenario(scenario())
 
 
 def test_copied_preview_context_rejects_publication_after_closing(mp4: bytes) -> None:

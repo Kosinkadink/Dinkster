@@ -4,6 +4,7 @@ import asyncio
 import json
 import mmap
 import sqlite3
+from collections.abc import Sequence
 from contextlib import ExitStack, closing
 from typing import Any, cast
 
@@ -18,7 +19,9 @@ from dinkster_assets import (
     open_verified,
     raster_image_facts,
 )
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import hold_produced_vault
+from dinkster_assets.vault import VaultWriter
 from dinkster_image_document import (
     IMAGE_DOCUMENT_MEDIA_TYPE,
     OUTPUT_ENCODING,
@@ -31,6 +34,12 @@ from dinkster_image_document import (
     validate_document,
 )
 from dinkster_image_document.format import MAX_DOCUMENT_BYTES, canonical_json
+from dinkster_protocol import SavedArtifact
+from dinkster_schema.reporting import (
+    ImageDocumentArtifact,
+    capture_image_documents,
+    publish_image_document,
+)
 from dinkster_values import IMAGE_DOCUMENT_DECODE_RESERVATION_LIMIT_BYTES
 from PIL import Image
 
@@ -89,13 +98,12 @@ def _valid_scope(request: web.Request) -> str | None:
 
 
 def _verify_dependencies(
-    library: ServerLibrary, scope: str, dependencies: list[dict[str, object]]
+    library: ServerLibrary, scope: str | None, dependencies: list[dict[str, object]]
 ) -> None:
     verified: dict[str, tuple[int, str, int, int, int]] = {}
     for dependency in dependencies:
         digest = cast(str, dependency["digest"])
-        grant = library.store.media_grant(scope, digest, "media/image")
-        if grant is None:
+        if scope is not None and library.store.media_grant(scope, digest, "media/image") is None:
             raise MissingDependency("a declared resource is not held")
         expected = (
             cast(int, dependency["byteSize"]),
@@ -108,7 +116,7 @@ def _verify_dependencies(
             if verified[digest] != expected:
                 raise DependencyMismatch("resource descriptor does not match held bytes")
             continue
-        path = library.locate(digest)
+        path = library.vault.resolve(digest) if scope is None else library.locate(digest)
         if path is None:
             raise MissingDependency("a declared resource is not held")
         with open_verified(path, digest) as handle:
@@ -140,7 +148,7 @@ def _decode_reservation(dependency: dict[str, object]) -> int:
 
 
 async def _verify_dependencies_bounded(
-    library: ServerLibrary, scope: str, dependencies: list[dict[str, object]]
+    library: ServerLibrary, scope: str | None, dependencies: list[dict[str, object]]
 ) -> None:
     if not dependencies:
         return
@@ -171,6 +179,82 @@ async def _verify_dependencies_bounded(
     finally:
         library.image_document_decode_reserved_bytes[0] -= reserved
         library.image_document_decode_slots.release()
+
+
+async def publish_original_documents(
+    library: ServerLibrary, node_id: str, claims: Sequence[ImageDocumentArtifact]
+) -> tuple[SavedArtifact, ...]:
+    """Validate and stage original documents before exposing vault-only artifacts."""
+    if not claims:
+        return ()
+
+    def validate() -> list[tuple[ImageDocumentArtifact, list[dict[str, object]]]]:
+        with capture_image_documents() as bounded:
+            for claim in claims:
+                publish_image_document(claim.data)
+        documents: list[tuple[ImageDocumentArtifact, list[dict[str, object]]]] = []
+        for claim in bounded:
+            parsed = decode_document(claim.data)
+            if canonical_json(parsed.value).encode("utf-8") != claim.data:
+                raise InvalidDocument("original image document bytes are not canonical")
+            documents.append((claim, list(parsed.dependencies)))
+        return documents
+
+    async with library.media_ingest_lock:
+        with closing(hold_produced_vault(library.vault.root)):
+            documents = await run_owned_thread(validate)
+            for _, dependencies in documents:
+                # These are invocation-owned bytes already adopted by the host,
+                # not a client upload requiring an existing scoped media grant.
+                await _verify_dependencies_bounded(library, None, dependencies)
+            stack = ExitStack()
+
+            def stage() -> list[tuple[VaultWriter, SavedArtifact]]:
+                writers: list[tuple[VaultWriter, SavedArtifact]] = []
+                try:
+                    inventory = ProducedAssetInventory(library.vault.root)
+                    for claim, _ in documents:
+                        digest = digest_bytes(claim.data)
+                        artifact = SavedArtifact(
+                            node_id,
+                            digest,
+                            "original.dinkster-image",
+                            len(claim.data),
+                            MEDIA_TYPE,
+                            f"documents/{digest[7:]}/original.dinkster-image",
+                        )
+                        if library.vault.resolve(digest) is None:
+                            inventory.pending(digest, artifact.size)
+                        writer = stack.enter_context(library.vault.writer(digest))
+                        writer.write(claim.data)
+                        writers.append((writer, artifact))
+                    return writers
+                except BaseException:
+                    stack.close()
+                    raise
+
+            task = asyncio.create_task(asyncio.to_thread(stage))
+            try:
+                writers = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if not task.cancelled():
+                    task.exception()
+                stack.close()
+                raise
+            try:
+                inventory = ProducedAssetInventory(library.vault.root)
+                for (writer, artifact), (_, dependencies) in zip(writers, documents, strict=True):
+                    writer.commit_with_result()
+                    inventory.confirm_existing(artifact.digest, artifact.size)
+                    library.store.put_dependencies(artifact.digest, dependencies)
+                return tuple(artifact for _, artifact in writers)
+            finally:
+                stack.close()
 
 
 def _verify_raster_decode(handle: Any, facts: RasterImageFacts) -> None:

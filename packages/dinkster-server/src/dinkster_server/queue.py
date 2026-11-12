@@ -54,10 +54,12 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     ExportSnapshot,
     PreviewPolicy,
+    SavedArtifact,
     SingleJobMultiGpuConfig,
     attention_policy_config_to_wire,
     single_job_multi_gpu_config_to_wire,
 )
+from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import Value
 
 from .redaction import PathRedactor
@@ -182,6 +184,10 @@ class JobQueue:
         settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], AbstractContextManager[object]] | None = None,
         publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
+        publish_image_documents: (
+            Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
+            | None
+        ) = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -201,6 +207,7 @@ class JobQueue:
         self._settle_job = settle_job
         self._job_context = job_context
         self._publish_outputs = publish_outputs
+        self._publish_image_documents = publish_image_documents
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -275,6 +282,8 @@ class JobQueue:
         execution = execution or self._engine.pin_execution()
         if self._publish_outputs is not None:
             execution = replace(execution, publish_outputs=self._publish_outputs)
+        if self._publish_image_documents is not None:
+            execution = replace(execution, publish_image_documents=self._publish_image_documents)
         assert execution.schemas is not None
         schemas = execution.schemas
         lowered = lower_selectors(graph, targets, schemas)
