@@ -519,7 +519,7 @@ class StaticPackIndex:
                     token=credential,
                 )
             schema = document.get("schemaVersion")
-            if type(schema) is not int or schema not in (1, 2):
+            if type(schema) is not int or schema != 2:
                 raise InstallError(
                     f"registry static index has unsupported schema {schema!r}; update Dinkster"
                 )
@@ -576,8 +576,6 @@ class StaticPackIndex:
         include_libraries: bool = False,
     ) -> tuple[dict[str, object], ...]:
         document = self._read(registry, "/static/packs/index.json", timeout, token)
-        if document["schemaVersion"] == 1:
-            return _static_releases(registry, document, include_libraries=include_libraries)
         entries: list[dict[str, object]] = []
         names: set[str] = set()
         for value in cast("list[object]", document["items"]):
@@ -617,14 +615,11 @@ class StaticPackIndex:
         catalog = self.catalog(
             registry, timeout=timeout, token=token, include_libraries=include_libraries
         )
-        document = self._read(registry, "/static/packs/index.json", timeout, token)
-        if document["schemaVersion"] == 1:
-            return tuple(row for row in catalog if row["name"] == pack)
         entry = next((row for row in catalog if row["name"] == pack), None)
         if entry is None:
             return ()
         document = self._read(registry, "/static/" + str(entry["url"]), timeout, token)
-        if document["schemaVersion"] != 2 or document.get("name") != pack:
+        if document.get("name") != pack:
             raise InstallError(f"registry static per-pack index identity differs for {pack}")
         releases = _static_releases(registry, document, include_libraries=include_libraries)
         if any(row["name"] != pack for row in releases):

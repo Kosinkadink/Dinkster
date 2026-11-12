@@ -133,14 +133,12 @@ def test_registry_preparation_allows_custom_locks_from_selected_inputs(
     assert explicit.read_text() == "explicit input bytes"
 
 
-@pytest.mark.parametrize("schema", [1, 2])
 def test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks(
     tmp_path: Path,
-    schema: int,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-    from test_installer import _serve_artifacts, _static_release, write_pack
+    from test_installer import _serve_artifacts, _static_indexes, _static_release, write_pack
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments.build import wheel
@@ -202,28 +200,10 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
     }
     wheel_record = release["wheels"][0]
     files = {
-        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        **_static_indexes([release]),
         "/static/" + lock_url: lock_bytes,
         "/static/" + wheel_record["url"]: payloads["added"],
     }
-    if schema == 2:
-        files["/static/packs/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "items": [
-                    {
-                        "name": "added",
-                        "publisher": "dinkster",
-                        "latestVersion": "1.2",
-                        "library": False,
-                        "url": "packs/added/index.json",
-                    }
-                ],
-            }
-        ).encode()
-        files["/static/packs/added/index.json"] = json.dumps(
-            {"schemaVersion": 2, "name": "added", "items": [release]}
-        ).encode()
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     (project / "registries.toml").write_text(
@@ -278,7 +258,7 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         assert not catalog.exists() and not artifacts.exists() and not locks[0].exists()
         assert requests == [
             ("/static/packs/index.json", None),
-            *([("/static/packs/added/index.json", None)] if schema == 2 else []),
+            ("/static/packs/added/index.json", None),
             ("/static/" + wheel_record["url"], None),
             ("/static/" + lock_url, None),
         ]
@@ -1203,7 +1183,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             for entry in entries
         } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
         if problem == "restore":
-            from test_installer import _serve_artifacts, _static_release
+            from test_installer import _serve_artifacts, _static_indexes, _static_release
 
             retained = store / "engines" / ("b" * 64) / "artifacts"
             responses: dict[str, bytes] = {}
@@ -1221,9 +1201,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     f"{entry.pack}-{entry.version}-py3-none-any.whl"
                 )
                 responses[wheel_urls[entry.pack]] = data
-            responses["/static/packs/index.json"] = json.dumps(
-                {"schemaVersion": 1, "items": releases}
-            ).encode()
+            responses.update(_static_indexes(releases))
             before = (target / "generation.json").read_bytes()
             requests: list[tuple[str, str | None]] = []
             server = _serve_artifacts(responses, requests)
@@ -1232,7 +1210,14 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 rebuilt = invoke(number=2, artifacts=retained, acquire_pack_sources=True)
                 assert [path for path, _ in requests] == [
                     "/static/packs/index.json",
-                    *(wheel_urls[entry.pack] for entry in entries),
+                    *(
+                        path
+                        for entry in entries
+                        for path in (
+                            f"/static/packs/{entry.pack}/index.json",
+                            wheel_urls[entry.pack],
+                        )
+                    ),
                 ]
                 assert rebuilt.drift(root / "generations/2") == ()
                 assert (root / "generations/2/dinkster.lock").read_bytes() == (

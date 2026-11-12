@@ -49,7 +49,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     from dinkster_workers.pack_lock import PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -114,9 +114,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     }
     server = _serve_artifacts(
         {
-            "/static/packs/index.json": json.dumps(
-                {"schemaVersion": 1, "items": [release]}
-            ).encode(),
+            **_static_indexes([release]),
             "/static/" + lock_url: lock,
             "/static/" + release["wheels"][0]["url"]: payload,
         },
@@ -580,7 +578,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _wheel, _workspace_tree
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments import build as publisher
@@ -702,9 +700,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
     outer_wheel = release["wheels"][0]
     registry = _serve_artifacts(
         {
-            "/static/packs/index.json": json.dumps(
-                {"schemaVersion": 1, "items": [release]}
-            ).encode(),
+            **_static_indexes([release]),
             "/static/" + lock_url: extra_lock,
             "/static/" + outer_wheel["url"]: extra_archive,
         },
