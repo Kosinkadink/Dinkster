@@ -402,6 +402,12 @@
   acquires their verified pack archives, and builds and activates a managed
   generation. `--yes` skips the prompt, not the plan or identity checks.
   Offline application is refused; `--offline --plan` remains read-only.
+- Pack wheel and dependency-metadata downloads retry dropped connections,
+  TLS transport failures, timeouts and HTTP 5xx responses up to three times.
+  Every attempt has a 30-second network timeout, with a wait between attempts.
+  Exhausted failures name the pack, URL and attempt count. HTTP 4xx,
+  certificate failures and completed size/hash mismatches refuse without retry;
+  offline pack provisioning makes no download request.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
