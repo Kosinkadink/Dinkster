@@ -115,6 +115,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         else RegistryConfig()
     )
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
+    missing: list[str] = []
     sources, locks = plan_registry_sources(
         config,
         select_registry(config, selector),
@@ -125,6 +126,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         index=StaticPackIndex(
             store / "metadata" / "registry", offline=args.offline, read_only=True
         ),
+        errors=missing if args.offline and not args.plan else None,
     )
     runtime = artifacts.runtime_inputs(catalog, variant, store)
     payloads = {
@@ -140,6 +142,18 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             cached_payloads[identity] = str(fetch_wheel(wheel, store / "wheels", offline=True))
         except ProvisionError:
             cached_payloads[identity] = None
+            if args.offline and not args.plan:
+                missing.append(
+                    f"pack wheel missing or corrupt: {wheel.filename}; sha256:{wheel.sha256}"
+                )
+    if args.offline and not args.plan:
+        missing.extend(
+            f"runtime input missing or corrupt: {row['path']}; sha256:{row['sha256']}"
+            for row in runtime
+            if not row["cached"]
+        )
+        if missing:
+            raise InstallError("offline setup inputs missing or corrupt:\n" + "\n".join(missing))
     plan = [
         f"Project: {root}",
         f"Store: {store}",
@@ -208,8 +222,6 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
     for key in ("engineRelease", "baseId", "sources", "dependencyLocks"):
         if observed[key] != approved[key]:
             raise InstallError("setup inputs changed after planning; request a new plan")
-    if args.offline:
-        raise InstallError("offline setup apply is not available; --offline --plan changes nothing")
     store = Path(cast("str", approved["store"]))
     sources = Lockfile.from_record_json(json.dumps(approved["sources"]))
     locks = {
@@ -225,7 +237,7 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
             wheel = next(
                 package for package in locks[entry.pack].packages if package.name == entry.pack
             )
-            payload = fetch_wheel(wheel.wheels[0], store / "wheels")
+            payload = fetch_wheel(wheel.wheels[0], store / "wheels", offline=args.offline)
             archive = pack_archive_path(archives, entry.artifact_digest)
             archive.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(payload, archive)
@@ -273,6 +285,8 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
             command.extend(("--gpu", gpu))
         if args.json:
             command.append("--json")
+        if args.offline:
+            command.append("--offline")
         return subprocess.run(command, check=False).returncode
 
 

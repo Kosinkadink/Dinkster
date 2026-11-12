@@ -245,8 +245,9 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         server.server_close()
 
 
+@pytest.mark.parametrize("mode", ["online", "offline", "offline-missing", "offline-corrupt"])
 def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd, mode: str
 ) -> None:
     import hashlib
     import os
@@ -254,7 +255,9 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     import sys
 
     from dinkster_registry import LockedPack, artifact_digest
+    from dinkster_supervisor.environment_artifacts import acquire, discover, runtime_inputs
     from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_environment import fetch_wheel
     from dinkster_workers.pack_lock import PackLock
     from dinkster_workers.pack_wheel import build_pack_archive
     from test_environment_runtime import free_port
@@ -345,37 +348,112 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     requests = []
     server = _serve_artifacts(files, requests)
     try:
-        assert (
-            cli_main(
-                [
-                    "setup",
-                    "--root",
-                    str(root),
-                    "--data",
-                    str(store),
-                    "--variant",
-                    "fixture-cpu",
-                    "--channel",
-                    "main",
-                    "--mirror",
-                    str(mirror),
-                    "--registry",
-                    f"http://127.0.0.1:{server.server_port}",
-                    "--port",
-                    str(port),
-                    "--yes",
-                    "--json",
-                ]
+        endpoint = f"http://127.0.0.1:{server.server_port}"
+        cached_pack: Path | None = None
+        missing_runtime: Path | None = None
+        if mode != "online":
+            from dinkster.registries import (
+                NamedRegistry,
+                RegistryConfig,
+                StaticPackIndex,
+                plan_registry_sources,
             )
-            == 0
-        ), json.loads(capfd.readouterr().out).get("error")
+
+            catalog = discover((str(mirror),), "main")
+            acquire(catalog, "fixture-cpu", store)
+            registry = NamedRegistry("fixture", endpoint, default=True)
+            _, locks = plan_registry_sources(
+                RegistryConfig((registry,)),
+                registry,
+                {"demo-nodes": "1.2.3"},
+                engine_version=engine["version"],
+                variant="fixture-cpu",
+                base_id=base["id"],
+                index=StaticPackIndex(store / "metadata/registry"),
+            )
+            cached_pack = fetch_wheel(locks[0].packages[-1].wheels[0], store / "wheels")
+            missing_runtime = next(
+                Path(cast("str", item["path"]))
+                for item in runtime_inputs(catalog, "fixture-cpu", store)
+                if cast("str", item["path"]).endswith(".whl")
+            )
+            if mode == "offline-missing":
+                cached_pack.unlink()
+                missing_runtime.unlink()
+            elif mode == "offline-corrupt":
+                cached_pack.write_bytes(b"corrupt pack")
+                missing_runtime.write_bytes(b"corrupt runtime")
+            files.clear()
+            mirror.rename(tmp_path / "disconnected")
+            requests.clear()
+        before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
+        if mode in {"offline-missing", "offline-corrupt"}:
+            assert (
+                cli_main(
+                    [
+                        "setup",
+                        "--root",
+                        str(root),
+                        "--data",
+                        str(store),
+                        "--variant",
+                        "fixture-cpu",
+                        "--channel",
+                        "main",
+                        "--mirror",
+                        str(mirror),
+                        "--registry",
+                        endpoint,
+                        "--port",
+                        str(port),
+                        "--yes",
+                        "--offline",
+                    ]
+                )
+                == 1
+            )
+            error = capfd.readouterr().err.split("setup refused: ", 1)[-1]
+            assert error.startswith("offline setup inputs missing or corrupt:")
+            assert cached_pack is not None and missing_runtime is not None
+            assert cached_pack.name in error and missing_runtime.name in error
+            assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before
+            assert not root.exists()
+            assert requests == []
+            return
+        code = cli_main(
+            [
+                "setup",
+                "--root",
+                str(root),
+                "--data",
+                str(store),
+                "--variant",
+                "fixture-cpu",
+                "--channel",
+                "main",
+                "--mirror",
+                str(mirror),
+                "--registry",
+                endpoint,
+                "--port",
+                str(port),
+                "--yes",
+                "--json",
+                *(["--offline"] if mode == "offline" else []),
+            ]
+        )
+        captured = capfd.readouterr()
+        assert code == 0, captured.out + captured.err
         assert (root / "current").read_text().strip() == "1"
         selected = json.loads((root / "generations/1/dinkster.lock").read_text())
         assert selected["packs"][0]["artifactDigest"] == entry.artifact_digest
         retained = PackLock.read(root / "generations/1/packs/demo-nodes/pack-lock.json")
         assert retained.pack == "demo-nodes"
         assert retained.packages[-1].wheels[0].sha256 == hashlib.sha256(payload).hexdigest()
-        assert any(path == wheel_path for path, _ in requests)
+        if mode == "offline":
+            assert requests == []
+        else:
+            assert any(path == wheel_path for path, _ in requests)
     finally:
         subprocess.run(
             [

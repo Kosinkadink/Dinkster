@@ -1094,27 +1094,32 @@ def plan_registry_sources(
     variant: str,
     base_id: str,
     index: StaticPackIndex,
+    errors: list[str] | None = None,
 ) -> tuple[Lockfile, tuple[PackLock, ...]]:
     """Select sources and bound locks from metadata without acquiring pack archives."""
     entries: list[LockedPack] = []
-    errors: list[str] = []
+    failures: list[str] = []
     for pack, minimum in minimums.items():
         try:
             entries.append(
                 resolve_compatible_release(registry, pack, minimum, engine_version, index=index)
             )
         except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
-            errors.append(f"{pack}: {exc}")
+            failures.append(f"{pack}: {exc}")
     sources = Lockfile.of(entries)
-    locks: tuple[PackLock, ...] = ()
-    try:
-        locks = read_registry_pack_locks(
-            config, sources, variant=variant, base_id=base_id, selected=registry, index=index
-        )
-    except InstallError as exc:
-        errors.append(str(exc))
-    if errors:
-        raise InstallError("registry plan refused:\n" + "\n".join(errors))
+    locks = read_registry_pack_locks(
+        config,
+        sources,
+        variant=variant,
+        base_id=base_id,
+        selected=registry,
+        index=index,
+        errors=failures,
+    )
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise InstallError("registry plan refused:\n" + "\n".join(failures))
     return sources, locks
 
 
