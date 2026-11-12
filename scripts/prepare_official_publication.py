@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -15,17 +16,12 @@ from dinkster_supervisor.environment_channels import engine_publication_names
 from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
 from dinkster_supervisor.environment_state import digest
 from dinkster_workers import load_manifest
-from dinkster_workers.boundary import PROTOCOL_VERSION
 from dinkster_workers.pack_wheel import pack_manifest_path
 
 from scripts.acquire_engine_bases import acquire
 from scripts.build_official_packs import build, library_metadata
-from scripts.build_release import (
-    development_version,
-    select_dependency_wheels,
-    sha256,
-    versioned_sources,
-)
+from scripts.build_release import build as build_release
+from scripts.download_frontend import download as download_frontend
 
 
 def prepare_inputs(
@@ -43,36 +39,24 @@ def prepare_inputs(
     )
     engine_dir = work / "engine"
     if candidate:
-        engine_dir.mkdir()
-        version = development_version(root)
-        with versioned_sources(root, version) as staged:
-            subprocess.run(
-                [
-                    "uv",
-                    "build",
-                    "--package",
-                    "dinkster-api",
-                    "--wheel",
-                    "--out-dir",
-                    str(engine_dir),
-                ],
-                cwd=staged,
-                check=True,
-            )
-        engine = {
-            "format": "dinkster.engine/1",
-            "repository": "Kosinkadink/Dinkster",
-            "tag": f"main-{commit}",
-            "commit": commit,
-            "version": version,
-            "workerProtocol": PROTOCOL_VERSION,
-            "artifacts": [
-                {"name": wheel.name, "size": wheel.stat().st_size, "sha256": sha256(wheel)}
-                for wheel in sorted(engine_dir.glob("*.whl"))
-            ],
-            "dependencies": select_dependency_wheels(root, "uv", bases),
-        }
-        (engine_dir / "release-manifest.json").write_text(json.dumps(engine), encoding="ascii")
+        started = time.monotonic()
+        frontend = work / "frontend.zip"
+        download_frontend(
+            json.loads((root / "scripts/release_sources.json").read_bytes()), frontend
+        )
+        engine = build_release(root, engine_dir, None, frontend, base_manifests=bases)
+        if engine["commit"] != commit:
+            raise ValueError("candidate engine must be built from the selected checkout")
+        print(
+            json.dumps(
+                {
+                    "unpublishedCandidate": commit,
+                    "buildSeconds": time.monotonic() - started,
+                    "artifactBytes": sum(path.stat().st_size for path in engine_dir.iterdir()),
+                }
+            ),
+            flush=True,
+        )
     else:
         engine = published_engine(work, commit)
     sources = work / "sources"

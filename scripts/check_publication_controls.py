@@ -63,8 +63,9 @@ def prepare_fixture(
         shutil.copyfile(manifest, destination / manifest.name)
         for artifact in json.loads(manifest.read_bytes())["artifacts"]:
             filename = artifact["name"]
-            if filename.startswith("dinkster_api-") and Path(filename).name == filename:
-                shutil.copyfile(engine / filename, destination / filename)
+            if Path(filename).name != filename:
+                raise ValueError("fixture engine artifact escapes its directory")
+            shutil.copyfile(engine / filename, destination / filename)
     (module / "__init__.py").write_text(
         api_import + "from dinkster_dry_run_helpers import VALUE\n"
         "from dinkster_api.v1 import Node, NodeSchema\n"
@@ -139,7 +140,7 @@ def prepare_fixture(
     (simple / "index.html").write_text(
         f'<a href="../../{helper.name}">{helper.name}</a>', encoding="ascii"
     )
-    if engine is not None:
+    if engine is not None and not incompatible:
         from scripts.stage_publication_probe_index import stage_index
 
         stage_index(sources, index, engine=engine)
@@ -147,6 +148,7 @@ def prepare_fixture(
 
 def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> dict:
     root = Path(__file__).resolve().parents[1]
+    runtime_mirror = fixtures / "runtime"
     good, broken = fixtures / "good", fixtures / "broken"
     results = []
     for reversed_order in (False, True):
@@ -155,7 +157,14 @@ def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> 
             catalog = json.loads(path.read_bytes())
             catalog["packs"].reverse()
             path.write_text(json.dumps(catalog), encoding="ascii")
-        result = check_publication(root, good, good / "index", service_image, publisher_image)
+        result = check_publication(
+            root,
+            good,
+            good / "index",
+            service_image,
+            publisher_image,
+            runtime_mirror=runtime_mirror,
+        )
         first, replay = result["submissions"]
         if [row["pack"] for row in first] != [HELPER, CONSUMER]:
             raise RuntimeError("publisher did not submit the library before its consumer")
@@ -163,7 +172,14 @@ def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> 
             raise RuntimeError("unchanged replay did not recognize every active identity")
         results.append(result)
     try:
-        check_publication(root, broken, broken / "index", service_image, publisher_image)
+        check_publication(
+            root,
+            broken,
+            broken / "index",
+            service_image,
+            publisher_image,
+            runtime_mirror=runtime_mirror,
+        )
     except RuntimeError as exc:
         expected = f"{CONSUMER}: selected {HELPER} excludes >=2"
         if expected not in str(exc):
@@ -171,10 +187,24 @@ def check_controls(fixtures: Path, service_image: str, publisher_image: str) -> 
     else:
         raise RuntimeError("publisher accepted an incompatible selected dependency")
     selected = fixtures / "matching-engine"
-    matching = check_publication(root, selected, selected / "index", service_image, publisher_image)
+    matching = check_publication(
+        root,
+        selected,
+        selected / "index",
+        service_image,
+        publisher_image,
+        runtime_mirror=runtime_mirror,
+    )
     missing = fixtures / "missing-export"
     try:
-        check_publication(root, missing, missing / "index", service_image, publisher_image)
+        check_publication(
+            root,
+            missing,
+            missing / "index",
+            service_image,
+            publisher_image,
+            runtime_mirror=runtime_mirror,
+        )
     except RuntimeError as exc:
         if "entry.unresolvable" not in str(exc):
             raise
@@ -194,6 +224,7 @@ if __name__ == "__main__":
     prepare = commands.add_parser("prepare")
     prepare.add_argument("--bases", required=True, type=Path)
     prepare.add_argument("--engine", required=True, type=Path)
+    prepare.add_argument("--runtime-mirror", type=Path)
     prepare.add_argument("--output", required=True, type=Path)
     check = commands.add_parser("check")
     check.add_argument("--fixtures", required=True, type=Path)
@@ -201,8 +232,15 @@ if __name__ == "__main__":
     check.add_argument("--publisher-image", required=True)
     args = parser.parse_args()
     if args.command == "prepare":
-        prepare_fixture(args.bases.resolve(), args.output.resolve() / "good")
-        prepare_fixture(args.bases.resolve(), args.output.resolve() / "broken", incompatible=True)
+        prepare_fixture(
+            args.bases.resolve(), args.output.resolve() / "good", engine=args.engine.resolve()
+        )
+        prepare_fixture(
+            args.bases.resolve(),
+            args.output.resolve() / "broken",
+            incompatible=True,
+            engine=args.engine.resolve(),
+        )
         prepare_fixture(
             args.bases.resolve(),
             args.output.resolve() / "matching-engine",
@@ -214,9 +252,15 @@ if __name__ == "__main__":
             engine=args.engine.resolve(),
             missing_export=True,
         )
+        if args.runtime_mirror is not None:
+            shutil.copytree(args.runtime_mirror.resolve(), args.output.resolve() / "runtime")
     else:
         print(
             json.dumps(
-                check_controls(args.fixtures.resolve(), args.service_image, args.publisher_image)
+                check_controls(
+                    args.fixtures.resolve(),
+                    args.service_image,
+                    args.publisher_image,
+                )
             )
         )
