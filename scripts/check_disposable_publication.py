@@ -488,18 +488,22 @@ def check_publication(
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
             timings["captureError"] = type(exc).__name__
         finish_phase()
-        if failed:
-            print(json.dumps({"timings": timings}), flush=True)
         phase = "cleanup"
         # Cleanup has its own bound even when the publication deadline expired.
         deadline = time.monotonic() + 60
-        for container in reversed(containers):
-            subprocess.run(["docker", "rm", "--force", container], capture_output=True, timeout=15)
-        if volume_created:
-            docker("volume", "rm", name)
-        if network_created:
-            docker("network", "rm", name)
-        finish_phase()
+        try:
+            for container in reversed(containers):
+                subprocess.run(
+                    ["docker", "rm", "--force", container], capture_output=True, timeout=15
+                )
+            if volume_created:
+                docker("volume", "rm", name)
+            if network_created:
+                docker("network", "rm", name)
+        finally:
+            finish_phase()
+            if failed or sys.exc_info()[0] is not None:
+                print(json.dumps({"timings": timings}), flush=True)
 
 
 if __name__ == "__main__":

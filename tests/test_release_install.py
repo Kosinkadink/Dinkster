@@ -144,6 +144,7 @@ def test_disposable_publication_retains_timings_without_changing_verdict(
         assert report["submissions"] == [[], []]
     phases = report["timings"]["phases"]
     assert phases[0]["phase"] == "startup"
+    assert phases[-1]["phase"] == "cleanup"
     assert all(row["endSeconds"] >= row["startSeconds"] >= 0 for row in phases)
     if failure == "capture":
         assert report["timings"]["captureError"] == "scan timing reader exited 1"
