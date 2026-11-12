@@ -2215,6 +2215,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     engine = {
         "version": "1.2.3",
         "label": "2026-10-31-1.2.3",
+        "repository": "Kosinkadink/Dinkster",
         "workerProtocol": 11,
         "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
     }
@@ -2311,6 +2312,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         )
     assert first_lock.packages[0].wheels[0].url == expected
     assert first_lock.packages[0].wheels[0].sha256 == digest
+    assert first_lock.packages[0].wheels[0].registry == "https://github.com/Kosinkadink/Dinkster"
     if published:
         assert hashlib.sha256(metadata.read_bytes()).hexdigest() == before
         return
@@ -2399,6 +2401,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
                 "size": 17,
                 "sha256": "b" * 64,
                 "url": "https://example.test/fixture.whl",
+                "index": "https://issuer.example.test/simple" if mode == "independent" else None,
             }
         ],
         "nvidia": None,
@@ -2454,6 +2457,9 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
             lock = PackLock.read(path)
             assert lock.pack in expected and lock.variant == "fixture-base"
             assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
+            assert lock.packages[0].wheels[0].registry == (
+                "https://issuer.example.test/simple" if mode == "independent" else None
+            )
     assert {path: path.read_bytes() for path in before} == before
     assert not list(tmp_path.glob("release-pack-locks-*"))
 
