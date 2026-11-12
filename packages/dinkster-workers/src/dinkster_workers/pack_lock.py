@@ -7,11 +7,9 @@ import email
 import hashlib
 import json
 import re
-import shutil
 import subprocess
 import tempfile
 import tomllib
-import urllib.request
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -28,6 +26,7 @@ from packaging.version import Version
 
 from .manifest import load_manifest
 from .provision import ProvisionError
+from .wheel_download import download_wheel
 
 OPENCV_ALIASES = {
     "opencv-python": "opencv-contrib-python-headless",
@@ -86,8 +85,7 @@ def _wheel_requirements(wheel: LockedWheel) -> tuple[str, ...]:
     """Read dependency metadata from verified bytes, once per publication artifact."""
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-metadata-") as directory:
         path = Path(directory) / wheel.filename
-        with urllib.request.urlopen(wheel.url, timeout=30) as source, path.open("wb") as output:
-            shutil.copyfileobj(source, output)
+        download_wheel(wheel.url, path, max_size=wheel.size)
         with path.open("rb") as source:
             if (
                 path.stat().st_size != wheel.size
@@ -382,8 +380,12 @@ def resolve_pack_lock(
                 digest = wheel.get("hashes", {}).get("sha256")
                 if size is None or digest is None or wheel in archives:
                     # uv omits integrity metadata for local find-links artifacts.
-                    with urllib.request.urlopen(url) as stream:
-                        content = stream.read()
+                    downloaded = root / "resolved-wheel"
+                    try:
+                        download_wheel(url, downloaded, max_size=size)
+                    except ProvisionError as exc:
+                        raise ProvisionError(f"pack {pack}: {exc}") from exc
+                    content = downloaded.read_bytes()
                     measured = hashlib.sha256(content).hexdigest()
                     if digest is not None and digest != measured:
                         raise ProvisionError(f"resolved wheel hash mismatch: {url}")
@@ -423,7 +425,11 @@ def resolve_pack_lock(
             if package.name == "dinkster-api":
                 continue
             for wheel in package.wheels:
-                for text in _wheel_requirements(wheel):
+                try:
+                    wheel_requirements = _wheel_requirements(wheel)
+                except ProvisionError as exc:
+                    raise ProvisionError(f"pack {pack}: {exc}") from exc
+                for text in wheel_requirements:
                     if canonicalize_name(Requirement(text).name) == "dinkster-api":
                         api_requirements.add(normalize_requirement(text))
         normalized = tuple(dict.fromkeys((*normalized, *sorted(api_requirements))))
