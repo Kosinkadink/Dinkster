@@ -130,34 +130,40 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     assert _run(root, "stop", "--yes")[0] == 0
     files: dict[str, bytes] = {}
     releases, entries = [], []
-    for version, value in (("1.0.0", 31), ("1.1.0", 79)):
-        pack = tmp_path / version
+    for name, version, value in (
+        ("healthy", "1.0.0", 31),
+        ("healthy", "1.1.0", 79),
+        ("a-unlocked", "2.0.0", 53),
+        ("z-badlock", "3.0.0", 97),
+    ):
+        module = name.replace("-", "_")
+        pack = tmp_path / f"{name}-{version}"
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
-            HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
-            .replace("healthy_nodes:", "healthy:")
+            HEALTHY_MANIFEST.replace('name = "healthy-nodes"', f'name = "{name}"')
+            .replace("healthy_nodes:", f"{module}:")
             .replace('requires = ["numpy>=1.26"]', 'requires = ["fixture-helper>=1"]')
             .replace("[pack]\n", f'[pack]\nversion = "{version}"\nengine = ">=1,<3"\n')
         )
-        (pack / "healthy").mkdir()
-        (pack / "healthy/__init__.py").write_text(HEALTHY_NODES + f"\nVALUE = {value}\n")
-        (pack / "pyproject.toml").write_text(f'[project]\nname="healthy"\nversion="{version}"\n')
-        archive = tmp_path / f"healthy-{version}-py3-none-any.whl"
+        (pack / module).mkdir()
+        (pack / module / "__init__.py").write_text(HEALTHY_NODES + f"\nVALUE = {value}\n")
+        (pack / "pyproject.toml").write_text(f'[project]\nname="{name}"\nversion="{version}"\n')
+        archive = tmp_path / f"{module}-{version}-py3-none-any.whl"
         build_pack_archive(pack, archive)
         payload = archive.read_bytes()
         entry = LockedPack(
-            "healthy",
+            name,
             version,
             artifact_digest(payload),
             "dinkster",
-            ("healthy",),
+            (module,),
             "registry:official",
         )
         entries.append(entry)
-        lock_path = tmp_path / f"{version}.pack-lock.json"
+        lock_path = tmp_path / f"{name}-{version}.pack-lock.json"
         dependency = wheel(tmp_path, "fixture_helper", version, value + 7)
         PackLock(
-            "healthy",
+            name,
             "fixture-cpu",
             ">=3.12",
             ("fixture-helper>=1",),
@@ -347,6 +353,94 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         ), diagnostic
                 finally:
                     files[lock_url] = lock_bytes
+                if number == 2:
+                    missing_url, corrupt_url = (
+                        "/static/" + sibling["installLocks"]["fixture-cpu"]["url"]
+                        for sibling in releases[2:]
+                    )
+                    missing_bytes = files.pop(missing_url)
+                    corrupt_bytes = files[corrupt_url]
+                    files[corrupt_url] = b"x" * len(corrupt_bytes)
+                    try:
+                        siblings = subprocess.run(
+                            [
+                                *refused.args[:-1],
+                                "a-unlocked@2.0.0",
+                                "z-badlock@3.0.0",
+                                "--yes",
+                            ],
+                            cwd=tmp_path,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        assert siblings.returncode != 0
+                        diagnostic = siblings.stdout + siblings.stderr
+                        assert "a-unlocked@2.0.0 dependency lock" in diagnostic, diagnostic
+                        assert "z-badlock@3.0.0 dependency lock" in diagnostic, diagnostic
+                        assert entry.artifact_digest in diagnostic, diagnostic
+                        assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                        assert f"retained base {base_id} is missing or linked" in diagnostic, (
+                            diagnostic
+                        )
+                        assert {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        } == before
+                    finally:
+                        files[missing_url] = missing_bytes
+                        files[corrupt_url] = corrupt_bytes
+                if number == 3:
+                    retained_lock = root / "generations/2/packs/healthy/pack-lock.json"
+                    retained_bytes = retained_lock.read_bytes()
+                    try:
+                        for damaged in (b"invalid lock", None):
+                            if damaged is None:
+                                retained_lock.unlink()
+                            else:
+                                retained_lock.write_bytes(damaged)
+                            damaged_before = {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            }
+                            retained_failure = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert retained_failure.returncode != 0
+                            diagnostic = retained_failure.stdout + retained_failure.stderr
+                            assert (
+                                "pack healthy: recorded dependency lock missing or modified"
+                                in diagnostic
+                            ), diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                            assert f"retained base {base_id} is missing or linked" in diagnostic, (
+                                diagnostic
+                            )
+                            for path in engine_wheels:
+                                name = parse_wheel_filename(path.name)[0]
+                                assert (
+                                    f"offline generation wheel missing or corrupt: {name}"
+                                    in diagnostic
+                                ), diagnostic
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == damaged_before
+                    finally:
+                        retained_lock.write_bytes(retained_bytes)
             finally:
                 unavailable_base.rename(base)
                 for index, path in enumerate(engine_wheels):
@@ -502,7 +596,8 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         "/static/" + lock_url: lock,
         "/static/" + release["wheels"][0]["url"]: payload,
     }
-    server = _serve_artifacts(registry_files, [])
+    registry_requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(registry_files, registry_requests)
     try:
         setup = fixture["commands"]["setup"]
         code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
@@ -558,6 +653,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             } == before
             run_cli(*command, "--plan", str(review))
             capsys.readouterr()
+            assert registry_requests and all(
+                "/wheels/" not in path for path, _ in registry_requests
+            ), registry_requests
             saved = json.loads(review.read_bytes())
             registry_config.write_text(registry_text + "\n# changed configuration\n")
             with pytest.raises(SystemExit):

@@ -284,15 +284,25 @@ class GenerationContext:
 
 
 def _generation_locks(
-    source_generation: Path | None, overrides: Sequence[Path]
+    source_generation: Path | None,
+    overrides: Sequence[Path],
+    *,
+    errors: list[str] | None = None,
 ) -> tuple[PackLock, ...]:
     locks: dict[str, PackLock] = {}
-    replacements = {lock.pack: lock for path in overrides for lock in (PackLock.read(path),)}
-    if len(replacements) != len(overrides):
-        raise ProvisionError("more than one supplied dependency lock for the same pack")
+    failures: list[str] = []
+    replacements: dict[str, PackLock] = {}
+    for path in overrides:
+        try:
+            lock = PackLock.read(path)
+            if lock.pack in replacements:
+                raise ProvisionError("more than one supplied dependency lock for the same pack")
+            replacements[lock.pack] = lock
+        except (ProvisionError, OSError, ValueError) as exc:
+            failures.append(f"dependency lock {path}: {exc}")
     if source_generation is not None:
         if not source_generation.is_dir():
-            raise ProvisionError(f"source generation missing: {source_generation}")
+            failures.append(f"source generation missing: {source_generation}")
         packs = source_generation / "packs"
         if packs.is_dir():
             for directory in sorted(packs.iterdir()):
@@ -302,17 +312,20 @@ def _generation_locks(
                 if directory.name in replacements:
                     locks[directory.name] = replacements.pop(directory.name)
                 else:
-                    if not path.is_file():
-                        raise ProvisionError(
-                            f"pack {directory.name}: recorded dependency lock missing"
-                        )
-                    lock = PackLock.read(path)
-                    if lock.pack != directory.name:
-                        raise ProvisionError(
-                            f"pack {directory.name}: recorded lock names {lock.pack}"
-                        )
-                    locks[lock.pack] = lock
+                    try:
+                        if not path.is_file():
+                            raise ProvisionError("recorded dependency lock missing")
+                        lock = PackLock.read(path)
+                        if lock.pack != directory.name:
+                            raise ProvisionError(f"recorded lock names {lock.pack}")
+                        locks[lock.pack] = lock
+                    except (ProvisionError, OSError, ValueError) as exc:
+                        failures.append(f"pack {directory.name}: {exc}")
     locks.update(replacements)
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise ProvisionError("\n".join(failures))
     return tuple(locks[name] for name in sorted(locks))
 
 
@@ -322,17 +335,19 @@ def preflight_generation(
     source_generation: Path | None = None,
     locks: Sequence[Path] = (),
     engine_only: bool = False,
+    errors: list[str] | None = None,
 ) -> tuple[PackPlan, ...]:
     """Plan all recorded packs without fetching wheels or changing either generation."""
     context.validate()
     if source_generation is None and (context.generation.parent.parent / "current").exists():
         raise ProvisionError("source generation is required for an existing project")
-    recorded = _generation_locks(source_generation, locks)
+    recorded = _generation_locks(source_generation, locks, errors=errors)
     missing = set(context.in_process_packs) - {lock.pack for lock in recorded}
     if missing:
-        raise ProvisionError(
-            f"in-process packs have no dependency lock: {', '.join(sorted(missing))}"
-        )
+        message = f"in-process packs have no dependency lock: {', '.join(sorted(missing))}"
+        if errors is None:
+            raise ProvisionError(message)
+        errors.append(message)
     if not recorded:
         return ()
     facts = GenerationPackages.inspect(context.generation_python)
@@ -504,15 +519,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             changes = (str(python),)
         else:
+            errors: list[str] = []
             plans = preflight_generation(
                 context,
                 source_generation=args.source_generation,
                 locks=args.lock,
                 engine_only=args.operation == "collect",
+                errors=errors if args.operation == "collect" else None,
             )
             code = int(any(plan.conflicts for plan in plans))
             if args.operation == "collect":
-                errors: list[str] = []
                 for plan in plans:
                     for wheel in plan.wheels:
                         try:

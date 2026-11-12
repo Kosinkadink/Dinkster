@@ -164,6 +164,8 @@
   without package-index resolution, retaining the engine and base.
   After confirmation, a missing retained base is reported alongside unavailable
   source and dependency wheels, without changing retained project or store bytes.
+  Missing or modified retained dependency locks do not hide other pack payload
+  failures. An unreadable lock cannot identify its unknown dependency wheels.
   Engine wheel checks use the retained exact constraints, not a package index.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing

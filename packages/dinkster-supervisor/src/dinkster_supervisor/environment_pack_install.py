@@ -63,7 +63,7 @@ def _project_inputs(root: Path) -> dict[str, str | None]:
     return inputs
 
 
-def _current(root: Path) -> tuple[Path, Generation, Path]:
+def _current(root: Path, *, allow_lock_drift: bool = False) -> tuple[Path, Generation, Path]:
     number = read_current(root)
     if number is None:
         raise EnvironmentError("pack installation requires an active generation")
@@ -71,13 +71,23 @@ def _current(root: Path) -> tuple[Path, Generation, Path]:
     generation = Generation.read(source / "generation.json")
     pointer = root / "store"
     store = Path(pointer.read_text(encoding="utf-8").strip())
+    allowed_drift: set[str] = (
+        {
+            f"{kind}: {name}"
+            for name, _ in generation.files
+            if name.startswith("packs/") and name.endswith("/pack-lock.json")
+            for kind in ("missing", "modified")
+        }
+        if allow_lock_drift
+        else set()
+    )
     if (
         generation.number != number
         or pointer.is_symlink()
         or not store.is_absolute()
         or store.is_symlink()
         or source.is_symlink()
-        or generation.drift(source)
+        or any(change not in allowed_drift for change in generation.drift(source))
     ):
         raise EnvironmentError("pack installation requires intact current software and store")
     return source, generation, store
@@ -92,7 +102,8 @@ def inspect_pack_install(
 ) -> dict[str, object]:
     """Read the active engine's published metadata without acquiring payloads or writing state."""
     root = root.resolve()
-    source, generation, store = _current(root)
+    source, generation, store = _current(root, allow_lock_drift=True)
+    drift = generation.drift(source)
     inputs = _project_inputs(root)
     registry_inputs: dict[str, str] = {}
     for flag, value in zip(registry_arguments[::2], registry_arguments[1::2], strict=True):
@@ -181,10 +192,34 @@ def inspect_pack_install(
         )
     metadata["sourceCosts"] = source_costs
     dependency_costs: dict[tuple[str, str], dict[str, object]] = {}
-    retained_locks = {
-        path.parent.name: read_document(path)
-        for path in sorted((source / "packs").glob("*/pack-lock.json"))
-    } | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
+    retained_locks: dict[str, dict[str, object]] = {}
+    lock_paths = {
+        name
+        for name, _ in generation.files
+        if name.startswith("packs/") and name.endswith("/pack-lock.json")
+    } | {
+        path.relative_to(source).as_posix() for path in (source / "packs").glob("*/pack-lock.json")
+    }
+    for name in sorted(lock_paths):
+        path = source / name
+        try:
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or content_digest(path) != dict(generation.files).get(name)
+            ):
+                raise EnvironmentError("recorded dependency lock missing or modified")
+            if path.parent.name in cast("dict[str, object]", metadata["dependencyLocks"]):
+                continue
+            retained_locks[path.parent.name] = read_document(path)
+        except (OSError, ValueError) as exc:
+            cast("list[str]", metadata.setdefault("errors", [])).append(
+                f"pack {path.parent.name}: {exc}"
+            )
+    metadata["retainedDependencyLocks"] = retained_locks
+    retained_locks = retained_locks | cast(
+        "dict[str, dict[str, object]]", metadata["dependencyLocks"]
+    )
     for lock in retained_locks.values():
         for package in cast("list[dict[str, object]]", lock["packages"]):
             for wheel in cast("list[dict[str, object]]", package["wheels"]):
@@ -208,7 +243,7 @@ def inspect_pack_install(
         _project_inputs(root) != inputs
         or any(content_digest(Path(path)) != digest for path, digest in registry_inputs.items())
         or content_digest(source / "generation.json") != software
-        or generation.drift(source)
+        or generation.drift(source) != drift
     ):
         raise EnvironmentError("project changed after planning; request a new plan")
     return {
@@ -238,7 +273,7 @@ def plan_pack_install(
     root, output = root.resolve(), output.absolute()
     if updates is None and (not selections or len(selections) > 64):
         raise EnvironmentError("pack installation requires 1 to 64 exact selections")
-    source, generation, store = _current(root)
+    source, generation, store = _current(root, allow_lock_drift=True)
     if output.is_relative_to(root) or output.is_relative_to(store):
         raise EnvironmentError("pack review inputs must be outside project and shared store")
     review = inspect_pack_install(
@@ -246,7 +281,7 @@ def plan_pack_install(
     )
     metadata = cast("dict[str, object]", review["metadata"])
     with writer_lock(store), writer_lock(root):
-        source, generation, actual_store = _current(root)
+        source, generation, actual_store = _current(root, allow_lock_drift=True)
         if actual_store != store:
             raise EnvironmentError("project changed after planning; request a new plan")
         inputs = _project_inputs(root)
@@ -297,10 +332,9 @@ def plan_pack_install(
                 errors.append(str(exc))
             wheels = scratch / "store" / "wheels"
             wheels.mkdir(parents=True)
-            all_locks = {
-                path.parent.name: read_document(path)
-                for path in sorted((source / "packs").glob("*/pack-lock.json"))
-            } | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
+            all_locks = cast(
+                "dict[str, dict[str, object]]", metadata["retainedDependencyLocks"]
+            ) | cast("dict[str, dict[str, object]]", metadata["dependencyLocks"])
             for lock in all_locks.values():
                 for package in cast("list[dict[str, object]]", lock["packages"]):
                     for wheel in cast("list[dict[str, object]]", package["wheels"]):
@@ -409,14 +443,7 @@ print(Lockfile.of(entries).record_json())
                     "constraints": generation.constraints,
                     "inProcessPacks": list(generation.in_process_packs),
                     "sources": read_document(catalog),
-                    "dependencyLocks": {
-                        path.parent.name: read_document(path)
-                        for path in sorted((source / "packs").glob("*/pack-lock.json"))
-                    }
-                    | {
-                        cast("str", read_document(path)["pack"]): read_document(path)
-                        for path in locks
-                    },
+                    "dependencyLocks": all_locks,
                     "preflight": preflight,
                     "ownEnvironmentBytes": size,
                     "files": {
