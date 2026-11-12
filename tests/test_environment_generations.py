@@ -763,7 +763,7 @@ def test_checkout_pack_commands_do_not_expand_wheel_sources(
         if "--find-links-stdin" in command:
             assert json.loads(kwargs["input"]) == [str(path) for path in links]
         else:
-            source = Path(command[3]).read_text()
+            source = Path(command[command.index("--no-config") + 1]).read_text()
             assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
             assert "--no-index" in command
         raise RuntimeError("command inspected")

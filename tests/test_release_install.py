@@ -1417,11 +1417,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         helper = tomllib.loads(
             (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.4"
+        assert helper["version"] == "0.0.5"
         models = tomllib.loads(
             (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
         )["project"]
-        assert "dinkster-pack-helpers==0.0.4" in models["dependencies"]
+        assert "dinkster-pack-helpers==0.0.5" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -4151,7 +4151,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.9")
+                ("dinkster-image", "0.0.10")
             ]
     finally:
         server.shutdown()
