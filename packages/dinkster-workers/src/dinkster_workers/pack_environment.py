@@ -109,13 +109,16 @@ def fetch_pack_wheels(plan: PackPlan, store: Path, *, offline: bool = False) -> 
     """Acquire only selected locked wheels, with actionable pack and source diagnostics."""
     plan.require_layering()
     paths: list[Path] = []
+    errors: list[str] = []
     for wheel in plan.wheels:
         try:
             paths.append(fetch_wheel(wheel, store, offline=offline))
         except (ProvisionError, OSError, ValueError) as exc:
-            raise ProvisionError(
+            errors.append(
                 f"pack {plan.lock.pack}: {wheel.url}: download/verification failed: {exc}"
-            ) from exc
+            )
+    if errors:
+        raise ProvisionError("\n".join(errors))
     return tuple(paths)
 
 
@@ -492,8 +495,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             code = int(any(plan.conflicts for plan in plans))
             if not code and args.operation == "acquire":
                 _require_fresh_generation(context.generation)
+                errors: list[str] = []
                 for plan in plans:
-                    fetch_pack_wheels(plan, context.wheel_store, offline=context.offline)
+                    try:
+                        fetch_pack_wheels(plan, context.wheel_store, offline=context.offline)
+                    except (ProvisionError, OSError, ValueError) as exc:
+                        errors.append(str(exc))
+                if errors:
+                    raise ProvisionError("\n".join(errors))
             if not code and args.operation == "rebuild":
                 changes = rebuild_generation(context, plans)
     except (ProvisionError, OSError, ValueError) as exc:

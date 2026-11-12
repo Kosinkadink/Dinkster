@@ -42,6 +42,8 @@
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
+- Official pack publication can bind scans to the exact acquired engine commit
+  and manifest digest while retaining the original archive and dependency locks.
 - Dependency locks declaring engine API compatibility can layer unchanged on
   later engines inside that range. The target must supply the API, and all
   ordinary shared dependency versions must still agree exactly. Older exact
@@ -51,8 +53,10 @@
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
   approve an approximate restore. Shared tools are recorded, never replaced.
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
-  not newer releases. Interrupted software restores retain a failed-attempt receipt
-  while leaving successful history unchanged.
+  not newer releases. Acquisition collects unavailable or mismatched sources
+  before copying any of the set into the retained cache, without provisioning
+  or activating a standalone installation. Interrupted software restores retain
+  a failed-attempt receipt while leaving successful history unchanged.
 - Restore can recover selected source archives retained by another engine release
   when the recorded source cache was pruned. Retained bytes must match the locked
   BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
@@ -147,6 +151,27 @@
   upper bound for pack wheel bytes. Unavailable releases and invalid locks are
   reported together. Offline metadata discovery reads only retained channel,
   engine and base records and reports missing engine/base records together.
+- Registry planning also supports exact additions/replacements and compatible
+  updates against an installed source lock. Unselected sources stay unchanged,
+  including local development packs. Updates keep recorded registry provenance
+  and do not downgrade; missing releases and invalid published locks are reported
+  together without acquiring pack payloads or changing the project.
+- Published pack install/update commands on an active managed project display
+  the retained engine/base/variant, old/new identities, proposed generation,
+  published locks, verified cached versus downloadable payloads, wheel-byte
+  upper bounds and worker cost before confirmation. Non-terminal use
+  requires `--yes` or a saved plan. Declining leaves the project and store
+  unchanged. Saved reviews expire after 15 minutes and refuse changed project
+  or selection metadata; successful add and update activate fresh generations
+  without package-index resolution, retaining the engine and base.
+  Missing retained bases refuse early rather than listing later payload failures.
+  Local/git selections require explicit development rather than mixed installation.
+- Standalone pack installation and serving are development-only. Registry-bearing
+  saved plans, snapshots, workflow stamps and rollback targets refuse instead of
+  provisioning published dependencies without reviewed base/variant locks.
+  Published source acquisition remains available to managed software restore;
+  catalog preparation cannot fall back to range resolution outside a labelled
+  development session.
 - Managed setup and update can require a reviewed published engine and base
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying

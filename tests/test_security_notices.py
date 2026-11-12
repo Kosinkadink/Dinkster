@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -311,16 +312,17 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     source = tmp_path / "pack"
     source.mkdir()
     (source / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "test-pack"\n[pack.entry]\nnodes = "example:NODES"\n'
+        '[pack]\nname = "test-pack"\n[pack.entry]\nnodes = "test_pack:NODES"\n[pack.sandbox]\n'
     )
+    (source / "test_pack").mkdir()
     targets = []
     archives = {}
     for version in ("1.2.3", "2.0.0", "3.0.0"):
-        (source / "example.py").write_text(f'NODES = []\nVERSION = "{version}"\n')
+        (source / "test_pack/__init__.py").write_text(f'NODES = []\nVERSION = "{version}"\n')
         archive = tmp_path / f"{version}.zip"
         digest = build_artifact(source, archive)
         entry = LockedPack(
-            "test-pack", version, digest, "publisher", ("test-pack",), "registry:" + REGISTRY
+            "test-pack", version, digest, "local", ("test-pack",), "local:" + str(source)
         )
         targets.append(Lockfile.of([entry]))
         archives[version] = archive
@@ -342,18 +344,47 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     assert installer.current_number() == current
     assert archives["1.2.3"].is_file()
     spec = installer.packs_for_serving()[0]
-    assert spec.packs is not None and spec.packs["test-pack"].version == "2.0.0"
+    assert spec.packs is not None
+    assert spec.packs["test-pack"].artifact_digest == targets[1].packs[0].artifact_digest
+    previous, _ = store.cached(REGISTRY)
+    assert previous is not None
+    feed["revision"] = 2
+    feed["notices"][0]["release"]["artifactDigest"] = targets[1].packs[0].artifact_digest
+    feed["notices"][0].update(id="636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8", revision=2)
+    feed["notices"].append(previous.notices[0].model_dump(mode="json", by_alias=True))
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    with pytest.raises(InstallError, match="security malicious"):
+        installer.packs_for_serving()
+    with pytest.raises(InstallError, match="security malicious"):
+        installer.apply(targets[1], venvs=False)
+    assert installer.current_number() == current
+
+    acquisition = Installer(
+        tmp_path / "acquisition",
+        accelerator="cpu",
+        registry_fetch=lambda entry: archives[entry.version].read_bytes(),
+    )
+    store = SecurityStore(acquisition.root / "security.sqlite3")
+    store.provision_trust(json.dumps(_trust(key)).encode())
+    feed = _feed("vulnerable")
+    feed["notices"][0]["release"]["artifactDigest"] = targets[0].packs[0].artifact_digest
+    published = replace(targets[0].packs[0], source="registry:" + REGISTRY)
+    store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    with pytest.raises(InstallError, match="decision pending"):
+        acquisition.acquire(published)
+    assert not acquisition.artifact_available(published)
+    store.answer(REGISTRY, UUID(NOTICE), 1, approved=True)
+    acquisition.acquire(published)
+    assert acquisition.artifact_available(published)
+    assert acquisition.current_number() is None
+    store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    with pytest.raises(InstallError, match="decision denied"):
+        acquisition.acquire(published)
     feed["revision"] = 2
     feed["notices"][0].update(revision=2, previousRevision=1, state="vulnerable")
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
-    installer.rollback(venvs=False)
-    spec = installer.packs_for_serving()[0]
-    assert spec.packs is not None and spec.packs["test-pack"].version == "1.2.3"
-    store.answer(REGISTRY, UUID(NOTICE), 2, approved=False)
-    with pytest.raises(InstallError, match="decision denied"):
-        installer.packs_for_serving()
-    with pytest.raises(InstallError, match="decision denied"):
-        installer.apply(targets[0], venvs=False)
+    with pytest.raises(InstallError, match="decision pending"):
+        acquisition.acquire(published)
     feed["revision"] = 3
     feed["notices"][0].update(id="636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8", revision=3)
     feed["notices"][0]["release"].update(
@@ -364,16 +395,13 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     assert previous is not None
     feed["notices"].append(previous.notices[0].model_dump(mode="json", by_alias=True))
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    published = replace(targets[2].packs[0], source="registry:" + REGISTRY)
     with pytest.raises(InstallError, match="decision pending"):
-        installer.apply(
-            targets[2], {targets[2].packs[0].artifact_digest: archives["3.0.0"]}, venvs=False
-        )
+        acquisition.acquire(published)
     store.answer(REGISTRY, UUID("636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"), 3, approved=True)
-    installer.apply(
-        targets[2], {targets[2].packs[0].artifact_digest: archives["3.0.0"]}, venvs=False
-    )
-    spec = installer.packs_for_serving()[0]
-    assert spec.packs is not None and spec.packs["test-pack"].version == "3.0.0"
+    acquisition.acquire(published)
+    assert acquisition.artifact_available(published)
+    assert acquisition.current_number() is None
 
 
 @pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused"])
