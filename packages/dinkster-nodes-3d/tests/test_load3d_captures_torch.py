@@ -13,7 +13,6 @@ import av
 import numpy as np
 import pytest
 import torch
-from dinkster_3d import register_types as register_inference_types
 from dinkster_3d.load3d_captures import Load3D
 from dinkster_api.v1 import (
     LOAD_3D_TYPE,
@@ -158,7 +157,6 @@ def test_load3d_empty_model_and_recording_through_ordinary_hosts(
         registry = TypeRegistry()
         register_core_types(registry)
         register_asset_type(registry, vault)
-        register_inference_types(registry)
         composer = ServingComposer(registry=registry)
         try:
             for spec in geometry_pack_specs(in_process=in_process):

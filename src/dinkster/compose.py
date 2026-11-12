@@ -65,9 +65,12 @@ from dinkster_assets import (
     DeclaredAsset,
     PackAssetCatalog,
     register_asset_type,
+    register_file3d_types,
+    register_load3d_type,
     register_save_target_type,
     resolver_from_env,
 )
+from dinkster_assets.file3d import FILE3D_FORMATS
 from dinkster_assets.scratch import hold_produced_job
 from dinkster_caches import (
     DEFAULT_DISK_CACHE_BYTES,
@@ -189,6 +192,7 @@ from dinkster_server import (
 )
 from dinkster_values import (
     AUDIO_RECORD_TYPE,
+    LOAD_3D_TYPE,
     MEBIBYTE,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
@@ -7581,6 +7585,12 @@ class ServingComposer:
             register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
         if SAVE_TARGET_TYPE in type_ids and SAVE_TARGET_TYPE not in registry:
             register_save_target_type(registry)
+        if LOAD_3D_TYPE in type_ids and LOAD_3D_TYPE not in registry:
+            if ASSET_TYPE not in registry:
+                register_asset_type(registry, resolver_from_env())
+            register_load3d_type(registry)
+        if any(type_id in FILE3D_FORMATS and type_id not in registry for type_id in type_ids):
+            register_file3d_types(registry, resolver_from_env())
 
     def _register_worker_renditions(self, registry: TypeRegistry, owner: str, worker: Any) -> None:
         for declaration in worker.renditions:
