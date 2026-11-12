@@ -1630,7 +1630,11 @@ class Installer:
         registries = load_registries(config) if config.is_file() else RegistryConfig()
         registry = (
             registries.registry_for(entry).endpoint
-            if _is_registry_source(entry.source) and config.is_file()
+            if _is_registry_source(entry.source)
+            and (
+                config.is_file()
+                or entry.source.startswith(("registry:http://", "registry:https://"))
+            )
             else entry.source
         )
         return SecurityArtifact(

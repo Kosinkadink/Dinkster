@@ -347,9 +347,12 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             store.import_feed(REGISTRY, _signed(feed, key))
             assert not await composer.enforce_security()
             assert not running.done()
-            assert composer.security_status()["findings"][0]["decision"] == "pending"
+            findings = composer.security_status()["findings"]
+            assert isinstance(findings, list)
+            assert findings[0]["decision"] == "pending"
             control = await invoke("control-pack")
-            assert control.error is None and control.outputs["value"].resolve() == "control-pack"
+            assert control.error is None and control.outputs is not None
+            assert control.outputs["value"].resolve() == "control-pack"
             if stop_reason == "denied":
                 store.answer(REGISTRY, UUID(NOTICE), 3, approved=False)
             else:
@@ -362,7 +365,8 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             with pytest.raises(SecurityError):
                 await invoke("test-pack")
             control = await invoke("control-pack")
-            assert control.error is None and control.outputs["value"].resolve() == "control-pack"
+            assert control.error is None and control.outputs is not None
+            assert control.outputs["value"].resolve() == "control-pack"
             assert (roots[1] / "finished").read_text() == "finished\nfinished\n"
             feed["revision"] = 5
             previous = feed["notices"][0]["revision"]
