@@ -1461,6 +1461,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start = commands.add_parser("start", help="start the current generation's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
+    start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
@@ -1527,6 +1528,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
+    """Execute a parsed generation operation using the shared result contract."""
     result: dict[str, object] = {
         "format": "dinkster.environment-result/1",
         "operation": args.operation,
@@ -1660,6 +1662,8 @@ def run(args: argparse.Namespace) -> int:
             print(change)
         if "error" in result:
             print(result["error"], file=sys.stderr)
+        if "url" in result:
+            print(f"Dinkster is available at {result['url']}", flush=True)
         if args.operation == "history" and code == 0:
             print(
                 json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
@@ -1745,6 +1749,10 @@ def run(args: argparse.Namespace) -> int:
                     print(f"Warning: {warning}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
+    if code == 0 and "url" in result and args.operation == "start" and args.open_browser:
+        import webbrowser
+
+        webbrowser.open(cast("str", result["url"]))
     return code
 
 

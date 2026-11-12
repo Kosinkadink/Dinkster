@@ -30,7 +30,7 @@ dependencies = [
 
 [project.scripts]
 dinkster = "dinkster.cli:main"
-dinkster-serve = "dinkster.serve:main"
+dinkster-serve = "dinkster.launch:serve_main"
 dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 
