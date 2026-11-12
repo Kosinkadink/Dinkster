@@ -1146,6 +1146,32 @@ def test_image_document_attachment_rejects_closed_copied_context() -> None:
     assert [item.data for item in documents] == [b"original"]
 
 
+def test_original_document_attachment_limits_include_the_boundary() -> None:
+    from dinkster_schema.reporting import (
+        IMAGE_DOCUMENT_ARTIFACT_LIMIT_BYTES,
+        capture_image_documents,
+        publish_image_document,
+    )
+    from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT, SAVED_ARTIFACT_LIMIT_BYTES
+
+    with capture_image_documents() as documents:
+        for _ in range(SAVED_ARTIFACT_CLAIM_LIMIT):
+            publish_image_document(b"x")
+        with pytest.raises(ValueError, match="batch exceeds"):
+            publish_image_document(b"y")
+    assert len(documents) == SAVED_ARTIFACT_CLAIM_LIMIT
+    data = b"x" * IMAGE_DOCUMENT_ARTIFACT_LIMIT_BYTES
+    count = SAVED_ARTIFACT_LIMIT_BYTES // len(data)
+    with capture_image_documents() as documents:
+        for _ in range(count):
+            publish_image_document(data)
+        with pytest.raises(ValueError, match="batch exceeds"):
+            publish_image_document(b"y")
+        with pytest.raises(ValueError, match="nonempty bounded"):
+            publish_image_document(data + b"y")
+    assert len(documents) == count
+
+
 def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:
     with pytest.raises(RuntimeError, match="active invocation"):
         publish_preview_artifact(mp4, name="preview.mp4", media_type="video/mp4")
@@ -1176,7 +1202,11 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
     library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
 
     async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(tmp_path)})
+        composer = ServingComposer(
+            worker_env={"PYTHONPATH": str(tmp_path)},
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+        )
         try:
             await composer.add_pack(PackSpec(manifest, in_process=in_process))
             client = TestClient(
@@ -1226,6 +1256,10 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
                         asset = await client.get(f"/assets/{digest}")
                         assert asset.status == 200
                         assert await asset.read() == data
+                restarted = composer.composition.make_engine(lambda _event: None)
+                cached = await restarted.run(graph, ["original"])
+                assert cached.cached == ("original",)
+                assert {item.digest for item in cached.artifacts} == set(expected)
                 observations = library.store.query_assets("local", project="film")
                 assert {item.asset.digest for group in observations for item in group} == set(
                     expected
@@ -1372,6 +1406,112 @@ def test_original_document_cancellation_discards_staging(
             library.store.close()
 
     run_scenario(scenario())
+
+
+def test_original_document_commit_failure_retains_shared_bytes_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_image_document.document import empty_document
+    from dinkster_schema.reporting import ImageDocumentArtifact
+
+    vault = AssetVault(tmp_path / "vault")
+    library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+    first, second = empty_document(3, 2).data, empty_document(8, 5).data
+    calls = 0
+    commit = VaultWriter.commit_with_result
+
+    def fail_commit(self: VaultWriter) -> tuple[Path, bool]:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise AssetError("commit failed")
+        result = commit(self)
+        with vault.writer(digest_bytes(first)) as independent:
+            independent.write(first)
+            commit(independent)
+        return result
+
+    async def scenario() -> None:
+        claims = (ImageDocumentArtifact(first), ImageDocumentArtifact(second))
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(VaultWriter, "commit_with_result", fail_commit)
+                with pytest.raises(AssetError, match="commit failed"):
+                    await library.publish_image_documents("node", claims)
+            retained = vault.resolve(digest_bytes(first))
+            assert retained is not None and retained.read_bytes() == first
+            assert list(vault.root.glob(".ingest-*")) == []
+            with claim_inactive_produced_vault(vault.root) as inactive:
+                assert inactive
+            artifacts = await library.publish_image_documents("node", claims)
+            assert [item.digest for item in artifacts] == [
+                digest_bytes(first),
+                digest_bytes(second),
+            ]
+            for data in (first, second):
+                retained = vault.resolve(digest_bytes(data))
+                assert retained is not None and retained.read_bytes() == data
+        finally:
+            library.store.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("table", ("asset_dependencies", "asset_observations"))
+def test_original_document_catalog_failure_recovers_after_restart(
+    tmp_path: Path, table: str
+) -> None:
+    from dinkster_image_document import ImageDocument
+    from dinkster_image_document.document import empty_document
+    from dinkster_schema.reporting import ImageDocumentArtifact
+    from test_image_document_rendering import _png, _resource
+
+    source = _png([[(73, 21, 190, 255)]])
+    record = empty_document(3, 2).to_record()
+    record["allocation"]["nextOrdinal"] = 1
+    record["resources"] = {"r0": _resource("r0", source, 1, 1)}
+    data = ImageDocument.from_record(record).data
+    vault = AssetVault(tmp_path / "vault")
+    with vault.writer(digest_bytes(source)) as writer:
+        writer.write(source)
+        writer.commit()
+    database = tmp_path / "library.sqlite"
+    library = ServerLibrary(vault=vault, store=LibraryStore(database))
+    try:
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                f"CREATE TRIGGER fail_document BEFORE INSERT ON {table} "
+                "BEGIN SELECT RAISE(ABORT, 'catalog offline'); END"
+            )
+        artifacts = run_scenario(
+            library.publish_image_documents("create", (ImageDocumentArtifact(data),))
+        )
+        job = Job(JobKey("client", "job"), Graph(nodes={}), (), 0, "run", "fp", project="film")
+        with pytest.raises(AssetError, match="catalog could not be committed"):
+            library.record_saved_outputs(job, RunResult("run", {}, (), (), (), artifacts=artifacts))
+        assert len(list(vault.root.glob(".upload-observations/*.json"))) == 1
+        assert library.store.query_assets("local", project="film") == []
+        with sqlite3.connect(database) as connection:
+            connection.execute("DROP TRIGGER fail_document")
+    finally:
+        library.store.close()
+    restarted = ServerLibrary(vault=vault, store=LibraryStore(database))
+    try:
+        recover_asset_observations(restarted)
+        assert list(vault.root.glob(".upload-observations/*.json")) == []
+        dependencies = restarted.store.get_dependencies(digest_bytes(data))
+        assert dependencies is not None and len(dependencies) == 1
+        assert dependencies[0]["resourceId"] == "r0"
+        assert dependencies[0]["digest"] == digest_bytes(source)
+        assert dependencies[0]["byteSize"] == len(source)
+        observations = restarted.store.query_assets("local", project="film")
+        assert [item.asset.digest for group in observations for item in group] == [
+            digest_bytes(data)
+        ]
+        retained = vault.resolve(digest_bytes(data))
+        assert retained is not None and retained.read_bytes() == data
+    finally:
+        restarted.store.close()
 
 
 def test_copied_preview_context_rejects_publication_after_closing(mp4: bytes) -> None:

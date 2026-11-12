@@ -98,12 +98,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 13
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v13: original image document attachments and source closure in successful results;
 v12: explicit mounted saved-file attachments in successful invocation results;
 v11: encoded preview artifacts in successful invocation results;
 v10: invocation-scoped run-control relay;

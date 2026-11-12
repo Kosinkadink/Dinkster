@@ -267,10 +267,9 @@ async def publish_original_documents(
                 raise
             try:
                 inventory = ProducedAssetInventory(library.vault.root)
-                for (writer, artifact), (_, parsed) in zip(writers, documents, strict=True):
+                for writer, artifact in writers:
                     writer.commit_with_result()
                     inventory.confirm_existing(artifact.digest, artifact.size)
-                    library.store.put_dependencies(artifact.digest, parsed.dependencies)
                 return tuple(artifact for _, artifact in writers)
             finally:
                 stack.close()
