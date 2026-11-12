@@ -197,6 +197,15 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+        if project in {"dinkster-api", "dinkster-supervisor"}:
+            security = ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security"
+            for path in security.glob("*.py"):
+                assert actual.read(f"dinkster_security/{path.name}") == path.read_bytes()
+                if project == "dinkster-supervisor":
+                    assert (
+                        actual.read(f"dinkster_supervisor/security/{path.name}")
+                        == path.read_bytes()
+                    )
     if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [

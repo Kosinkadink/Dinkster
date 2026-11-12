@@ -25,6 +25,7 @@ if [ "${1:-all}" = checks ]; then exit 0; fi
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_disabled_features.py \
   tests/test_settings.py \
+  tests/test_supervisor_limits.py \
   tests/test_security_notices.py \
   tests/test_dependency_rule.py::test_core_paths_do_not_import_optional_packages_at_module_scope \
   tests/test_dependency_rule.py::test_umbrella_optional_packages_are_locked \

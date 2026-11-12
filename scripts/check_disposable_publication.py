@@ -332,6 +332,7 @@ def check_publication(
             [
                 "/source",
                 "/source/src",
+                "/candidate-security",
                 "/source/packages/dinkster-supervisor/shared",
                 *[
                     "/source/" + str(path.relative_to(root))
@@ -353,6 +354,10 @@ def check_publication(
             "root",
             "--mount",
             f"type=bind,src={root.resolve()},dst=/source,readonly",
+            "--mount",
+            "type=bind,src="
+            + str(root.resolve() / "packages/dinkster-supervisor/src/dinkster_supervisor/security")
+            + ",dst=/candidate-security/dinkster_security,readonly",
             "--mount",
             f"type=bind,src={inputs.resolve()},dst=/inputs,readonly",
             "--env",
