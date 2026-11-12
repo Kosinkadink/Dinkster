@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from blake3 import blake3
 from dinkster_workers import ManifestError
 from dinkster_workers.pack_wheel import _enforce_limit
 
