@@ -1645,11 +1645,11 @@ def test_selected_root_wheel_origin_respects_base_replacement_ownership(base_own
     from dinkster_supervisor.environment_constraints import installed_wheel_origins
 
     wheel = {"filename": "helper-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
-    base = {
+    base: dict[str, object] = {
         "replaces": ["helper"] if base_owned else [],
         "wheels": [{**wheel, "index": "https://base-issuer.example.test/simple"}],
     }
-    engine = {
+    engine: dict[str, object] = {
         "dependencies": {
             "cpu": {"wheels": [{**wheel, "index": "https://engine-issuer.example.test/simple"}]}
         }
