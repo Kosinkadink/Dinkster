@@ -47,8 +47,10 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ):
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_supervisor.environment_constraints import requirement_hashes
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from packaging.utils import parse_wheel_filename
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
     from test_installer import _serve_artifacts, _static_release
@@ -256,6 +258,18 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             source_bytes = files[source_url]
             dependency = tmp_path / f"fixture_helper-{entry.version}-py3-none-any.whl"
             dependency_bytes = dependency.read_bytes()
+            constraints = (root / "generations" / str(number - 1) / "constraints.txt").read_text()
+            engine_hashes = requirement_hashes(constraints)
+            engine_wheels = [
+                path
+                for path in (store / "wheels").rglob("*.whl")
+                if content_digest(path)[7:] in engine_hashes
+            ][:2]
+            assert len(engine_wheels) == 2
+            held_wheels = tmp_path / f"unavailable-engine-wheels-{number}"
+            held_wheels.mkdir()
+            for index, path in enumerate(engine_wheels):
+                path.rename(held_wheels / str(index))
             base.rename(unavailable_base)
             files[source_url] = bytes([source_bytes[0] ^ 1]) + source_bytes[1:]
             dependency.write_bytes(bytes([dependency_bytes[0] ^ 1]) + dependency_bytes[1:])
@@ -292,11 +306,51 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     if path.is_file() and not path.is_symlink()
                 } == before
                 diagnostic = refused.stdout + refused.stderr
-                assert base_id in diagnostic, diagnostic
+                assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                assert "target exact source restore refused:" in diagnostic, diagnostic
                 assert entry.artifact_digest in diagnostic, diagnostic
-                assert dependency.name in diagnostic, diagnostic
+                assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                for path in engine_wheels:
+                    name = parse_wheel_filename(path.name)[0]
+                    assert f"offline generation wheel missing or corrupt: {name}" in diagnostic, (
+                        diagnostic
+                    )
+                lock_url = (
+                    "/static/"
+                    + releases[entries.index(entry)]["installLocks"]["fixture-cpu"]["url"]
+                )
+                lock_bytes = files.pop(lock_url)
+                try:
+                    missing_lock = subprocess.run(
+                        refused.args,
+                        cwd=tmp_path,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    assert missing_lock.returncode != 0
+                    assert {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    } == before
+                    diagnostic = missing_lock.stdout + missing_lock.stderr
+                    assert "healthy@" + entry.version + " dependency lock" in diagnostic, diagnostic
+                    assert "target exact source restore refused:" in diagnostic, diagnostic
+                    assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
+                    for path in engine_wheels:
+                        name = parse_wheel_filename(path.name)[0]
+                        assert (
+                            f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                        ), diagnostic
+                finally:
+                    files[lock_url] = lock_bytes
             finally:
                 unavailable_base.rename(base)
+                for index, path in enumerate(engine_wheels):
+                    (held_wheels / str(index)).rename(path)
                 files[source_url] = source_bytes
                 dependency.write_bytes(dependency_bytes)
             command = subprocess.run(

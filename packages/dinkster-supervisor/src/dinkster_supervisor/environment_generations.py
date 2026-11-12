@@ -106,7 +106,7 @@ def pack_operation(
     uv: str = "uv",
 ) -> dict[str, object]:
     """Invoke the generation-owned provisioner without importing engine packages."""
-    if operation not in {"preflight", "acquire", "rebuild", "doctor", "references"}:
+    if operation not in {"preflight", "collect", "acquire", "rebuild", "doctor", "references"}:
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
     command = [
         str(interpreter(generation)),
@@ -164,7 +164,11 @@ def pack_operation(
         messages = cast("list[object]", changes)
         if any(not isinstance(message, str) for message in messages):
             raise ValueError("changes must contain strings")
-        errors = list(cast("list[str]", messages)) if operation in {"doctor", "references"} else []
+        errors = (
+            list(cast("list[str]", messages))
+            if operation in {"doctor", "references", "collect"}
+            else []
+        )
         names: set[str] = set()
         for raw_pack in cast("list[object]", packs):
             if not isinstance(raw_pack, dict):

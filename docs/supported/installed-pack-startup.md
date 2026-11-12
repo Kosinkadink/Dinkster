@@ -162,7 +162,9 @@
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
   or selection metadata; successful add and update activate fresh generations
   without package-index resolution, retaining the engine and base.
-  Missing retained bases refuse early rather than listing later payload failures.
+  After confirmation, a missing retained base is reported alongside unavailable
+  source and dependency wheels, without changing retained project or store bytes.
+  Engine wheel checks use the retained exact constraints, not a package index.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
   saved plans, snapshots, workflow stamps and rollback targets refuse instead of

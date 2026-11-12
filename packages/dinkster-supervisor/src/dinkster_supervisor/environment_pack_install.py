@@ -15,6 +15,7 @@ from typing import cast
 
 from dinkster_store import object_path
 
+from .environment_constraints import requirement_hashes, selected_wheel_requirements
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -111,6 +112,7 @@ def inspect_pack_install(
         str(root),
         *registry_arguments,
         "plan-registry-sources",
+        "--collect-errors",
         "--engine-manifest",
         str(source / "engine-manifest.json"),
         "--engine-release",
@@ -135,9 +137,6 @@ def inspect_pack_install(
     errors: list[str] = []
     if result.returncode:
         errors.append(result.stderr.strip() or result.stdout.strip())
-    base = object_path(store / "bases", generation.base) / "python"
-    if not base.is_dir() or base.is_symlink():
-        errors.append(f"retained base {generation.base} is missing or linked")
     if errors:
         raise EnvironmentError("published pack review refused:\n" + "\n".join(errors))
     try:
@@ -157,6 +156,11 @@ def inspect_pack_install(
             raise ValueError("target engine returned inconsistent identities")
     except ValueError as exc:
         raise EnvironmentError(f"published pack review returned invalid metadata: {exc}") from exc
+    base = object_path(store / "bases", generation.base) / "python"
+    if not base.is_dir() or base.is_symlink():
+        cast("list[str]", metadata.setdefault("errors", [])).append(
+            f"retained base {generation.base} is missing or linked"
+        )
     source_costs: list[dict[str, object]] = []
     for entry in cast(
         "list[dict[str, object]]", cast("dict[str, object]", metadata["sources"])["packs"]
@@ -227,16 +231,19 @@ def plan_pack_install(
     selections: tuple[str, ...],
     output: Path,
     *,
+    updates: tuple[str, ...] | None = None,
     registry_arguments: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
-    if not selections or len(selections) > 64:
+    if updates is None and (not selections or len(selections) > 64):
         raise EnvironmentError("pack installation requires 1 to 64 exact selections")
     source, generation, store = _current(root)
     if output.is_relative_to(root) or output.is_relative_to(store):
         raise EnvironmentError("pack review inputs must be outside project and shared store")
-    review = inspect_pack_install(root, selections, registry_arguments=registry_arguments)
+    review = inspect_pack_install(
+        root, selections, updates=updates, registry_arguments=registry_arguments
+    )
     metadata = cast("dict[str, object]", review["metadata"])
     with writer_lock(store), writer_lock(root):
         source, generation, actual_store = _current(root)
@@ -260,29 +267,26 @@ def plan_pack_install(
             for name, lock in cast("dict[str, object]", metadata["dependencyLocks"]).items():
                 write_document(lock_root / f"{name}.json", cast("dict[str, object]", lock))
             locks = tuple(sorted(lock_root.glob("*.json")))
-            engine = scratch / "engine"
-            prepare_engine_interpreter(
-                engine,
-                store=store,
-                base=generation.base,
-                constraints=source / "constraints.txt",
-                uv_cache=scratch / "uv-cache",
-            )
-            preflight = pack_operation(
-                "preflight",
-                generation=engine,
-                store=store,
-                variant=generation.variant,
-                worker_protocol=generation.worker_protocol,
-                own_environment_size=size,
-                source_generation=source,
-                locks=locks,
-                in_process_packs=generation.in_process_packs,
-            )
-            errors: list[str] = []
+            errors = list(cast("list[str]", metadata.get("errors", [])))
+            constraints = (source / "constraints.txt").read_text(encoding="utf-8")
+            try:
+                selected_wheel_requirements(
+                    interpreter(source),
+                    constraints,
+                    [
+                        store / "wheels",
+                        *(
+                            object_path(store / "wheels", "sha256:" + identity)
+                            for identity in requirement_hashes(constraints)
+                        ),
+                    ],
+                    errors=errors,
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(f"engine {generation.engine_release}: {exc}")
             try:
                 restore_pack_sources(
-                    engine,
+                    source,
                     catalog_lock=catalog,
                     artifacts=artifacts,
                     project=root,
@@ -313,8 +317,8 @@ def plan_pack_install(
                             shutil.copyfile(cached, target)
             try:
                 pack_operation(
-                    "acquire",
-                    generation=engine,
+                    "collect",
+                    generation=source,
                     store=scratch / "store",
                     variant=generation.variant,
                     worker_protocol=generation.worker_protocol,
@@ -327,6 +331,25 @@ def plan_pack_install(
                 errors.append(str(exc))
             if errors:
                 raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
+            engine = scratch / "engine"
+            prepare_engine_interpreter(
+                engine,
+                store=store,
+                base=generation.base,
+                constraints=source / "constraints.txt",
+                uv_cache=scratch / "uv-cache",
+            )
+            preflight = pack_operation(
+                "preflight",
+                generation=engine,
+                store=store,
+                variant=generation.variant,
+                worker_protocol=generation.worker_protocol,
+                own_environment_size=size,
+                source_generation=source,
+                locks=locks,
+                in_process_packs=generation.in_process_packs,
+            )
             admitted = subprocess.run(
                 [
                     str(interpreter(engine)),

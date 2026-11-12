@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from dinkster_store import object_path, readable_label
 from dinkster_values import MEBIBYTE
+from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .boundary import PROTOCOL_VERSION
@@ -319,6 +321,7 @@ def preflight_generation(
     *,
     source_generation: Path | None = None,
     locks: Sequence[Path] = (),
+    engine_only: bool = False,
 ) -> tuple[PackPlan, ...]:
     """Plan all recorded packs without fetching wheels or changing either generation."""
     context.validate()
@@ -333,6 +336,19 @@ def preflight_generation(
     if not recorded:
         return ()
     facts = GenerationPackages.inspect(context.generation_python)
+    if engine_only:
+        versions: dict[str, str] = {}
+        for line in context.constraints.read_text().replace("\\\n", "").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            requirement = Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line))
+            if requirement.marker and not requirement.marker.evaluate(dict(facts.markers)):
+                continue
+            pins = list(requirement.specifier)
+            if requirement.url or len(pins) != 1 or pins[0].operator != "==":
+                raise ProvisionError("engine constraints require exact version pins")
+            versions[canonicalize_name(requirement.name)] = pins[0].version
+        facts = replace(facts, versions=versions)
     plans: list[PackPlan] = []
     for lock in sorted(recorded, key=lambda lock: lock.pack not in context.in_process_packs):
         plan = plan_pack(
@@ -409,7 +425,8 @@ def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "operation", choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")
+        "operation",
+        choices=("preflight", "collect", "acquire", "rebuild", "doctor", "terminal", "references"),
     )
     parser.add_argument("--generation", type=Path, required=True)
     parser.add_argument("--generation-python", type=Path, required=True)
@@ -491,8 +508,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 context,
                 source_generation=args.source_generation,
                 locks=args.lock,
+                engine_only=args.operation == "collect",
             )
             code = int(any(plan.conflicts for plan in plans))
+            if args.operation == "collect":
+                errors: list[str] = []
+                for plan in plans:
+                    for wheel in plan.wheels:
+                        try:
+                            fetch_wheel(wheel, context.wheel_store, offline=context.offline)
+                        except (ProvisionError, OSError, ValueError) as exc:
+                            errors.append(f"pack {plan.lock.pack}: {wheel.filename}: {exc}")
+                if errors:
+                    raise ProvisionError("\n".join(errors))
             if not code and args.operation == "acquire":
                 _require_fresh_generation(context.generation)
                 errors: list[str] = []
