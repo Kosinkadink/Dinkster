@@ -6,11 +6,18 @@ import hashlib
 import json
 import os
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
+import threading
+import urllib.error
 import urllib.request
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -19,6 +26,7 @@ from dinkster_workers.boundary import PROTOCOL_VERSION
 from dinkster_workers.pack_environment import (
     GenerationContext,
     doctor_generation,
+    fetch_pack_wheels,
     fetch_wheel,
     main,
     pack_drift,
@@ -135,6 +143,242 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
         ) as archive:
             archive.extractall(site)
     return python
+
+
+@contextmanager
+def _wheel_server(
+    wheel: LockedWheel, payload: bytes, outcome: str
+) -> Iterator[tuple[LockedWheel, list[int]]]:
+    requests: list[int] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(1)
+            if outcome == "exhausted" or outcome == "disconnect" and len(requests) == 1:
+                self.close_connection = True
+                return
+            if outcome == "503" and len(requests) == 1 or outcome == "404":
+                self.send_error(int(outcome))
+                return
+            content = (
+                b"x" * len(payload)
+                if outcome == "hash"
+                else payload[:-1]
+                if outcome == "short"
+                else payload + b"x"
+                if outcome == "oversize"
+                else payload
+            )
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            if outcome == "partial" and len(requests) == 1:
+                self.wfile.write(content[:7])
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.close_connection = True
+                return
+            self.wfile.write(content)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield (
+            replace(wheel, url=f"http://127.0.0.1:{server.server_port}/{wheel.filename}"),
+            requests,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("outcome", ["disconnect", "partial", "503"])
+def test_pack_install_retries_interrupted_wheel_download(tmp_path: Path, outcome: str) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    payload = (tmp_path / wheel.filename).read_bytes()
+    python = _generation(tmp_path / "generation/python", [])
+    with _wheel_server(wheel, payload, outcome) as (remote, requests):
+        lock = PackLock(
+            "example",
+            "linux-cpu",
+            ">=3.12",
+            ("fixture-extra==1.2",),
+            (),
+            (LockedDistribution("fixture-extra", "1.2", (remote,)),),
+        )
+        plan = plan_pack(
+            lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=0
+        )
+        installed = provision_pack(
+            plan,
+            generation_python=python,
+            packs=tmp_path / "generation/packs",
+            wheel_store=tmp_path / "store",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+        )
+        assert (
+            subprocess.check_output(
+                [str(installed), "-c", "import fixture_extra; print(fixture_extra.VALUE)"],
+                text=True,
+            ).strip()
+            == "23"
+        )
+        assert len(requests) == 2
+        assert not list((tmp_path / "store").rglob("*.partial"))
+
+
+@pytest.mark.parametrize("outcome", ["reset", "eof", "handshake", "timeout", "certificate"])
+def test_wheel_transport_failures_have_a_timeout_on_every_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    payload = (tmp_path / wheel.filename).read_bytes()
+    original = urllib.request.urlopen
+    timeouts: list[float] = []
+
+    def interrupted(url: str, *, timeout: float):
+        timeouts.append(timeout)
+        if outcome == "timeout" or len(timeouts) == 1:
+            error = {
+                "reset": ConnectionResetError("connection reset"),
+                "eof": urllib.error.URLError(ssl.SSLEOFError("TLS unexpected EOF")),
+                "handshake": urllib.error.URLError(TimeoutError("TLS handshake timed out")),
+                "timeout": TimeoutError("read timed out"),
+                "certificate": urllib.error.URLError(
+                    ssl.SSLCertVerificationError("untrusted certificate")
+                ),
+            }[outcome]
+            raise error
+        return original(url, timeout=timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", interrupted)
+    with _wheel_server(wheel, payload, "ok") as (remote, requests):
+        if outcome in {"timeout", "certificate"}:
+            with pytest.raises((ProvisionError, urllib.error.URLError)) as failure:
+                fetch_wheel(remote, tmp_path / "store")
+            assert (
+                "failed after 3 tries" if outcome == "timeout" else "untrusted certificate"
+            ) in str(failure.value)
+            assert not requests
+        else:
+            assert fetch_wheel(remote, tmp_path / "store").read_bytes() == payload
+            assert len(requests) == 1
+        assert len(timeouts) == (
+            3 if outcome == "timeout" else 1 if outcome == "certificate" else 2
+        )
+        assert all(value == 30 for value in timeouts)
+
+
+@pytest.mark.parametrize("outcome", ["exhausted", "404", "hash", "short", "oversize", "offline"])
+def test_pack_download_retry_refusals_preserve_verification_and_offline(
+    tmp_path: Path, outcome: str
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    with _wheel_server(wheel, (tmp_path / wheel.filename).read_bytes(), outcome) as (
+        remote,
+        requests,
+    ):
+        lock = PackLock(
+            "example",
+            "linux-cpu",
+            ">=3.12",
+            ("fixture-extra==1.2",),
+            (),
+            (LockedDistribution("fixture-extra", "1.2", (remote,)),),
+        )
+        plan = plan_pack(
+            lock,
+            GenerationPackages.inspect(Path(sys.executable)),
+            variant="linux-cpu",
+            own_environment_size=0,
+        )
+        with pytest.raises(ProvisionError) as failure:
+            fetch_pack_wheels(plan, tmp_path / "store", offline=outcome == "offline")
+        assert "pack example:" in str(failure.value)
+        assert remote.url in str(failure.value)
+        assert {
+            "exhausted": "failed after 3 tries",
+            "404": "HTTP Error 404",
+            "hash": "wheel hash or size mismatch",
+            "short": "wheel hash or size mismatch",
+            "oversize": "wheel exceeds locked size",
+            "offline": "offline pack wheel missing",
+        }[outcome] in str(failure.value)
+        assert len(requests) == (3 if outcome == "exhausted" else 0 if outcome == "offline" else 1)
+        assert not list((tmp_path / "store").rglob("*.whl"))
+        assert not list((tmp_path / "store").rglob("*.partial"))
+
+
+@pytest.mark.parametrize("measured", [False, True])
+@pytest.mark.parametrize("outcome", ["partial", "exhausted", "hash"])
+def test_lock_resolution_retries_verified_dependency_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, measured: bool, outcome: str
+) -> None:
+    api = _wheel(tmp_path, "dinkster-api", "0.0.3", "dinkster_api", "VALUE = 3\n")
+    wheel = _wheel(
+        tmp_path,
+        "fixture-extra",
+        "1.2",
+        "fixture_extra",
+        "VALUE = 23\n",
+        requires=("dinkster-api>=0.0.3",),
+    )
+    with _wheel_server(wheel, (tmp_path / wheel.filename).read_bytes(), outcome) as (
+        remote,
+        requests,
+    ):
+
+        def compile_lock(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            output = Path(command[command.index("--output-file") + 1])
+            rows = []
+            for name, version, artifact in (
+                ("dinkster-api", "0.0.3", api),
+                ("fixture-extra", "1.2", remote),
+            ):
+                row = (
+                    f'[[packages]]\nname="{name}"\nversion="{version}"\n'
+                    f"[[packages.wheels]]\nurl={json.dumps(artifact.url)}\n"
+                    f'hashes.sha256="{artifact.sha256}"\n'
+                )
+                if measured or name == "dinkster-api":
+                    row += f"size={artifact.size}\n"
+                rows.append(row)
+            output.write_text("".join(rows))
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", compile_lock)
+
+        def resolve() -> PackLock:
+            return resolve_pack_lock(
+                pack="example",
+                variant="linux-cpu",
+                requirements=["fixture-extra==1.2"],
+                python=Path(sys.executable),
+                constraints=tmp_path / "constraints.txt",
+                engine=">=0.0.3",
+            )
+
+        if outcome != "partial":
+            with pytest.raises(ProvisionError) as failure:
+                resolve()
+            assert remote.url in str(failure.value)
+            assert ("failed after 3 tries" if outcome == "exhausted" else "hash mismatch") in str(
+                failure.value
+            )
+            if outcome == "exhausted":
+                assert "pack example:" in str(failure.value)
+            assert len(requests) == (3 if outcome == "exhausted" else 1)
+            return
+        lock = resolve()
+        assert lock.requirements == ("fixture-extra==1.2", "dinkster-api>=0.0.3")
+        assert [package.name for package in lock.packages] == ["fixture-extra"]
+        assert len(requests) == (2 if measured else 3)
 
 
 @pytest.mark.parametrize("failure", ["missing", "hash", "short", "oversize"])
