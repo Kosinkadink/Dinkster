@@ -63,9 +63,8 @@ from dinkster_registry import (
 from dinkster_registry.artifact import MANIFEST_FILENAME, build_artifact, unpack_artifact
 from dinkster_schema import canonical_claim, canonical_name
 from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.host import SecurityHost
 from dinkster_security.policy import Artifact as SecurityArtifact
-from dinkster_security.policy import assess
-from dinkster_security.store import SecurityStore
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 from dinkster_workers import (
     PackManifest,
@@ -1603,46 +1602,60 @@ class Installer:
 
     def _check_security(self, target: Lockfile, *, installing: bool) -> None:
         database = self.root / "security.sqlite3"
-        if not database.is_file():
+        if not database.is_file() and not (self.root / "security.toml").is_file():
             return
-        from .registries import RegistryConfig, load_registries
-
-        config = self.root / "registries.toml"
-        registries = load_registries(config) if config.is_file() else RegistryConfig()
-        store = SecurityStore(database)
+        host = SecurityHost(self.root)
+        host.refresh()
         installed = {
             (entry.pack, entry.version, entry.artifact_digest, entry.source)
             for number in self.generation_numbers()
             for entry in self.lockfile_of(number).packs
         }
         for entry in target.packs:
-            registry = entry.source
-            if _is_registry_source(entry.source):
-                registry = registries.registry_for(entry).endpoint
-            artifact = SecurityArtifact(
-                registry,
-                SecurityRelease.model_validate(
-                    {
-                        "pack": entry.pack,
-                        "version": entry.version,
-                        "artifactDigest": entry.artifact_digest,
-                    }
-                ),
-            )
-            result = assess(
-                store,
+            artifact = self._security_artifact(entry)
+            result = host.assess(
                 (artifact,),
                 installing=installing
                 and (entry.pack, entry.version, entry.artifact_digest, entry.source)
                 not in installed,
             )
             if not result.allowed:
+                if result.stale_registries:
+                    raise InstallError(
+                        "security feed exceeds configured maximum age: "
+                        + ", ".join(result.stale_registries)
+                    )
                 finding = next(item for item in result.findings if not item.allowed)
                 raise InstallError(
                     f"security {finding.state}: {entry.pack}=={entry.version} "
                     f"({entry.artifact_digest}), notice {finding.notice.id} "
                     f"revision {finding.notice.revision}, decision {finding.decision}"
                 )
+
+    def _security_artifact(self, entry: LockedPack) -> SecurityArtifact:
+        from .registries import RegistryConfig, load_registries
+
+        config = self.root / "registries.toml"
+        registries = load_registries(config) if config.is_file() else RegistryConfig()
+        registry = (
+            registries.registry_for(entry).endpoint
+            if _is_registry_source(entry.source)
+            and (
+                config.is_file()
+                or entry.source.startswith(("registry:http://", "registry:https://"))
+            )
+            else entry.source
+        )
+        return SecurityArtifact(
+            registry,
+            SecurityRelease.model_validate(
+                {
+                    "pack": entry.pack,
+                    "version": entry.version,
+                    "artifactDigest": entry.artifact_digest,
+                }
+            ),
+        )
 
     # -- serving ---------------------------------------------------------
 
@@ -1708,6 +1721,10 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
+                    security_artifacts=tuple(
+                        self._security_artifact(entries[member])
+                        for member in (group[1] if group is not None else (entry.pack,))
+                    ),
                     trust_reserved=False,
                     packs={manifest.name: info},
                     worker_group=group[0] if group is not None else None,

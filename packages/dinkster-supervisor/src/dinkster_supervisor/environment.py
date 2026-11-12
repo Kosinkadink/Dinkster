@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from platform import machine
+from time import monotonic
 from typing import cast
 
 from dinkster_store import object_path, pack_archive_path
@@ -59,6 +60,7 @@ from .environment_generations import (
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, plan_pack_install
+from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
@@ -1402,6 +1404,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_plan = commands.add_parser("packs-plan", help="retain exact additive software inputs")
     packs_plan.add_argument("packs", nargs="+", metavar="PACK@VERSION")
     packs_plan.add_argument("--output", type=Path, required=True)
+    packs_plan.add_argument(
+        "--progress", type=Path, help="atomically publish preparation observations"
+    )
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
@@ -1540,7 +1545,32 @@ def run(args: argparse.Namespace) -> int:
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
         if args.operation == "packs-plan":
-            result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+            sequence = 0
+            last_write = 0.0
+            last_stage = ""
+
+            def progress(stage: str, completed: int, total: int) -> None:
+                nonlocal sequence, last_write, last_stage
+                sequence += 1
+                if args.progress is not None:
+                    if args.progress.with_name(args.progress.name + ".cancel").exists():
+                        raise EnvironmentError("pack preparation cancelled")
+                    now = monotonic()
+                    if stage == last_stage and now - last_write < 0.25 and completed != total:
+                        return
+                    write_document(
+                        args.progress,
+                        {
+                            "sequence": sequence,
+                            "stage": stage,
+                            "completed": completed,
+                            "total": total,
+                        },
+                    )
+                    last_write, last_stage = now, stage
+
+            with observe_preparation(progress):
+                result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
             code = 0
         elif args.operation == "packs-apply":
             result.update(apply_pack_install(args.root, args.input, args.approval))

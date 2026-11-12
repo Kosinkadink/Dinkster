@@ -268,6 +268,28 @@ jobs:
       - uses: ./.github/actions/windows-python
         if: matrix.os == 'windows'
       - run: uv sync --all-packages
+        if: matrix.os == 'windows'
+      - name: Install the locked Linux workspace with CPU torch
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          uv export --locked --all-packages --no-hashes --no-annotate --no-header \
+            | sed '/^nvidia-/d; /^triton==/d' > "$RUNNER_TEMP/linux-root-requirements.txt"
+          uv venv --clear --python '${{ matrix.python-version }}'
+          uv pip sync --python .venv/bin/python --torch-backend cpu "$RUNNER_TEMP/linux-root-requirements.txt"
+          echo 'UV_NO_SYNC=1' >> "$GITHUB_ENV"
+          .venv/bin/python - <<'PY'
+          from importlib.metadata import distributions
+          import torch
+          import torchvision
+          print(f"torch {torch.__version__}, CUDA {torch.version.cuda}; torchvision {torchvision.__version__}")
+          assert torch.__version__.endswith('+cpu') and torch.version.cuda is None
+          assert torchvision.__version__.endswith('+cpu')
+          assert not any(
+              distribution.metadata['Name'].lower().startswith(('nvidia-', 'triton'))
+              for distribution in distributions()
+          )
+          PY
       - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'
         shell: pwsh

@@ -171,13 +171,17 @@ def test_portable_attention_uses_available_backend_or_pytorch_fallback(
     assert original.attention is None
 
 
+@pytest.mark.parametrize("accelerator", ["auto", "cpu"])
 @pytest.mark.parametrize("gpu_count", [0, 1, 3])
 def test_device_selector_options_follow_available_devices(
-    monkeypatch: pytest.MonkeyPatch, gpu_count: int
+    monkeypatch: pytest.MonkeyPatch, gpu_count: int, accelerator: str
 ) -> None:
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", accelerator)
     options = ["default", "cpu"]
     if gpu_count > 1:
         options.extend(f"gpu:{index}" for index in range(gpu_count))
+    if accelerator == "cpu":
+        monkeypatch.setitem(sys.modules, "dinkster_inference.model_management", SimpleNamespace())
     monkeypatch.setattr(
         device_routing,
         "_model_management",

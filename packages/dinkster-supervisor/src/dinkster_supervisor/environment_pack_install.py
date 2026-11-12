@@ -13,6 +13,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.policy import Artifact as SecurityArtifact
+from dinkster_security.policy import assess
+from dinkster_security.store import SecurityStore
 from dinkster_store import object_path
 
 from .environment_constraints import (
@@ -28,6 +32,7 @@ from .environment_generations import (
     retained_pack_archive,
 )
 from .environment_history import history, is_software_metadata
+from .environment_progress import preparation_progress
 from .environment_runtime import engine_status
 from .environment_state import (
     EnvironmentError,
@@ -183,6 +188,7 @@ def inspect_pack_install(
         command.extend(["--add", selection])
     if updates is not None:
         command.extend(["--update", *updates])
+    preparation_progress("checking-registry-metadata")
     errors: list[str] = []
     try:
         entries = history(root)
@@ -443,6 +449,7 @@ def plan_pack_install(
                 )
             except (OSError, ValueError) as exc:
                 errors.append(f"engine {generation.engine_release}: {exc}")
+            preparation_progress("preparing-pack-sources")
             try:
                 restore_pack_sources(
                     source,
@@ -475,6 +482,7 @@ def plan_pack_install(
                             target.parent.mkdir(exist_ok=True)
                             shutil.copyfile(cached, target)
             if diagnostic_python is not None:
+                preparation_progress("acquiring-pack-inputs")
                 try:
                     if metadata["compatibility"] is None:
                         raise EnvironmentError("recorded target wheel compatibility unavailable")
@@ -497,6 +505,7 @@ def plan_pack_install(
             if errors:
                 raise EnvironmentError("pack inputs unavailable:\n" + "\n".join(errors))
             engine = scratch / "engine"
+            preparation_progress("preparing-runtime")
             prepare_engine_interpreter(
                 engine,
                 store=store,
@@ -504,6 +513,7 @@ def plan_pack_install(
                 constraints=source / "constraints.txt",
                 uv_cache=scratch / "uv-cache",
             )
+            preparation_progress("checking-pack-requirements")
             preflight = pack_operation(
                 "preflight",
                 generation=engine,
@@ -516,6 +526,7 @@ def plan_pack_install(
                 in_process_packs=generation.in_process_packs,
             )
             if diagnostic_python is None:
+                preparation_progress("acquiring-pack-inputs")
                 pack_operation(
                     "acquire",
                     generation=engine,
@@ -527,6 +538,7 @@ def plan_pack_install(
                     locks=locks,
                     in_process_packs=generation.in_process_packs,
                 )
+            preparation_progress("checking-pack-admission")
             admitted = subprocess.run(
                 [
                     str(interpreter(engine)),
@@ -562,6 +574,7 @@ print(Lockfile.of(entries).record_json())
                 or generation.drift(source)
             ):
                 raise EnvironmentError("project changed after planning; request a new plan")
+            preparation_progress("retaining-review")
             output.mkdir()
             try:
                 shutil.copyfile(catalog, output / "dinkster.lock")
@@ -586,6 +599,7 @@ print(Lockfile.of(entries).record_json())
                     "constraints": generation.constraints,
                     "inProcessPacks": list(generation.in_process_packs),
                     "sources": read_document(catalog),
+                    "securityRegistries": metadata["securityRegistries"],
                     "dependencyLocks": all_locks,
                     "preflight": preflight,
                     "ownEnvironmentBytes": size,
@@ -646,8 +660,52 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
                 or content_digest(path) != expected
             ):
                 raise EnvironmentError("reviewed pack inputs changed; request a new plan")
+        database = root / "security.sqlite3"
+        if database.is_file():
+            retained: set[tuple[object, ...]] = set()
+            for path in (root / "generations").glob("*/dinkster.lock"):
+                if path.parent.name == str(target):
+                    continue
+                sealed = Generation.read(path.parent / "generation.json")
+                if (
+                    path.is_symlink()
+                    or path.parent.is_symlink()
+                    or content_digest(path) != dict(sealed.files).get(path.name)
+                ):
+                    raise EnvironmentError("security requires intact retained source locks")
+                for entry in cast("list[dict[str, object]]", read_document(path)["packs"]):
+                    retained.add(
+                        tuple(entry[key] for key in ("pack", "version", "artifactDigest", "source"))
+                    )
+            security = SecurityStore(database)
+            registries = cast("dict[str, str]", record["securityRegistries"])
+            for entry in cast(
+                "list[dict[str, object]]", cast("dict[str, object]", record["sources"])["packs"]
+            ):
+                artifact = SecurityArtifact(
+                    registries[cast("str", entry["source"])],
+                    SecurityRelease.model_validate(
+                        {key: entry[key] for key in ("pack", "version", "artifactDigest")}
+                    ),
+                )
+                result = assess(
+                    security,
+                    (artifact,),
+                    installing=tuple(
+                        entry[key] for key in ("pack", "version", "artifactDigest", "source")
+                    )
+                    not in retained,
+                )
+                if not result.allowed:
+                    finding = next(item for item in result.findings if not item.allowed)
+                    raise EnvironmentError(
+                        f"security {finding.state}: {entry['pack']}=={entry['version']} "
+                        f"({entry['artifactDigest']}), notice {finding.notice.id} "
+                        f"revision {finding.notice.revision}, decision {finding.decision}"
+                    )
 
     with writer_lock(store), writer_lock(root):
+        target = next_generation(root)
         revalidate()
         if time.time() >= cast("float", record["expires"]) or (inputs / "consumed").exists():
             raise EnvironmentError("pack installation confirmation expired or was already used")
@@ -658,7 +716,6 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             shutil.copyfile(wheel, destination)
         with (inputs / "consumed").open("x", encoding="ascii") as handle:
             handle.write(approval)
-        target = next_generation(root)
         journal = begin_activation(root, target, "update")
         try:
             replace(Journal.read(journal), stage="building").write(journal)
