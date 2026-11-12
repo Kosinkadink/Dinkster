@@ -187,7 +187,7 @@ jobs:
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
       - run: >-
-          uv run --no-sync python -m pytest -q --durations=5
+          uv run --no-sync python -m pytest -n0 -q --durations=5
           tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release
           tests/test_environment_history.py::test_installed_wheel_pack_add_and_update_without_index_resolution
 

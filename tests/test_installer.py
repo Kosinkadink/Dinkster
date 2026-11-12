@@ -37,6 +37,7 @@ from dinkster_registry import (
 from dinkster_store import pack_archive_path
 from dinkster_workers import DoctorReport, Finding, PackManifest
 from dinkster_workers.provision import ProvisionError
+from packaging.version import Version
 
 import dinkster.installer as installer_module
 from dinkster.installer import (
@@ -2780,6 +2781,30 @@ def _static_release(entry: LockedPack, data: bytes) -> dict[str, object]:
     }
 
 
+def _static_indexes(releases: Sequence[Mapping[str, object]]) -> dict[str, bytes]:
+    packs: dict[str, list[Mapping[str, object]]] = {}
+    for row in releases:
+        packs.setdefault(str(row["name"]), []).append(row)
+    catalog = []
+    files = {}
+    for name, rows in packs.items():
+        latest = max(rows, key=lambda row: Version(str(row["version"])))
+        catalog.append(
+            {
+                "name": name,
+                "publisher": latest["publisher"],
+                "latestVersion": latest["version"],
+                "library": latest.get("library", False),
+                "url": f"packs/{name}/index.json",
+            }
+        )
+        files[f"/static/packs/{name}/index.json"] = json.dumps(
+            {"schemaVersion": 2, "name": name, "items": rows}
+        ).encode()
+    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 2, "items": catalog}).encode()
+    return files
+
+
 def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
     from dinkster.registries import NamedRegistry, prepare_registry_sources
 
@@ -2799,9 +2824,8 @@ def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
         server.shutdown()
 
 
-@pytest.mark.parametrize("schema", [1, 2])
 def test_exact_library_release_resolves_and_downloads_without_node_discovery(
-    tmp_path: Path, schema: int
+    tmp_path: Path,
 ) -> None:
     from dinkster.registries import (
         NamedRegistry,
@@ -2818,27 +2842,9 @@ def test_exact_library_release_resolves_and_downloads_without_node_discovery(
     record = {**_static_release(entry, data), "library": True}
     wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     files = {
-        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+        **_static_indexes([record]),
         f"/static/{wheel['url']}": data,
     }
-    if schema == 2:
-        files["/static/packs/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "items": [
-                    {
-                        "name": "demo",
-                        "latestVersion": "1.0.0",
-                        "publisher": entry.publisher,
-                        "library": True,
-                        "url": "packs/demo/index.json",
-                    }
-                ],
-            }
-        ).encode()
-        files["/static/packs/demo/index.json"] = json.dumps(
-            {"schemaVersion": 2, "name": "demo", "items": [record]}
-        ).encode()
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     try:
@@ -2876,7 +2882,7 @@ def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> Non
     artifact_path = f"/static/{wheel['url']}"
     server = _serve_artifacts(
         {
-            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            **_static_indexes([record]),
             artifact_path: data,
         },
         requests,
@@ -2885,11 +2891,19 @@ def test_http_registry_fetcher_uses_verified_static_wheel(tmp_path: Path) -> Non
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fetch = http_registry_fetcher(endpoint + "/")  # trailing slash normalized
         assert fetch(release) == data
-        assert requests == [(index_path, None), (artifact_path, None)]
+        assert requests == [
+            (index_path, None),
+            ("/static/packs/demo/index.json", None),
+            (artifact_path, None),
+        ]
 
         authed = http_registry_fetcher(endpoint, token="s3cret")
         assert authed(release) == data
-        assert requests[-2:] == [(index_path, "Bearer s3cret"), (artifact_path, "Bearer s3cret")]
+        assert requests[-3:] == [
+            (index_path, "Bearer s3cret"),
+            ("/static/packs/demo/index.json", "Bearer s3cret"),
+            (artifact_path, "Bearer s3cret"),
+        ]
 
         missing = replace(release, artifact_digest="blake3:" + "0" * 64)
         with pytest.raises(InstallError, match=r"registry download of demo@1\.0\.0 .* failed"):
@@ -2935,7 +2949,7 @@ def test_registry_download_retries_only_transport(
     index_path = "/static/packs/index.json"
     wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     wheel_path = f"/static/{wheel['url']}"
-    index = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+    indexes = _static_indexes([record])
     target_path = index_path if target == "index" else wheel_path
     counts: Counter[str] = Counter()
     release_stalled = threading.Event()
@@ -2960,7 +2974,7 @@ def test_registry_download_retries_only_transport(
                     self.close_connection = True
                     return
                 release_stalled.set()
-            payload = index if self.path == index_path else data
+            payload = indexes.get(self.path, data)
             if self.path == target_path and outcome in ("corrupt", "retry-corrupt"):
                 payload = b"not valid JSON" if target == "index" else b"x" * len(data)
             self.send_response(200)
@@ -3020,6 +3034,8 @@ def test_registry_download_retries_only_transport(
             del expected[target_path]
         if target == "index" and outcome in ("timeout", "disconnect", "handshake"):
             expected[wheel_path] = 1
+        if target == "wheel" or outcome in ("timeout", "disconnect", "handshake"):
+            expected["/static/packs/demo/index.json"] = 1
         assert counts == expected
         if attempts > 1:
             assert "attempt 1/3" in caplog.text
@@ -3059,7 +3075,7 @@ def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malforme
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
-            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            **_static_indexes([record]),
             f"/static/{wheel['url']}": data,
         },
         requests,
@@ -3070,7 +3086,7 @@ def test_http_registry_fetcher_rejects_invalid_wheel_size(size: object, malforme
             http_registry_fetcher(f"http://127.0.0.1:{server.server_port}")(release)
         assert "demo@1.0.0" in str(refusal.value)
         if malformed:
-            assert requests == [(index_path, None)]
+            assert requests == [(index_path, None), ("/static/packs/demo/index.json", None)]
     finally:
         server.shutdown()
 
@@ -3301,9 +3317,9 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
     demo = write_pack(tmp_path / "demo", "demo")
     entry, _ = lock_local_pack(demo, installer.artifacts_dir)
     release = replace(entry, version="1.0.0", publisher="acme")
-    good = "/static/packs/index.json"
+    good = "/static/packs/demo/index.json"
     record = _static_release(release, b"wheel")
-    files = {good: json.dumps({"schemaVersion": 1, "items": [record]}).encode()}
+    files = _static_indexes([record])
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     try:
@@ -3323,7 +3339,7 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
             resolve_release(registry, "demo", "2.0.0")
         wheel = cast("list[dict[str, object]]", record["wheels"])[0]
         wheel["digest"] = "md5:1"
-        files[good] = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+        files.update(_static_indexes([record]))
         with pytest.raises(InstallError, match="invalid wheel fields"):
             resolve_release(registry, "demo", "1.0.0")
         files[good] = b"not json"
@@ -3331,7 +3347,7 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
             resolve_release(registry, "demo", "1.0.0")
         record = _static_release(release, b"wheel")
         record["publisher"] = 7
-        files[good] = json.dumps({"schemaVersion": 1, "items": [record]}).encode()
+        files[good] = json.dumps({"schemaVersion": 2, "name": "demo", "items": [record]}).encode()
         with pytest.raises(InstallError, match="malformed release record"):
             resolve_release(registry, "demo", "1.0.0")
     finally:
@@ -3349,9 +3365,8 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         ("1.0", "0.3", None),
     ],
 )
-@pytest.mark.parametrize("schema", [1, 2])
 def test_registry_resolves_newest_compatible_pack_across_all_pages(
-    minimum: str, engine: str, expected: str | None, schema: int
+    minimum: str, engine: str, expected: str | None
 ) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
@@ -3369,29 +3384,7 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
     for version, bounds in versions:
         entry = LockedPack("demo", version, digests[version], "dinkster", ())
         rows.append({**_static_release(entry, b"wheel"), "engine": bounds})
-    files = {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}
-    if schema == 2:
-        files["/static/packs/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "items": [
-                    {
-                        "name": "demo",
-                        "publisher": "dinkster",
-                        "latestVersion": "12.0",
-                        "library": False,
-                        "url": "packs/demo/index.json",
-                    }
-                ],
-            }
-        ).encode()
-        files["/static/packs/demo/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "name": "demo",
-                "items": rows,
-            }
-        ).encode()
+    files = _static_indexes(rows)
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     try:
@@ -3405,9 +3398,10 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
             assert selected.artifact_digest == digests[expected]
             assert selected.pack == "demo"
             assert selected.source == registry.source
-        assert requests == [("/static/packs/index.json", None)] + (
-            [("/static/packs/demo/index.json", None)] if schema == 2 else []
-        )
+        assert requests == [
+            ("/static/packs/index.json", None),
+            ("/static/packs/demo/index.json", None),
+        ]
     finally:
         server.shutdown()
 
@@ -3446,9 +3440,7 @@ def test_registry_keeps_older_engines_on_compatible_pack_versions(
         }
         for index, (version, bounds) in enumerate(versions, start=1)
     ]
-    server = _serve_artifacts(
-        {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": rows}).encode()}, []
-    )
+    server = _serve_artifacts(_static_indexes(rows), [])
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
         selected = resolve_compatible_release(registry, manifest.name, "0.0.2", engine)
@@ -3470,46 +3462,60 @@ def test_registry_selection_snapshot_refreshes_between_operations(
 
     entry = LockedPack("demo", "3.1", "blake3:" + "b" * 64, "dinkster", ())
     record = {**_static_release(entry, b"wheel"), "engine": ">=0.4,<0.7"}
-    responses = iter(
-        json.dumps({"schemaVersion": 1, "items": rows}).encode()
-        for rows in ([record], [] if removed else [{**record, "engine": ">=0.8,<0.9"}])
-    )
-    files = {
-        "/static/packs/index.json": responses.__next__,
-    }
+    files = _static_indexes([record])
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
         assert resolve_compatible_release(registry, "demo", "1.0", "0.5").version == "3.1"
+        files.update(_static_indexes([] if removed else [{**record, "engine": ">=0.8,<0.9"}]))
         with pytest.raises(InstallError, match="no active demo"):
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
-        assert requests == [("/static/packs/index.json", None)] * 2
+        assert requests == [
+            ("/static/packs/index.json", None),
+            ("/static/packs/demo/index.json", None),
+            ("/static/packs/index.json", None),
+        ] + ([] if removed else [("/static/packs/demo/index.json", None)])
     finally:
         server.shutdown()
 
 
 @pytest.mark.parametrize(
-    ("page", "reason"),
+    ("page", "reason", "per_pack"),
     [
-        ({"schemaVersion": 1, "items": "bad"}, "unsupported schema or missing items"),
-        ({"schemaVersion": 1, "items": [42]}, "non-object release"),
-        ({"schemaVersion": 1, "items": [{"version": "1.0"}]}, "name and version strings"),
+        ({"schemaVersion": 2, "items": "bad"}, "unsupported schema or missing items", False),
+        ({"schemaVersion": 2, "name": "demo", "items": [42]}, "non-object release", True),
         (
-            {"schemaVersion": 1, "items": [{"name": "demo", "version": "1.0"}]},
-            "one universal wheel",
+            {"schemaVersion": 2, "name": "demo", "items": [{"version": "1.0"}]},
+            "name and version strings",
+            True,
         ),
-        ({"schemaVersion": 3, "items": []}, "unsupported schema 3; update Dinkster"),
-        ({"items": []}, "unsupported schema"),
+        (
+            {"schemaVersion": 2, "name": "demo", "items": [{"name": "demo", "version": "1.0"}]},
+            "one universal wheel",
+            True,
+        ),
+        ({"schemaVersion": 1, "items": []}, "unsupported schema 1; update Dinkster", False),
+        (
+            {"schemaVersion": 1, "name": "demo", "items": []},
+            "unsupported schema 1; update Dinkster",
+            True,
+        ),
+        ({"schemaVersion": 3, "items": []}, "unsupported schema 3; update Dinkster", False),
+        ({"items": []}, "unsupported schema", False),
     ],
 )
 def test_registry_compatible_selection_refuses_malformed_pages(
-    page: dict[str, object], reason: str
+    page: dict[str, object], reason: str, per_pack: bool
 ) -> None:
     from dinkster.registries import NamedRegistry, resolve_compatible_release
 
     payload = json.dumps(page).encode()
-    server = _serve_artifacts({"/static/packs/index.json": payload}, [])
+    files = _static_indexes(
+        [_static_release(LockedPack("demo", "1.0", "blake3:" + "b" * 64, "acme", ()), b"wheel")]
+    )
+    files["/static/packs/demo/index.json" if per_pack else "/static/packs/index.json"] = payload
+    server = _serve_artifacts(files, [])
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
         with pytest.raises(InstallError, match=reason):
@@ -3602,11 +3608,12 @@ def test_registry_preparation_snapshot_isolates_endpoints_and_credentials(
     from dinkster.registries import NamedRegistry, StaticPackIndex, resolve_release
 
     entry = LockedPack("demo", "1.0", "blake3:" + "b" * 64, "acme", ())
-    payload = json.dumps({"schemaVersion": 1, "items": [_static_release(entry, b"wheel")]}).encode()
+    files = _static_indexes([_static_release(entry, b"wheel")])
     requests: list[tuple[str, str | None]] = []
     path = "/static/packs/index.json"
-    first = _serve_artifacts({path: payload}, requests)
-    second = _serve_artifacts({path: payload}, requests)
+    pack_path = "/static/packs/demo/index.json"
+    first = _serve_artifacts(files, requests)
+    second = _serve_artifacts(files, requests)
     snapshot = tmp_path / "operation-index"
     try:
         registry = NamedRegistry("", f"http://127.0.0.1:{first.server_port}", "FIXTURE_TOKEN")
@@ -3628,13 +3635,16 @@ def test_registry_preparation_snapshot_isolates_endpoints_and_credentials(
         )
         assert requests == [
             (path, "Bearer first-fixture-credential"),
+            (pack_path, "Bearer first-fixture-credential"),
             (path, "Bearer second-fixture-credential"),
+            (pack_path, "Bearer second-fixture-credential"),
             (path, "Bearer second-fixture-credential"),
+            (pack_path, "Bearer second-fixture-credential"),
         ]
-        assert len(list(snapshot.iterdir())) == 3
+        assert len(list(snapshot.iterdir())) == 6
         assert all("fixture-credential" not in p.name + p.read_text() for p in snapshot.iterdir())
         resolve_release(registry, "demo", "1.0", index=StaticPackIndex(tmp_path / "next-operation"))
-        assert len(requests) == 4
+        assert len(requests) == 8
     finally:
         first.shutdown()
         second.shutdown()
@@ -3647,15 +3657,15 @@ def test_registry_compatible_selection_refuses_only_undeclared_releases(engine: 
     calls: list[tuple[str, str | None]] = []
     record = _static_release(LockedPack("demo", "3.0", "blake3:" + "b" * 64, "acme", ()), b"wheel")
     record["engine"] = engine
-    server = _serve_artifacts(
-        {"/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode()},
-        calls,
-    )
+    server = _serve_artifacts(_static_indexes([record]), calls)
     try:
         registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
         with pytest.raises(InstallError, match="versions of demo"):
             resolve_compatible_release(registry, "demo", "1.0", "0.5")
-        assert calls == [("/static/packs/index.json", None)]
+        assert calls == [
+            ("/static/packs/index.json", None),
+            ("/static/packs/demo/index.json", None),
+        ]
     finally:
         server.shutdown()
 
@@ -3697,7 +3707,7 @@ def test_registry_source_identity_comes_from_verified_archive(
     record = {**_static_release(release, archive.read_bytes()), "engine": ">=0.0.2.dev0,<0.7"}
     wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     files = {
-        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+        **_static_indexes([record]),
         f"/static/{wheel['url']}": archive.read_bytes(),
     }
     server = _serve_artifacts(files, [])
@@ -3899,13 +3909,18 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
             }
         )
         files["/static/" + lock_path] = payload
-    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": releases}).encode()
+    files.update(_static_indexes(releases))
     requests: list[tuple[str, str | None]] = []
     if problem == "selected":
         files = {
             path: payload
             for path, payload in files.items()
-            if path in {"/static/packs/index.json", "/static/" + lock_path}
+            if path
+            in {
+                "/static/packs/index.json",
+                "/static/packs/z-other/index.json",
+                "/static/" + lock_path,
+            }
         }
         expected.pop("demo")
     server = _serve_artifacts(files, requests)
@@ -4109,7 +4124,12 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                 }
             if problem == "selected":
                 assert requests and all(
-                    path in {"/static/packs/index.json", "/static/" + lock_path}
+                    path
+                    in {
+                        "/static/packs/index.json",
+                        "/static/packs/z-other/index.json",
+                        "/static/" + lock_path,
+                    }
                     for path, _ in requests
                 )
             if problem is None:
@@ -4265,7 +4285,7 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
     release = {**_static_release(added, archives["added"]), "engine": ">=0"}
     wheel = cast("list[dict[str, object]]", release["wheels"])[0]
     files = {
-        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        **_static_indexes([release]),
         f"/static/{wheel['url']}": (
             b"x" * len(archives["added"]) if problem == "corrupt" else archives["added"]
         ),
@@ -4415,9 +4435,8 @@ def test_cli_adds_exact_pack_without_reresolving_installed_sources(
 
 
 @pytest.mark.parametrize("mode", ["complete", "partial", "offline", "strict", "corrupt"])
-@pytest.mark.parametrize("schema", [1, 2])
 def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, schema: int
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str
 ) -> None:
     from dinkster import __version__
     from dinkster.registries import default_pack_minimums
@@ -4437,35 +4456,11 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
     wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     artifact_path = f"/static/{wheel['url']}"
     files = {
-        "/static/packs/index.json": json.dumps(
-            {"schemaVersion": 1, "items": [newer, record]}
-        ).encode(),
+        **_static_indexes([newer, record]),
         artifact_path: (
             b"x" * archive.stat().st_size if mode == "corrupt" else archive.read_bytes()
         ),
     }
-    if schema == 2:
-        files["/static/packs/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "items": [
-                    {
-                        "name": pack_name,
-                        "latestVersion": "0.0.4",
-                        "publisher": "audit-actor",
-                        "library": False,
-                        "url": f"packs/{pack_name}/index.json",
-                    }
-                ],
-            }
-        ).encode()
-        files[f"/static/packs/{pack_name}/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "name": pack_name,
-                "items": [newer, record],
-            }
-        ).encode()
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts({} if mode == "offline" else files, requests)
     root = tmp_path / "project"
@@ -4520,9 +4515,11 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
                     ),
                 )
                 assert report["packs"] == [pack_name]
-                assert requests == [("/static/packs/index.json", None)] + (
-                    [(f"/static/packs/{pack_name}/index.json", None)] if schema == 2 else []
-                ) + [(artifact_path, None)]
+                assert requests == [
+                    ("/static/packs/index.json", None),
+                    (f"/static/packs/{pack_name}/index.json", None),
+                    (artifact_path, None),
+                ]
                 cached = pack_archive_path(artifacts, digest)
                 assert cached.read_bytes() == archive.read_bytes()
                 if mode == "partial":
@@ -4588,12 +4585,9 @@ def test_cli_reresolves_installed_sources_without_mutating_project(
     ]
     wheel = cast("list[dict[str, object]]", rows[1]["wheels"])[0]
     files = {
-        "/static/packs/index.json": json.dumps(
-            {
-                "schemaVersion": 1,
-                "items": [row for row in rows if mode != "lower-only" or row["version"] != "0.0.3"],
-            }
-        ).encode(),
+        **_static_indexes(
+            [row for row in rows if mode != "lower-only" or row["version"] != "0.0.3"]
+        ),
         f"/static/{wheel['url']}": archive.read_bytes(),
     }
     requests: list[tuple[str, str | None]] = []
@@ -4808,7 +4802,7 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
-            index_path: json.dumps({"schemaVersion": 1, "items": [record]}).encode(),
+            **_static_indexes([record]),
             artifact_path: data,
         },
         requests,
@@ -4826,14 +4820,16 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         fetch = routing_registry_fetcher(config, None)
 
         assert fetch(release) == data
-        assert requests[-2:] == [
+        assert requests[-3:] == [
             (index_path, "Bearer corp-secret"),
+            ("/static/packs/demo/index.json", "Bearer corp-secret"),
             (artifact_path, "Bearer corp-secret"),
         ]
         assert fetch(replace(release, source="registry")) == data  # default
         assert fetch(replace(release, source=f"registry:{endpoint}")) == data
         assert requests == [
             (index_path, "Bearer corp-secret"),
+            ("/static/packs/demo/index.json", "Bearer corp-secret"),
             (artifact_path, "Bearer corp-secret"),
             (artifact_path, "Bearer corp-secret"),
             (artifact_path, "Bearer corp-secret"),

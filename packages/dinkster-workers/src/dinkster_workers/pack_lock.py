@@ -215,7 +215,7 @@ print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in m.distribu
 """
         try:
             result = subprocess.run(
-                [str(python), "-I", "-c", script], capture_output=True, text=True
+                [str(python), "-I", "-B", "-c", script], capture_output=True, text=True
             )
         except OSError as exc:
             raise ProvisionError(f"cannot inspect generation interpreter {python}: {exc}") from exc
