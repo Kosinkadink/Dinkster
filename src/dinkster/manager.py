@@ -427,6 +427,7 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
             selections,
             updates=tuple(cast("list[str]", updates)) if updates is not None else None,
             registry_arguments=registry_arguments,
+            diagnostic_python=Path(sys.executable),
         )
         if observed != approved:
             raise InstallError("pack plan is stale; request a new plan")
@@ -444,6 +445,7 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
                 retained,
                 updates=tuple(cast("list[str]", updates)) if updates is not None else None,
                 registry_arguments=registry_arguments,
+                diagnostic_python=Path(sys.executable),
             )
             prepared = result["packPlan"]
             acquired = Lockfile.from_record_json(json.dumps(prepared["sources"]))
@@ -459,6 +461,7 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
                     selections,
                     updates=tuple(cast("list[str]", updates)) if updates is not None else None,
                     registry_arguments=registry_arguments,
+                    diagnostic_python=Path(sys.executable),
                 )
                 != approved
             ):
@@ -492,7 +495,11 @@ def _managed_pack_changes(args: argparse.Namespace, *, update: bool = False) -> 
     updates = tuple(args.packs) if update else None
     try:
         review = operations.inspect_pack_install(
-            root, selections, updates=updates, registry_arguments=tuple(registry_arguments)
+            root,
+            selections,
+            updates=updates,
+            registry_arguments=tuple(registry_arguments),
+            diagnostic_python=Path(sys.executable),
         )
     except (OSError, ValueError) as exc:
         raise InstallError(str(exc)) from exc
@@ -1310,10 +1317,14 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
         "dinkster_supervisor.environment_artifacts"
     ).validate_manifest
 
+    errors: list[str] = []
     try:
         engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)
     except (OSError, ValueError) as exc:
-        raise InstallError(f"target engine metadata refused: {exc}") from exc
+        if not args.collect_errors or args.engine_version is None:
+            raise InstallError(f"target engine metadata refused: {exc}") from exc
+        errors.append(f"target engine metadata refused: {exc}")
+        engine = {"version": args.engine_version}
     defaults = engine.get("defaultPacks")
     if args.installed_lock is None and (not isinstance(defaults, dict) or not defaults):
         raise InstallError("target engine has no default pack declaration")
@@ -1321,24 +1332,31 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
     index = StaticPackIndex(args.index_snapshot, offline=args.offline, read_only=True)
     installed = Lockfile()
-    errors: list[str] = []
     if args.installed_lock is not None:
         try:
             installed = Lockfile.from_record_json(args.installed_lock.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise InstallError(f"installed sources cannot be read: {exc}") from exc
-        sources, locks = plan_registry_changes(
-            config,
-            installed,
-            selections=tuple(args.add),
-            updates=tuple(args.update) if args.update is not None else None,
-            engine_version=cast("str", engine["version"]),
-            variant=args.variant,
-            base_id=args.base_id,
-            selected=select_registry(config, args.registry) if args.registry else None,
-            index=index,
-            errors=errors if args.collect_errors else None,
-        )
+        except (InstallError, OSError, ValueError) as exc:
+            if not args.collect_errors:
+                raise InstallError(f"installed sources cannot be read: {exc}") from exc
+            errors.append(f"installed sources cannot be read: {exc}")
+        try:
+            sources, locks = plan_registry_changes(
+                config,
+                installed,
+                selections=tuple(args.add),
+                updates=tuple(args.update) if args.update is not None else None,
+                engine_version=cast("str", engine["version"]),
+                variant=args.variant,
+                base_id=args.base_id,
+                selected=select_registry(config, args.registry) if args.registry else None,
+                index=index,
+                errors=errors if args.collect_errors else None,
+            )
+        except InstallError as exc:
+            if not args.collect_errors:
+                raise
+            errors.append(str(exc))
+            sources, locks = installed, ()
     else:
         if args.add or args.update is not None:
             raise InstallError("pack changes require --installed-lock")
@@ -1722,6 +1740,7 @@ def main() -> None:
     )
     source_plan.add_argument("--engine-manifest", type=Path, required=True)
     source_plan.add_argument("--engine-release", required=True)
+    source_plan.add_argument("--engine-version", help="recorded version for diagnostic collection")
     source_plan.add_argument("--variant", required=True)
     source_plan.add_argument("--base-id", required=True)
     source_plan.add_argument("--index-snapshot", type=Path)

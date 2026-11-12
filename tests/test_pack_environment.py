@@ -949,6 +949,17 @@ def test_collection_lists_unreadable_locks_and_valid_sibling_wheel_failures(
     )
     assert "in-process packs have no dependency lock: absent" in diagnostic
     assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
+    observed = GenerationPackages.inspect(python)
+    recorded = json.dumps(
+        {"tags": [str(tag) for tag in observed.tags], "markers": dict(observed.markers)}
+    )
+    unavailable = list(arguments)
+    unavailable[unavailable.index("--generation-python") + 1] = str(tmp_path / "absent-python")
+    assert main(["collect", *unavailable, "--compatibility", recorded]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "pack absent: recorded dependency lock missing" in diagnostic
+    assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
+    assert "cannot inspect generation interpreter" not in diagnostic
     assert {path: path.read_bytes() for path in source.rglob("*") if path.is_file()} == before
     assert not (target / "packs").exists()
     assert main(["preflight", *arguments]) == 1

@@ -321,6 +321,50 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     assert f"offline generation wheel missing or corrupt: {name}" in diagnostic, (
                         diagnostic
                     )
+                if number == 2:
+                    engine_python = interpreter(root / "generations/1")
+                    held_python = tmp_path / "unavailable-generation-python"
+                    engine_python.rename(held_python)
+                    engine_before = {
+                        path: content_digest(path)
+                        for directory in (root, store)
+                        for path in directory.rglob("*")
+                        if path.is_file() and not path.is_symlink()
+                    }
+                    try:
+                        unavailable_engine = subprocess.run(
+                            refused.args,
+                            cwd=tmp_path,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        assert unavailable_engine.returncode != 0
+                        diagnostic = unavailable_engine.stdout + unavailable_engine.stderr
+                        assert {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        } == engine_before
+                        assert (
+                            "missing: "
+                            + engine_python.relative_to(root / "generations/1").as_posix()
+                            in diagnostic
+                        ), diagnostic
+                        assert f"retained base {base_id} is missing or linked" in diagnostic, (
+                            diagnostic
+                        )
+                        assert entry.artifact_digest in diagnostic, diagnostic
+                        assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                        for path in engine_wheels:
+                            name = parse_wheel_filename(path.name)[0]
+                            assert (
+                                f"offline generation wheel missing or corrupt: {name}" in diagnostic
+                            ), diagnostic
+                    finally:
+                        held_python.rename(engine_python)
                 metadata_paths = [
                     root / "generations" / str(number - 1) / name
                     for name in ("engine-manifest.json", "constraints.txt", "dinkster.lock")
@@ -365,6 +409,49 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         assert (
                             f"offline generation wheel missing or corrupt: {name}" in diagnostic
                         ), diagnostic
+                    if number == 2:
+                        for path in metadata_paths[1:]:
+                            path.write_bytes(metadata_bytes[path])
+                        held_history = tmp_path / "unavailable-history"
+                        (root / "history").rename(held_history)
+                        no_history_before = {
+                            path: content_digest(path)
+                            for directory in (root, store)
+                            for path in directory.rglob("*")
+                            if path.is_file() and not path.is_symlink()
+                        }
+                        try:
+                            no_history = subprocess.run(
+                                refused.args,
+                                cwd=tmp_path,
+                                stdin=subprocess.DEVNULL,
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            assert no_history.returncode != 0
+                            diagnostic = no_history.stdout + no_history.stderr
+                            assert (
+                                "recorded software input unavailable: engine-manifest.json"
+                                in diagnostic
+                            )
+                            assert f"retained base {base_id} is missing or linked" in diagnostic
+                            assert entry.artifact_digest in diagnostic, diagnostic
+                            assert f"pack healthy: {dependency.name}:" in diagnostic, diagnostic
+                            for path in engine_wheels:
+                                name = parse_wheel_filename(path.name)[0]
+                                assert (
+                                    f"offline generation wheel missing or corrupt: {name}"
+                                    in diagnostic
+                                )
+                            assert {
+                                path: content_digest(path)
+                                for directory in (root, store)
+                                for path in directory.rglob("*")
+                                if path.is_file() and not path.is_symlink()
+                            } == no_history_before
+                        finally:
+                            held_history.rename(root / "history")
                 finally:
                     for path, data in metadata_bytes.items():
                         path.write_bytes(data)

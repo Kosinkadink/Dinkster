@@ -169,6 +169,10 @@
   Missing or modified engine metadata, source locks and constraints still refuse;
   exact software-history copies allow other input failures to be diagnosed without
   repairing the retained files or activating the damaged generation.
+  The pip command also lists other known unavailable inputs when the target
+  interpreter is unavailable. Missing history or metadata is reported, never
+  silently replaced with another engine or dependency version. A damaged
+  generation cannot be constructed or activated.
   Engine wheel checks use the retained exact constraints, not a package index.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing

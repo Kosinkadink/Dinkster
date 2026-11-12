@@ -110,6 +110,7 @@ def selected_wheel_requirements(
     directories: list[Path],
     *,
     errors: list[str] | None = None,
+    compatibility: dict[str, object] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """Choose verified compatible bytes, then pin sync to those exact local URLs."""
     paths: dict[tuple[str, str], Path] = {}
@@ -123,7 +124,12 @@ def selected_wheel_requirements(
         if identity not in paths:
             paths[identity] = path
             rows.append({"filename": path.name, "size": path.stat().st_size, "sha256": sha})
-    selected = selected_wheel_rows(requirements, rows, wheel_compatibility(python), errors=errors)
+    selected = selected_wheel_rows(
+        requirements,
+        rows,
+        compatibility if compatibility is not None else wheel_compatibility(python),
+        errors=errors,
+    )
     pins: list[str] = []
     for row in selected:
         filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])

@@ -19,6 +19,7 @@ from pathlib import Path
 from dinkster_store import object_path, readable_label
 from dinkster_values import MEBIBYTE
 from packaging.requirements import Requirement
+from packaging.tags import parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .boundary import PROTOCOL_VERSION
@@ -336,6 +337,7 @@ def preflight_generation(
     locks: Sequence[Path] = (),
     engine_only: bool = False,
     errors: list[str] | None = None,
+    facts: GenerationPackages | None = None,
 ) -> tuple[PackPlan, ...]:
     """Plan all recorded packs without fetching wheels or changing either generation."""
     context.validate()
@@ -350,7 +352,7 @@ def preflight_generation(
         errors.append(message)
     if not recorded:
         return ()
-    facts = GenerationPackages.inspect(context.generation_python)
+    facts = facts if facts is not None else GenerationPackages.inspect(context.generation_python)
     if engine_only:
         versions: dict[str, str] = {}
         for line in context.constraints.read_text().replace("\\\n", "").splitlines():
@@ -454,6 +456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--source-generation", type=Path)
+    parser.add_argument("--compatibility", type=json.loads)
     parser.add_argument("--lock", type=Path, action="append", default=[])
     parser.add_argument("--in-process-pack", action="append", default=[])
     parser.add_argument("--pack")
@@ -520,12 +523,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             changes = (str(python),)
         else:
             errors: list[str] = []
+            facts = None
+            if args.compatibility is not None:
+                if args.operation != "collect":
+                    raise ProvisionError("recorded compatibility is only valid for collection")
+                compatibility = args.compatibility
+                facts = GenerationPackages(
+                    {},
+                    compatibility["markers"]["python_full_version"],
+                    frozenset(tag for text in compatibility["tags"] for tag in parse_tag(text)),
+                    compatibility["markers"],
+                )
             plans = preflight_generation(
                 context,
                 source_generation=args.source_generation,
                 locks=args.lock,
                 engine_only=args.operation == "collect",
                 errors=errors if args.operation == "collect" else None,
+                facts=facts,
             )
             code = int(any(plan.conflicts for plan in plans))
             if args.operation == "collect":
