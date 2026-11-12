@@ -9,14 +9,18 @@ import urllib.error
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
-
-from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES
 
 from .documents import SecurityError
 from .policy import Artifact, Assessment, assess
 from .store import SecurityStore
+
+if TYPE_CHECKING:
+    from ..limits import SECURITY_FEED_LIMIT_BYTES
+else:
+    from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES
 
 logger = logging.getLogger(__name__)
 
