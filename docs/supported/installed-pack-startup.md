@@ -150,6 +150,10 @@
   does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
+  Unpublished selected wheels submit together as one admission set. Already
+  published archives and locks must match exactly and are not resubmitted;
+  changed bindings require a new version. Success requires every submitted
+  member to become publicly active with its expected archive digest.
   Engine-only pushes select no pack. PR, fork and tag events build and
   preflight without submission; only trusted main may submit to the registry.
   A queued submission is not an admission verdict.

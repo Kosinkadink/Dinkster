@@ -32,7 +32,6 @@ from scripts.build_release import (
     select_dependency_wheels,
     validate_engine_wheels,
     versioned_sources,
-    wheel_metadata,
     workspace_projects,
     write_constraints,
 )
@@ -169,8 +168,11 @@ def test_disposable_publication_retains_timings_without_changing_verdict(
         path.write_text("{}")
     index = tmp_path / "index"
     index.mkdir()
+    (index / "runtime/wheels").mkdir(parents=True)
+    commands = []
 
     def run(command, **kwargs):
+        commands.append(command)
         stdout = ""
         if "mint-token" in command:
             stdout = "private-token"
@@ -202,6 +204,29 @@ def test_disposable_publication_retains_timings_without_changing_verdict(
     else:
         assert report["timings"]["candidates"] == [{"pack": "timed-candidate"}]
     assert "private-token" not in json.dumps(report)
+    scanners = [command for command in commands if "scanner" in command]
+    assert len(scanners) == 2
+    mounts = [
+        [command[i + 1] for i, arg in enumerate(command) if arg == "--mount"]
+        for command in scanners
+    ]
+    shared = [next(mount for mount in row if mount.endswith("dst=/data")) for row in mounts]
+    private = [
+        next(mount for mount in row if mount.endswith("dst=/data/objects/.probe-runtime"))
+        for row in mounts
+    ]
+    assert shared[0] == shared[1]
+    assert private[0] != private[1]
+    for mount in private:
+        seeds = [
+            command
+            for command in commands
+            if mount in command and "/seed,readonly" in " ".join(command)
+        ]
+        assert len(seeds) == 1
+        assert str(index / "runtime/wheels") in " ".join(seeds[0])
+        volume = mount.split("src=", 1)[1].split(",", 1)[0]
+        assert ["docker", "volume", "rm", volume] in commands
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
@@ -3941,6 +3966,7 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
         "missing",
         "digest",
         "candidate",
+        "candidate-head",
         "index-commit",
         "index-digest",
         "index-path",
@@ -4004,7 +4030,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
         entry["path"] = "engine/" + "a" * 64
 
     def metadata(mirror, path):
-        assert problem != "candidate"
+        assert problem not in {"candidate", "candidate-head"}
         assert mirror == "https://releases.dinkster.org" and path == "engine/index.json"
         entries = [{**entry, "commit": "b" * 40}, entry]
         if problem == "index-duplicate":
@@ -4053,19 +4079,30 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(preparation, "fetch_artifact", fetch)
     candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
-    if problem == "candidate":
-        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.4.dev456")
-        monkeypatch.setattr(
-            preparation,
-            "versioned_sources",
-            lambda root, version: versioned_sources(ROOT, version),
-        )
+    if problem in {"candidate", "candidate-head"}:
+        pin = {"repository": "Kosinkadink/Dinkster-Frontend", "commit": "f" * 40}
+        (tmp_path / "scripts/release_sources.json").write_text(json.dumps(pin))
 
-        def candidate_wheels(root, uv, bases):
-            assert root == tmp_path and uv == "uv" and len(bases) == 2
-            return candidate_dependencies
+        def frontend(sources, destination):
+            assert sources == pin
+            destination.write_bytes(b"verified frontend artifact")
 
-        monkeypatch.setattr(preparation, "select_dependency_wheels", candidate_wheels)
+        def candidate_engine(root, destination, tag, frontend, *, base_manifests):
+            assert root == tmp_path and tag is None and len(base_manifests) == 2
+            assert frontend.read_bytes() == b"verified frontend artifact"
+            destination.mkdir()
+            (destination / "constraints.txt").write_bytes(b"pins")
+            result = {
+                **engine,
+                "commit": ("e" if problem == "candidate-head" else "c") * 40,
+                "version": "0.0.4.dev456",
+                "dependencies": candidate_dependencies,
+            }
+            (destination / "release-manifest.json").write_text(json.dumps(result))
+            return result
+
+        monkeypatch.setattr(preparation, "download_frontend", frontend)
+        monkeypatch.setattr(preparation, "build_release", candidate_engine)
     monkeypatch.setattr(
         preparation,
         "build",
@@ -4083,6 +4120,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                     tmp_path / ".official-publication",
                     "c" * 40,
                     ["dinkster-image"],
+                    candidate=problem == "candidate-head",
                 )
             assert not output.exists()
         else:
@@ -4091,7 +4129,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 tmp_path / ".official-publication",
                 "c" * 40,
                 ["dinkster-image"],
-                candidate=problem == "candidate",
+                candidate=problem in {"candidate", "candidate-head"},
             ) == [
                 {"variant": "linux-cpu", "runner": "ubuntu-latest"},
                 {"variant": "win-nvidia", "runner": "windows-latest"},
@@ -4102,15 +4140,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert manifest["dependencies"] == candidate_dependencies
                 assert manifest["version"] == "0.0.4.dev456"
                 assert manifest["commit"] == "c" * 40
-                api = work / "engine/dinkster_api-0.0.4.dev456-py3-none-any.whl"
-                assert wheel_metadata(api) == ("dinkster-api", "0.0.4.dev456")
-                assert manifest["artifacts"] == [
-                    {
-                        "name": api.name,
-                        "size": api.stat().st_size,
-                        "sha256": hashlib.sha256(api.read_bytes()).hexdigest(),
-                    }
-                ]
+                assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             else:
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
