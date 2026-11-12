@@ -79,7 +79,13 @@ class ComfyMathExpression(Node):
             input_families=(
                 InputFamilySpec(
                     "values",
-                    TypeExpr.union(CORE_FLOAT, CORE_INT, CORE_BOOLEAN),
+                    (
+                        InputSpec(
+                            "value",
+                            TypeExpr.union(CORE_FLOAT, CORE_INT, CORE_BOOLEAN),
+                            force_input=True,
+                        ),
+                    ),
                     min_members=1,
                     member_names=tuple(string.ascii_lowercase),
                     optional_after_minimum=True,

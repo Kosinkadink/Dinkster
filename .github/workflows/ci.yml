@@ -230,6 +230,14 @@ jobs:
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
+      - name: Provision installed-wheel host dependencies before offline validation
+        if: needs.checks.outputs.engine == 'true'
+        run: |
+          for package in dinkster dinkster-api dinkster-engine; do
+            uv build --package "$package" --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
+          done
+          uv venv --python .venv/bin/python "$RUNNER_TEMP/fast-wheel-host"
+          uv pip install --python "$RUNNER_TEMP/fast-wheel-host/bin/python" --no-sources "$RUNNER_TEMP/fast-build-setup/"*.whl
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
         run: uv run --no-sync python tools/verify_pinned_inference.py

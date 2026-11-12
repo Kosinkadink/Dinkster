@@ -2744,6 +2744,8 @@ def _serve_artifacts(
             self.respond()
 
         def do_POST(self) -> None:
+            # Finish receiving the upload before closing the response connection.
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
             self.respond()
 
         def log_message(self, format: str, *args: object) -> None:

@@ -6,11 +6,11 @@ import hashlib
 import io
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -44,7 +44,7 @@ from tests.fixtures.environments.build import build_base, canonical_json, execut
 
 
 def test_installed_wheel_pack_add_and_update_without_index_resolution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ):
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_workers.boundary import PROTOCOL_VERSION
@@ -201,27 +201,38 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
     uv = shutil.which("uv")
     assert uv is not None
     log = trap / "uv.jsonl"
-    wrapper = trap / "uv.py"
-    wrapper.write_text(
+    wrapper = (
         "import json,subprocess,sys\n"
-        f"with open({str(log)!r},'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
-        "a=sys.argv[1:]\n"
-        "assert a[:1] in (['pip'],['venv'],['cache']), 'unexpected uv operation'\n"
-        "if a[:1]==['pip']:\n"
-        "    assert a[1] in ('install','sync'), 'package index resolver attempted'\n"
-        "    assert '--offline' in a and '--no-index' in a, 'package index access attempted'\n"
-        "    assert '--require-hashes' in a, 'unhashed install attempted'\n"
-        "    if a[1]=='install': assert '--no-deps' in a, 'dependency resolution attempted'\n"
-        f"sys.exit(subprocess.call([{uv!r},*a]))\n"
+        "def main():\n"
+        f"    with open({str(log)!r},'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "    a=sys.argv[1:]\n"
+        "    assert a[:1] in (['pip'],['venv'],['cache']), 'unexpected uv operation'\n"
+        "    if a[:1]==['pip']:\n"
+        "        assert a[1] in ('install','sync'), 'package index resolver attempted'\n"
+        "        assert '--offline' in a and '--no-index' in a, 'package index access attempted'\n"
+        "        assert '--require-hashes' in a, 'unhashed install attempted'\n"
+        "        if a[1]=='install': assert '--no-deps' in a, 'dependency resolution attempted'\n"
+        f"    return subprocess.call([{uv!r},*a])\n"
     )
-    launcher = trap / ("uv.cmd" if sys.platform == "win32" else "uv")
-    launcher.write_text(
-        f'@"{sys.executable}" "{wrapper}" %*\n'
-        if sys.platform == "win32"
-        else f'#!/bin/sh\n{shlex.quote(sys.executable)} {shlex.quote(str(wrapper))} "$@"\n'
+    guard = trap / "resolver_guard-1.0.0-py3-none-any.whl"
+    metadata = "resolver_guard-1.0.0.dist-info"
+    # A wheel entry point supplies uv.exe, which Windows CreateProcess finds unlike uv.cmd.
+    with zipfile.ZipFile(guard, "w") as archive:
+        archive.writestr("resolver_guard.py", wrapper)
+        archive.writestr(
+            f"{metadata}/METADATA", "Metadata-Version: 2.1\nName: resolver-guard\nVersion: 1.0.0\n"
+        )
+        archive.writestr(
+            f"{metadata}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        )
+        archive.writestr(
+            f"{metadata}/entry_points.txt", "[console_scripts]\nuv = resolver_guard:main\n"
+        )
+        archive.writestr(f"{metadata}/RECORD", "")
+    subprocess.run(
+        [uv, "pip", "install", "--python", str(python), "--no-deps", str(guard)], check=True
     )
-    launcher.chmod(0o755)
-    monkeypatch.setenv("PATH", str(trap) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("PATH", str(python.parent) + os.pathsep + os.environ["PATH"])
     control = subprocess.run(["uv", "pip", "compile", "absent"], capture_output=True, text=True)
     assert control.returncode != 0 and "package index resolver attempted" in control.stderr
     log.write_text("")
@@ -290,6 +301,14 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         assert any(row[:2] == ["pip", "sync"] for row in commands), commands
         assert not any(row[:2] == ["pip", "compile"] for row in commands)
         assert requests and all(path.startswith("/static/") for path, _ in requests), requests
+        request.node.add_report_section(
+            "call",
+            "Published pack resolver trap",
+            f"launcher: {shutil.which('uv')}\n"
+            f"compile negative control: {control.stderr}\n"
+            f"guarded public add/update uv calls: {json.dumps(commands)}\n"
+            "public add/update activated generations 2/3",
+        )
     finally:
         _run(root, "stop", "--yes")
         server.shutdown()

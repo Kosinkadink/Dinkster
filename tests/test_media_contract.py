@@ -420,7 +420,13 @@ def test_forged_layout_is_rejected_without_decoding() -> None:
 @pytest.mark.parametrize(
     ("registration", "type_id"),
     [
-        (registration, type_id)
+        pytest.param(
+            registration,
+            type_id,
+            marks=pytest.mark.pack_runtime(f"dinkster-{registration.replace('_', '-')}")
+            if registration != "inference"
+            else (),
+        )
         for registration in (
             "image",
             "inference",

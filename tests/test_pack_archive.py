@@ -881,14 +881,15 @@ def test_default_admission_separates_expensive_children_without_changing_selecti
     )
     groups = result["groups"]
     assert isinstance(groups, list)
-    assert len(groups) == 10
+    assert len(groups) == 13
     assert all(groups)
     assert sorted(name for group in groups for name in group) == sorted(
         entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
     )
     assert ["dinkster-3d"] in groups
-    assert ["dinkster-image", "dinkster-latent"] in groups
-    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert ["dinkster-image"] in groups
+    assert ["dinkster-video"] in groups
+    assert ["dinkster-audio"] in groups
     assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
 
 
@@ -965,21 +966,16 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
         )
 
-    locked = mode in {"locked-prepared", "locked-runtime"}
     is_prepared = mode in {"prepared", "locked-prepared", "locked-runtime"}
     generation = tmp_path / "generation-python"
     generation.touch()
     constraints = tmp_path / "constraints.txt"
     constraints.touch()
-    context = (
-        {
-            "generation_python": generation,
-            "base_id": "sha256:" + "f" * 64,
-            "constraints": constraints,
-        }
-        if locked
-        else {}
-    )
+    context = {
+        "generation_python": generation,
+        "base_id": "sha256:" + "f" * 64,
+        "constraints": constraints,
+    }
     if mode == "locked-runtime":
         from test_pack_environment import _generation, _wheel
 
@@ -1029,23 +1025,22 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         (output / "official-packs.lock").write_text(
             Lockfile.of([entries["candidate"]]).record_json()
         )
-        if locked:
-            lock = dependency_lock("candidate")
-            if mode == "locked-runtime":
-                from dinkster_workers.pack_lock import resolve_pack_lock
+        lock = dependency_lock("candidate")
+        if mode == "locked-runtime":
+            from dinkster_workers.pack_lock import resolve_pack_lock
 
-                resolved = resolve_pack_lock(
-                    pack="candidate",
-                    variant=kwargs["variant"],
-                    requirements=("dinkster-api>=0.0.2.dev0,<0.1", "locked-extra==1.2+cpu"),
-                    python=kwargs["python"],
-                    constraints=kwargs["constraints"],
-                    indexes=kwargs.get("indexes", ()),
-                    find_links=kwargs.get("find_links", ()),
-                    engine=">=0.0.2.dev0,<0.1",
-                )
-                lock = replace(resolved, packages=(*resolved.packages, *lock.packages))
-            lock.write(output / "candidate-7.2-linux-cpu.pack-lock.json")
+            resolved = resolve_pack_lock(
+                pack="candidate",
+                variant=kwargs["variant"],
+                requirements=("dinkster-api>=0.0.2.dev0,<0.1", "locked-extra==1.2+cpu"),
+                python=kwargs["python"],
+                constraints=kwargs["constraints"],
+                indexes=kwargs.get("indexes", ()),
+                find_links=kwargs.get("find_links", ()),
+                engine=">=0.0.2.dev0,<0.1",
+            )
+            lock = replace(resolved, packages=(*resolved.packages, *lock.packages))
+        lock.write(output / "candidate-7.2-linux-cpu.pack-lock.json")
 
     def registry_defaults(registry, minimums, artifacts, *, engine_version):
         # The candidate has no registry release: requesting it would fail here.
@@ -1060,9 +1055,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
 
     observed = []
 
-    def engine_tests(root, catalog, artifacts, *, test_packs=()):
+    def engine_tests(root, catalog, artifacts, *, generation_python, locks, variant, test_packs=()):
         assert root == Path(admission.__file__).resolve().parents[1]
         assert test_packs == (("candidate",) if is_prepared else ())
+        assert generation_python.is_file()
+        assert set(locks) == {pack.pack for pack in catalog.packs}
+        assert variant == "linux-cpu"
         observed.extend((pack.pack, pack.version) for pack in catalog.packs)
 
     monkeypatch.setattr(
@@ -1183,7 +1181,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "timeout": "not active yet",
         "engine-version": "do not match the engine checkout and version",
         "incomplete-catalog": "prepared sources omit defaults",
-        "corrupt-artifact": "candidate@7.2 admission refused",
+        "corrupt-artifact": "candidate: locked outer wheel differs from the archive",
         "unknown-pack": "requested admission packs are not in the catalog",
         "lock-base": "do not match the engine checkout and version",
         "lock-artifact": "dependency lock identity differs",
@@ -1920,7 +1918,7 @@ def test_official_publication_declarations_match_archive_admission(
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.3",
+                "0.0.4",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
                     "dinkster-inference",
@@ -2262,6 +2260,7 @@ def test_registry_probe_refuses_degraded_isolation(
         "collection",
         "dependency",
         "teardown",
+        "library-lock-mismatch",
     ],
 )
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
@@ -2269,8 +2268,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     monkeypatch: pytest.MonkeyPatch,
     problem: str | None,
     capfd: pytest.CaptureFixture[str],
+    selected_pack_runtime,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution
+    from test_pack_environment import _wheel
 
     from scripts.run_selected_pack_tests import run_selected_tests
 
@@ -2292,10 +2294,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         '[project]\nname = "dinkster-image"\n'
     )
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
+    dev_module = engine / "packages/dinkster-nodes-dev/src/dinkster_nodes_dev"
+    dev_module.mkdir(parents=True)
+    (dev_module / "__init__.py").write_text("VALUE = 73\n")
     (tests / "test_image_nodes.py").write_text(
         "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
         "import tomllib\n"
-        "from pathlib import Path\nimport dinkster_image\n"
+        "from pathlib import Path\nimport dinkster_image\nimport dinkster_nodes_dev\n"
         "from dinkster_image import VALUE, NEW_NODE as Unpublished\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + (
@@ -2313,6 +2318,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             else "def test_selected_value():\n"
         )
         + "    assert VALUE == 47\n"
+        "    assert dinkster_nodes_dev.VALUE == 73\n"
+        "    assert Path(dinkster_nodes_dev.__file__).resolve().is_relative_to(\n"
+        "        Path.cwd() / 'packages/dinkster-nodes-dev/src')\n"
+        "    from locked_only_dependency import VALUE as LOCKED_VALUE\n"
+        "    assert LOCKED_VALUE == 61\n"
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
         "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
         "    history = Path(os.environ['DINKSTER_TEST_HISTORY_ROOT'])\n"
@@ -2454,6 +2464,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     (source / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-image"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        'requires = ["locked-only-dependency==1.7"]\n'
         'namespaces = ["image-fixture"]\n'
         '[pack.entry]\nnodes = "dinkster_image:NODES"\n'
     )
@@ -2465,7 +2476,8 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     value = 13 if problem in {"broken", "mixed-class", "shadowed", "class-shadow"} else 47
     (module / "__init__.py").write_text(
         ("import missing_selected_internal_dependency\n" if problem == "dependency" else "")
-        + f"VALUE = {value}\nNODES = []\n"
+        + f"from locked_only_dependency import VALUE as DEPENDENCY_VALUE\n"
+        f"assert DEPENDENCY_VALUE == 61\nVALUE = {value}\nNODES = []\n"
     )
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
@@ -2499,8 +2511,71 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             )
         ]
     )
+    python, locks = selected_pack_runtime(catalog, artifacts)
+    from dataclasses import replace
+
+    if problem in {None, "library-lock-mismatch"}:
+        helper = _wheel(tmp_path, "selected-helper", "2.4", "selected_helper", "VALUE=83")
+        helper_archive = tmp_path / helper.filename
+        helper_digest = artifact_digest(helper_archive.read_bytes())
+        from dinkster_store import pack_archive_path
+
+        pack_archive_path(artifacts, helper_digest).write_bytes(helper_archive.read_bytes())
+        catalog = Lockfile.of(
+            [*catalog.packs, LockedPack("selected-helper", "2.4", helper_digest, "dinkster", ())]
+        )
+        python, locks = selected_pack_runtime(catalog, artifacts)
+        for name, lock in locks.items():
+            locks[name] = replace(
+                lock,
+                packages=tuple(
+                    replace(
+                        package,
+                        wheels=tuple(
+                            replace(
+                                wheel,
+                                url="http://127.0.0.1:1/unpublished-helper.whl",
+                                sha256=(
+                                    "f" * 64
+                                    if problem == "library-lock-mismatch"
+                                    and name == "dinkster-image"
+                                    else wheel.sha256
+                                ),
+                            )
+                            for wheel in package.wheels
+                        ),
+                    )
+                    if package.name == "selected-helper"
+                    else package
+                    for package in lock.packages
+                ),
+            )
+        test_file = engine / "tests/test_image_nodes.py"
+        test_file.write_text(
+            test_file.read_text()
+            + "\nfrom selected_helper import VALUE as HELPER_VALUE\nassert HELPER_VALUE == 83\n"
+        )
+        subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+
+    dependency = _wheel(
+        tmp_path, "locked-only-dependency", "1.7", "locked_only_dependency", "VALUE=61"
+    )
+    locks["dinkster-image"] = replace(
+        locks["dinkster-image"],
+        requirements=("locked-only-dependency==1.7",),
+        packages=(
+            *locks["dinkster-image"].packages,
+            LockedDistribution("locked-only-dependency", "1.7", (dependency,)),
+        ),
+    )
+    (tmp_path / "locked_only_dependency.py").write_text("VALUE=13\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/forbidden")
+    context = {"generation_python": python, "locks": locks, "variant": "linux-cpu"}
     if problem is None:
-        run_selected_tests(engine, catalog, artifacts)
+        run_selected_tests(engine, catalog, artifacts, **context)
         output = capfd.readouterr().out
         assert "3 passed" in output
         assert "2 skipped" in output
@@ -2516,17 +2591,72 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         assert "dinkster_image:NEW_NODE" in output
     elif problem == "missing":
         with pytest.raises(PackArchiveError, match="wheel.import-name"):
-            run_selected_tests(engine, catalog, artifacts)
+            run_selected_tests(engine, catalog, artifacts, **context)
+    elif problem == "library-lock-mismatch":
+        from dinkster_workers.provision import ProvisionError
+
+        with pytest.raises(
+            ProvisionError, match="unpublished-helper.whl: download/verification failed"
+        ):
+            run_selected_tests(engine, catalog, artifacts, **context)
     else:
         with pytest.raises(subprocess.CalledProcessError):
-            run_selected_tests(engine, catalog, artifacts)
+            run_selected_tests(engine, catalog, artifacts, **context)
+
+
+def test_selected_pack_tests_refuse_incompatible_base_before_test_tool_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution, PackLock
+    from dinkster_workers.provision import ProvisionError
+    from test_pack_environment import _generation, _wheel
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    source = tmp_path / "selected"
+    source.mkdir()
+    (source / "dinkster_text").mkdir()
+    (source / "dinkster_text/__init__.py").write_text("NODES = []\n")
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        '[pack.entry]\nnodes = "dinkster_text:NODES"\n'
+    )
+    archive = tmp_path / "dinkster_text-1.2.3-py3-none-any.whl"
+    build_pack_archive(source, archive)
+    digest = artifact_digest(archive.read_bytes())
+    archive.rename(tmp_path / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of([LockedPack("dinkster-text", "1.2.3", digest, "dinkster", ())])
+    base = _wheel(tmp_path, "simpleeval", "1.0.7", "simpleeval", "")
+    required = _wheel(tmp_path, "simpleeval", "1.0.8", "simpleeval", "")
+    python = _generation(tmp_path / "generation/python", [base])
+    lock = PackLock(
+        "dinkster-text",
+        "linux-cpu",
+        ">=3.12",
+        ("simpleeval==1.0.8",),
+        (),
+        (LockedDistribution("simpleeval", "1.0.8", (required,)),),
+    )
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/forbidden")
+    with pytest.raises(ProvisionError, match="simpleeval: generation has 1.0.7, lock needs 1.0.8"):
+        run_selected_tests(
+            tmp_path,
+            catalog,
+            tmp_path,
+            generation_python=python,
+            locks={"dinkster-text": lock},
+            variant="linux-cpu",
+        )
 
 
 @pytest.mark.parametrize("selected_value", [17, 29])
 @pytest.mark.parametrize("vision", [False, True])
 @pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
 def test_selected_pack_runtime_id_uses_distribution_layout(
-    tmp_path: Path, selected_value: int, vision: bool
+    tmp_path: Path, selected_value: int, vision: bool, selected_pack_runtime
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
 
@@ -2587,8 +2717,10 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     digest = artifact_digest(archive.read_bytes())
     archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
     catalog = Lockfile.of([LockedPack(pack_id, "1.2.3", digest, "dinkster", (pack_id,))])
+    python, locks = selected_pack_runtime(catalog, artifacts)
+    context = {"generation_python": python, "locks": locks, "variant": "linux-cpu"}
     if selected_value == 17:
-        run_selected_tests(engine, catalog, artifacts)
+        run_selected_tests(engine, catalog, artifacts, **context)
     else:
         with pytest.raises(subprocess.CalledProcessError):
-            run_selected_tests(engine, catalog, artifacts)
+            run_selected_tests(engine, catalog, artifacts, **context)

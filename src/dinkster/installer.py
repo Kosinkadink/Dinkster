@@ -88,11 +88,10 @@ from dinkster_workers.provision import (
 from packaging.requirements import Requirement
 
 from . import __version__ as dinkster_version
-from .compose import PackSpec
-from .packs import pack_info_from_manifest
 from .storelock import StoreLockTimeout, hold_lock
 
 if TYPE_CHECKING:
+    from .compose import PackSpec
     from .registries import StaticPackIndex
 
 LOCAL_PUBLISHER = "local"
@@ -1655,6 +1654,9 @@ class Installer:
         Development specs carry their locked source and publisher but omit
         the release version: local/git content has no reviewed release identity.
         Published sources must use the managed generation inventory instead."""
+        from .compose import PackSpec
+        from .packs import pack_info_from_manifest
+
         number = self.current_number()
         if number is None:
             return []
