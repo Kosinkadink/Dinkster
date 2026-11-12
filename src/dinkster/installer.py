@@ -88,11 +88,10 @@ from dinkster_workers.provision import (
 from packaging.requirements import Requirement
 
 from . import __version__ as dinkster_version
-from .compose import PackSpec
-from .packs import pack_info_from_manifest
 from .storelock import StoreLockTimeout, hold_lock
 
 if TYPE_CHECKING:
+    from .compose import PackSpec
     from .registries import StaticPackIndex
 
 LOCAL_PUBLISHER = "local"
@@ -1648,6 +1647,9 @@ class Installer:
         installs (local/git) omit the version rather than surface the
         ``0.0.0`` sentinel: they have no release identity, the digest is
         the real pin, and wire omission MEANS unpinned."""
+        from .compose import PackSpec
+        from .packs import pack_info_from_manifest
+
         number = self.current_number()
         if number is None:
             return []
