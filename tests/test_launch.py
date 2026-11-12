@@ -218,7 +218,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
             if mode == "text":
                 assert f"Engine: {engine['version']} (sha256:{release})" in captured.out
                 assert "Runtime: Python 3.14.10; fixture-cpu" in captured.out
-                assert "Pack: example-pack@1.2.3; registry:private" in captured.out
+                assert f"Pack: example-pack@1.2.3; registry:{endpoint}" in captured.out
                 assert "Dependency lock: other-pack; sha256:" in captured.out
                 assert "Pack payload upper bound: 22 bytes" in captured.out
             else:
@@ -228,7 +228,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 assert set(result["dependencyLocks"]) == set(defaults)
                 assert result["maximumPackPayloadBytes"] == 22
                 assert all(
-                    row["source"] == "registry:private" for row in result["sources"]["packs"]
+                    row["source"] == f"registry:{endpoint}" for row in result["sources"]["packs"]
                 )
                 if mode == "offline":
                     assert all(row["cached"] for row in result["runtimeInputs"])
