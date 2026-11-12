@@ -3152,6 +3152,12 @@ class ServingComposer:
         staged._publication = publication
         staged.composition._pin_execution = seat.pin
         staged._private_staging = False
+        # Pinned jobs retain workers from retired compositions until they drain.
+        # Keep their policy checks and monitor ownership across publication.
+        self._security_workers.update(staged._security_workers)
+        self._security_revoked.update(staged._security_revoked)
+        staged._security_workers = self._security_workers
+        staged._security_revoked = self._security_revoked
         self.__dict__.update(staged.__dict__)
         for tenant in transferred_tenants:
             if tenant in old._tenant_registries:

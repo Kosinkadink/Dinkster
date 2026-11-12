@@ -243,8 +243,9 @@ def test_host_refuses_invalid_local_policy_before_transport(tmp_path: Path, conf
 
 @pytest.mark.parametrize("stop_reason", ["malicious", "denied"])
 @pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("adopt_generation", [False, True])
 def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_control(
-    tmp_path: Path, stop_reason: str, shared: bool
+    tmp_path: Path, stop_reason: str, shared: bool, adopt_generation: bool
 ):
     from dinkster_protocol import Invocation
     from dinkster_workers.doctor import prepare_catalog
@@ -327,6 +328,7 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
 
     async def scenario() -> None:
         composer = ServingComposer(security=host)
+        retired = None
         try:
             with pytest.raises(SecurityError, match="security malicious"):
                 await composer.add_pack(specs[0])
@@ -340,6 +342,7 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
                 await composer.add_pack(specs[1])
             assert not (roots[0] / "imported").exists()
             pinned = composer.composition._pin_execution()
+            schemas = dict(composer.composition.schemas)
 
             async def invoke(name: str):
                 return await pinned.worker.invoke(
@@ -348,7 +351,7 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
                         node_id=name,
                         node_type=f"{name}.run",
                         inputs={},
-                        effective_schema=composer.composition.schemas[f"{name}.run"],
+                        effective_schema=schemas[f"{name}.run"],
                         executor=name,
                     )
                 )
@@ -365,6 +368,11 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
                 async with asyncio.timeout(15):
                     while not (roots[1] / "started").exists():
                         await asyncio.sleep(0.01)
+            if adopt_generation:
+                staged = composer.spawn_empty()
+                for spec in specs:
+                    await staged.add_pack(spec)
+                retired = composer.adopt(staged)
             feed["revision"] = 3
             feed["notices"][0].update(
                 revision=3, previousRevision=2, status="active", state="vulnerable"
@@ -407,6 +415,8 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             assert not (roots[0] / "finished").exists()
         finally:
             await composer.close()
+            if retired is not None:
+                await retired.close()
 
     asyncio.run(scenario())
 

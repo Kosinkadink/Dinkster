@@ -11,7 +11,8 @@
   explicit age limits and vulnerability refusal apply to retained releases too.
   Serving hosts periodically refresh configured security feeds. A newly blocked
   isolated worker stops, including work pinned before the notice arrived;
-  unrelated workers continue. Pending vulnerable work continues until denied.
+  pinned work from a retired composition remains subject to the same policy.
+  Unrelated workers continue. Pending vulnerable work continues until denied.
   A signed lift clears the classification without resuming a stopped worker.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
