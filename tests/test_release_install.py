@@ -2702,6 +2702,12 @@ def test_disposable_registry_acquisition_uses_public_source_for_all_pull_request
         "main-substitution",
         "main-error",
         "workflow_dispatch",
+        "pr-source",
+        "pr-dependency",
+        "pr-unknown",
+        "pr-docs",
+        "pr-tests",
+        "pr-markdown",
     ],
 )
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
@@ -2733,7 +2739,7 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         'version = "2.7rc1"\nengine = ">=0.2,<1"\n'
         '[pack.entry]\nnodes = "nodes:NODES"\n'
     )
-    if event.startswith("main-"):
+    if event.startswith(("main-", "pr-")):
         library = tmp_path / "packages/dinkster-pack-helpers/pyproject.toml"
         library.parent.mkdir()
         library.write_text(
@@ -2744,6 +2750,25 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
     (tmp_path / ".git/HEAD").write_text(tree + "\n")
     after = tree
+    if event.startswith("pr-"):
+        changed = (
+            tmp_path
+            / {
+                "pr-source": "packages/dinkster-pack-helpers/src/helpers.py",
+                "pr-dependency": "uv.lock",
+                "pr-unknown": "unknown-input",
+                "pr-docs": "docs/usage.md",
+                "pr-tests": "tests/test_helpers.py",
+                "pr-markdown": "README.md",
+            }[event]
+        )
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text("changed\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        after = subprocess.check_output(
+            ["git", "-C", str(tmp_path), "write-tree"], text=True
+        ).strip()
+        (tmp_path / ".git/HEAD").write_text(after + "\n")
     if event == "lockstep" or event.startswith("main-"):
         changed = tmp_path / (
             ".github/workflows/official-packs.yml"
@@ -2863,11 +2888,20 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert json.loads(outputs["packs"]) == (
         []
-        if event in {"engine-only", "main-failure", "main-skipped", "main-served"}
+        if event
+        in {
+            "engine-only",
+            "main-failure",
+            "main-skipped",
+            "main-served",
+            "pr-docs",
+            "pr-tests",
+            "pr-markdown",
+        }
         else ["dinkster-pack-helpers"]
         if event == "main-schema1"
         else ["dinkster-nodes-foundation", "dinkster-pack-helpers"]
-        if event.startswith("main-") and event != "main-other-versions"
+        if event.startswith(("main-", "pr-")) and event != "main-other-versions"
         else ["dinkster-nodes-foundation"]
     )
     assert outputs["applicable"] == (

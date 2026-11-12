@@ -17,6 +17,36 @@ from dinkster_workers import load_manifest
 from scripts.build_official_packs import is_official_pack_manifest, official_library
 
 
+def pull_request_selection(root: Path, before: str) -> tuple[str, ...]:
+    """Only proven documentation and root-test changes may bypass public comparison."""
+    if re.fullmatch(r"[0-9a-f]{40}", before) is None:
+        raise ValueError("publication base must be a full Git commit identity")
+    if before != "0" * 40:
+        changed = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "diff",
+                    "--name-only",
+                    "--no-renames",
+                    "-z",
+                    before,
+                    "HEAD",
+                ]
+            )
+            .decode()
+            .split("\0")
+        )
+        if all(
+            path.startswith(("docs/", "tests/")) or "/" not in path and path.endswith(".md")
+            for path in filter(None, changed)
+        ):
+            return ()
+    return select_packs(root, before="0" * 40)
+
+
 def publication_selection(root: Path, before: str) -> tuple[str, ...]:
     """Engine dependency and publication changes require checking every official pack."""
     if re.fullmatch(r"[0-9a-f]{40}", before) is None:
