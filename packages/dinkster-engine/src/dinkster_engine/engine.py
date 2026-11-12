@@ -297,6 +297,8 @@ class ExecutionRuntime:
         Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
         | None
     ) = None
+    require_image_document_publication: bool = False
+    """Reject document-bearing results unless the host persists their originals."""
     asset_folders: AssetFolderContext | None = None
     validate_saved_artifacts: (
         Callable[[str, Sequence[Mapping[str, object]], int], Awaitable[tuple[SavedArtifact, ...]]]
@@ -1028,7 +1030,13 @@ class Engine:
         connected_undemanded_inputs: tuple[str, ...] | None = None,
         cache_scope: str | None = None,
     ) -> str:
+        runtime = self._runtime()
+        # Unpublished direct results must not satisfy a server's publication contract.
         parts: list[bytes] = [signature.encode("utf-8")]
+        if runtime.require_image_document_publication:
+            parts.append(b"required-image-documents")
+        if runtime.publish_image_documents is not None:
+            parts.append(b"published-image-documents")
         if cache_scope is not None:
             parts.extend((b"region-occurrence", cache_scope.encode("utf-8")))
         behavior_hash = self._runtime().extension_behavior_hash
@@ -2025,8 +2033,10 @@ class Engine:
                     raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
                 self._run_artifacts[run_id].extend(artifacts)
             document_artifacts: tuple[SavedArtifact, ...] = ()
-            if result.image_documents:
-                document_publisher = self._runtime().publish_image_documents
+            document_publisher = self._runtime().publish_image_documents
+            if result.image_documents and (
+                document_publisher is not None or self._runtime().require_image_document_publication
+            ):
                 try:
                     if document_publisher is None:
                         raise RuntimeError("original document publication has no host publisher")

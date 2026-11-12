@@ -11,6 +11,7 @@ import sys
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import av
@@ -1178,8 +1179,13 @@ def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("publication", ("available", "missing", "failed"))
 def test_original_documents_publish_without_output_folder_and_survive_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes, in_process: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mp4: bytes,
+    in_process: bool,
+    publication: str,
 ) -> None:
     from dinkster_image_document import ImageDocument
     from dinkster_image_document.document import empty_document
@@ -1209,21 +1215,32 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
         )
         try:
             await composer.add_pack(PackSpec(manifest, in_process=in_process))
+            graph = Graph(
+                nodes={"original": GraphNode("preview-fixture.emit", {"mode": "document-only"})}
+            )
+            direct = composer.composition.make_engine(lambda _event: None)
+            result = await direct.run(graph, ["original"])
+            assert result.diagnostics == ()
+            assert result.artifacts == ()
+            assert all(vault.resolve(digest) is None for digest in expected)
+            if publication == "failed":
+
+                def fail_commit(_writer: VaultWriter) -> tuple[Path, bool]:
+                    raise AssetError("document storage unavailable")
+
+                monkeypatch.setattr(VaultWriter, "commit_with_result", fail_commit)
             client = TestClient(
                 TestServer(
                     create_app(
                         composer.composition.make_engine,
                         composer.composition.schemas,
                         asset_export=vault,
-                        library=library,
+                        library=library if publication != "missing" else None,
                     )
                 )
             )
             await client.start_server()
             try:
-                graph = Graph(
-                    nodes={"original": GraphNode("preview-fixture.emit", {"mode": "document-only"})}
-                )
                 artifacts = None
                 for job_id in ("first", "cached"):
                     response = await client.post(
@@ -1245,6 +1262,13 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
                             if status["state"] not in ("pending", "running"):
                                 break
                             await asyncio.sleep(0)
+                    if publication != "available":
+                        assert status["state"] == "failed", status
+                        assert not status.get("outputs")
+                        assert not status.get("artifacts")
+                        assert all(vault.resolve(digest) is None for digest in expected)
+                        assert library.store.query_assets("local", project="film") == []
+                        continue
                     assert status["state"] == "completed", status
                     result = status
                     assert {item["digest"] for item in result["artifacts"]} == set(expected)
@@ -1256,8 +1280,18 @@ def test_original_documents_publish_without_output_folder_and_survive_cache(
                         asset = await client.get(f"/assets/{digest}")
                         assert asset.status == 200
                         assert await asset.read() == data
+                if publication != "available":
+                    return
                 restarted = composer.composition.make_engine(lambda _event: None)
-                cached = await restarted.run(graph, ["original"])
+                cached = await restarted.run(
+                    graph,
+                    ["original"],
+                    execution=replace(
+                        restarted.pin_execution(),
+                        publish_image_documents=library.publish_image_documents,
+                        require_image_document_publication=True,
+                    ),
+                )
                 assert cached.cached == ("original",)
                 assert {item.digest for item in cached.artifacts} == set(expected)
                 observations = library.store.query_assets("local", project="film")

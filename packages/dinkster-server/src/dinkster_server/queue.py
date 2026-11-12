@@ -282,8 +282,11 @@ class JobQueue:
         execution = execution or self._engine.pin_execution()
         if self._publish_outputs is not None:
             execution = replace(execution, publish_outputs=self._publish_outputs)
-        if self._publish_image_documents is not None:
-            execution = replace(execution, publish_image_documents=self._publish_image_documents)
+        execution = replace(
+            execution,
+            publish_image_documents=self._publish_image_documents,
+            require_image_document_publication=True,
+        )
         assert execution.schemas is not None
         schemas = execution.schemas
         lowered = lower_selectors(graph, targets, schemas)
