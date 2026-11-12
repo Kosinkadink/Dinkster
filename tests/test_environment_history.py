@@ -44,6 +44,7 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
 
 
+@pytest.mark.timeout(600)
 def test_installed_wheel_pack_add_and_update_without_index_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ):
