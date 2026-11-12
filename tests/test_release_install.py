@@ -254,12 +254,14 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
             str(python),
             "-I",
             "-c",
-            "from dinkster_api.v1 import Node; print(Node.__name__)",
+            "from dinkster_api.v1 import Node; "
+            "from dinkster_security.host import SecurityHost; "
+            "print(Node.__name__, SecurityHost.__name__)",
         ],
         cwd=tmp_path,
         text=True,
     )
-    assert result.strip() == "Node"
+    assert result.strip() == "Node SecurityHost"
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
