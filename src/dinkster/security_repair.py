@@ -133,7 +133,7 @@ def plan_security_repair(
                             "artifactDigest": entry.artifact_digest,
                         }
                     ),
-                    dependencies[name]
+                    tuple(dependency for item in reachable for dependency in dependencies[item])
                     + tuple(
                         Dependency(
                             issuer(selected[item]),

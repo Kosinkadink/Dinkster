@@ -20,8 +20,8 @@
   Selected file records retain their issuing origins and distribution versions;
   changing acquisition mirrors or registry aliases cannot change those origins.
 - Managed generation pack selection checks cached notices against sealed library
-  identities and transitive pack sources. A malicious dependency blocks its
-  consumer as affected, not malicious. Missing or changed wheel provenance refuses
+  identities, transitive pack sources and their selected libraries. A malicious
+  dependency blocks its consumer as affected, not malicious. Missing or changed wheel provenance refuses
   selection when security checking is configured. Generation selection refreshes
   before checking. Catalog preparation also checks before importing pack code,
   using the provisioned wheel receipts before the generation is sealed. Sealed

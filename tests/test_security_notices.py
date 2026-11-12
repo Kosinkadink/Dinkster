@@ -485,13 +485,15 @@ def _execution_generation(
     entries: list[LockedPack],
     archives: dict[str, Path],
     in_process: tuple[str, ...],
+    *,
+    number: int = 1,
 ) -> Path:
     from dinkster_supervisor.environment_state import interpreter
     from test_environment_generations import _workspace_tree
 
     from dinkster.generation_packs import stage_generation_packs
 
-    generation = root / "generations/1"
+    generation = root / "generations" / str(number)
     generation.mkdir(parents=True)
     _workspace_tree(generation / "python")
     stage_generation_packs(
@@ -534,7 +536,7 @@ def _execution_generation(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
-                "generation": 1,
+                "generation": number,
                 "base": "sha256:" + "a" * 64,
                 "engine": {"version": "test", "release": "sha256:" + "b" * 64},
                 "constraints": files["constraints.txt"],
@@ -545,8 +547,266 @@ def _execution_generation(
             }
         )
     )
-    (root / "current").write_text("1\n")
+    (root / "current").write_text(f"{number}\n")
     return generation
+
+
+@pytest.mark.parametrize("placement", ["root", "shared", "isolated", "transitive"])
+def test_cached_dependency_cannot_reenter_through_retained_rehosted_or_failed_update(
+    tmp_path: Path,
+    security_feed: tuple[str, dict[str, Any]],
+    execution_artifacts: tuple[list[LockedPack], dict[str, Path], dict[str, Path]],
+    placement: str,
+):
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from dinkster_supervisor.environment_state import (
+        EnvironmentError,
+        Generation,
+        Journal,
+        content_digest,
+        interpreter,
+        read_current,
+        set_current,
+    )
+    from dinkster_supervisor.environment_transactions import (
+        activate,
+        begin_activation,
+        recover_activation,
+    )
+    from dinkster_workers.pack_environment import fetch_wheel
+    from dinkster_workers.pack_lock import LockedWheel
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments.build import wheel
+
+    entries, archives, markers = execution_artifacts
+    provider = "control-pack" if placement in {"shared", "transitive"} else "test-pack"
+    hosting = (
+        ("control-pack",)
+        if placement in {"shared", "isolated"}
+        else (("test-pack", "control-pack") if placement == "root" else ())
+    )
+    source = tmp_path / provider
+    module = source / (provider.replace("-", "_") + "_security_nodes.py")
+    module.write_text(
+        module.read_text().replace(
+            "        (ROOT / 'started').touch()",
+            "        import fixture_dependency\n"
+            "        (ROOT / 'started').touch()\n"
+            "        (ROOT / 'dependency-value').write_text(str(fixture_dependency.VALUE))",
+        )
+    )
+    if placement == "transitive":
+        manifest = tmp_path / "test-pack/dinkster-pack.toml"
+        manifest.write_text(manifest.read_text() + '[pack.dependencies]\ncontrol-pack=">=1"\n')
+    for index, entry in enumerate(entries):
+        archive = tmp_path / f"{entry.pack}-with-dependency.zip"
+        identity = build_artifact(tmp_path / entry.pack, archive)
+        entries[index] = replace(entry, artifact_digest=identity)
+        archives[identity] = archive
+    root = tmp_path / "managed"
+    cache = tmp_path / "wheel-cache"
+    cache.mkdir()
+    wheels = {}
+    for version, value in (("1.0", 31), ("2.0", 79)):
+        path = wheel(tmp_path, "fixture_dependency", version, value)
+        locked = LockedWheel(
+            path.name, path.stat().st_size, content_digest(path)[7:], path.as_uri(), REGISTRY
+        )
+        wheels[version] = (locked, fetch_wheel(locked, cache))
+
+    def build(number: int, version: str, registry: str = REGISTRY) -> Path:
+        generation = _execution_generation(root, entries, archives, hosting, number=number)
+        locked, cached = wheels[version]
+        rehosted = replace(locked, registry=registry, url="http://127.0.0.1:1/unavailable")
+        assert fetch_wheel(rehosted, cache, offline=True) == cached
+        python = (
+            interpreter(generation)
+            if placement in {"root", "shared"}
+            else (
+                generation
+                / "packs"
+                / provider
+                / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            )
+        )
+        site = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-B",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--target",
+                site,
+                "--no-index",
+                "--no-deps",
+                str(cached),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        receipt = generation / (
+            "installed-wheels.json"
+            if placement == "root"
+            else f"packs/{provider}/installed-wheels.json"
+        )
+        receipt.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "inherited": [],
+                    "wheels": [
+                        {
+                            "filename": locked.filename,
+                            "size": locked.size,
+                            "sha256": locked.sha256,
+                            "registry": registry,
+                        }
+                    ],
+                }
+            )
+        )
+        record = Generation.read(generation / "generation.json")
+        replace(
+            record,
+            files=tuple(
+                (path.relative_to(generation).as_posix(), content_digest(path))
+                for path in sorted(generation.rglob("*"))
+                if path.is_file()
+                and path.name != "generation.json"
+                and "__pycache__" not in path.parts
+                and (
+                    path.relative_to(generation).parts[0] != "packs"
+                    or path.name == "installed-wheels.json"
+                )
+            ),
+        ).write(generation / "generation.json")
+        assert not Generation.read(generation / "generation.json").drift(generation)
+        return generation
+
+    def execute(port: int, job: str, expected: int) -> None:
+        base = f"http://127.0.0.1:{port}"
+        request = Request(
+            base + "/api/jobs",
+            data=json.dumps(
+                {
+                    "clientId": "security",
+                    "jobId": job,
+                    "graph": graph_to_wire(
+                        Graph(nodes={"marker": GraphNode(f"{provider}.run", {"nonce": job})})
+                    ),
+                    "targets": ["marker"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=5) as response:  # noqa: S310
+            assert response.status == 202
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            with urlopen(base + f"/api/jobs/security/{job}", timeout=5) as response:  # noqa: S310
+                state = json.load(response)
+            if state["state"] in {"completed", "failed", "cancelled"}:
+                assert state["state"] == "completed", state
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("dependency control job did not finish")
+        assert (markers[provider] / "dependency-value").read_text() == str(expected)
+
+    build(1, "1.0")
+    port = free_port()
+    try:
+        start_engine(root, 1, "main", port)
+        execute(port, "before-notice", 31)
+    finally:
+        stop_engine(root, "main", generation=1)
+    build(2, "2.0")
+    key = Ed25519PrivateKey.generate()
+    store = _store(root, key)
+    feed = _feed("malicious")
+    feed["notices"][0]["release"].update(
+        pack="fixture-dependency",
+        version="1.0",
+        artifactDigest="sha256:" + wheels["1.0"][0].sha256,
+    )
+    store.import_feed(REGISTRY, _signed(feed, key))
+    url, response = security_feed
+    response.update(status=503)
+    (root / "security.toml").write_text(
+        f'[feed_urls]\n"{REGISTRY}" = "{url}/security/index.json"\n'
+    )
+    for marker in markers.values():
+        for path in marker.iterdir():
+            path.unlink()
+    try:
+        blocked = "test-pack" if placement == "isolated" else "control-pack"
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}") as refused:
+            start_engine(root, 1, "retained", free_port())
+        if placement == "transitive":
+            assert "Security affected: test-pack" in str(refused.value)
+        assert all(not (marker / "imported").exists() for marker in markers.values())
+        start_engine(root, 2, "main", port)
+        execute(port, "unaffected-version", 79)
+        journal = begin_activation(root, 3, "update")
+        build(3, "1.0", "https://rehost.example.test")
+        set_current(root, 2)
+        for marker in markers.values():
+            (marker / "imported").unlink(missing_ok=True)
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}"):
+            activate(root, journal, revalidate=lambda: None)
+        assert read_current(root) == 2
+        assert Journal.read(journal).stage == "rolled-back"
+        assert not (root / "generations/3").exists()
+        assert all(not (marker / "imported").exists() for marker in markers.values())
+        execute(port, "after-update-refusal", 79)
+        rollback = root / "journal/9999999999999999999.json"
+        replace(
+            Journal.read(journal),
+            operation="rollback",
+            target=1,
+            stage="starting",
+            history_entry=None,
+            error=None,
+        ).write(rollback)
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}"):
+            activate(root, rollback, revalidate=lambda: None)
+        assert read_current(root) == 2
+        assert Journal.read(rollback).stage == "rolled-back"
+        execute(port, "after-rollback-refusal", 79)
+        stop_engine(root, "main", generation=2)
+        for marker in markers.values():
+            (marker / "imported").unlink(missing_ok=True)
+        interrupted = root / "journal/9999999999999999998.json"
+        replace(
+            Journal.read(journal),
+            previous=1,
+            target=2,
+            stage="starting",
+            history_entry=None,
+            error="candidate failed after old generation was stopped",
+        ).write(interrupted)
+        with pytest.raises(EnvironmentError, match=f"security affected: {blocked}"):
+            recover_activation(root, interrupted)
+        assert read_current(root) == 1
+        assert all(not (marker / "imported").exists() for marker in markers.values())
+        assert not (markers[provider] / "dependency-value").read_text() == "31"
+        set_current(root, 2)
+        start_engine(root, 2, "main", port)
+        execute(port, "after-recovery-refusal", 79)
+    finally:
+        for number, name in ((1, "retained"), (1, "main"), (2, "main"), (3, "main")):
+            stop_engine(root, name, generation=number)
 
 
 @pytest.mark.parametrize(
@@ -1412,6 +1672,7 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(
     [
         "release",
         "lock",
+        "transitive",
         "rehost",
         "engine",
         "python",
@@ -1540,7 +1801,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             for path in generation.rglob("*")
             if path.is_file()
         ),
-        ("provider",),
+        () if case == "transitive" else ("provider",),
     )
     record.write(generation / "generation.json")
     rows = []
@@ -1621,9 +1882,11 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             security=host,
         )
         assert result["status"] == (
-            "approval-required" if case in {"release", "lock"} else "no-compatible-fix"
+            "approval-required"
+            if case in {"release", "lock", "transitive"}
+            else "no-compatible-fix"
         ), result
-        if case in {"release", "lock"}:
+        if case in {"release", "lock", "transitive"}:
             offer = cast("dict[str, Any]", result["offer"])
             assert offer["approvalRequired"] is True
             assert offer["changedPack"] == "provider"

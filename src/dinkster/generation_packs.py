@@ -329,7 +329,12 @@ def generation_pack_specs(
                     ),
                     tuple(
                         sorted(
-                            dependencies | set(libraries[entry.pack]),
+                            dependencies
+                            | {
+                                dependency
+                                for path in spec.env["PYTHONPATH"].split(os.pathsep)
+                                for dependency in libraries[Path(path).name]
+                            },
                             key=lambda item: (item.registry, item.name, item.version, item.digest),
                         )
                     ),
