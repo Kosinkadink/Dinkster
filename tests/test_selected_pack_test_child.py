@@ -10,9 +10,10 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("published", ["pass", "fail", "fail-only", "absent"])
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("published", ["pass", "fail", "fail-only", "collection-error", "absent"])
 def test_selected_archive_runner_preserves_execution_and_unavailable_exports(
-    tmp_path: Path, published: str
+    tmp_path: Path, published: str, parallel: bool
 ) -> None:
     runner = Path(__file__).parents[1] / "scripts/_selected_pack_test_child.py"
     (tmp_path / "pyproject.toml").write_text(
@@ -28,17 +29,27 @@ def test_selected_archive_runner_preserves_execution_and_unavailable_exports(
         code += f"def test_published():\n    assert {published == 'pass'}\n"
     if published == "fail":
         code += "def test_keeper():\n    assert 17 + 4 == 21\n"
+    if published == "collection-error":
+        code += "raise RuntimeError('broken collection')\n"
     source.write_text(code, encoding="ascii")
     companion = tmp_path / "test_unavailable.py"
     companion.write_text(
-        "from _selected_pack_test_child import UnavailableExport\n"
+        "def test_available_companion():\n    assert True\n"
+        if published == "fail-only"
+        else "from _selected_pack_test_child import UnavailableExport\n"
         "def test_unavailable_companion():\n"
         "    bool(UnavailableExport('fixture:unpublished'))\n",
         encoding="ascii",
     )
     config = tmp_path / "selection.json"
     config.write_text(
-        json.dumps({"modules": {}, "packs": [], "tests": [str(source), str(companion)]})
+        json.dumps(
+            {
+                "modules": {},
+                "packs": [],
+                "tests": [str(source), str(companion)] if parallel else [str(source)],
+            }
+        )
     )
     result = subprocess.run(
         [sys.executable, str(runner), str(config)],
@@ -48,10 +59,13 @@ def test_selected_archive_runner_preserves_execution_and_unavailable_exports(
         timeout=60,
         check=False,
     )
-    expected = {"pass": 0, "fail": 1, "fail-only": 1, "absent": 5}[published]
+    expected = {"pass": 0, "fail": 1, "fail-only": 1, "collection-error": 2, "absent": 5}[published]
     assert result.returncode == expected, result.stdout + result.stderr
-    assert "1 skipped" in result.stdout
-    if published != "absent":
+    if published != "collection-error" or parallel:
+        assert "1 skipped" in result.stdout
+    if published == "collection-error":
+        assert "broken collection" in result.stdout
+    elif published != "absent":
         assert ("1 passed" if published == "pass" else "1 failed") in result.stdout
 
 
@@ -137,13 +151,20 @@ def test_selected_cross_pack_cases_use_the_owning_interpreter(
         f"    assert Path(sys.prefix) != Path({str(runtime)!r})\n",
         encoding="ascii",
     )
+    companion = tmp_path / "test_unavailable.py"
+    companion.write_text(
+        "from _selected_pack_test_child import UnavailableExport\n"
+        "def test_unavailable_companion():\n"
+        "    bool(UnavailableExport('fixture:unpublished'))\n",
+        encoding="ascii",
+    )
     config = tmp_path / "selection.json"
     config.write_text(
         json.dumps(
             {
                 "modules": {},
                 "packs": [],
-                "tests": [str(source)],
+                "tests": [str(source), str(companion)],
                 "runtimes": {} if outcome == "missing-runtime" else {"other-pack": str(python)},
             }
         )
