@@ -10,6 +10,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -25,9 +26,104 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
-from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
+from dinkster.registries import NamedRegistry, RegistryPublishError
 from scripts.build_official_packs import library_metadata
 from scripts.build_release import read_base_manifest
+
+
+def _submit_set(
+    registry: NamedRegistry,
+    packs: Sequence[LockedPack],
+    sources: Path,
+    output: Path,
+    engine: dict[str, str] | None,
+) -> tuple[str, dict[str, tuple[str, str]]]:
+    boundary = "dinkster-" + uuid.uuid4().hex
+    members = []
+    files = bytearray()
+    for index, pack in enumerate(packs):
+        field = f"wheel{index}"
+        archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        member = {
+            "name": pack.pack,
+            "version": pack.version,
+            "archive": field,
+            "locks": json.loads((output / f"{pack.pack}-{pack.version}.json").read_bytes()),
+        }
+        if engine is not None:
+            member["engine"] = engine
+        members.append(member)
+        files.extend(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; '
+            f'filename="{archive.name}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode(
+                "ascii"
+            )
+        )
+        files.extend(archive.read_bytes())
+        files.extend(b"\r\n")
+    data = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="manifest"\r\n\r\n'.encode("ascii")
+        + json.dumps({"members": members}, allow_nan=False).encode("ascii")
+        + b"\r\n"
+        + files
+        + f"--{boundary}--\r\n".encode("ascii")
+    )
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    if token := registry.token():
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        registry.endpoint.rstrip("/") + "/v1/publish-sets", data=data, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            document = json.load(response)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RegistryPublishError(f"batch submission failed: HTTP {exc.code}: {detail}") from exc
+    except (OSError, ValueError) as exc:
+        raise RegistryPublishError(f"batch submission failed: {exc}") from exc
+    (output / "set.json").write_text(json.dumps(document, indent=2) + "\n", encoding="ascii")
+    try:
+        set_id = document["setId"]
+        if (
+            not isinstance(set_id, str)
+            or not set_id
+            or document["status"] not in {"queued", "accepted", "rejected", "expired"}
+        ):
+            raise ValueError
+        received = document["members"]
+        if not isinstance(received, list) or len(received) != len(packs):
+            raise ValueError
+        expected = {pack.pack: pack for pack in packs}
+        candidates = {}
+        for member in received:
+            pack = expected.pop(member["packName"])
+            candidate_id, state = member["candidateId"], member["status"]
+            if (
+                member["version"] != pack.version
+                or member["artifactDigest"] != pack.artifact_digest
+                or not isinstance(candidate_id, str)
+                or not candidate_id
+                or state
+                not in {
+                    "queued",
+                    "scanning",
+                    "retrying",
+                    "promoting",
+                    "review",
+                    "accepted",
+                    "rejected",
+                }
+            ):
+                raise ValueError
+            candidates[pack.pack] = candidate_id, state
+        if len({candidate_id for candidate_id, _ in candidates.values()}) != len(packs):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise RegistryPublishError(
+            "registry answered batch submission with a malformed receipt"
+        ) from exc
+    return set_id, candidates
 
 
 def _wait_active(
@@ -352,7 +448,6 @@ def publish_official_packs(
                 )
             public.add(pack.pack)
     result: list[dict[str, object]] = []
-    candidates: dict[str, str] = {}
     for pack in ordered if registry is not None else catalog.packs:
         locks = output / f"{pack.pack}-{pack.version}.json"
         row: dict[str, object] = {
@@ -363,43 +458,41 @@ def publish_official_packs(
         }
         result.append(row)
         if registry is not None:
-            if pack.pack in public:
-                row.update(state="published")
-                (output / "result.json").write_text(
-                    json.dumps(result, indent=2) + "\n", encoding="utf-8"
-                )
-                continue
+            row["state"] = "published" if pack.pack in public else "submitting"
+    (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    candidates: dict[str, str] = {}
+    if registry is not None:
+        missing = [pack for pack in ordered if pack.pack not in public]
+        missing_names = {pack.pack for pack in missing}
+        for pack in missing:
             for dep in dependencies[pack.pack]:
+                if dep.pack in missing_names:
+                    continue
                 _wait_active(
                     registry,
                     dep,
                     selected[dep.pack].version if dep.pack in selected else None,
-                    candidates.get(dep.pack),
+                    None,
                     time.monotonic() + activation_timeout,
                     selected[dep.pack].artifact_digest if dep.pack in selected else None,
                 )
-            row["state"] = "submitting"
+        if missing:
+            try:
+                set_id, submitted = _submit_set(registry, missing, sources, output, engine)
+            except RegistryPublishError as exc:
+                raise RegistryPublishError(
+                    "publication refused (not retried); "
+                    f"if archive or install locks changed, bump the pack version: {exc}"
+                ) from exc
+            for row in result:
+                name = str(row["pack"])
+                if name in submitted:
+                    candidate_id, state = submitted[name]
+                    row.update(state=state, candidateId=candidate_id, setId=set_id)
+                    candidates[name] = candidate_id
             (output / "result.json").write_text(
                 json.dumps(result, indent=2) + "\n", encoding="utf-8"
             )
-            try:
-                verdict = publish_release(
-                    registry,
-                    sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
-                    pack.pack,
-                    pack.version,
-                    locks=locks,
-                    engine=engine,
-                )
-            except RegistryPublishError as exc:
-                raise RegistryPublishError(
-                    f"{pack.pack}@{pack.version}: publication refused (not retried); "
-                    f"if archive or install locks changed, bump the pack version: {exc}"
-                ) from exc
-            row.update(state=verdict.state, candidateId=verdict.candidate_id)
-            candidates[pack.pack] = verdict.candidate_id
-        (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    if registry is not None:
         deadline = time.monotonic() + activation_timeout
         failures = []
         for row in result:
