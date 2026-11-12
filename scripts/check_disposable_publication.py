@@ -253,6 +253,30 @@ def check_publication(
                 "--env",
                 "DINKSTER_PROBE_RUNTIME_MIRROR=/runtime",
             )
+            if (runtime / "wheels").is_dir():
+                seed = name + "-seed"
+                containers.append(seed)
+                docker(
+                    "run",
+                    "--rm",
+                    "--pull=never",
+                    "--name",
+                    seed,
+                    "--network",
+                    "none",
+                    "--user",
+                    "root",
+                    "--mount",
+                    f"type=volume,src={name},dst=/data",
+                    "--mount",
+                    f"type=bind,src={(runtime / 'wheels').resolve()},dst=/seed,readonly",
+                    "--entrypoint",
+                    "python",
+                    service_id,
+                    "-c",
+                    "import shutil; shutil.copytree('/seed', "
+                    "'/data/objects/.probe-runtime/wheels', dirs_exist_ok=True)",
+                )
         registry = run_container(
             "registry",
             service_id,

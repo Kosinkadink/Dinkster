@@ -9,6 +9,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from html import escape
@@ -18,6 +19,7 @@ from urllib.request import Request, url2pathname, urlopen
 from zipfile import ZipFile
 
 from dinkster_registry import Lockfile, artifact_digest, unpack_artifact
+from dinkster_store import object_path, readable_label
 from dinkster_supervisor.environment_artifacts import validate_manifest
 from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
 from dinkster_workers import load_manifest
@@ -141,6 +143,7 @@ def stage_index(
 
 def stage_runtime(bases: Path, engine: Path, output: Path) -> None:
     """Keep published bytes intact beside an explicitly unpublished exact-head engine."""
+    started = time.monotonic()
     origin = "https://releases.dinkster.org"
     for source in sorted(bases.glob("*/manifest.json")):
         base = json.loads(source.read_bytes())
@@ -182,6 +185,22 @@ def stage_runtime(bases: Path, engine: Path, output: Path) -> None:
         fetch_artifact(
             (str(engine),), row["name"], destination / row["name"], row["sha256"], row["size"]
         )
+    base = json.loads((bases / "linux-cpu/manifest.json").read_bytes())
+    owned = set(base["replaces"])
+    dependencies = manifest["dependencies"]["linux-cpu"]["wheels"]
+
+    def stage_dependency(row: dict) -> None:
+        filename, sha = row["filename"], row["sha256"]
+        target = (
+            object_path(
+                output / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+            )
+            / filename
+        )
+        fetch_artifact((row["url"].rsplit("/", 1)[0],), filename, target, sha, row["size"])
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(stage_dependency, [row for row in dependencies if row["name"] not in owned]))
     (output / "engine/index.json").write_text(
         json.dumps(
             [
@@ -195,6 +214,17 @@ def stage_runtime(bases: Path, engine: Path, output: Path) -> None:
             ]
         ),
         encoding="ascii",
+    )
+    print(
+        json.dumps(
+            {
+                "runtimePreparationSeconds": time.monotonic() - started,
+                "artifactBytes": sum(
+                    path.stat().st_size for path in output.rglob("*") if path.is_file()
+                ),
+            }
+        ),
+        flush=True,
     )
 
 

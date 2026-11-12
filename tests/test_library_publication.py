@@ -810,11 +810,14 @@ def test_probe_index_stages_selected_library_dependency_without_public_lookup(
         stage_index(sources, tmp_path / "bad-index")
 
 
-@pytest.mark.parametrize("damage", [None, "base-metadata", "base-archive", "engine-artifact"])
+@pytest.mark.parametrize(
+    "damage", [None, "base-metadata", "base-archive", "engine-artifact", "dependency"]
+)
 def test_disposable_runtime_staging_preserves_and_verifies_release_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str | None
 ) -> None:
     from test_environment_artifacts import _mirror
+    from test_pack_environment import _wheel
 
     from scripts import stage_publication_probe_index as staging
 
@@ -828,6 +831,29 @@ def test_disposable_runtime_staging_preserves_and_verifies_release_bytes(
     selected = origin / base_path / "manifest.json"
     (bases / "manifest.json").write_bytes(selected.read_bytes())
     engine_path = origin / "engine" / channel["engine"]["release"][7:]
+    dependency = origin / "deps"
+    dependency.mkdir()
+    wheel = _wheel(dependency, "runtime-helper", "1.0", "runtime_helper", "VALUE = 37\n")
+    engine["dependencies"] = {
+        "linux-cpu": {
+            "base": base["id"],
+            "wheels": [
+                *base["wheels"],
+                {
+                    "name": "runtime-helper",
+                    "version": "1.0",
+                    "filename": wheel.filename,
+                    "size": wheel.size,
+                    "sha256": wheel.sha256,
+                    "index": "https://pypi.org/simple",
+                    "url": "https://releases.dinkster.org/deps/" + wheel.filename,
+                },
+            ],
+        }
+    }
+    payload = json.dumps(engine).encode()
+    (engine_path / "release-manifest.json").write_bytes(payload)
+    channel["engine"]["release"] = "sha256:" + hashlib.sha256(payload).hexdigest()
     if damage == "base-metadata":
         changed = {**base, "python": "3.13.0"}
         selected.write_text(json.dumps(changed))
@@ -835,6 +861,8 @@ def test_disposable_runtime_staging_preserves_and_verifies_release_bytes(
         (origin / base_path / "base.tar.zst.002").write_bytes(b"corrupt")
     elif damage == "engine-artifact":
         (engine_path / "constraints.txt").write_bytes(b"corrupt")
+    elif damage == "dependency":
+        (dependency / wheel.filename).write_bytes(b"corrupt")
 
     def read(mirror, path):
         assert mirror == "https://releases.dinkster.org"
@@ -857,6 +885,9 @@ def test_disposable_runtime_staging_preserves_and_verifies_release_bytes(
         return
     staging.stage_runtime(bases.parent, engine_path, output)
     assert (output / "base/linux-cpu/index.json").read_bytes() == index.read_bytes()
+    [cached] = (output / "wheels").rglob("*.whl")
+    assert cached.name == wheel.filename
+    assert cached.read_bytes() == (dependency / wheel.filename).read_bytes()
     for filename in ("manifest.json", "base.tar.zst.001", "base.tar.zst.002"):
         assert (output / base_path / filename).read_bytes() == (
             origin / base_path / filename
