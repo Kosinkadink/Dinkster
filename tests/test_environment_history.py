@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -38,6 +41,259 @@ from test_environment_runtime import free_port
 from test_environment_state import _generation
 
 from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
+
+
+def test_installed_wheel_pack_add_and_update_without_index_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+    from test_environment_generations import _workspace_tree
+    from test_installer import _serve_artifacts, _static_release
+
+    from dinkster.pack_archive import build_pack_archive
+    from tests.fixtures.environments import build as publisher
+
+    checkout = Path(__file__).resolve().parents[1]
+    wheels = tmp_path / "wheels"
+    for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
+        subprocess.run(
+            ["uv", "build", "--package", project, "--wheel", "--out-dir", str(wheels)],
+            cwd=checkout,
+            check=True,
+        )
+    host = tmp_path / "host"
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(host)], check=True)
+    python = host / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--no-sources",
+            *map(str, wheels.glob("*.whl")),
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import dinkster, dinkster_api, dinkster_engine, dinkster_supervisor; "
+            "from pathlib import Path; "
+            f"assert all(Path(m.__file__).is_relative_to({str(host)!r}) for m in "
+            "(dinkster, dinkster_api, dinkster_engine, dinkster_supervisor))",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root = Path(fixture["root"])
+    initial = json.loads(Path(fixture["initialChannel"]).read_bytes())
+    empty = tmp_path / "empty.lock"
+    empty.write_text(Lockfile.of([]).record_json())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    setup = fixture["commands"]["setup"]
+    code, result = _run(
+        root,
+        *setup[setup.index("setup") : -1],
+        "--catalog-lock",
+        str(empty),
+        "--artifacts",
+        str(artifacts),
+        timeout=120,
+    )
+    assert code == 0 and result["current"] == 1, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    files: dict[str, bytes] = {}
+    releases, entries = [], []
+    for version, value in (("1.0.0", 31), ("1.1.0", 79)):
+        pack = tmp_path / version
+        pack.mkdir()
+        (pack / "dinkster-pack.toml").write_text(
+            HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
+            .replace("healthy_nodes:", "healthy:")
+            .replace('requires = ["numpy>=1.26"]', 'requires = ["fixture-helper>=1"]')
+            .replace("[pack]\n", f'[pack]\nversion = "{version}"\nengine = ">=1,<3"\n')
+        )
+        (pack / "healthy").mkdir()
+        (pack / "healthy/__init__.py").write_text(HEALTHY_NODES + f"\nVALUE = {value}\n")
+        (pack / "pyproject.toml").write_text(f'[project]\nname="healthy"\nversion="{version}"\n')
+        archive = tmp_path / f"healthy-{version}-py3-none-any.whl"
+        build_pack_archive(pack, archive)
+        payload = archive.read_bytes()
+        entry = LockedPack(
+            "healthy",
+            version,
+            artifact_digest(payload),
+            "dinkster",
+            ("healthy",),
+            "registry:official",
+        )
+        entries.append(entry)
+        lock_path = tmp_path / f"{version}.pack-lock.json"
+        dependency = wheel(tmp_path, "fixture_helper", version, value + 7)
+        PackLock(
+            "healthy",
+            "fixture-cpu",
+            ">=3.12",
+            ("fixture-helper>=1",),
+            (),
+            (
+                LockedDistribution(
+                    "fixture-helper",
+                    version,
+                    (
+                        LockedWheel(
+                            dependency.name,
+                            dependency.stat().st_size,
+                            hashlib.sha256(dependency.read_bytes()).hexdigest(),
+                            dependency.as_uri(),
+                        ),
+                    ),
+                ),
+            ),
+        ).write(lock_path)
+        lock = lock_path.read_bytes()
+        lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
+        release = {
+            **_static_release(entry, payload),
+            "engine": ">=1,<3",
+            "installLocks": {
+                "fixture-cpu": {
+                    "baseId": initial["base"]["fixture-cpu"]["id"],
+                    "artifactDigest": entry.artifact_digest,
+                    "digest": artifact_digest(lock),
+                    "size": len(lock),
+                    "url": lock_url,
+                }
+            },
+        }
+        releases.append(release)
+        files["/static/" + lock_url] = lock
+        files["/static/" + release["wheels"][0]["url"]] = payload
+    files["/static/packs/index.json"] = json.dumps({"schemaVersion": 1, "items": releases}).encode()
+    requests = []
+    server = _serve_artifacts(files, requests)
+    trap = tmp_path / "trap"
+    trap.mkdir()
+    uv = shutil.which("uv")
+    assert uv is not None
+    log = trap / "uv.jsonl"
+    wrapper = trap / "uv.py"
+    wrapper.write_text(
+        "import json,subprocess,sys\n"
+        f"with open({str(log)!r},'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "a=sys.argv[1:]\n"
+        "assert a[:1] in (['pip'],['venv'],['cache']), 'unexpected uv operation'\n"
+        "if a[:1]==['pip']:\n"
+        "    assert a[1] in ('install','sync'), 'package index resolver attempted'\n"
+        "    assert '--offline' in a and '--no-index' in a, 'package index access attempted'\n"
+        "    assert '--require-hashes' in a, 'unhashed install attempted'\n"
+        "    if a[1]=='install': assert '--no-deps' in a, 'dependency resolution attempted'\n"
+        f"sys.exit(subprocess.call([{uv!r},*a]))\n"
+    )
+    launcher = trap / ("uv.cmd" if sys.platform == "win32" else "uv")
+    launcher.write_text(
+        f'@"{sys.executable}" "{wrapper}" %*\n'
+        if sys.platform == "win32"
+        else f'#!/bin/sh\n{shlex.quote(sys.executable)} {shlex.quote(str(wrapper))} "$@"\n'
+    )
+    launcher.chmod(0o755)
+    monkeypatch.setenv("PATH", str(trap) + os.pathsep + os.environ["PATH"])
+    control = subprocess.run(["uv", "pip", "compile", "absent"], capture_output=True, text=True)
+    assert control.returncode != 0 and "package index resolver attempted" in control.stderr
+    log.write_text("")
+    (root / "registries.toml").write_text(
+        f'[registries.official]\nendpoint="http://127.0.0.1:{server.server_port}"\ndefault=true\n'
+    )
+    # Linux tmpfs exercises a system TEMP on a different volume from the managed store.
+    review_temp = tempfile.TemporaryDirectory(
+        dir="/dev/shm" if sys.platform == "linux" and Path("/dev/shm").is_dir() else None
+    )
+    try:
+        for args, number, entry, value in (
+            (("install", "healthy@1.0.0"), 2, entries[0], 31),
+            (("update", "healthy"), 3, entries[1], 79),
+        ):
+            command = subprocess.run(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "dinkster.cli",
+                    "pack",
+                    "--root",
+                    str(root),
+                    *args,
+                    "--yes",
+                ],
+                cwd=tmp_path,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env={
+                    **os.environ,
+                    "TMPDIR": review_temp.name,
+                    "TEMP": review_temp.name,
+                    "TMP": review_temp.name,
+                },
+            )
+            assert command.returncode == 0, command.stdout + command.stderr
+            assert f"activated generation {number}" in command.stdout
+            assert (root / "current").read_text() == f"{number}\n"
+            generation = root / "generations" / str(number)
+            software = Generation.read(generation / "generation.json")
+            assert software.engine_release == initial["engine"]["release"]
+            assert software.base == initial["base"]["fixture-cpu"]["id"]
+            locked = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
+            assert locked.get("healthy") == entry
+            pack_python = (
+                generation
+                / "packs/healthy"
+                / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+            )
+            observed = subprocess.check_output(
+                [
+                    str(pack_python),
+                    "-I",
+                    "-c",
+                    "import healthy, fixture_helper; print(healthy.VALUE, fixture_helper.VALUE)",
+                ],
+                text=True,
+            )
+            assert observed.strip() == f"{value} {value + 7}"
+            assert _run(root, "stop", "--yes")[0] == 0
+        commands = [json.loads(line) for line in log.read_text().splitlines()]
+        assert any(row[:2] == ["pip", "sync"] for row in commands), commands
+        assert not any(row[:2] == ["pip", "compile"] for row in commands)
+        assert requests and all(path.startswith("/static/") for path, _ in requests), requests
+    finally:
+        _run(root, "stop", "--yes")
+        server.shutdown()
+        review_temp.cleanup()
 
 
 @pytest.mark.parametrize("pack_route", ["supervisor", "command"])

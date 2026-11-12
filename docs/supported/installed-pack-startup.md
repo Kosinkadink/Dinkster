@@ -160,7 +160,9 @@
   upper bounds and worker cost before confirmation. Non-terminal use
   requires `--yes` or a saved plan. Declining leaves the project and store
   unchanged. Saved reviews expire after 15 minutes and refuse changed project
-  or selection metadata; successful application activates a fresh generation.
+  or selection metadata; successful add and update activate fresh generations
+  without package-index resolution, retaining the engine and base.
+  Missing retained bases refuse early rather than listing later payload failures.
   Local/git selections require explicit development rather than mixed installation.
 - Standalone pack installation and serving are development-only. Registry-bearing
   saved plans, snapshots, workflow stamps and rollback targets refuse instead of

@@ -377,11 +377,13 @@ def restore_pack_sources(
     registry_arguments: tuple[str, ...] = (),
 ) -> None:
     """Acquire exact source bytes in scratch without provisioning or activating packs."""
+    lock = read_document(catalog_lock)
+    if not lock["packs"]:
+        return
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
         scratch = Path(directory)
         cache = scratch / "artifacts"
         cache.mkdir()
-        lock = read_document(catalog_lock)
         for row in cast("list[dict[str, object]]", lock["packs"]):
             identity = row.get("artifactDigest")
             if not isinstance(identity, str):
@@ -644,7 +646,6 @@ def prepare_registry_inputs(
     project: Path,
     installed_lock: Path | None = None,
     additions: tuple[str, ...] = (),
-    registry_arguments: tuple[str, ...] = (),
     pack_locks: tuple[Path, ...] = (),
     prepare_locks: Callable[[Path, Path, Path, Path], tuple[Path, ...]] | None = None,
     preflight: Callable[[Path, Path, Path], None] | None = None,
@@ -675,16 +676,7 @@ def prepare_registry_inputs(
         catalog = scratch / "dinkster.lock"
         artifacts = scratch / "artifacts"
         output = scratch / "locks"
-        command = [
-            str(python),
-            "-I",
-            "-B",
-            "-m",
-            "dinkster.manager",
-            "--root",
-            str(project),
-            *registry_arguments,
-        ]
+        command = [str(python), "-I", "-B", "-m", "dinkster.manager", "--root", str(project)]
 
         def run(arguments: list[str]) -> dict[str, object]:
             completed = subprocess.run([*command, *arguments], capture_output=True, text=True)

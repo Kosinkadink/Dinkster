@@ -251,7 +251,7 @@ def plan_pack_install(
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
         size = cast("int", review["ownEnvironmentBytes"])
-        with tempfile.TemporaryDirectory(dir=output.parent, prefix=".pack-inputs-") as directory:
+        with tempfile.TemporaryDirectory(dir=store, prefix=".pack-inputs-") as directory:
             scratch = Path(directory)
             catalog, artifacts = scratch / "dinkster.lock", scratch / "artifacts"
             write_document(catalog, cast("dict[str, object]", metadata["sources"]))

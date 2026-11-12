@@ -129,6 +129,14 @@ changed project or selected release metadata requires a new review. Local/git
 sources cannot be mixed with published selections; use `dinkster develop` for
 explicit unlocked development.
 
+Both confirmed commands acquire the selected archives and their published
+dependency locks, then build and activate a fresh generation without package-index
+resolution. The retained engine and base do not change. Release and lock metadata
+failures are reported together; confirmed source and dependency-wheel acquisition
+failures are also collected together. A missing retained base refuses before
+source or dependency-wheel acquisition, so that refusal does not list later
+payload failures.
+
 For a source lock containing registry packs, `prepare-registry-locks` accepts
 `--catalog-lock`, a new `--output` directory, `--variant` and the exact
 `--base-id sha256:...`. It downloads the dependency locks already published
