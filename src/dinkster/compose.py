@@ -6269,6 +6269,7 @@ class ServingComposer:
                     vram_budgets=cuda_vram_budgets(memory_budgets),
                     comfy_args=comfy_args,
                 )
+            self._check_security(spec)
             if record.spec.worker_group is not None:
                 if spec.worker_group != record.spec.worker_group:
                     raise CompositionError(

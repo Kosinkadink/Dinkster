@@ -392,6 +392,13 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
                 feed["revision"] = 4
                 feed["notices"][0].update(revision=4, previousRevision=3, state="malicious")
                 store.import_feed(REGISTRY, _signed(feed, key))
+            if not adopt_generation:
+                (roots[0] / "imported").unlink()
+                surface = composer.composition
+                with pytest.raises(SecurityError):
+                    await composer.reload_pack("test-pack")
+                assert composer.composition is surface
+                assert not (roots[0] / "imported").exists()
             assert not await composer.enforce_security()
             await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), 10)
             if sibling is not None:
