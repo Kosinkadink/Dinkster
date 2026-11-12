@@ -882,7 +882,7 @@ def build_generation(
             read_document(destination / "engine-manifest.json")
             if (destination / "engine-manifest.json").is_file()
             else {},
-            variant,
+            cast("str", (artifact_sources or {}).get("dependencyVariant", variant)),
         )
         write_document(destination / "installed-wheels.json", receipt)
         provisioned: set[str] = set()

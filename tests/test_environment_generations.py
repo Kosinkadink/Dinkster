@@ -1664,8 +1664,10 @@ def test_selected_root_wheel_origin_respects_base_replacement_ownership(base_own
     ]
 
 
+@pytest.mark.parametrize("origin", ["base", "engine", "custom-engine"])
 def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existing_version(
     tmp_path: Path,
+    origin: str,
 ) -> None:
     store = tmp_path / "store"
     base = store / "bases" / ("a" * 64) / "python"
@@ -1698,20 +1700,22 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
         f"selected-fixture==1.0 --hash=sha256:{sha} --hash=sha256:{other_sha}\n"
         'inactive-fixture==1.0; sys_platform == "not-a-platform" --hash=sha256:' + "0" * 64 + "\n"
     )
+    wheel_row = {
+        "filename": selected.name,
+        "size": selected.stat().st_size,
+        "sha256": sha,
+        "index": "https://issuer.example.test/simple",
+    }
     (base.parent / "manifest.json").write_text(
-        json.dumps(
-            {
-                "wheels": [
-                    {
-                        "filename": selected.name,
-                        "size": selected.stat().st_size,
-                        "sha256": sha,
-                        "index": "https://issuer.example.test/simple",
-                    }
-                ]
-            }
-        )
+        json.dumps({"wheels": [wheel_row] if origin == "base" else []})
     )
+    engine_manifest = json.dumps(
+        {"dependencies": {"linux-cpu": {"wheels": [wheel_row] if origin != "base" else []}}}
+    ).encode()
+    engine_sha = hashlib.sha256(engine_manifest).hexdigest()
+    engine = store / "engines" / engine_sha
+    engine.mkdir(parents=True)
+    (engine / "release-manifest.json").write_bytes(engine_manifest)
     root = tmp_path / "project"
     generation = root / "generations/1"
     sealed = build_generation(
@@ -1720,10 +1724,11 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
         store=store,
         base="sha256:" + "a" * 64,
         engine_version="1.0",
-        engine_release="sha256:" + "b" * 64,
+        engine_release="sha256:" + engine_sha,
         constraints=constraints,
-        variant="linux-cpu",
+        variant="custom-base" if origin == "custom-engine" else "linux-cpu",
         worker_protocol=1,
+        artifact_sources={"dependencyVariant": "linux-cpu"},
     )
     python = interpreter(generation)
     assert (

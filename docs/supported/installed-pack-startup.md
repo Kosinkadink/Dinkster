@@ -21,6 +21,8 @@
   changing acquisition mirrors or registry aliases cannot change those origins.
   Base-owned replacements retain the base issuer even when engine metadata
   also lists the same wheel bytes.
+  Custom bases retain engine dependency origins from their selected published
+  dependency variant, independently of the custom base's name.
 - Managed generation pack selection checks cached notices against sealed library
   identities, transitive pack sources and their selected libraries. A malicious
   dependency blocks its consumer as affected, not malicious. Missing or changed wheel provenance refuses
