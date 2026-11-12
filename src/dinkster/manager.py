@@ -1310,6 +1310,28 @@ def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
 
 
+def _cmd_plan_security_repair(args: argparse.Namespace) -> None:
+    from dinkster_security.host import SecurityHost
+
+    from .security_repair import plan_security_repair
+
+    security = SecurityHost(args.generation.parent.parent)
+    security.refresh()
+    print(
+        json.dumps(
+            plan_security_repair(
+                args.generation,
+                args.pack,
+                _registry_config(args),
+                index=StaticPackIndex(read_only=True),
+                security=security,
+                accelerator=args.accelerator,
+            ),
+            sort_keys=True,
+        )
+    )
+
+
 def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     validate_manifest = importlib.import_module(
         "dinkster_supervisor.environment_artifacts"
@@ -1737,6 +1759,14 @@ def main() -> None:
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
     archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
+
+    repair = commands.add_parser(
+        "plan-security-repair",
+        help="compute an approval-required repair without acquiring payloads",
+    )
+    repair.add_argument("--generation", type=Path, required=True)
+    repair.add_argument("--pack", required=True)
+    repair.set_defaults(handler=_cmd_plan_security_repair)
 
     source_plan = commands.add_parser(
         "plan-registry-sources",

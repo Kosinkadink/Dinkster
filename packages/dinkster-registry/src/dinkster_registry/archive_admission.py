@@ -198,6 +198,9 @@ def _manifest_payload(manifest: PackManifest, release: dict[str, object]) -> dic
             "writableMounts": manifest.sandbox.writable_mounts,
         },
         "pythonRequirements": list(manifest.requires),
+        "pythonExtraRequirements": {
+            accelerator: list(requirements) for accelerator, requirements in manifest.extra_requires
+        },
         "nodeSource": manifest.node_source,
         "dependencies": [
             {"packName": dependency.pack, "versionRange": dependency.version}

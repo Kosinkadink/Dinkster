@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-models"
-version = "0.0.7"
+version = "0.0.8"
 description = "First-party Dinkster models nodes"
 requires-python = ">=3.12"
 dependencies = [

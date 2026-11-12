@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Kosinkadink/dinkster-registry-service
-          ref: cdde4b507f0e9d3f05fa40337946a5d3761b7b69
+          ref: 32e84786ca680f0f7fe53433949e293ce36ae3f5
           persist-credentials: false
           path: .disposable-registry-source
       - name: Build the unchanged service Dockerfile without publishing

@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-flux"
-version = "0.0.6"
+version = "0.0.7"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.flux"]
