@@ -2629,8 +2629,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     if problem is None:
         run_selected_tests(engine, catalog, artifacts, **context)
         output = capfd.readouterr().out
-        assert "3 passed" in output
-        assert "2 skipped" in output
+        outcomes = [
+            json.loads(line[line.index('{"admissionTests"') :])["outcome"]
+            for line in output.splitlines()
+            if '{"admissionTests": "result"' in line
+        ]
+        assert outcomes.count("passed") == 3
+        assert outcomes.count("skipped") == 2
         assert '"admissionTests": "collected"' in output
         assert '"pack": "dinkster-image@1.2.3"' in output
         assert '"nodeid": "tests/test_image_nodes.py::test_selected_value"' in output
