@@ -228,10 +228,25 @@ def test_library_preparation_and_native_locks_preserve_exact_sources(
     base_path.write_text(json.dumps(base))
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/base_bundles.json").write_text(json.dumps({"linux-cpu": "b" * 64}))
+    (tmp_path / "scripts/release_sources.json").write_text("{}")
     (tmp_path / "uv.lock").write_text("package = []\n")
     monkeypatch.setattr(preparation, "acquire", lambda *args: [base_path])
-    monkeypatch.setattr(preparation, "development_version", lambda *args: "0.0.3.dev1")
-    monkeypatch.setattr(preparation, "select_dependency_wheels", lambda *args: {})
+
+    def engine(root, output, tag, frontend, **kwargs):
+        output.mkdir()
+        manifest = {
+            "version": "0.0.3.dev1",
+            "commit": "a" * 40,
+            "tag": "main-" + "a" * 40,
+            "workerProtocol": PROTOCOL_VERSION,
+            "artifacts": [],
+            "dependencies": {},
+        }
+        (output / "release-manifest.json").write_text(json.dumps(manifest))
+        return manifest
+
+    monkeypatch.setattr(preparation, "download_frontend", lambda *args: None)
+    monkeypatch.setattr(preparation, "build_release", engine)
     work = tmp_path / "work"
     assert preparation.prepare_inputs(
         tmp_path, work, "a" * 40, ["dinkster-test-consumer"], candidate=True
@@ -793,6 +808,75 @@ def test_probe_index_stages_selected_library_dependency_without_public_lookup(
         archive.writestr("changed.txt", "source drift")
     with pytest.raises(ValueError, match="probe source digest mismatch: test-consumer"):
         stage_index(sources, tmp_path / "bad-index")
+
+
+@pytest.mark.parametrize("damage", [None, "base-metadata", "base-archive", "engine-artifact"])
+def test_disposable_runtime_staging_preserves_and_verifies_release_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str | None
+) -> None:
+    from test_environment_artifacts import _mirror
+
+    from scripts import stage_publication_probe_index as staging
+
+    origin = tmp_path / "origin"
+    base, engine, channel = _mirror(origin, variant="linux-cpu")
+    base_path = "base/linux-cpu/" + base["id"][7:]
+    index = origin / "base/linux-cpu/index.json"
+    index.write_text(json.dumps([{"id": base["id"], "path": base_path}]) + "\n")
+    bases = tmp_path / "bases/linux-cpu"
+    bases.mkdir(parents=True)
+    selected = origin / base_path / "manifest.json"
+    (bases / "manifest.json").write_bytes(selected.read_bytes())
+    engine_path = origin / "engine" / channel["engine"]["release"][7:]
+    if damage == "base-metadata":
+        changed = {**base, "python": "3.13.0"}
+        selected.write_text(json.dumps(changed))
+    elif damage == "base-archive":
+        (origin / base_path / "base.tar.zst.002").write_bytes(b"corrupt")
+    elif damage == "engine-artifact":
+        (engine_path / "constraints.txt").write_bytes(b"corrupt")
+
+    def read(mirror, path):
+        assert mirror == "https://releases.dinkster.org"
+        return (origin / path).read_bytes()
+
+    fetch = staging.fetch_artifact
+
+    def acquire(mirrors, filename, destination, digest, size):
+        if mirrors[0].startswith("https://releases.dinkster.org/"):
+            mirrors = (str(origin / mirrors[0].removeprefix("https://releases.dinkster.org/")),)
+        return fetch(mirrors, filename, destination, digest, size)
+
+    monkeypatch.setattr(staging, "read_metadata", read)
+    monkeypatch.setattr(staging, "fetch_artifact", acquire)
+    output = tmp_path / "runtime"
+    if damage is not None:
+        with pytest.raises(ValueError):
+            staging.stage_runtime(bases.parent, engine_path, output)
+        assert not (output / "engine/index.json").exists()
+        return
+    staging.stage_runtime(bases.parent, engine_path, output)
+    assert (output / "base/linux-cpu/index.json").read_bytes() == index.read_bytes()
+    for filename in ("manifest.json", "base.tar.zst.001", "base.tar.zst.002"):
+        assert (output / base_path / filename).read_bytes() == (
+            origin / base_path / filename
+        ).read_bytes()
+    [candidate] = json.loads((output / "engine/index.json").read_bytes())
+    assert candidate == {
+        "commit": engine["commit"],
+        "sha256": channel["engine"]["release"][7:],
+        "version": engine["version"],
+        "path": "engine/" + channel["engine"]["release"][7:],
+        "unpublishedCandidate": True,
+    }
+    for filename in (
+        "release-manifest.json",
+        "constraints.txt",
+        "fixture_engine-2.0-py3-none-any.whl",
+    ):
+        assert (output / candidate["path"] / filename).read_bytes() == (
+            engine_path / filename
+        ).read_bytes()
 
 
 def test_probe_index_refuses_local_dependency_outside_selected_sources(

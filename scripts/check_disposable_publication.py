@@ -116,6 +116,7 @@ def check_publication(
     publisher_image: str,
     *,
     timeout: float = 600,
+    runtime_mirror: Path | None = None,
 ) -> dict:
     """Images and the complete dependency index must already exist locally."""
     start = time.monotonic()
@@ -241,6 +242,16 @@ def check_publication(
                 "DINKSTER_ENV=development",
                 "--env",
                 "DINKSTER_PROBE_ENGINE_RELEASE=/engine",
+            )
+        runtime = runtime_mirror if runtime_mirror is not None else package_index / "runtime"
+        if runtime.is_dir():
+            common += (
+                "--mount",
+                f"type=bind,src={runtime.resolve()},dst=/runtime,readonly",
+                "--env",
+                "DINKSTER_ENV=development",
+                "--env",
+                "DINKSTER_PROBE_RUNTIME_MIRROR=/runtime",
             )
         registry = run_container(
             "registry",
