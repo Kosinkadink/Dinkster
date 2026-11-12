@@ -1102,6 +1102,8 @@ def encode_result(
     result: InvocationResult,
     invocation_id: str,
     execute_ms: float,
+    *,
+    document_sources: Mapping[str, Value] | None = None,
 ) -> tuple[dict[str, object], list[bytes], list[SharedMemory]]:
     from .saved_artifacts import MAX_SAVED_ARTIFACTS, validate_candidate
 
@@ -1117,6 +1119,16 @@ def encode_result(
         "invocationId": invocation_id,
         "executeMs": execute_ms,
     }
+    if (
+        result.error is None
+        and document_sources is not None
+        and (result.image_documents or document_sources)
+    ):
+        if set(document_sources) != {str(index) for index in range(len(result.image_documents))}:
+            raise BoundaryError("image document sources do not match the attachment batch")
+        header["imageDocumentSources"] = {
+            key: value.meta.get("asset_refs", []) for key, value in document_sources.items()
+        }
     if result.artifact_candidates:
         header["artifactCandidates"] = [
             {
@@ -1919,6 +1931,7 @@ def decode_result(
             "artifactCandidates",
             "previewArtifacts",
             "imageDocuments",
+            "imageDocumentSources",
             "savedArtifactClaims",
             "savedFilePreviews",
         }

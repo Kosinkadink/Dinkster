@@ -71,7 +71,7 @@ def mp4() -> bytes:
     return _tiny_mp4(23)
 
 
-def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
+def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None = None) -> Path:
     payload = base64.b64encode(data).decode("ascii")
     failed_payload = base64.b64encode(_tiny_mp4(99)).decode("ascii")
     module = "preview_fixture_" + digest_bytes(str(tmp_path).encode())[7:19]
@@ -85,8 +85,12 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "OutputSpec, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
         "attach_saved_artifact, AssetWriter, MountSnapshotWriter, SaveTarget)\n"
         "from dinkster_schema.reporting import publish_image_document\n"
+        "from dinkster_image_document import ImageDocument\n"
+        "from dinkster_image_document.document import (empty_document, document_meta, "
+        "validate_image_document_encoded)\n"
         f"DATA = base64.b64decode({payload!r})\n"
         f"FAILED_DATA = base64.b64decode({failed_payload!r})\n"
+        f"DOCUMENT = {document!r}\n"
         "LAST_REF = None\n"
         "class Preview(Node):\n"
         " @classmethod\n"
@@ -99,8 +103,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "  global LAST_REF\n"
         "  data = FAILED_DATA if mode == 'fail' else DATA\n"
         "  if mode.startswith('document'):\n"
-        "   publish_image_document(b'{\"original\":true}')\n"
-        "   publish_image_document(b'{\"edited\":true}')\n"
+        "   publish_image_document(DOCUMENT)\n"
+        "   publish_image_document(empty_document(7, 3).data)\n"
         "   publish_preview_artifact(DATA, name='preview.mp4', media_type='video/mp4')\n"
         "   if mode == 'document-fail': raise ValueError('document fixture failed')\n"
         "   return cls.outputs(out='document')\n"
@@ -152,7 +156,11 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "'preview-fixture.emit', 'inner' if mode == 'nested' else 'emit', mode='ok')\n"
         "  return graph.finalize(out=child.out('out'))\n"
         "NODES = (Preview, Expand)\n"
-        "def register_types(registry): pass\n",
+        "def register_types(registry):\n"
+        " if DOCUMENT is not None:\n"
+        "  registry.register('dinkster.layers', coerce=lambda obj: obj, "
+        "encode=lambda obj: obj.data, decode=ImageDocument, meta=document_meta, "
+        "validate_encoded=validate_image_document_encoded, asset_references_complete=True)\n",
         encoding="ascii",
     )
     manifest = tmp_path / "dinkster-pack.toml"
@@ -161,6 +169,7 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "name = 'preview-fixture'\n"
         "publisher = 'dinkster'\n"
         "namespaces = ['preview-fixture']\n"
+        "type-namespaces = ['dinkster.layers']\n"
         "[pack.entry]\n"
         f"nodes = '{module}:NODES'\n"
         f"types = '{module}:register_types'\n",
@@ -889,22 +898,97 @@ def test_encoded_retention_requires_live_output_and_recovers_catalog(
     assert mounts.resolve(digest_bytes(mp4)) is not None
 
 
+@pytest.mark.parametrize(
+    "sources", ("none", "available", "missing", "corrupt", "size-mismatch", "noncanonical")
+)
 @pytest.mark.parametrize("fail", (False, True))
-def test_isolated_image_document_attachments_survive_worker_teardown(
-    tmp_path: Path, mp4: bytes, fail: bool
+@pytest.mark.parametrize("remote", (False, True), ids=("isolated", "remote"))
+def test_image_document_attachments_adopt_sources_before_worker_teardown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mp4: bytes,
+    fail: bool,
+    sources: str,
+    remote: bool,
 ) -> None:
+    from dinkster_assets import AssetResolver
+    from dinkster_caches import BudgetedDiskCAS
+    from dinkster_image_document import ImageDocument
+    from dinkster_image_document.document import empty_document
     from dinkster_protocol import Invocation
-    from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
-    from dinkster_workers import IsolatedWorker
+    from dinkster_values import CORE_STRING, TypeRegistry, Value, register_core_types
+    from dinkster_workers import IsolatedWorker, RemoteWorker
+    from test_image_document_rendering import _png, _resource
+    from test_remote import TOKEN, start_service, stop_service
 
-    manifest = _write_preview_pack(tmp_path, mp4)
+    source = _png([[(73, 21, 190, 255)]])
+    digest = digest_bytes(source)
+    producer = AssetVault(tmp_path / "producer")
+    engine = AssetVault(tmp_path / "engine")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+    record = empty_document(3, 2).to_record()
+    if sources != "none":
+        record["allocation"]["nextOrdinal"] = 1
+        record["resources"] = {"r0": _resource("r0", source, 1, 1)}
+        if sources == "size-mismatch":
+            record["resources"]["r0"]["byteSize"] = len(source) + 1
+        if sources != "missing":
+            with producer.writer(digest) as writer:
+                writer.write(source)
+                writer.commit()
+            if sources == "corrupt":
+                path = producer.resolve(digest)
+                assert path is not None
+                path.write_bytes(b"not the declared image")
+    original = ImageDocument.from_record(record).data
+    if sources == "noncanonical":
+        original = original.replace(b'{"', b'{ "', 1)
+    manifest = _write_preview_pack(tmp_path, mp4, document=original)
 
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        worker = IsolatedWorker(manifest, registry, extra_env={"PYTHONPATH": str(tmp_path)})
+        process = None
+        transfer = BudgetedDiskCAS(tmp_path / "transfer", max_bytes=1)
+        worker: IsolatedWorker | RemoteWorker
+        if remote:
+            process, host, port = await start_service(
+                manifest,
+                tmp_path,
+                "--asset-vault",
+                str(producer.root),
+                "--value-store",
+                str(tmp_path / "daemon-transfer"),
+                pythonpath=(tmp_path,),
+            )
+            worker = RemoteWorker(
+                host, port, TOKEN, registry, name="documents", value_store=transfer
+            )
+        else:
+            worker = IsolatedWorker(
+                manifest,
+                registry,
+                extra_env={
+                    "PYTHONPATH": str(tmp_path),
+                    "DINKSTER_ASSET_VAULT": str(producer.root),
+                },
+            )
         try:
             await worker.start()
+            if remote:
+                capture = worker._session._produced_assets.capture
+
+                def pressure_during_adoption(
+                    outputs: Mapping[str, Value],
+                    transferred: AssetResolver | None = None,
+                    inputs: Mapping[str, Value] | None = None,
+                ) -> None:
+                    transfer.put(b"another result arrived before document adoption")
+                    capture(outputs, transferred, inputs)
+
+                monkeypatch.setattr(
+                    worker._session._produced_assets, "capture", pressure_during_adoption
+                )
             schema = worker.schemas["preview-fixture.emit"]
             result = await worker.invoke(
                 Invocation(
@@ -917,33 +1001,61 @@ def test_isolated_image_document_attachments_survive_worker_teardown(
             )
         finally:
             await worker.close()
-        if fail:
+            if process is not None:
+                await stop_service(process)
+        assert not worker._session._received_asset_pins
+        shutil.rmtree(transfer.root)
+        if fail or sources in ("missing", "corrupt", "size-mismatch", "noncanonical"):
             assert result.error is not None
             assert result.image_documents == result.preview_artifacts == ()
+            assert engine.resolve(digest) is None
         else:
             assert result.error is None
             assert [item.data for item in result.image_documents] == [
-                b'{"original":true}',
-                b'{"edited":true}',
+                original,
+                empty_document(7, 3).data,
             ]
             assert [item.data for item in result.preview_artifacts] == [mp4]
+            if sources == "available":
+                path = producer.resolve(digest)
+                assert path is not None
+                path.unlink()
+                adopted = engine.resolve(digest)
+                assert adopted is not None and adopted.read_bytes() == source
+                inventory = ProducedAssetInventory(engine.root).entries()
+                assert any(item.digest == digest and item.adopted_at_ns for item in inventory)
 
     run_scenario(scenario())
 
 
 @pytest.mark.parametrize("fail", (False, True))
 def test_image_documents_cross_successful_invocations_without_becoming_previews(
-    fail: bool, mp4: bytes
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool, mp4: bytes
 ) -> None:
     from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_assets.declared import produced_output_scratch
+    from dinkster_image.types import register_image_types
+    from dinkster_image_document import ImageDocument
+    from dinkster_image_document.document import empty_document
     from dinkster_protocol import Invocation
     from dinkster_schema.reporting import publish_image_document
     from dinkster_values import TypeRegistry, register_core_types
     from dinkster_workers import InProcessWorker
     from dinkster_workers.boundary import ValueCodec, decode_result, encode_result
+    from test_image_document_rendering import _png, _resource
 
-    original = b'{"original":true}'
-    edited = b'{"edited":true}'
+    source = _png([[(22, 48, 7, 255)]])
+    digest = digest_bytes(source)
+    record = empty_document(3, 2).to_record()
+    record["allocation"]["nextOrdinal"] = 1
+    record["resources"] = {"r0": _resource("r0", source, 1, 1)}
+    original = ImageDocument.from_record(record).data
+    edited = empty_document(7, 3).data
+    vault = AssetVault(tmp_path / "host-vault")
+    scratch = tmp_path / "pack-scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
 
     class Document(Node):
         @classmethod
@@ -955,6 +1067,11 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
 
         @classmethod
         def execute(cls) -> Mapping[str, object]:
+            produced = produced_output_scratch()
+            assert produced is not None
+            with produced.writer(digest) as writer:
+                writer.write(source)
+                writer.commit()
             publish_image_document(original)
             publish_image_document(edited)
             publish_preview_artifact(mp4, name="preview.mp4", media_type="video/mp4")
@@ -965,6 +1082,7 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
+        register_image_types(registry)
         schema = Document.schema()
         worker = InProcessWorker({schema.node_type: Document}, registry)
         result = await worker.invoke(Invocation("document", "node", schema.node_type, {}, schema))
@@ -973,8 +1091,12 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
             assert result.image_documents == result.preview_artifacts == ()
             header, blobs, segments = encode_result(ValueCodec(registry), result, "document", 0)
             assert "imageDocuments" not in header and blobs == [] and segments == []
+            assert vault.resolve(digest) is None
             return
         assert result.error is None
+        shutil.rmtree(scratch)
+        adopted = vault.resolve(digest)
+        assert adopted is not None and adopted.read_bytes() == source
         assert [item.data for item in result.image_documents] == [original, edited]
         codec = ValueCodec(registry)
         header, blobs, segments = encode_result(codec, result, "document", 0)

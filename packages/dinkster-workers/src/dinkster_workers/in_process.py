@@ -110,7 +110,7 @@ from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
 from .preview_artifacts import capture_saved_file_previews
-from .produced_assets import ProducedAssetAuthority
+from .produced_assets import ProducedAssetAuthority, image_document_values
 from .run_control import PreparedRunContext
 from .saved_artifacts import SavedArtifactAuthority
 
@@ -447,6 +447,11 @@ class InProcessWorker:
                     result = replace(result, outputs=cast("dict[str, Value]", outputs))
                 if authority is not None and result.outputs is not None:
                     await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
+                    if result.image_documents:
+                        documents = await _run_sync(
+                            image_document_values, self.registry, result.image_documents
+                        )
+                        await _run_sync(authority.capture, documents, None, invocation.inputs)
                 return result
             except (AssetError, OSError) as error:
                 return InvocationResult(

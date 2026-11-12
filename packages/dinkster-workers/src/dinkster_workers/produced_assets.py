@@ -14,18 +14,23 @@ from dinkster_assets import (
     AssetResolver,
     AssetVault,
     LocalAssetRef,
+    digest_bytes,
     open_verified,
 )
 from dinkster_assets.declared import offer_produced_outputs
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import hold_produced_vault
 from dinkster_assets.value import value_asset_references
+from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import (
     IMAGE_DOCUMENT_TYPE,
     MEBIBYTE,
+    SAVED_ARTIFACT_CLAIM_LIMIT,
+    EncodedPayload,
     Rendition,
     TypeRegistry,
     Value,
+    ValueMeta,
     default_decode,
     iter_value_tree,
 )
@@ -46,6 +51,57 @@ def rendition_values(registry: TypeRegistry, rendition: Rendition) -> dict[str, 
         raise AssetError("document rendition does not match its declared envelope")
     spec.validate_encoded(rendition.data, value.meta.entries)
     return {"document": value}
+
+
+def image_document_values(
+    registry: TypeRegistry, documents: Sequence[ImageDocumentArtifact]
+) -> dict[str, Value]:
+    """Project original documents through their declared codec for source handoff."""
+    values: dict[str, Value] = {}
+    try:
+        for index, document in enumerate(documents):
+            values[str(index)] = rendition_values(
+                registry, Rendition("document", DOCUMENT_RENDITION_MIME, document.data)
+            )["document"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AssetError(f"invalid original image document: {exc}") from exc
+    return values
+
+
+def image_document_sources(
+    header: Mapping[str, object], documents: Sequence[ImageDocumentArtifact]
+) -> dict[str, Value]:
+    """Read required source declarations without relying on a local pack codec."""
+    sources = header.get("imageDocumentSources", {})
+    if not isinstance(sources, Mapping) or set(cast("Mapping[str, object]", sources)) != {
+        str(index) for index in range(len(documents))
+    }:
+        raise AssetError("image document sources do not match the attachment batch")
+    declarations = cast("Mapping[str, object]", sources)
+    values: dict[str, Value] = {}
+    for index, document in enumerate(documents):
+        refs = [ref.to_wire() for ref in _document_source_references(declarations[str(index)])]
+        values[str(index)] = Value(
+            IMAGE_DOCUMENT_TYPE,
+            digest_bytes(document.data),
+            ValueMeta({"asset_refs": refs}),
+            EncodedPayload(IMAGE_DOCUMENT_TYPE, document.data, None),
+        )
+    return values
+
+
+def _document_source_references(raw: object) -> Iterator[AssetRef]:
+    if type(raw) is not list or len(cast("list[object]", raw)) > SAVED_ARTIFACT_CLAIM_LIMIT:
+        raise AssetError("image document sources require a bounded reference list")
+    for item in cast("list[object]", raw):
+        if not isinstance(item, Mapping) or set(cast("Mapping[str, object]", item)) != {
+            "digest",
+            "name",
+            "size",
+            "mediaType",
+        }:
+            raise AssetError("image document source reference has invalid fields")
+        yield AssetRef.from_wire(cast("Mapping[str, object]", item))
 
 
 def _references(raw: object, resolver: AssetResolver | None = None) -> Iterator[AssetRef]:
@@ -93,6 +149,14 @@ def result_asset_digests(header: Mapping[str, object], blobs: Sequence[bytes]) -
         raise AssetError("result outputs must be a mapping")
     for wire in cast("Mapping[str, object]", outputs).values():
         visit(wire)
+    sources = header.get("imageDocumentSources", {})
+    if (
+        not isinstance(sources, Mapping)
+        or len(cast("Mapping[str, object]", sources)) > SAVED_ARTIFACT_CLAIM_LIMIT
+    ):
+        raise AssetError("image document sources must be a mapping")
+    for refs in cast("Mapping[str, object]", sources).values():
+        digests.update(ref.digest for ref in _document_source_references(refs))
     algebra = header.get("resultAlgebra")
     if algebra is not None:
         if not isinstance(algebra, Mapping):
