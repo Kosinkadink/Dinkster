@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-pack-helpers"
-version = "0.0.4"
+version = "0.0.5"
 description = "Shared conditioning, model asset and latent helpers for node packs"
 requires-python = ">=3.12"
 dependencies = [

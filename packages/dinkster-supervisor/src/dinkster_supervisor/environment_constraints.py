@@ -146,6 +146,35 @@ def selected_wheel_requirements(
     return "\n".join(pins) + "\n", selected
 
 
+def installed_wheel_origins(
+    wheels: list[dict[str, object]],
+    base: dict[str, object],
+    engine: dict[str, object],
+    variant: str,
+) -> list[dict[str, object]]:
+    """Bind selected bytes to manifest origins, never to their acquisition cache paths."""
+    origins: dict[tuple[object, object, object], object] = {}
+    for row in cast("list[dict[str, object]]", base.get("wheels", [])):
+        origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+    owned = set(cast("list[str]", base.get("replaces", [])))
+    selections = cast("dict[str, dict[str, object]]", engine.get("dependencies", {}))
+    for row in cast("list[dict[str, object]]", selections.get(variant, {}).get("wheels", [])):
+        if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned:
+            origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+    repository = engine.get("repository")
+    issuer = f"https://github.com/{repository}" if repository else None
+    for row in cast("list[dict[str, object]]", engine.get("artifacts", [])):
+        if (
+            str(row["name"]).endswith(".whl")
+            and parse_wheel_filename(cast("str", row["name"]))[0] not in owned
+        ):
+            origins[row["name"], row["size"], row["sha256"]] = issuer
+    return [
+        {**row, "registry": origins.get((row["filename"], row["size"], row["sha256"]))}
+        for row in wheels
+    ]
+
+
 def validate_base_requirements(
     wheels: tuple[Path, ...],
     base: dict[str, object],

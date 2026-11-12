@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-image"
-version = "0.0.9"
+version = "0.0.10"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 requires = [

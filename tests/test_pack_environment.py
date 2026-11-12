@@ -408,6 +408,7 @@ def test_lock_resolution_retries_verified_dependency_metadata(
             return subprocess.CompletedProcess(command, 0, "", "")
 
         monkeypatch.setattr(subprocess, "run", compile_lock)
+        (tmp_path / "constraints.txt").write_text("")
 
         def resolve() -> PackLock:
             return resolve_pack_lock(
@@ -434,6 +435,92 @@ def test_lock_resolution_retries_verified_dependency_metadata(
         assert lock.requirements == ("fixture-extra==1.2", "dinkster-api>=0.0.3")
         assert [package.name for package in lock.packages] == ["fixture-extra"]
         assert len(requests) == (2 if measured else 3)
+
+
+@pytest.mark.parametrize("source", ["index", "multiple-indexes", "constraint-index", "local"])
+def test_resolved_wheel_issuer_uses_only_explicit_unambiguous_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    content = (tmp_path / artifact.filename).read_bytes()
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+        def do_HEAD(self) -> None:
+            requests.append(self.path)
+            self.send_response(200 if self.path == f"/artifacts/{artifact.filename}" else 404)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            if self.path in {"/simple/fixture-extra/", "/other/fixture-extra/"}:
+                payload = (
+                    f'<a href="/artifacts/{artifact.filename}#sha256={artifact.sha256}">'
+                    f"{artifact.filename}</a>"
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+            elif self.path == f"/artifacts/{artifact.filename}":
+                payload = content
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+            else:
+                payload = b""
+                self.send_response(404)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}"
+        (tmp_path / "uv.toml").write_text(
+            f'[[index]]\nurl = "{endpoint}/ambient"\n', encoding="ascii"
+        )
+        # The offline CI gate must still reach this test's loopback index.
+        monkeypatch.delenv("UV_OFFLINE", raising=False)
+        monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("UV_INDEX", endpoint + "/ambient")
+        monkeypatch.setenv("UV_EXTRA_INDEX_URL", endpoint + "/ambient")
+        monkeypatch.setenv("UV_FIND_LINKS", endpoint + "/ambient")
+        monkeypatch.setenv("UV_CONFIG_FILE", str(tmp_path / "uv.toml"))
+        constraints = tmp_path / "constraints.txt"
+        constraints.write_text(
+            (f"--extra-index-url {endpoint}/other\n" if source == "constraint-index" else "")
+            + "fixture-extra==1.2\n"
+        )
+        lock = resolve_pack_lock(
+            pack="example",
+            variant="linux-cpu",
+            requirements=["fixture-extra>=1"],
+            python=Path(sys.executable),
+            constraints=constraints,
+            indexes=(endpoint + "/simple",)
+            + ((endpoint + "/other",) if source == "multiple-indexes" else ()),
+            find_links=(tmp_path,) if source == "local" else (),
+        )
+        wheel = lock.packages[0].wheels[0]
+        assert wheel.filename == artifact.filename and wheel.sha256 == artifact.sha256
+        assert wheel.registry == (endpoint + "/simple" if source == "index" else None)
+        assert not any("ambient" in path for path in requests)
+        assert wheel.url == (
+            artifact.url if source == "local" else endpoint + "/artifacts/" + artifact.filename
+        )
+        encoded_wheel = json.loads(lock.to_json())["packages"][0]["wheels"][0]
+        assert encoded_wheel.get("registry") == wheel.registry
+        assert ("registry" in encoded_wheel) == (wheel.registry is not None)
+        assert PackLock.from_json(lock.to_json()) == lock
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
+        server.server_close()
 
 
 @pytest.mark.parametrize("failure", ["missing", "hash", "short", "oversize"])
@@ -508,6 +595,7 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         "fixture_extra",
         "import torch, cv2\ndef node(): return torch.value + cv2.value\n",
     )
+    extra = replace(extra, registry="https://issuer.example.test")
     alternative_source = tmp_path / "alternative"
     alternative_source.mkdir()
     alternative = _wheel(
@@ -599,6 +687,7 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
                     "filename": extra.filename,
                     "sha256": extra.sha256,
                     "size": extra.size,
+                    "registry": extra.registry,
                 }
             ],
             "inherited": ["opencv-contrib-python-headless", "torch"],
