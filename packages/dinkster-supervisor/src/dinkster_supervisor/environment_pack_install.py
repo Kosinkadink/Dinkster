@@ -48,6 +48,10 @@ from .environment_transactions import (
     next_generation,
     recover_activation,
 )
+from .security.documents import Release as SecurityRelease
+from .security.policy import Artifact as SecurityArtifact
+from .security.policy import assess
+from .security.store import SecurityStore
 
 
 def _approval(record: dict[str, object]) -> str:
@@ -595,6 +599,7 @@ print(Lockfile.of(entries).record_json())
                     "constraints": generation.constraints,
                     "inProcessPacks": list(generation.in_process_packs),
                     "sources": read_document(catalog),
+                    "securityRegistries": metadata["securityRegistries"],
                     "dependencyLocks": all_locks,
                     "preflight": preflight,
                     "ownEnvironmentBytes": size,
@@ -655,8 +660,52 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
                 or content_digest(path) != expected
             ):
                 raise EnvironmentError("reviewed pack inputs changed; request a new plan")
+        database = root / "security.sqlite3"
+        if database.is_file():
+            retained: set[tuple[object, ...]] = set()
+            for path in (root / "generations").glob("*/dinkster.lock"):
+                if path.parent.name == str(target):
+                    continue
+                sealed = Generation.read(path.parent / "generation.json")
+                if (
+                    path.is_symlink()
+                    or path.parent.is_symlink()
+                    or content_digest(path) != dict(sealed.files).get(path.name)
+                ):
+                    raise EnvironmentError("security requires intact retained source locks")
+                for entry in cast("list[dict[str, object]]", read_document(path)["packs"]):
+                    retained.add(
+                        tuple(entry[key] for key in ("pack", "version", "artifactDigest", "source"))
+                    )
+            security = SecurityStore(database)
+            registries = cast("dict[str, str]", record["securityRegistries"])
+            for entry in cast(
+                "list[dict[str, object]]", cast("dict[str, object]", record["sources"])["packs"]
+            ):
+                artifact = SecurityArtifact(
+                    registries[cast("str", entry["source"])],
+                    SecurityRelease.model_validate(
+                        {key: entry[key] for key in ("pack", "version", "artifactDigest")}
+                    ),
+                )
+                result = assess(
+                    security,
+                    (artifact,),
+                    installing=tuple(
+                        entry[key] for key in ("pack", "version", "artifactDigest", "source")
+                    )
+                    not in retained,
+                )
+                if not result.allowed:
+                    finding = next(item for item in result.findings if not item.allowed)
+                    raise EnvironmentError(
+                        f"security {finding.state}: {entry['pack']}=={entry['version']} "
+                        f"({entry['artifactDigest']}), notice {finding.notice.id} "
+                        f"revision {finding.notice.revision}, decision {finding.decision}"
+                    )
 
     with writer_lock(store), writer_lock(root):
+        target = next_generation(root)
         revalidate()
         if time.time() >= cast("float", record["expires"]) or (inputs / "consumed").exists():
             raise EnvironmentError("pack installation confirmation expired or was already used")
@@ -667,7 +716,6 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             shutil.copyfile(wheel, destination)
         with (inputs / "consumed").open("x", encoding="ascii") as handle:
             handle.write(approval)
-        target = next_generation(root)
         journal = begin_activation(root, target, "update")
         try:
             replace(Journal.read(journal), stage="building").write(journal)

@@ -248,6 +248,15 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+        if project in {"dinkster-api", "dinkster-supervisor"}:
+            security = ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security"
+            for path in security.glob("*.py"):
+                assert actual.read(f"dinkster_security/{path.name}") == path.read_bytes()
+                if project == "dinkster-supervisor":
+                    assert (
+                        actual.read(f"dinkster_supervisor/security/{path.name}")
+                        == path.read_bytes()
+                    )
     if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [
@@ -269,9 +278,10 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
 
 
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")
-def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) -> None:
-    _, rebuilt = _distribution_wheels(tmp_path, "dinkster-api")
-    environment = tmp_path / "standalone-api"
+@pytest.mark.parametrize("project", ["dinkster-api", "dinkster-supervisor"])
+def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, project: str) -> None:
+    _, rebuilt = _distribution_wheels(tmp_path, project)
+    environment = tmp_path / "standalone"
     subprocess.run(
         ["uv", "venv", "--python", sys.executable, str(environment)],
         cwd=tmp_path,
@@ -291,17 +301,56 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
         cwd=tmp_path,
         check=True,
     )
+    if project == "dinkster-api":
+        imports = (
+            "import importlib.util; "
+            "assert importlib.util.find_spec('dinkster_supervisor') is None; "
+            "from dinkster_api.v1 import Node; "
+            "print(Node.__name__); "
+        )
+        expected = "Node\nSecurityHost"
+    else:
+        imports = (
+            "from dinkster_supervisor.environment import main; "
+            "from dinkster_supervisor.security.host import SecurityHost; "
+            "from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES; "
+            "assert SECURITY_FEED_LIMIT_BYTES == 33554432; "
+            "print(main.__name__, SecurityHost.__name__); "
+        )
+        expected = "main SecurityHost\nSecurityHost"
     result = subprocess.check_output(
         [
             str(python),
             "-I",
             "-c",
-            "from dinkster_api.v1 import Node; print(Node.__name__)",
+            imports + "from dinkster_security.host import SecurityHost; "
+            "print(SecurityHost.__name__)",
         ],
         cwd=tmp_path,
         text=True,
     )
-    assert result.strip() == "Node"
+    assert result.strip() == expected
+
+    if project == "dinkster-supervisor":
+        alias = tmp_path / "source-security"
+        shutil.copytree(
+            ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security",
+            alias / "dinkster_security",
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                f"import sys; sys.path.insert(0, {str(alias)!r}); "
+                "from pathlib import Path; "
+                "import dinkster_security.host as host; "
+                f"assert Path(host.__file__).is_relative_to({str(alias)!r}); "
+                "assert host.SECURITY_FEED_LIMIT_BYTES == 33554432",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
