@@ -4099,6 +4099,7 @@ def test_cli_acquires_published_locks_for_exact_sources_and_base(
                                     "sha256": "f" * 64,
                                     "size": 12,
                                     "url": endpoint + f"/static/wheels/{'f' * 64}/{filename}",
+                                    "registry": endpoint,
                                 }
                             ],
                         }

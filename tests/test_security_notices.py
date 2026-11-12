@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from dinkster_registry import InstallError, LockedPack, Lockfile, build_artifact
 from dinkster_security.documents import Release, SecurityError
 from dinkster_security.host import SecurityHost
-from dinkster_security.policy import Artifact, assess
+from dinkster_security.policy import Artifact, Dependency, assess
 from dinkster_security.store import SecurityStore
 
 REGISTRY = "https://registry.example.test"
@@ -1116,7 +1116,11 @@ def test_malicious_bytes_block_rehosting_and_dependencies_without_misclassifying
     inventory = (
         Artifact(REGISTRY, bad),
         Artifact("https://another.example.test", rehosted),
-        Artifact(REGISTRY, good, (bad.artifact_digest,)),
+        Artifact(
+            REGISTRY,
+            good,
+            (Dependency(REGISTRY, bad.pack, bad.version, bad.artifact_digest),),
+        ),
         Artifact(REGISTRY, good),
     )
     result = assess(SecurityStore(store.path), inventory)
@@ -1131,6 +1135,43 @@ def test_malicious_bytes_block_rehosting_and_dependencies_without_misclassifying
     feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
     assert assess(store, inventory).allowed
+
+
+@pytest.mark.parametrize("changed", [None, "registry", "name", "version", "digest"])
+def test_dependency_vulnerability_advice_requires_exact_issuing_file(
+    tmp_path: Path, changed: str | None
+):
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    document = store.import_feed(REGISTRY, _signed(_feed(), key), now=VERIFIED_AT)
+    release = document.notices[0].release
+    dependency = Dependency(REGISTRY, release.pack, release.version, release.artifact_digest)
+    if changed is not None:
+        dependency = replace(
+            dependency,
+            **{
+                changed: {
+                    "registry": "https://other.example.test",
+                    "name": "another-library",
+                    "version": "1.2.4",
+                    "digest": "sha256:" + "b" * 64,
+                }[changed]
+            },
+        )
+    consumer = Artifact(
+        "https://consumer.example.test",
+        Release.model_validate(
+            {"pack": "consumer", "version": "2.0", "artifactDigest": "sha256:" + "c" * 64}
+        ),
+        (dependency,),
+    )
+    installed = assess(store, (consumer,))
+    installation = assess(store, (consumer,), installing=True)
+    assert installed.allowed
+    assert installation.allowed is (changed is not None)
+    assert len(installed.findings) == (1 if changed is None else 0)
+    store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    assert assess(store, (consumer,)).allowed is (changed is not None)
 
 
 def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback(
@@ -1254,8 +1295,11 @@ def test_installer_cached_blocks_cover_new_install_serving_and_retained_rollback
     assert acquisition.current_number() is None
 
 
-@pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused"])
-def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: Path, cause: str):
+@pytest.mark.parametrize("cause", ["root", "shared", "isolated", "source", "unused", "foreign"])
+@pytest.mark.parametrize("state", ["malicious", "vulnerable"])
+def test_generation_selection_uses_sealed_installed_dependency_bytes(
+    tmp_path: Path, cause: str, state: str
+):
     from dinkster.compose import CompositionError
     from dinkster.generation_packs import load_generation_packs, stage_generation_packs
 
@@ -1285,7 +1329,12 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: P
     )
     python.parent.mkdir(parents=True)
     python.write_bytes(b"interpreter not launched by selection")
-    bad = {"filename": "bad_library-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
+    bad = {
+        "filename": "bad_library-1.0-py3-none-any.whl",
+        "size": 7,
+        "sha256": "a" * 64,
+        "registry": "https://other.example.test" if cause == "foreign" else REGISTRY,
+    }
     receipts = {
         "installed-wheels.json": {
             "format": "dinkster.installed-wheels/1",
@@ -1303,9 +1352,10 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: P
             "inherited": [],
         },
     }
-    if cause in {"root", "shared", "isolated"}:
+    if cause in {"root", "shared", "isolated", "foreign"}:
         name = {
             "root": "installed-wheels.json",
+            "foreign": "installed-wheels.json",
             "shared": "packs/z-provider/installed-wheels.json",
             "isolated": "packs/alpha-consumer/installed-wheels.json",
         }[cause]
@@ -1335,16 +1385,21 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(tmp_path: P
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
     assert len(load_generation_packs(generation)[1]) == 2
-    feed = _feed("malicious")
+    feed = _feed(state)
+    feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
     if cause == "source":
         feed["notices"][0]["release"].update(
-            pack="z-provider", artifactDigest=entries[1].artifact_digest
+            pack="z-provider", version="1.2.3", artifactDigest=entries[1].artifact_digest
         )
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
-    if cause == "unused":
+    if state == "vulnerable":
+        assert len(load_generation_packs(generation)[1]) == 2
+        store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+    if cause == "unused" or (cause == "foreign" and state == "vulnerable"):
         assert len(load_generation_packs(generation)[1]) == 2
     else:
-        with pytest.raises(CompositionError, match="security affected: alpha-consumer"):
+        classification = "affected" if state == "malicious" else "vulnerable"
+        with pytest.raises(CompositionError, match=f"security {classification}: alpha-consumer"):
             load_generation_packs(generation)
     receipt_path = generation / "packs/alpha-consumer/installed-wheels.json"
     receipt_path.write_text("{}\n")

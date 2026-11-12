@@ -209,6 +209,7 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         "fixture_extra",
         "import torch, cv2\ndef node(): return torch.value + cv2.value\n",
     )
+    extra = replace(extra, registry="https://issuer.example.test")
     alternative_source = tmp_path / "alternative"
     alternative_source.mkdir()
     alternative = _wheel(
@@ -300,6 +301,7 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
                     "filename": extra.filename,
                     "sha256": extra.sha256,
                     "size": extra.size,
+                    "registry": extra.registry,
                 }
             ],
             "inherited": ["opencv-contrib-python-headless", "torch"],

@@ -281,7 +281,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             assert software.engine_release == initial["engine"]["release"]
             assert software.base == initial["base"]["fixture-cpu"]["id"]
             locked = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
-            assert locked.get("healthy") == entry
+            assert locked.get("healthy") == replace(
+                entry, source=f"registry:http://127.0.0.1:{server.server_port}"
+            )
             pack_python = (
                 generation
                 / "packs/healthy"
@@ -516,7 +518,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
         assert Lockfile.from_record_json(snapshots[2]["metadata"]["dinkster.lock"]) == Lockfile.of(
-            [entry]
+            [replace(entry, source=f"registry:http://127.0.0.1:{server.server_port}")]
         )
         assert (
             snapshots[2]["metadata"]["packs/healthy/pack-lock.json"].encode("utf-8")
@@ -1230,7 +1232,18 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                         PackLock.read(dependencies / "extra.pack-lock.json"),
                         indexes=(endpoint + "/static/fixture-cpu/simple/",),
                         packages=(
-                            *PackLock.read(dependencies / "extra.pack-lock.json").packages,
+                            *(
+                                replace(
+                                    package,
+                                    wheels=tuple(
+                                        replace(wheel, registry=endpoint)
+                                        for wheel in package.wheels
+                                    ),
+                                )
+                                for package in PackLock.read(
+                                    dependencies / "extra.pack-lock.json"
+                                ).packages
+                            ),
                             LockedDistribution(
                                 "extra",
                                 "1.0.0",
@@ -1240,6 +1253,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                                         len(extra_archive),
                                         hashlib.sha256(extra_archive).hexdigest(),
                                         endpoint + "/static/" + outer_wheel["url"],
+                                        endpoint,
                                     ),
                                 ),
                             ),
@@ -1987,9 +2001,14 @@ def test_missing_base_offers_minimal_compatible_replacements(
         expected_wheels = []
         base_manifest = json.loads(chosen["snapshot"]["metadata"]["base-manifest.json"])
         expected_wheels.extend(
-            {key: row[key] for key in ("filename", "size", "sha256")}
+            {
+                **{key: row[key] for key in ("filename", "size", "sha256")},
+                "registry": row.get("index"),
+            }
             for row in base_manifest["wheels"]
         )
+        engine_manifest = json.loads(chosen["snapshot"]["metadata"]["engine-manifest.json"])
+        repository = engine_manifest.get("repository")
         release = mirror / "engine" / expected_engine["release"][7:]
         for path in release.glob("*.whl"):
             expected_wheels.append(
@@ -1997,6 +2016,7 @@ def test_missing_base_offers_minimal_compatible_replacements(
                     "filename": path.name,
                     "size": path.stat().st_size,
                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "registry": f"https://github.com/{repository}" if repository else None,
                 }
             )
         expected_receipt = {

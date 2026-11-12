@@ -716,6 +716,7 @@ def static_release_wheel(
             cast("int", size),
             sha256,
             registry.endpoint + "/static/" + cast("str", relative),
+            registry.endpoint,
         )
         LockedDistribution(name, version, (wheel,))
     except (ValueError, ProvisionError) as exc:
@@ -1065,7 +1066,16 @@ def read_registry_pack_locks(
                     lock,
                     indexes=(registry.endpoint + f"/static/{variant}/simple/",),
                     packages=(
-                        *lock.packages,
+                        *(
+                            replace(
+                                package,
+                                wheels=tuple(
+                                    replace(wheel, registry=wheel.registry or registry.endpoint)
+                                    for wheel in package.wheels
+                                ),
+                            )
+                            for package in lock.packages
+                        ),
                         LockedDistribution(entry.pack, entry.version, (wheel,)),
                     ),
                 )

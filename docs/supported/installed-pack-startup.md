@@ -17,6 +17,8 @@
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
+  Selected file records retain their issuing origins and distribution versions;
+  changing acquisition mirrors or registry aliases cannot change those origins.
 - Managed generation pack selection checks cached notices against sealed library
   identities and transitive pack sources. A malicious dependency blocks its
   consumer as affected, not malicious. Missing or changed wheel provenance refuses
@@ -24,6 +26,10 @@
   before checking. Catalog preparation also checks before importing pack code,
   using the provisioned wheel receipts before the generation is sealed. Sealed
   generations continue to require the recorded receipt hashes.
+  Dependency vulnerability advice matches the exact issuing registry, distribution,
+  version and file digest, preserving pending continuation and explicit denial.
+  Missing issuing origins refuse security-checked selection rather than guessing
+  authority from download URLs or local cache paths.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.

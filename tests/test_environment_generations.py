@@ -1674,10 +1674,34 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
         f"selected-fixture==1.0 --hash=sha256:{sha} --hash=sha256:{other_sha}\n"
         'inactive-fixture==1.0; sys_platform == "not-a-platform" --hash=sha256:' + "0" * 64 + "\n"
     )
-    generation = tmp_path / "generation"
-    python = prepare_engine_interpreter(
-        generation, store=store, base="sha256:" + "a" * 64, constraints=constraints
+    (base.parent / "manifest.json").write_text(
+        json.dumps(
+            {
+                "wheels": [
+                    {
+                        "filename": selected.name,
+                        "size": selected.stat().st_size,
+                        "sha256": sha,
+                        "index": "https://issuer.example.test/simple",
+                    }
+                ]
+            }
+        )
     )
+    root = tmp_path / "project"
+    generation = root / "generations/1"
+    sealed = build_generation(
+        root=root,
+        number=1,
+        store=store,
+        base="sha256:" + "a" * 64,
+        engine_version="1.0",
+        engine_release="sha256:" + "b" * 64,
+        constraints=constraints,
+        variant="linux-cpu",
+        worker_protocol=1,
+    )
+    python = interpreter(generation)
     assert (
         subprocess.check_output(
             [str(python), "-I", "-c", "import selected_fixture; print(selected_fixture.VALUE)"]
@@ -1697,9 +1721,19 @@ def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existin
     )
     assert json.loads((generation / "installed-wheels.json").read_text()) == {
         "format": "dinkster.installed-wheels/1",
-        "wheels": [{"filename": selected.name, "size": selected.stat().st_size, "sha256": sha}],
+        "wheels": [
+            {
+                "filename": selected.name,
+                "size": selected.stat().st_size,
+                "sha256": sha,
+                "registry": "https://issuer.example.test/simple",
+            }
+        ],
         "inherited": [],
     }
+    assert dict(sealed.files)["installed-wheels.json"] == (
+        "sha256:" + hashlib.sha256((generation / "installed-wheels.json").read_bytes()).hexdigest()
+    )
 
 
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
