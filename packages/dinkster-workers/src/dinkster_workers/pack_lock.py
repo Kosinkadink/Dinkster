@@ -62,7 +62,8 @@ class LockedWheel:
         if urlparse(self.url).scheme not in {"https", "http", "file"}:
             raise ProvisionError(f"unsupported wheel URL: {self.filename}")
         if self.registry is not None:
-            issuer = urlparse(self.registry) if isinstance(self.registry, str) else None
+            registry = cast(object, self.registry)
+            issuer = urlparse(registry) if isinstance(registry, str) else None
             if (
                 issuer is None
                 or issuer.scheme not in {"https", "http"}
