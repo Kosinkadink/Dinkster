@@ -1,5 +1,7 @@
 ## Image operations
 
+- Pack authors can import `parse_color` from `dinkster_api.v1` for normalized
+  float32 RGBA from supported color names, hex RGB/RGBA or comma-separated channels.
 - `WebcamCapture` decodes a granted browser-captured PNG into a single image
   batch. Its `WEBCAM` input retains the uploaded asset identity across worker
   transport; filesystem path literals are not accepted. Width, height and
