@@ -1595,10 +1595,6 @@ class Installer:
         database = self.root / "security.sqlite3"
         if not database.is_file() and not (self.root / "security.toml").is_file():
             return
-        from .registries import RegistryConfig, load_registries
-
-        config = self.root / "registries.toml"
-        registries = load_registries(config) if config.is_file() else RegistryConfig()
         host = SecurityHost(self.root)
         host.refresh()
         installed = {
@@ -1607,19 +1603,7 @@ class Installer:
             for entry in self.lockfile_of(number).packs
         }
         for entry in target.packs:
-            registry = entry.source
-            if _is_registry_source(entry.source):
-                registry = registries.registry_for(entry).endpoint
-            artifact = SecurityArtifact(
-                registry,
-                SecurityRelease.model_validate(
-                    {
-                        "pack": entry.pack,
-                        "version": entry.version,
-                        "artifactDigest": entry.artifact_digest,
-                    }
-                ),
-            )
+            artifact = self._security_artifact(entry)
             result = host.assess(
                 (artifact,),
                 installing=installing
@@ -1638,6 +1622,27 @@ class Installer:
                     f"({entry.artifact_digest}), notice {finding.notice.id} "
                     f"revision {finding.notice.revision}, decision {finding.decision}"
                 )
+
+    def _security_artifact(self, entry: LockedPack) -> SecurityArtifact:
+        from .registries import RegistryConfig, load_registries
+
+        config = self.root / "registries.toml"
+        registries = load_registries(config) if config.is_file() else RegistryConfig()
+        registry = (
+            registries.registry_for(entry).endpoint
+            if _is_registry_source(entry.source) and config.is_file()
+            else entry.source
+        )
+        return SecurityArtifact(
+            registry,
+            SecurityRelease.model_validate(
+                {
+                    "pack": entry.pack,
+                    "version": entry.version,
+                    "artifactDigest": entry.artifact_digest,
+                }
+            ),
+        )
 
     # -- serving ---------------------------------------------------------
 
@@ -1702,6 +1707,10 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
+                    security_artifacts=tuple(
+                        self._security_artifact(entries[member])
+                        for member in (group[1] if group is not None else (entry.pack,))
+                    ),
                     trust_reserved=_is_registry_source(entry.source)
                     and entry.publisher == "dinkster",
                     packs={manifest.name: info},

@@ -26,6 +26,7 @@ class HostSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     feed_urls: dict[str, HttpUrl] = Field(default_factory=dict)
+    refresh_interval_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
     request_timeout_seconds: float = Field(default=5, gt=0, allow_inf_nan=False)
     refuse_vulnerable: bool = False
     maximum_feed_age_seconds: int | None = Field(default=None, gt=0)
@@ -39,6 +40,7 @@ class SecurityHost:
         self.store = SecurityStore(root / "security.sqlite3")
         self.settings = HostSettings()
         self.refresh_errors: dict[str, str] = {}
+        self._reported: set[tuple[str, str, int, str, str]] = set()
 
     def refresh(self) -> None:
         """Try every trusted issuer independently; outage never erases its checkpoint."""
@@ -77,10 +79,31 @@ class SecurityHost:
     def assess(self, artifacts: tuple[Artifact, ...], *, installing: bool = False) -> Assessment:
         """Use the shared policy, including signed issue age rather than download age."""
         seconds = self.settings.maximum_feed_age_seconds
-        return assess(
+        result = assess(
             self.store,
             artifacts,
             installing=installing,
             refuse_vulnerable=self.settings.refuse_vulnerable,
             maximum_feed_age=None if seconds is None else timedelta(seconds=seconds),
         )
+        for item in result.findings:
+            identity = (
+                item.registry,
+                str(item.notice.id),
+                item.notice.revision,
+                item.artifact.release.pack,
+                item.decision,
+            )
+            if identity not in self._reported:
+                logger.warning(
+                    "Security %s: %s==%s, notice %s revision %d, decision %s, execution %s",
+                    item.state,
+                    item.artifact.release.pack,
+                    item.artifact.release.version,
+                    item.notice.id,
+                    item.notice.revision,
+                    item.decision,
+                    "allowed" if item.allowed else "refused",
+                )
+                self._reported.add(identity)
+        return result

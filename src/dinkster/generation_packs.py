@@ -24,10 +24,9 @@ from dinkster_registry import (
 )
 from dinkster_schema import canonical_claim, canonical_name
 from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.host import SecurityHost
 from dinkster_security.inventory import generation_dependencies
 from dinkster_security.policy import Artifact as SecurityArtifact
-from dinkster_security.policy import assess
-from dinkster_security.store import SecurityStore
 from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
@@ -150,7 +149,9 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
     )
     project = generation.parent.parent
     database = project / "security.sqlite3"
-    if database.is_file():
+    if database.is_file() or (project / "security.toml").is_file():
+        security = SecurityHost(project)
+        security.refresh()
         lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
         libraries = generation_dependencies(
             generation, record["files"], tuple(entry.pack for entry in lock.packs), tuple(hosting)
@@ -159,6 +160,7 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
         registries = load_registries(config) if config.is_file() else RegistryConfig()
         entries = {entry.pack: entry for entry in lock.packs}
         artifacts: list[SecurityArtifact] = []
+        selected: list[PackSpec] = []
         for entry, spec in zip(lock.packs, specs, strict=True):
             dependencies = {
                 entries[Path(path).name].artifact_digest
@@ -183,8 +185,12 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
                     tuple(sorted(dependencies | set(libraries[entry.pack]))),
                 )
             )
-        result = assess(SecurityStore(database), tuple(artifacts))
+            selected.append(replace(spec, security_artifacts=(artifacts[-1],)))
+        specs = tuple(selected)
+        result = security.assess(tuple(artifacts))
         if not result.allowed:
+            if result.stale_registries:
+                raise CompositionError("security feed exceeds configured maximum age")
             finding = next(item for item in result.findings if not item.allowed)
             raise CompositionError(
                 f"security {finding.state}: {finding.artifact.release.pack}, "

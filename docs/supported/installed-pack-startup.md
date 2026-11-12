@@ -9,15 +9,19 @@
   including configured mirrors. Failed refresh preserves cached decisions and
   blocks without inventing incidents. Feed age does not refuse by default;
   explicit age limits and vulnerability refusal apply to retained releases too.
-  These checks do not stop an already running worker.
+  Serving hosts periodically refresh configured security feeds. A newly blocked
+  isolated worker stops, including work pinned before the notice arrived;
+  unrelated workers continue. Pending vulnerable work continues until denied.
+  A signed lift clears the classification without resuming a stopped worker.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
 - Managed generation pack selection checks cached notices against sealed library
   identities and transitive pack sources. A malicious dependency blocks its
   consumer as affected, not malicious. Missing or changed wheel provenance refuses
-  selection when security checking is configured. This is not a supervisor
-  launch gate or a running-worker monitor.
+  selection when security checking is configured. Generation selection refreshes
+  before checking. Supervisor install/start/restore gates are separate from this
+  serving-host behavior.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.

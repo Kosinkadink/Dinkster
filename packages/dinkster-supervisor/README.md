@@ -36,6 +36,7 @@ trust from `<root>/security.sqlite3`. Refresh requests the complete signed
 ```toml
 refuse_vulnerable = false
 request_timeout_seconds = 5.0
+refresh_interval_seconds = 60.0
 # maximum_feed_age_seconds = 86400
 
 [feed_urls]
@@ -50,7 +51,17 @@ uses signed `issuedAt`, not the time of the latest successful download. Explicit
 vulnerability refusal applies to retained releases too. Local policy reloads
 on refresh; malformed policy refuses rather than silently reverting to defaults.
 Installer acquisition, install, rollback and serving selection refresh before
-their policy check. This transport does not itself stop or resume any process.
+their policy check. Managed generation pack selection also refreshes its project
+root. Serving uses the selected generation's project root, otherwise the install
+root, otherwise the library root, when security trust or configuration exists
+at launch. The serving host owns a periodic refresh task and cancels it during
+cleanup. It checks release identities before catalog preparation, worker import,
+lazy activation and dispatch, including previously pinned routes. A new block
+revokes execution before closing isolated workers or shared process owners;
+affected in-process execution requests whole-engine shutdown. A lift never
+resumes a revoked session. `GET /api/security` reports current findings, decisions,
+configured stale issuers and refresh failures. Flagged releases are logged once
+per notice revision and answer during a host lifetime.
 
 ## Ingress
 

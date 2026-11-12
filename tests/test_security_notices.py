@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import hashlib
@@ -233,6 +234,149 @@ def test_host_refuses_invalid_local_policy_before_transport(tmp_path: Path, conf
     with pytest.raises(ValueError):
         host.refresh()
     assert host.store.registries() == ()
+
+
+@pytest.mark.parametrize("stop_reason", ["malicious", "denied"])
+def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_control(
+    tmp_path: Path, stop_reason: str
+):
+    from dinkster_protocol import Invocation
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    key = Ed25519PrivateKey.generate()
+    store = _store(tmp_path, key)
+    host = SecurityHost(tmp_path)
+    specs = []
+    roots = []
+    for name in ("test-pack", "control-pack"):
+        root = tmp_path / name
+        root.mkdir()
+        marker = tmp_path / f"{name}-markers"
+        marker.mkdir()
+        roots.append(marker)
+        module = "security_marker_" + hashlib.sha256(str(root).encode()).hexdigest()[:12]
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "{module}:NODES"\n')
+        (root / f"{module}.py").write_text(
+            "import asyncio\nfrom pathlib import Path\n"
+            "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "from dinkster_values import CORE_STRING\n"
+            f"ROOT = Path({str(marker)!r})\n"
+            "(ROOT / 'imported').write_text('imported')\n"
+            "class Marker(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            f"        return NodeSchema(node_type='{name}.run', display_name='Marker', "
+            "category='test', inputs=(), outputs=(OutputSpec('value', "
+            "TypeExpr.concrete(CORE_STRING)),), io_bound=True)\n"
+            "    @classmethod\n"
+            "    async def execute(cls):\n"
+            "        (ROOT / 'started').write_text('started')\n"
+            "        while (ROOT / 'hold').exists() and not (ROOT / 'release').exists():\n"
+            "            await asyncio.sleep(0.01)\n"
+            "        with (ROOT / 'finished').open('a') as stream:\n"
+            "            stream.write('finished\\n')\n"
+            f"        return cls.outputs(value='{name}')\n"
+            "NODES = [Marker]\n"
+        )
+        report = prepare_catalog(manifest, environment={"PYTHONPATH": str(root)})
+        assert report.ok, report
+        (marker / "imported").unlink()
+        digest = build_artifact(root, tmp_path / f"{name}.zip")
+        artifact = Artifact(
+            REGISTRY,
+            Release.model_validate(
+                {
+                    "pack": name,
+                    "version": "1.2.3",
+                    "artifactDigest": digest,
+                }
+            ),
+        )
+        specs.append(
+            PackSpec(
+                manifest,
+                env={"PYTHONPATH": str(root)},
+                require_catalog=True,
+                security_artifacts=(artifact,),
+            )
+        )
+    feed = _feed("malicious")
+    feed["notices"][0]["release"]["artifactDigest"] = (
+        specs[0].security_artifacts[0].release.artifact_digest
+    )
+    store.import_feed(REGISTRY, _signed(feed, key))
+
+    async def scenario() -> None:
+        composer = ServingComposer(security=host)
+        try:
+            with pytest.raises(SecurityError, match="security malicious"):
+                await composer.add_pack(specs[0])
+            assert not (roots[0] / "imported").exists()
+            await composer.add_pack(specs[1])
+            feed["revision"] = 2
+            feed["notices"][0].update(revision=2, previousRevision=1, status="cleared")
+            store.import_feed(REGISTRY, _signed(feed, key))
+            await composer.add_pack(specs[0])
+            assert not (roots[0] / "imported").exists()
+            pinned = composer.composition._pin_execution()
+
+            async def invoke(name: str):
+                return await pinned.worker.invoke(
+                    Invocation(
+                        invocation_id=name,
+                        node_id=name,
+                        node_type=f"{name}.run",
+                        inputs={},
+                        effective_schema=composer.composition.schemas[f"{name}.run"],
+                        executor=name,
+                    )
+                )
+
+            (roots[0] / "hold").touch()
+            running = asyncio.create_task(invoke("test-pack"))
+            async with asyncio.timeout(15):
+                while not (roots[0] / "started").exists():
+                    await asyncio.sleep(0.01)
+            feed["revision"] = 3
+            feed["notices"][0].update(
+                revision=3, previousRevision=2, status="active", state="vulnerable"
+            )
+            store.import_feed(REGISTRY, _signed(feed, key))
+            assert not await composer.enforce_security()
+            assert not running.done()
+            assert composer.security_status()["findings"][0]["decision"] == "pending"
+            control = await invoke("control-pack")
+            assert control.error is None and control.outputs["value"].resolve() == "control-pack"
+            if stop_reason == "denied":
+                store.answer(REGISTRY, UUID(NOTICE), 3, approved=False)
+            else:
+                feed["revision"] = 4
+                feed["notices"][0].update(revision=4, previousRevision=3, state="malicious")
+                store.import_feed(REGISTRY, _signed(feed, key))
+            assert not await composer.enforce_security()
+            await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), 10)
+            assert not (roots[0] / "finished").exists()
+            with pytest.raises(SecurityError):
+                await invoke("test-pack")
+            control = await invoke("control-pack")
+            assert control.error is None and control.outputs["value"].resolve() == "control-pack"
+            assert (roots[1] / "finished").read_text() == "finished\nfinished\n"
+            feed["revision"] = 5
+            previous = feed["notices"][0]["revision"]
+            feed["notices"][0].update(revision=5, previousRevision=previous, status="cleared")
+            store.import_feed(REGISTRY, _signed(feed, key))
+            assert not composer.security_status()["findings"]
+            assert not await composer.enforce_security()
+            with pytest.raises(SecurityError, match="explicit restart"):
+                await invoke("test-pack")
+            assert not (roots[0] / "finished").exists()
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("previous_publisher", [None, "original-publisher"])

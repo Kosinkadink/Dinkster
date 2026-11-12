@@ -89,6 +89,7 @@ from dinkster_schema import (
     core_logger,
     validate_name,
 )
+from dinkster_security.host import SecurityHost
 from dinkster_server import (
     SETTINGS_CATEGORIES,
     STATE_KEY,
@@ -1670,6 +1671,26 @@ def main(argv: list[str] | None = None) -> None:
         os.environ["DINKSTER_MOUNTS_SNAPSHOT"] = str(mounts_snapshot)
         # Workers inherit the store where consented acquisition lands bytes.
         os.environ["DINKSTER_ASSET_VAULT"] = str(library_root / "vault")
+    security_root = (
+        args.generation.parent.parent
+        if args.generation is not None
+        else Path(args.install_root)
+        if args.install_root
+        else Path(args.library_root)
+        if args.library_root
+        else None
+    )
+    security = (
+        SecurityHost(security_root)
+        if security_root is not None
+        and (
+            (security_root / "security.sqlite3").is_file()
+            or (security_root / "security.toml").is_file()
+        )
+        else None
+    )
+    if security is not None:
+        security.refresh()
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
     for pack_id in () if args.no_default_packs else default_pack_ids():
@@ -1844,6 +1865,7 @@ def main(argv: list[str] | None = None) -> None:
                 schema_reload_requests.put_nowait(name)
 
         composer = ServingComposer(
+            security=security,
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
@@ -2084,6 +2106,11 @@ def main(argv: list[str] | None = None) -> None:
 
         if resolution_store is not None:
             app.on_cleanup.append(close_federated_assets)
+
+        async def security_status(_: web.Request) -> web.Response:
+            return web.json_response(composer.security_status())
+
+        app.router.add_get("/api/security", security_status)
         _add_collaboration_routes(
             app,
             Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
@@ -2185,6 +2212,25 @@ def main(argv: list[str] | None = None) -> None:
             # on_startup runs inside run_app's main task; capturing it is
             # what lets a composition failure abort the whole process.
             main_task = asyncio.current_task()
+
+            async def monitor_security() -> None:
+                assert security is not None
+                try:
+                    while True:
+                        await asyncio.to_thread(security.refresh)
+                        if await composer.enforce_security():
+                            raise RuntimeError("security block requires whole-engine stop")
+                        await asyncio.sleep(security.settings.refresh_interval_seconds)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failure.append(exc)
+                    log.error("security monitor stopped the host: %s", exc)
+                    if main_task is not None:
+                        main_task.cancel()
+
+            if security is not None:
+                drive_tasks.append(asyncio.create_task(monitor_security()))
 
             async def drive() -> None:
                 async def publish_delta(delta: PackDelta) -> int:
