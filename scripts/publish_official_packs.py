@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -23,9 +26,104 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
-from dinkster.registries import NamedRegistry, RegistryPublishError, publish_release
+from dinkster.registries import NamedRegistry, RegistryPublishError
 from scripts.build_official_packs import library_metadata
 from scripts.build_release import read_base_manifest
+
+
+def _submit_set(
+    registry: NamedRegistry,
+    packs: Sequence[LockedPack],
+    sources: Path,
+    output: Path,
+    engine: dict[str, str] | None,
+) -> tuple[str, dict[str, tuple[str, str]]]:
+    boundary = "dinkster-" + uuid.uuid4().hex
+    members = []
+    files = bytearray()
+    for index, pack in enumerate(packs):
+        field = f"wheel{index}"
+        archive = sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+        member = {
+            "name": pack.pack,
+            "version": pack.version,
+            "archive": field,
+            "locks": json.loads((output / f"{pack.pack}-{pack.version}.json").read_bytes()),
+        }
+        if engine is not None:
+            member["engine"] = engine
+        members.append(member)
+        files.extend(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; '
+            f'filename="{archive.name}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode(
+                "ascii"
+            )
+        )
+        files.extend(archive.read_bytes())
+        files.extend(b"\r\n")
+    data = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="manifest"\r\n\r\n'.encode("ascii")
+        + json.dumps({"members": members}, allow_nan=False).encode("ascii")
+        + b"\r\n"
+        + files
+        + f"--{boundary}--\r\n".encode("ascii")
+    )
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    if token := registry.token():
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        registry.endpoint.rstrip("/") + "/v1/publish-sets", data=data, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            document = json.load(response)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RegistryPublishError(f"batch submission failed: HTTP {exc.code}: {detail}") from exc
+    except (OSError, ValueError) as exc:
+        raise RegistryPublishError(f"batch submission failed: {exc}") from exc
+    (output / "set.json").write_text(json.dumps(document, indent=2) + "\n", encoding="ascii")
+    try:
+        set_id = document["setId"]
+        if (
+            not isinstance(set_id, str)
+            or not set_id
+            or document["status"] not in {"queued", "accepted", "rejected", "expired"}
+        ):
+            raise ValueError
+        received = document["members"]
+        if not isinstance(received, list) or len(received) != len(packs):
+            raise ValueError
+        expected = {pack.pack: pack for pack in packs}
+        candidates = {}
+        for member in received:
+            pack = expected.pop(member["packName"])
+            candidate_id, state = member["candidateId"], member["status"]
+            if (
+                member["version"] != pack.version
+                or member["artifactDigest"] != pack.artifact_digest
+                or not isinstance(candidate_id, str)
+                or not candidate_id
+                or state
+                not in {
+                    "queued",
+                    "scanning",
+                    "retrying",
+                    "promoting",
+                    "review",
+                    "accepted",
+                    "rejected",
+                }
+            ):
+                raise ValueError
+            candidates[pack.pack] = candidate_id, state
+        if len({candidate_id for candidate_id, _ in candidates.values()}) != len(packs):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise RegistryPublishError(
+            "registry answered batch submission with a malformed receipt"
+        ) from exc
+    return set_id, candidates
 
 
 def _wait_active(
@@ -34,8 +132,11 @@ def _wait_active(
     version: str | None,
     candidate_id: str | None,
     deadline: float,
+    artifact_digest: str | None = None,
 ) -> None:
     subject = f"{dependency.pack}@{version or dependency.version}"
+    if candidate_id is not None:
+        subject += f" (candidate {candidate_id})"
     last = "no active public version"
     while (remaining := deadline - time.monotonic()) > 0:
         path = f"/v1/packs/{quote(dependency.pack, safe='')}/versions"
@@ -65,6 +166,13 @@ def _wait_active(
                     and document.get("version") == version
                     and document.get("packName") == dependency.pack
                 ):
+                    if (
+                        artifact_digest is not None
+                        and document.get("artifact", {}).get("digest") != artifact_digest
+                    ):
+                        raise RegistryPublishError(
+                            f"{subject}: public archive digest differs from built archive"
+                        )
                     return
                 last = document.get("stateReason") or document.get("state") or last
                 break
@@ -128,6 +236,7 @@ def publish_official_packs(
     registry: NamedRegistry | None = None,
     preflight_registry: str | None = None,
     activation_timeout: float = 600,
+    engine_manifest: Path | None = None,
 ) -> list[dict[str, object]]:
     """Validate the entire publication set before exposing maps or making a request.
 
@@ -137,6 +246,25 @@ def publish_official_packs(
     """
     if output.exists():
         raise ValueError("publication output must be a new directory")
+    engine = None
+    engine_version = None
+    if engine_manifest is not None:
+        metadata = engine_manifest.read_bytes()
+        release = json.loads(metadata)
+        if (
+            not isinstance(release, dict)
+            or release.get("format") != "dinkster.engine/1"
+            or release.get("repository") != "Kosinkadink/Dinkster"
+            or not isinstance(release.get("commit"), str)
+            or re.fullmatch(r"[0-9a-f]{40}", release["commit"]) is None
+            or not isinstance(release.get("version"), str)
+        ):
+            raise ValueError("publication requires an exact Dinkster engine manifest")
+        engine_version = release["version"]
+        engine = {
+            "commit": release["commit"],
+            "manifestDigest": "sha256:" + hashlib.sha256(metadata).hexdigest(),
+        }
     supported = json.loads((root / "scripts/base_bundles.json").read_bytes())
     if not supported:
         raise ValueError("official publication requires supported bases")
@@ -199,6 +327,8 @@ def publish_official_packs(
                     or manifest.compatibility.version != pack.version
                 ):
                     raise ValueError(f"official publication source identity mismatch: {pack.pack}")
+                if engine_version is not None:
+                    manifest.compatibility.require_engine(pack.pack, engine_version)
             for value in requirements:
                 requirement = Requirement(value)
                 name = canonicalize_name(requirement.name)
@@ -318,7 +448,6 @@ def publish_official_packs(
                 )
             public.add(pack.pack)
     result: list[dict[str, object]] = []
-    candidates: dict[str, str] = {}
     for pack in ordered if registry is not None else catalog.packs:
         locks = output / f"{pack.pack}-{pack.version}.json"
         row: dict[str, object] = {
@@ -327,35 +456,68 @@ def publish_official_packs(
             "artifactDigest": pack.artifact_digest,
             "locks": str(locks),
         }
+        result.append(row)
         if registry is not None:
-            if pack.pack in public:
-                row.update(state="published")
-                result.append(row)
-                continue
+            row["state"] = "published" if pack.pack in public else "submitting"
+    (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    candidates: dict[str, str] = {}
+    if registry is not None:
+        missing = [pack for pack in ordered if pack.pack not in public]
+        missing_names = {pack.pack for pack in missing}
+        for pack in missing:
             for dep in dependencies[pack.pack]:
+                if dep.pack in missing_names:
+                    continue
                 _wait_active(
                     registry,
                     dep,
                     selected[dep.pack].version if dep.pack in selected else None,
-                    candidates.get(dep.pack),
+                    None,
                     time.monotonic() + activation_timeout,
+                    selected[dep.pack].artifact_digest if dep.pack in selected else None,
                 )
+        if missing:
             try:
-                verdict = publish_release(
-                    registry,
-                    sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
-                    pack.pack,
-                    pack.version,
-                    locks=locks,
-                )
+                set_id, submitted = _submit_set(registry, missing, sources, output, engine)
             except RegistryPublishError as exc:
                 raise RegistryPublishError(
-                    f"{pack.pack}@{pack.version}: publication refused (not retried); "
+                    "publication refused (not retried); "
                     f"if archive or install locks changed, bump the pack version: {exc}"
                 ) from exc
-            row.update(state=verdict.state, candidateId=verdict.candidate_id)
-            candidates[pack.pack] = verdict.candidate_id
-        result.append(row)
+            for row in result:
+                name = str(row["pack"])
+                if name in submitted:
+                    candidate_id, state = submitted[name]
+                    row.update(state=state, candidateId=candidate_id, setId=set_id)
+                    candidates[name] = candidate_id
+            (output / "result.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8"
+            )
+        deadline = time.monotonic() + activation_timeout
+        failures = []
+        for row in result:
+            pack = selected[str(row["pack"])]
+            if pack.pack not in candidates:
+                continue
+            try:
+                _wait_active(
+                    registry,
+                    PackDependency(pack.pack, "==" + pack.version),
+                    pack.version,
+                    candidates[pack.pack],
+                    deadline,
+                    pack.artifact_digest,
+                )
+            except RegistryPublishError as exc:
+                row["reason"] = str(exc)
+                failures.append(str(exc))
+            else:
+                row["state"] = "published"
+            (output / "result.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8"
+            )
+        if failures:
+            raise RegistryPublishError("Publication incomplete:\n" + "\n".join(failures))
     return result
 
 
@@ -365,22 +527,26 @@ if __name__ == "__main__":
     parser.add_argument("--base-manifest", required=True, action="append", type=Path)
     parser.add_argument("--pack-lock", required=True, action="append", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--engine-manifest", type=Path)
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--check-published", action="store_true")
     parser.add_argument("--registry", default="https://registry.dinkster.org")
     args = parser.parse_args()
-    print(
-        json.dumps(
-            publish_official_packs(
-                Path(__file__).resolve().parents[1],
-                args.sources.resolve(),
-                args.base_manifest,
-                args.pack_lock,
-                args.output.resolve(),
-                registry=NamedRegistry("", args.registry, token_env="DINKSTER_REGISTRY_TOKEN")
-                if args.publish
-                else None,
-                preflight_registry=args.registry if args.check_published else None,
-            )
+    try:
+        result = publish_official_packs(
+            Path(__file__).resolve().parents[1],
+            args.sources.resolve(),
+            args.base_manifest,
+            args.pack_lock,
+            args.output.resolve(),
+            registry=NamedRegistry("", args.registry, token_env="DINKSTER_REGISTRY_TOKEN")
+            if args.publish
+            else None,
+            preflight_registry=args.registry if args.check_published else None,
+            engine_manifest=args.engine_manifest,
         )
-    )
+    except RegistryPublishError as exc:
+        if args.output.exists():
+            (args.output / "failure.txt").write_text(str(exc) + "\n", encoding="utf-8")
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(result))

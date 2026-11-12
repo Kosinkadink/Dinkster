@@ -53,6 +53,43 @@ def publish(release: Path) -> None:
         raise ValueError("unexpected tools publication input")
     client = object_store()
     check_collision(client, "sha256:" + digest, "tools")
+    endpoint = "repos/Kosinkadink/Dinkster/git/"
+    reference = subprocess.run(
+        ["gh", "api", endpoint + "ref/tags/" + quote(tag, safe="")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if reference.returncode:
+        if str(json.loads(reference.stdout).get("status")) != "404":
+            reference.check_returncode()
+        # Push the already reachable run commit; the refs API can require workflows authorization.
+        subprocess.run(
+            [
+                "git",
+                "push",
+                "origin",
+                f"{manifest['commit']}:refs/tags/{tag}",
+            ],
+            check=True,
+        )
+        reference = subprocess.run(
+            ["gh", "api", endpoint + "ref/tags/" + quote(tag, safe="")],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    target = json.loads(reference.stdout)["object"]
+    while target["type"] == "tag":
+        annotated = subprocess.run(
+            ["gh", "api", endpoint + "tags/" + target["sha"]],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        target = json.loads(annotated.stdout)["object"]
+    if target["type"] != "commit" or target["sha"] != manifest["commit"]:
+        raise ValueError("existing tools release tag targets a different commit")
     existing = subprocess.run(
         [
             "gh",
@@ -70,7 +107,11 @@ def publish(release: Path) -> None:
     )
     if existing.returncode == 0:
         identity = json.loads(existing.stdout)
-        if identity["tagName"] != tag or identity["targetCommitish"] != manifest["commit"]:
+        # The verified tag, not targetCommitish creation metadata, identifies the release commit.
+        if identity["tagName"] != tag or identity["targetCommitish"] not in {
+            "main",
+            manifest["commit"],
+        }:
             raise ValueError("existing tools release targets a different commit")
         assets = identity["assets"]
         expected_sizes = {path.name: path.stat().st_size for path in files}
@@ -94,8 +135,7 @@ def publish(release: Path) -> None:
                 tag,
                 "--repo",
                 "Kosinkadink/Dinkster",
-                "--target",
-                str(manifest["commit"]),
+                "--verify-tag",
                 "--prerelease",
                 "--latest=false",
                 "--title",

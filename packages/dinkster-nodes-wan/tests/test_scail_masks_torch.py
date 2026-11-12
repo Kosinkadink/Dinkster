@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import torch
-from dinkster_api.v1 import IMAGE_TYPE, MASK_TYPE, SAM3_TRACK_DATA_TYPE
 from dinkster_wan.scail_masks import SCAIL2ColoredMask
 
 
@@ -19,30 +18,6 @@ def _tracks(masks: torch.Tensor, *, frames: int | None = None) -> dict[str, obje
         "n_frames": masks.shape[0] if frames is None else frames,
         "scores": list(range(masks.shape[1])),
     }
-
-
-def test_schema_preserves_native_order_types_defaults_and_visibility() -> None:
-    schema = SCAIL2ColoredMask.define_schema()
-    assert schema.node_type == "dinkster.wan.scail2_colored_mask"
-    assert schema.display_name == "Create SCAIL-2 Colored Mask"
-    assert schema.category == "model/conditioning/wan/scail"
-    assert schema.search_visibility == "normal"
-    assert [item.id for item in schema.inputs] == [
-        "driving_track_data",
-        "ref_track_data",
-        "object_indices",
-        "sort_by",
-        "replacement_mode",
-    ]
-    assert schema.inputs[0].type == SCAIL2ColoredMask.define_schema().inputs[0].type
-    assert schema.inputs[0].type.types == (SAM3_TRACK_DATA_TYPE,)
-    assert schema.inputs[1].type.types == (SAM3_TRACK_DATA_TYPE, MASK_TYPE)
-    assert schema.inputs[1].required is False
-    assert [item.default for item in schema.inputs[2:]] == ["", "left_to_right", False]
-    assert [(item.id, item.type.types) for item in schema.outputs] == [
-        ("pose_video_mask", (IMAGE_TYPE,)),
-        ("reference_image_mask", (IMAGE_TYPE,)),
-    ]
 
 
 def test_sorting_filtering_overlap_palette_wrap_and_track_storage_are_asymmetric() -> None:

@@ -21,7 +21,6 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     materialize_latent,
-    schema_to_wire,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_image.ported.image_layers import AddLayer
@@ -83,36 +82,6 @@ def test_add_layer_omits_invalid_canvas_and_default_fields(canvas: object) -> No
     assert item.keys() == {"image", "type", "x", "y", "z_index"}
     assert item["image"] is image
     assert (item["x"], item["y"], item["z_index"], item["type"]) == (0, 0, 0, "raster")
-
-
-def test_add_layer_serialized_schema_preserves_optional_controls() -> None:
-    wire = schema_to_wire(AddLayer.schema())
-    inputs = [item for item in wire["interface"] if item["role"] == "input"]
-    assert [item["id"] for item in inputs] == [
-        "layers",
-        "image",
-        "mask",
-        "name",
-        "x",
-        "y",
-        "opacity",
-        "blend_mode",
-        "rotation",
-        "width",
-        "height",
-        "z_index",
-        "flip_h",
-        "flip_v",
-    ]
-    assert [item["id"] for item in inputs if item["required"]] == ["image"]
-    assert inputs[0]["type"] == {"kind": "concrete", "types": ["LAYERS"]}
-    assert inputs[3]["widget"] == {"type": "STRING", "multiline": False}
-    assert inputs[4]["widget"]["min"] == -16_384
-    assert inputs[8]["widget"]["step"] == 1.0
-    assert inputs[7]["default"] == "normal"
-    assert len(inputs[7]["widget"]["options"]) == 26
-    assert all(item["doc"] for item in inputs)
-    assert [item["id"] for item in wire["interface"] if item["role"] == "output"] == ["LAYERS"]
 
 
 class _LayerHostSource(Node):

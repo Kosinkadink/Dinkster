@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any
 
-from dinkster_api.v1 import ImageDocument, apply_commands, canonical_json, digest_bytes, is_digest
+from dinkster_api.v1 import (
+    ImageDocument,
+    apply_commands,
+    coerce_delta,
+    digest_bytes,
+)
 
 from .compositor_types import (
     CompositorRecipe,
@@ -15,40 +18,6 @@ from .compositor_types import (
     coerce_compositor_recipe,
     source_layer_fingerprint,
 )
-
-
-def coerce_delta(obj: object) -> dict[str, Any]:
-    if obj == {}:
-        return {"version": 2, "documentDigest": None, "commands": []}
-    if isinstance(obj, Mapping) and cast(Mapping[str, Any], obj).get("version") == 2:
-        value = cast(dict[str, Any], obj)
-        if set(value) != {"version", "documentDigest", "commands"}:
-            raise ValueError("compositor delta requires version, documentDigest and commands")
-        if value["documentDigest"] is not None and not is_digest(value["documentDigest"]):
-            raise ValueError("invalid compositor document digest")
-        if not isinstance(value["commands"], list):
-            raise ValueError("compositor commands must be an array")
-        return json.loads(canonical_json(value))
-    if isinstance(obj, Mapping):
-        value = cast(dict[str, Any], obj)
-        if "canvas" in value and "w" in value["canvas"]:
-            return json.loads(canonical_json(value))
-    legacy = coerce_compositor_recipe(cast(object, obj))
-    if not legacy.layers:
-        return {"version": 2, "documentDigest": None, "commands": []}
-    return legacy.to_record()
-
-
-def encode_delta(obj: object) -> bytes:
-    return canonical_json(coerce_delta(obj)).encode("utf-8")
-
-
-def decode_delta(data: bytes) -> object:
-    return coerce_delta(json.loads(data))
-
-
-def validate_delta_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
-    decode_delta(data)
 
 
 def prepare_compositor(source: object, obj: object) -> tuple[ImageDocument, str, bool]:

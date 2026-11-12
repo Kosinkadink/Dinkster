@@ -67,9 +67,9 @@ def test_file_shards_support_extended_counts(count: int) -> None:
             "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 2,
         },
         8: {
-            "tests/test_serve.py": 3,
-            "tests/test_compose.py": 2,
-            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 4,
+            "tests/test_serve.py": 4,
+            "tests/test_compose.py": 6,
+            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 7,
         },
         10: {
             "tests/test_serve.py": 2,
@@ -218,7 +218,16 @@ def test_empty_shard_succeeds_without_hiding_empty_collection_or_failures(
     assert "nonexistent_shard_dependency" in broken.stdout
 
 
-def test_case_sharding_sorts_node_ids_and_keeps_other_files_whole(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "count,expected_cases",
+    [
+        (3, (("alpha", "eta", "zeta"), ("beta", "kappa"), ("delta", "theta"))),
+        (8, (("theta",), ("zeta",), (), ("alpha",), ("beta",), ("delta",), ("eta",), ("kappa",))),
+    ],
+)
+def test_case_sharding_sorts_node_ids_and_keeps_other_files_whole(
+    tmp_path: Path, count: int, expected_cases: tuple[tuple[str, ...], ...]
+) -> None:
     (tmp_path / "test_cases.py").write_text(
         "import pytest\n"
         "@pytest.mark.parametrize('name', "
@@ -229,12 +238,11 @@ def test_case_sharding_sorts_node_ids_and_keeps_other_files_whole(tmp_path: Path
     (tmp_path / "test_whole.py").write_text(
         "def test_first(): pass\ndef test_second(): pass\n", encoding="utf-8"
     )
-    expected_cases = (("alpha", "eta", "zeta"), ("beta", "kappa"), ("delta", "theta"))
     whole = {"test_whole.py::test_first", "test_whole.py::test_second"}
     shards = []
     for index, names in enumerate(expected_cases, start=1):
         result = _run_pytest(
-            tmp_path, "--file-shard", f"{index}/3", "--case-shard-file", "test_cases.py"
+            tmp_path, "--file-shard", f"{index}/{count}", "--case-shard-file", "test_cases.py"
         )
         assert result.returncode == 0, result.stdout + result.stderr
         selected = _passed_node_ids(result)
@@ -250,7 +258,7 @@ def test_case_sharding_sorts_node_ids_and_keeps_other_files_whole(tmp_path: Path
         "test_whole.py",
         "test_cases.py",
         "--file-shard",
-        "2/3",
+        f"2/{count}",
         "--case-shard-file",
         "test_cases.py",
     )

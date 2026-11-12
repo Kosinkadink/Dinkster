@@ -87,6 +87,7 @@ from dinkster_engine import (
     Worker,
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
+from dinkster_image_document.compositor import register_compositor_type
 from dinkster_inference_wire import register_inference_types
 from dinkster_memory import (
     FullReleaseResult,
@@ -174,6 +175,10 @@ from dinkster_schema import (
     schema_signature,
     validate_remote_choice_authority,
 )
+from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.documents import SecurityError
+from dinkster_security.host import SecurityHost
+from dinkster_security.policy import Artifact as SecurityArtifact
 from dinkster_server import (
     CORE_PACK_ID,
     ChoiceOwnerGone,
@@ -246,6 +251,7 @@ from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
 from packaging.requirements import Requirement
 
+from .composition_error import CompositionError
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
 from .native_policy import NativeDispatchPolicy, select_resident_producer
@@ -305,11 +311,6 @@ _MODEL_PACK_IDS: tuple[str, ...] = ()
 def _trusted_reserved_claims_can_overlap(first: str, second: str) -> bool:
     root = reserved_root(first)
     return root is not None and reserved_root(second) == root
-
-
-class CompositionError(Exception):
-    """Pack composition is misconfigured: reserved/duplicate pack names or
-    node-type collisions. Raised at startup, never mid-workflow."""
 
 
 class UnknownPackError(CompositionError):
@@ -1035,6 +1036,8 @@ class PackSpec:
     """Refresh worker policy and ComfyUI argv from effective settings on reload."""
     require_catalog: bool = False
     """Refuse missing or stale installed declarations instead of importing at boot."""
+    security_artifacts: tuple[SecurityArtifact, ...] = ()
+    """Host-selected immutable release and dependency identities checked before execution."""
     start_timeout: float = 60.0
     packs: Mapping[str, PackInfo] | None = None
     attribute: Callable[[str], str] | None = None
@@ -1305,6 +1308,7 @@ def _installed_pack_spec(
         env={} if env is None else env,
         require_catalog=locked is not None and locked.source.startswith("registry:"),
         asset_vault_write=asset_vault_write,
+        host_types=register_compositor_type if pack_id == "dinkster-image" else None,
     )
 
 
@@ -1592,6 +1596,7 @@ def _lazy_choice_fetcher(
     async def fetch() -> Sequence[str]:
         try:
             async with composer._mutate:
+                composer._check_worker_execution(worker)
                 return await worker.fetch_choices(choice_id)
         except WorkerDied as exc:
             raise ChoiceOwnerGone(f"choice list {choice_id!r} owner is not connected") from exc
@@ -2292,6 +2297,7 @@ class ServingComposer:
         cache_dir: Path | str | None = None,
         cache_disk_budget: int = DEFAULT_DISK_CACHE_BYTES,
         composition_mode: PackCompositionMode = "development",
+        security: SecurityHost | None = None,
         _private_staging: bool = False,
         _reusable_in_process: Mapping[str, _PackRecord] | None = None,
     ) -> None:
@@ -2305,6 +2311,11 @@ class ServingComposer:
         # telemetry store makes every worker's measured reports land
         # parent-side - informational only, never admission.
         self._governor = governor
+        self._security = security
+        self._security_workers: weakref.WeakKeyDictionary[
+            Any, tuple[PackSpec, weakref.ReferenceType[Any] | None]
+        ] = weakref.WeakKeyDictionary()
+        self._security_revoked: weakref.WeakSet[Any] = weakref.WeakSet()
         self._dev = dev
         self._explain_misses = explain_misses
         self._headroom_base = headroom_base
@@ -2507,6 +2518,7 @@ class ServingComposer:
         )
         return ServingComposer(
             worker_env=worker_env,
+            security=self._security,
             saved_file_previews_enabled=self._saved_file_previews_enabled,
             sandbox_policy=self._sandbox_policy,
             sandbox_gpu_grants=self._sandbox_gpu_grants,
@@ -2759,6 +2771,7 @@ class ServingComposer:
                 if record.spec.worker_group == group_name and isinstance(record.worker, LazyWorker)
             ]
             for member in members:
+                self._check_worker_execution(member.worker)
                 member.worker.validate_source()
             try:
                 await owner.start()
@@ -2785,10 +2798,17 @@ class ServingComposer:
         async def close_execution() -> None:
             pass  # The composition owns the shared process, not an individual member.
 
-        return LazyWorker(manifest, catalog, start_execution, close_execution)
+        lazy = LazyWorker(
+            manifest,
+            catalog,
+            start_execution,
+            close_execution,
+            check_execution=lambda: self._check_worker_execution(lazy),
+        )
+        return lazy
 
     def _catalog_worker(
-        self, worker: Any, manifest: PackManifest, catalog: PackCatalog | None
+        self, worker: Any, manifest: PackManifest, catalog: PackCatalog | None, spec: PackSpec
     ) -> Any:
         if catalog is None:
             return worker
@@ -2802,7 +2822,7 @@ class ServingComposer:
             assert self._on_schema_reload is not None
             self._on_schema_reload(manifest.name)
 
-        return LazyWorker(
+        lazy = LazyWorker(
             manifest,
             catalog,
             activate,
@@ -2810,7 +2830,10 @@ class ServingComposer:
             declarations_changed
             if manifest.schema_reload_entry is not None and self._on_schema_reload is not None
             else None,
+            check_execution=lambda: self._check_worker_execution(lazy),
         )
+        self._track_security_worker(spec, lazy, worker)
+        return lazy
 
     def _isolated_worker(
         self,
@@ -2847,7 +2870,9 @@ class ServingComposer:
                 launcher=self._sandbox_launcher(spec, (manifest,), worker_env),
                 **worker_kwargs,
             )
-            return self._catalog_worker(worker, manifest, catalog)
+            worker = self._catalog_worker(worker, manifest, catalog, spec)
+            self._track_security_worker(spec, worker)
+            return worker
 
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         visible_devices = None if visible is None else tuple(visible.split(","))
@@ -2892,7 +2917,7 @@ class ServingComposer:
                     **worker_kwargs,
                 )
                 lanes.append(
-                    _ReplicaLane(cuda_index, self._catalog_worker(lane, manifest, catalog))
+                    _ReplicaLane(cuda_index, self._catalog_worker(lane, manifest, catalog, spec))
                 )
             return tuple(lanes)
 
@@ -2903,8 +2928,10 @@ class ServingComposer:
                 shutil.rmtree(rendezvous_directory, ignore_errors=True)
             raise
         if not spec.single_job_cuda_indices:
-            return _ReplicaWorkerPool(lanes)
-        return _SingleJobWorkerPool(
+            pool = _ReplicaWorkerPool(lanes)
+            self._track_security_worker(spec, pool)
+            return pool
+        pool = _SingleJobWorkerPool(
             lanes,
             cast("Path", rendezvous_path),
             spec.single_job_mode,
@@ -2912,6 +2939,8 @@ class ServingComposer:
             make_lanes,
             rendezvous_directory,
         )
+        self._track_security_worker(spec, pool)
+        return pool
 
     def _schema_reload_requested(self, pack: str, instance_token: str) -> None:
         record = self._records.get(pack)
@@ -2928,6 +2957,106 @@ class ServingComposer:
     def validate_specs(self, entries: Sequence[PackSpec | Path | str]) -> None:
         """Fail closed on contradictory group launch contracts before startup."""
         _validate_worker_group_specs(entries, self._worker_env)
+        for entry in entries:
+            if isinstance(entry, PackSpec):
+                self._check_security(entry)
+
+    @staticmethod
+    def _security_inventory(spec: PackSpec) -> tuple[SecurityArtifact, ...]:
+        return spec.security_artifacts or tuple(
+            SecurityArtifact(
+                info.source.removeprefix("registry:"),
+                SecurityRelease.model_validate(
+                    {
+                        "pack": canonical_name(name),
+                        "version": info.version or "0.0.0",
+                        "artifactDigest": info.artifact_digest,
+                    }
+                ),
+            )
+            for name, info in (spec.packs or {}).items()
+            if info.artifact_digest
+        )
+
+    def _check_security(self, spec: PackSpec) -> None:
+        if self._security is None:
+            return
+        result = self._security.assess(self._security_inventory(spec))
+        if result.stale_registries:
+            raise SecurityError("security feed exceeds configured maximum age")
+        if not result.allowed:
+            finding = next(item for item in result.findings if not item.allowed)
+            raise SecurityError(
+                f"security {finding.state}: {finding.artifact.release.pack}, "
+                f"notice {finding.notice.id} revision {finding.notice.revision}, "
+                f"decision {finding.decision}"
+            )
+
+    def _check_worker_execution(self, worker: Any) -> None:
+        if self._security is None:
+            return
+        if worker in self._security_revoked:
+            raise SecurityError("security stopped this worker; explicit restart is required")
+        entry = self._security_workers.get(worker)
+        if entry is not None:
+            self._check_security(entry[0])
+
+    def _track_security_worker(self, spec: PackSpec, worker: Any, group: Any = None) -> None:
+        if self._security is None:
+            return
+        previous = self._security_workers.get(worker)
+        owner = None if previous is None else previous[1]
+        self._security_workers[worker] = (spec, owner if group is None else weakref.ref(group))
+        if isinstance(worker, _ReplicaWorkerPool):
+            for lane in worker.lanes:
+                self._security_workers[lane.worker] = (spec, weakref.ref(worker))
+
+    async def enforce_security(self) -> bool:
+        """Stop blocked sessions, including pinned ones; report a required host exit."""
+        stop: set[Any] = set()
+        exit_host = False
+        for worker, (spec, group) in tuple(self._security_workers.items()):
+            try:
+                self._check_security(spec)
+            except SecurityError:
+                self._security_revoked.add(worker)
+                exit_host |= spec.in_process
+                if spec.in_process:
+                    continue
+                owner = None if group is None else group()
+                stop.add(worker if owner is None else owner)
+        # Revocation precedes awaiting any close, so queued and pinned dispatch
+        # cannot race the worker's bounded shutdown grace period.
+        await asyncio.gather(*(worker.close() for worker in stop))
+        return exit_host
+
+    def security_status(self) -> dict[str, object]:
+        if self._security is None:
+            return {"findings": [], "staleRegistries": [], "refreshErrors": {}}
+        artifacts = tuple(
+            dict.fromkeys(
+                artifact
+                for spec, _ in self._security_workers.values()
+                for artifact in self._security_inventory(spec)
+            )
+        )
+        result = self._security.assess(artifacts)
+        return {
+            "findings": [
+                {
+                    "pack": item.artifact.release.pack,
+                    "version": item.artifact.release.version,
+                    "state": item.state,
+                    "notice": str(item.notice.id),
+                    "revision": item.notice.revision,
+                    "decision": item.decision,
+                    "allowed": item.allowed,
+                }
+                for item in result.findings
+            ],
+            "staleRegistries": list(result.stale_registries),
+            "refreshErrors": dict(self._security.refresh_errors),
+        }
 
     def validate_catalogs(self, entries: Sequence[PackSpec | Path | str]) -> None:
         """Require installed declarations before a serving host binds."""
@@ -3023,6 +3152,12 @@ class ServingComposer:
         staged._publication = publication
         staged.composition._pin_execution = seat.pin
         staged._private_staging = False
+        # Pinned jobs retain workers from retired compositions until they drain.
+        # Keep their policy checks and monitor ownership across publication.
+        self._security_workers.update(staged._security_workers)
+        self._security_revoked.update(staged._security_revoked)
+        staged._security_workers = self._security_workers
+        staged._security_revoked = self._security_revoked
         self.__dict__.update(staged.__dict__)
         for tenant in transferred_tenants:
             if tenant in old._tenant_registries:
@@ -3583,6 +3718,7 @@ class ServingComposer:
             raise RuntimeError(
                 f"execution policy selected unknown arm {target!r} for {node_type!r}"
             )
+        self._check_worker_execution(arm.execution_worker)
         if arm.name in cold_arms:
             await arm.execution_worker.ensure_started()
             # Re-select with live capability evidence so policy cache identities
@@ -4259,6 +4395,7 @@ class ServingComposer:
             record = self._records.get(pack)
             if record is None or record.extension is None or route not in record.extension.routes:
                 raise KeyError("pack route is no longer active")
+            self._check_worker_execution(record.worker)
             return await record.worker.call_pack_route(route, data)
 
     async def read_frontend_module(self, pack: str, module: FrontendModule) -> bytes:
@@ -4815,6 +4952,9 @@ class ServingComposer:
                 arm_domains={arm.name: arm.domain for arm in arms},
                 default_arms={arm.name: arm.default_arm for arm in arms},
                 producer_targets=self._producer_targets(topology, arms),
+                check_arm=lambda name, candidates=arms: self._check_worker_execution(
+                    next(arm.execution_worker for arm in candidates if arm.name == name)
+                ),
             )
         return routes
 
@@ -5090,6 +5230,7 @@ class ServingComposer:
             loaded: list[Any] = []
 
             async def start_in_process() -> Any:
+                self._check_worker_execution(worker)
                 current_registry = composition._registry.copy()
                 loaded_worker, _, _, _ = load_host_pack(
                     manifest,
@@ -5112,7 +5253,13 @@ class ServingComposer:
 
             try:
                 if catalog is not None:
-                    worker = LazyWorker(manifest, catalog, start_in_process, close_in_process)
+                    worker = LazyWorker(
+                        manifest,
+                        catalog,
+                        start_in_process,
+                        close_in_process,
+                        check_execution=lambda: self._check_worker_execution(worker),
+                    )
                 else:
                     worker, _, _, _ = load_host_pack(
                         manifest,
@@ -5159,12 +5306,14 @@ class ServingComposer:
         if catalog is not None and spec.worker_group is not None:
             assert group_owner is not None
             worker = self._catalog_group_worker(spec.worker_group, group_owner, manifest, catalog)
+        self._track_security_worker(spec, worker, group_owner)
         try:
             if group_new and catalog is None:
                 assert group_owner is not None
                 await group_owner.start()
             elif spec.worker_group is None and not spec.in_process:
                 await cast("Any", worker).start()
+            self._check_worker_execution(worker)
             self._validate_body_arms(manifest, worker)
             self._validate_schema_only(manifest, worker)
             self._validate_executes(manifest, worker)
@@ -6120,6 +6269,7 @@ class ServingComposer:
                     vram_budgets=cuda_vram_budgets(memory_budgets),
                     comfy_args=comfy_args,
                 )
+            self._check_security(spec)
             if record.spec.worker_group is not None:
                 if spec.worker_group != record.spec.worker_group:
                     raise CompositionError(
@@ -6445,6 +6595,8 @@ class ServingComposer:
             pack: (replacement if pack == name else current.spec)
             for pack, current in group_records.items()
         }
+        for spec in specs.values():
+            self._check_security(spec)
         contract_values = {
             _worker_group_contract(item, self._worker_env) for item in specs.values()
         }
@@ -6512,8 +6664,12 @@ class ServingComposer:
                     )
                     for manifest in manifests
                 }
-            else:
+            for pack, member in members.items():
+                self._track_security_worker(specs[pack], member, owner)
+            if not catalogs:
                 await owner.start()
+            for member in members.values():
+                self._check_worker_execution(member)
             staged_records = dict(self._records)
             group_domain = _ResidencyDomain(next(iter(owner.members.values())), group_name)
             group_names = set(group_records)
@@ -7426,8 +7582,7 @@ class ServingComposer:
         if SAVE_TARGET_TYPE in type_ids and SAVE_TARGET_TYPE not in registry:
             register_save_target_type(registry)
 
-    @staticmethod
-    def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
+    def _register_worker_renditions(self, registry: TypeRegistry, owner: str, worker: Any) -> None:
         for declaration in worker.renditions:
             existing = next(
                 (
@@ -7461,6 +7616,7 @@ class ServingComposer:
                 type_id: str = declaration.type_id,
                 kind: str = declaration.kind,
             ) -> tuple[str, Mapping[str, str]]:
+                self._check_worker_execution(worker)
                 return await worker.resolve_rendition(type_id, kind, metadata, parameters)
 
             async def resolve_mime(
@@ -7469,6 +7625,7 @@ class ServingComposer:
                 type_id: str = declaration.type_id,
                 kind: str = declaration.kind,
             ) -> str:
+                self._check_worker_execution(worker)
                 return await worker.resolve_rendition_mime(type_id, kind, metadata)
 
             async def render(
@@ -7477,6 +7634,7 @@ class ServingComposer:
                 *,
                 kind: str = declaration.kind,
             ) -> Rendition:
+                self._check_worker_execution(worker)
                 return await worker.render_rendition(value, kind, parameters)
 
             registry.register_relayed_rendition(

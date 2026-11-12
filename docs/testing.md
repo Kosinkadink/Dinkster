@@ -73,9 +73,10 @@ unchanged by parallel execution.
 Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
 Do not use retries to hide a parallel-only failure. Package suites launched
 from their own project directory retain that project's pytest settings.
-Selected-archive admission is an explicit serial group: its inline plugin
-tracks unavailable exports and executed tests in the launcher's process.
-The selected tests and minimum-executed-test guard remain unchanged.
+Selected-archive admission with multiple test files splits whole files between
+two serial pytest processes after shared catalog preparation. Each process
+tracks unavailable exports and executed tests with its inline plugin. Any test
+or collection failure fails admission, and at least one selected test must pass.
 
 Full-validation jobs run serially inside each matrix shard with
 `PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
@@ -85,6 +86,8 @@ root shards print every setup, call and teardown duration with
 `test-timings-linux-N` and `test-timings-windows-N` JUnit artifacts, including
 when pytest fails. Use each platform's timings to balance its shards instead
 of counting files.
+The eight Windows runtime shards rotate each case-split file's sorted cases
+from its file-assigned shard, so expensive prefixes do not all start in shard one.
 
 ## Platform golden evidence
 
@@ -150,8 +153,8 @@ The selections and setup commands in
 | Linux CPython 3.12 root | All twelve serial `test` shards, balanced by native Linux timings with history and generations split by sorted test ID, other files whole, and the workflow's branch-coverage sources and exclusions |
 | Windows CPython 3.14.10 root | All ten serial `test` file shards, balanced by native Windows timings with module fixtures kept together, excluding the separate runtime selection and using the patched SQLite runtime |
 | Windows CPython 3.14.10 runtime | All eight serial `windows-runtime` jobs: environment, installer, release-install and supervisor contracts; artifacts, CLI, collection, generations, history and transactions split by sorted test ID, other files stay whole |
-| CPU Torch comfy | All four `torch-cpu (comfy, shard N)` selections in the CPU bundle's `.venv` |
-| CPU Torch vision | The `torch-cpu (vision)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
+| CPU node packs | All four `node pack tests (CPU, shard N)` selections in the CPU bundle's `.venv` |
+| CPU vision packs | The `vision pack tests (CPU)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |
 | Coverage gate | All twelve Linux and eight Windows runtime coverage files combined; `coverage report --fail-under=80` |
 
@@ -296,7 +299,8 @@ targets because their inputs come from outside.
 
 ## CPU checks
 
-The `torch-cpu` matrix has four comfy shards and one vision job, using
+The `torch-cpu` matrix has four `node pack tests (CPU, shard N)` jobs and one
+`vision pack tests (CPU)` job, using
 `.github/actions/torch-cpu-suite`. It never acquires or executes model weights.
 Environment setup runs in each job; vision Pyright runs in the vision job. The
 vision package suites also run without their artifact

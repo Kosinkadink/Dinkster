@@ -1,14 +1,15 @@
-"""Pack venv provisioning: a manifest becomes a private interpreter.
+"""Development pack venv provisioning: a manifest becomes a private interpreter.
 
 ``ensure_pack_venv`` creates (or reuses) a venv for a pack with ``uv`` and
 returns its python executable, ready to hand to IsolatedWorker. The venv
 gets the pack itself (editable, if it has a pyproject), the manifest's
 ``requires``, and the dinkster packages the worker host imports.
 
-Dev-workspace note: pass ``workspace_packages`` pointing at the local
+Published packs use locked managed generation provisioning instead.
+For checkout development, pass ``workspace_packages`` pointing at the local
 ``packages/dinkster-*`` directories so the child imports the same code the
-parent runs. In a released world these come from the index like anything
-else and ``workspace_packages`` stays empty.
+parent runs. Development without workspace packages resolves worker host
+requirements from the index along with the pack's declared ranges.
 """
 
 from __future__ import annotations

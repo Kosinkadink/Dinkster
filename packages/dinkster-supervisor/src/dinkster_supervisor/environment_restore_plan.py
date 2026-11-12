@@ -31,9 +31,13 @@ from .environment_artifacts import (
     validate_dependency_base,
     validate_manifest,
 )
-from .environment_constraints import effective_constraints
+from .environment_constraints import (
+    effective_constraints,
+    installed_wheel_origins,
+    selected_wheel_rows,
+)
 from .environment_downloads import artifact_available, read_metadata
-from .environment_generations import retained_pack_archive, verify_base_inputs
+from .environment_generations import ACQUIRE_PACK_SOURCES, retained_pack_archive, verify_base_inputs
 from .environment_history import history, validate_import
 from .environment_state import (
     Channel,
@@ -62,38 +66,6 @@ def _pack_source_missing(
     if not needed:
         return []
     lock["packs"] = needed
-    # Only acquisition runs in the active engine: no pack imports, provisioning or activation.
-    script = """
-import json, os, sys
-from pathlib import Path
-from dinkster.installer import Installer
-from dinkster.registries import (
-    RegistryConfig, load_registries, routing_registry_fetcher, select_registry,
-)
-from dinkster_registry import Lockfile
-project = Path(sys.argv[1])
-config_path = project / 'registries.toml'
-if config_path.is_file():
-    config = load_registries(config_path)
-elif os.environ.get('DINKSTER_REGISTRIES'):
-    config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
-else:
-    config = RegistryConfig()
-selector = os.environ.get('DINKSTER_REGISTRY', '')
-if not selector and not config_path.is_file() and not os.environ.get('DINKSTER_REGISTRIES'):
-    selector = 'https://registry.dinkster.org'
-selected = select_registry(config, selector) if selector else None
-installer = Installer(
-    Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
-)
-missing = []
-for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
-    try:
-        installer.acquire(entry)
-    except Exception:
-        missing.append(entry.artifact_digest)
-print(json.dumps(missing))
-"""
     unavailable = {cast("str", row["artifactDigest"]) for row in needed}
     current = read_current(root) if root is not None else None
     if current is not None and root is not None:
@@ -105,7 +77,7 @@ print(json.dumps(missing))
                         "-I",
                         "-B",
                         "-c",
-                        script,
+                        ACQUIRE_PACK_SOURCES,
                         str(root),
                     ],
                     cwd=directory,
@@ -134,11 +106,11 @@ print(json.dumps(missing))
                         raise
             if process.returncode == 0:
                 reported: object = json.loads(output)
-                if isinstance(reported, list) and all(
-                    isinstance(item, str) and item in unavailable
-                    for item in cast("list[object]", reported)
+                if isinstance(reported, dict) and all(
+                    isinstance(item, str) and item in unavailable and isinstance(reason, str)
+                    for item, reason in cast("dict[object, object]", reported).items()
                 ):
-                    unavailable = set(cast("list[str]", reported))
+                    unavailable = set(cast("dict[str, str]", reported))
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
     return [
@@ -596,6 +568,47 @@ def _substitutions(before: dict[str, object], after: dict[str, object]) -> list[
     return changes
 
 
+def _replacement_wheel_receipt(
+    snapshot: dict[str, object], engine: dict[str, object], base: dict[str, object], variant: str
+) -> str:
+    host = cast("dict[str, object]", snapshot["host"])
+    tags, markers = host.get("wheelTags"), host.get("markers")
+    if not isinstance(tags, list) or not isinstance(markers, dict):
+        raise EnvironmentError("replacement preview requires recorded wheel compatibility")
+    owned = cast("list[str]", base["replaces"])
+    rows = [
+        {"filename": row["filename"], "size": row["size"], "sha256": row["sha256"]}
+        for row in artifact_rows(base["wheels"], "filename")
+    ]
+    engine_rows = [
+        {"filename": row["name"], "size": row["size"], "sha256": row["sha256"]}
+        for row in artifact_rows(engine["artifacts"], "name")
+        if cast("str", row["name"]).endswith(".whl")
+    ]
+    if "dependencies" in engine:
+        engine_rows.extend(
+            dependency_wheels(cast("dict[str, object]", engine["dependencies"]).get(variant))
+        )
+    rows.extend(
+        row
+        for row in engine_rows
+        if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned
+    )
+    wheels = selected_wheel_rows(
+        _metadata(snapshot)["constraints.txt"], rows, {"tags": tags, "markers": markers}
+    )
+    wheels = installed_wheel_origins(wheels, base, engine, variant)
+    return (
+        json.dumps(
+            {"format": "dinkster.installed-wheels/1", "wheels": wheels, "inherited": []},
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+        )
+        + "\n"
+    )
+
+
 def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
     if snapshot.get("source") != "published":
         return []
@@ -714,6 +727,9 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
             candidate["constraints"] = (
                 "sha256:" + hashlib.sha256(constraints.encode("utf-8")).hexdigest()
             )
+            candidate_metadata["installed-wheels.json"] = _replacement_wheel_receipt(
+                candidate, engine, base, variant
+            )
             alternatives.append(candidate)
         except (OSError, ValueError):
             continue
@@ -814,6 +830,9 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
                 "sha256:" + hashlib.sha256(constraints.encode("utf-8")).hexdigest()
             )
             candidate["metadata"] = candidate_metadata
+            candidate_metadata["installed-wheels.json"] = _replacement_wheel_receipt(
+                candidate, engine, base, variant
+            )
             alternatives.append(candidate)
         except (OSError, ValueError):
             continue

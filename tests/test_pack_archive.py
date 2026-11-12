@@ -678,22 +678,33 @@ def test_official_library_selection_and_build(
     base_path.write_text(json.dumps(base))
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/base_bundles.json").write_text(json.dumps({"linux-cpu": identity}))
-    responses = {
-        f"/v1/publish/{name}/versions/0.0.1": json.dumps(
-            {"status": "queued", "candidateId": name}
-        ).encode()
-        for name in expected
-    }
+    responses = {}
     server = _serve_artifacts(responses, [])
     respond = vars(server.RequestHandlerClass)["respond"]
     submitted = []
 
     def registry_response(handler):
         if handler.command == "POST":
-            name = handler.path.split("/")[3]
-            if name == "dinkster-test-consumer":
-                assert submitted == ["dinkster-test-helpers"]
-            submitted.append(name)
+            assert handler.path == "/v1/publish-sets"
+            submitted.extend(expected)
+            responses[handler.path] = json.dumps(
+                {
+                    "setId": "library-set",
+                    "status": "queued",
+                    "members": [
+                        {
+                            "candidateId": pack.pack,
+                            "packName": pack.pack,
+                            "version": pack.version,
+                            "artifactDigest": pack.artifact_digest,
+                            "status": "queued",
+                        }
+                        for pack in catalog.packs
+                    ],
+                }
+            ).encode()
+        if handler.command == "GET" and handler.path.startswith("/v1/publish/"):
+            name = handler.path.rsplit("/", 1)[1]
             if problem == "library-rejected":
                 responses[f"/v1/publish/{name}"] = json.dumps(
                     {
@@ -702,9 +713,20 @@ def test_official_library_selection_and_build(
                         "findings": [{"code": "wheel.invalid", "message": "refused"}],
                     }
                 ).encode()
-            else:
+        if handler.command == "POST" and problem != "library-rejected":
+            for pack in catalog.packs:
+                name = pack.pack
                 responses[f"/v1/packs/{name}/versions/0.0.1"] = json.dumps(
-                    {"packName": name, "version": "0.0.1", "state": "active"}
+                    {
+                        "packName": name,
+                        "version": "0.0.1",
+                        "state": "active",
+                        "artifact": {
+                            "digest": next(
+                                pack.artifact_digest for pack in catalog.packs if pack.pack == name
+                            )
+                        },
+                    }
                 ).encode()
         respond(handler)
 
@@ -720,7 +742,7 @@ def test_official_library_selection_and_build(
                     tmp_path / "submitted",
                     registry=NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
                 )
-            assert submitted == ["dinkster-test-helpers"]
+            assert set(submitted) == set(expected)
             return
         result = publish_official_packs(
             tmp_path,
@@ -730,11 +752,7 @@ def test_official_library_selection_and_build(
             tmp_path / "submitted",
             registry=NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
         )
-        assert (
-            [row["pack"] for row in result]
-            == submitted
-            == ["dinkster-test-helpers", "dinkster-test-consumer"]
-        )
+        assert {row["pack"] for row in result} == set(submitted) == set(expected)
     finally:
         server.shutdown()
         server.server_close()
@@ -872,14 +890,15 @@ def test_default_admission_separates_expensive_children_without_changing_selecti
     )
     groups = result["groups"]
     assert isinstance(groups, list)
-    assert len(groups) == 10
+    assert len(groups) == 13
     assert all(groups)
     assert sorted(name for group in groups for name in group) == sorted(
         entry.pack for entry in catalog.packs if entry.pack != "dinkster-pack-helpers"
     )
     assert ["dinkster-3d"] in groups
-    assert ["dinkster-image", "dinkster-latent"] in groups
-    assert ["dinkster-video", "dinkster-audio"] in groups
+    assert ["dinkster-image"] in groups
+    assert ["dinkster-video"] in groups
+    assert ["dinkster-audio"] in groups
     assert Lockfile.from_record_json((prepared / "catalog.lock").read_text()) == catalog
 
 
@@ -895,6 +914,11 @@ def test_default_admission_separates_expensive_children_without_changing_selecti
         ("prepared", "incomplete-catalog"),
         ("prepared", "corrupt-artifact"),
         ("prepared", "unknown-pack"),
+        ("locked-prepared", None),
+        ("locked-prepared", "lock-base"),
+        ("locked-prepared", "lock-artifact"),
+        ("locked-prepared", "missing-lock"),
+        ("locked-runtime", None),
         ("published", None),
         ("published", "promotion"),
         ("published", "timeout"),
@@ -915,6 +939,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     from dinkster_registry.archive_admission import StageResult
     from dinkster_store import pack_archive_path, pack_label
     from dinkster_workers import load_manifest
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from dinkster_workers.pack_wheel import wheel_filename
 
     from scripts import check_default_pack_admission as admission
@@ -950,13 +975,81 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             source="git:Kosinkadink/Dinkster@" + "a" * 40 if name == "candidate" else "registry",
         )
 
-    def build_candidate(root, output, *, packs):
+    is_prepared = mode in {"prepared", "locked-prepared", "locked-runtime"}
+    generation = tmp_path / "generation-python"
+    generation.touch()
+    constraints = tmp_path / "constraints.txt"
+    constraints.touch()
+    context = {
+        "generation_python": generation,
+        "base_id": "sha256:" + "f" * 64,
+        "constraints": constraints,
+    }
+    if mode == "locked-runtime":
+        from test_pack_environment import _generation, _wheel
+
+        runtime = tmp_path / "runtime"
+        wheelhouse = runtime / "wheelhouse"
+        wheelhouse.mkdir(parents=True)
+        _wheel(wheelhouse, "dinkster-api", "0.0.4.dev37", "dinkster_api", "")
+        _wheel(wheelhouse, "locked-extra", "1.2+cpu", "locked_extra", "")
+        python = _generation(tmp_path / "managed/python", [])
+        constraints.write_text("dinkster-api==0.0.4.dev37\nlocked-extra==1.2+cpu\n")
+        monkeypatch.setattr(
+            admission,
+            "read_runtime",
+            lambda *args: (python, "sha256:" + "f" * 64, constraints, "linux-cpu"),
+        )
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        context.clear()
+        context["runtime"] = runtime
+
+    def dependency_lock(name):
+        return PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            (),
+            (),
+            (
+                LockedDistribution(
+                    name,
+                    entries[name].version,
+                    (
+                        LockedWheel(
+                            f"{name}-{entries[name].version}-py3-none-any.whl",
+                            len(archives[name]),
+                            hashlib.sha256(archives[name]).hexdigest(),
+                            "https://registry.example/pack.whl",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def build_candidate(root, output, *, packs, **kwargs):
         assert packs == ("candidate",)
         output.mkdir()
         (output / "candidate-7.2-py3-none-any.whl").write_bytes(archives["candidate"])
         (output / "official-packs.lock").write_text(
             Lockfile.of([entries["candidate"]]).record_json()
         )
+        lock = dependency_lock("candidate")
+        if mode == "locked-runtime":
+            from dinkster_workers.pack_lock import resolve_pack_lock
+
+            resolved = resolve_pack_lock(
+                pack="candidate",
+                variant=kwargs["variant"],
+                requirements=("dinkster-api>=0.0.2.dev0,<0.1", "locked-extra==1.2+cpu"),
+                python=kwargs["python"],
+                constraints=kwargs["constraints"],
+                indexes=kwargs.get("indexes", ()),
+                find_links=kwargs.get("find_links", ()),
+                engine=">=0.0.2.dev0,<0.1",
+            )
+            lock = replace(resolved, packages=(*resolved.packages, *lock.packages))
+        lock.write(output / "candidate-7.2-linux-cpu.pack-lock.json")
 
     def registry_defaults(registry, minimums, artifacts, *, engine_version):
         # The candidate has no registry release: requesting it would fail here.
@@ -971,9 +1064,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
 
     observed = []
 
-    def engine_tests(root, catalog, artifacts, *, test_packs=()):
+    def engine_tests(root, catalog, artifacts, *, generation_python, locks, variant, test_packs=()):
         assert root == Path(admission.__file__).resolve().parents[1]
-        assert test_packs == (("candidate",) if mode == "prepared" else ())
+        assert test_packs == (("candidate",) if is_prepared else ())
+        assert generation_python.is_file()
+        assert set(locks) == {pack.pack for pack in catalog.packs}
+        assert variant == "linux-cpu"
         observed.extend((pack.pack, pack.version) for pack in catalog.packs)
 
     monkeypatch.setattr(
@@ -983,18 +1079,31 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
     monkeypatch.setattr(admission, "build", build_candidate)
     monkeypatch.setattr(admission, "prepare_registry_sources", registry_defaults)
     monkeypatch.setattr(admission, "run_executable_probe", lambda root: StageResult())
+    monkeypatch.setattr(
+        admission,
+        "read_registry_pack_locks",
+        lambda config, catalog, **kwargs: tuple(dependency_lock(p.pack) for p in catalog.packs),
+    )
+    monkeypatch.setattr(admission, "run_locked_probe", lambda root, lock, **kwargs: StageResult())
     monkeypatch.setattr(admission, "run_selected_tests", engine_tests)
     prepared = None
-    if mode == "prepared":
+    if is_prepared:
         prepared = tmp_path / "prepared"
         output = admission.check_defaults(
             admission.NamedRegistry("", "https://registry.example"),
             engine_version="0.2",
             candidate_base="b" * 40,
             prepare_output=prepared,
+            **context,
         )
         groups = output["groups"]
         assert isinstance(groups, list)
+        if mode == "locked-runtime":
+            lock = PackLock.read(prepared / "pack-locks/candidate.json")
+            assert [(item.name, item.version) for item in lock.packages] == [
+                ("locked-extra", "1.2+cpu"),
+                ("candidate", "7.2"),
+            ]
         assert sorted(name for group in groups for name in group) == [
             "candidate",
             "unchanged",
@@ -1034,6 +1143,14 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             digest = entries["candidate"].artifact_digest.removeprefix("blake3:")
             with zipfile.ZipFile(prepared / "artifacts" / f"{digest}.zip", "a") as wheel:
                 wheel.writestr("changed.txt", "digest drift")
+        elif problem == "lock-base":
+            metadata = json.loads((prepared / "engine.json").read_text())
+            metadata["baseId"] = "sha256:" + "e" * 64
+            (prepared / "engine.json").write_text(json.dumps(metadata))
+        elif problem == "lock-artifact":
+            dependency_lock("unchanged").write(prepared / "pack-locks/candidate.json")
+        elif problem == "missing-lock":
+            (prepared / "pack-locks/candidate.json").unlink()
     publication = None
     if mode == "published":
         publication = tmp_path / "official-packs.lock"
@@ -1073,11 +1190,14 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "timeout": "not active yet",
         "engine-version": "do not match the engine checkout and version",
         "incomplete-catalog": "prepared sources omit defaults",
-        "corrupt-artifact": "candidate@7.2 admission refused",
+        "corrupt-artifact": "candidate: locked outer wheel differs from the archive",
         "unknown-pack": "requested admission packs are not in the catalog",
+        "lock-base": "do not match the engine checkout and version",
+        "lock-artifact": "dependency lock identity differs",
+        "missing-lock": "candidate.json",
     }.get(problem or "")
     if expected_error:
-        with pytest.raises((ValueError, admission.InstallError), match=expected_error):
+        with pytest.raises((ValueError, OSError, admission.InstallError), match=expected_error):
             admission.check_defaults(
                 admission.NamedRegistry("", "https://registry.example"),
                 engine_version="0.2",
@@ -1087,8 +1207,9 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                 test_packs=("unknown",)
                 if problem == "unknown-pack"
                 else ("candidate",)
-                if mode == "prepared"
+                if is_prepared
                 else (),
+                **context,
             )
         assert not observed
     else:
@@ -1098,7 +1219,8 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
             candidate_base="b" * 40 if mode == "candidate" else None,
             published_sources=publication,
             prepared_sources=prepared,
-            test_packs=("candidate",) if mode == "prepared" else (),
+            test_packs=("candidate",) if is_prepared else (),
+            **context,
         )
         assert sorted(observed) == [("candidate", "7.2"), ("unchanged", "1.3")]
         assert result == {
@@ -1109,7 +1231,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
                     "version": entries[name].version,
                     "artifactDigest": entries[name].artifact_digest,
                 }
-                for name in (("candidate",) if mode == "prepared" else ("candidate", "unchanged"))
+                for name in (("candidate",) if is_prepared else ("candidate", "unchanged"))
             ],
         }
     if problem in {"manifest", "security"}:
@@ -1133,6 +1255,7 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         None,
         "prepare-only",
         "published-identical",
+        "published-partial",
         "check-published",
         "dependency-active",
         "dependency-levels",
@@ -1140,6 +1263,13 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "dependency-external",
         "dependency-rejected",
         "dependency-timeout",
+        "submitted-progress",
+        "submitted-rejected",
+        "submitted-timeout",
+        "submitted-digest",
+        "receipt-members",
+        "receipt-digest",
+        "receipt-duplicate",
         "published-digest",
         "published-size",
         "published-lock",
@@ -1167,6 +1297,12 @@ def test_default_admission_scans_unpublished_candidates_and_registry_defaults(
         "source-version",
         "publisher",
         "declaration",
+        "preflight-published-digest",
+        "preflight-published-lock",
+        "preflight-helper-change",
+        "preflight-lookup-failed",
+        "preflight-unpublished",
+        "preflight-version-raised",
     ],
 )
 def test_official_publication_requires_complete_supported_base_bindings(
@@ -1184,14 +1320,34 @@ def test_official_publication_requires_complete_supported_base_bindings(
     )
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_installer import _serve_artifacts
+    from test_pack_environment import _wheel
 
     from dinkster.registries import NamedRegistry, RegistryPublishError
     from scripts.publish_official_packs import publish_official_packs
 
+    preflight = bool(problem and problem.startswith("preflight-"))
+    if preflight:
+        assert problem is not None
+        problem = problem.removeprefix("preflight-")
     sources = tmp_path / "sources"
     sources.mkdir()
+    engine_manifest = tmp_path / "release-manifest.json"
+    engine_manifest.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.engine/1",
+                "repository": "Kosinkadink/Dinkster",
+                "commit": "c" * 40,
+                "version": "0.3.1",
+            }
+        )
+    )
     packs = []
-    versions = [("first-pack", "1.2.3"), ("second-pack", "7.4.0rc1")]
+    published_helper = None
+    versions = [
+        ("first-pack", "1.2.3"),
+        ("second-pack", "7.4.1" if problem == "version-raised" else "7.4.0rc1"),
+    ]
     chained = problem in {"dependency-levels", "dependency-levels-timeout"}
     if chained:
         versions.extend([("third-pack", "2.0"), ("fourth-pack", "3.0")])
@@ -1229,6 +1385,24 @@ def test_official_publication_requires_complete_supported_base_bindings(
             built.rename(archive)
         else:
             build_artifact(tree, archive)
+        if name == "second-pack" and problem in {"helper-change", "version-raised"}:
+            old = _wheel(
+                tmp_path,
+                name,
+                "7.4.0rc1",
+                module.name,
+                "VALUE = 1\n",
+                requires=("dinkster-inference==0.1.1",),
+            )
+            published_helper = (tmp_path / old.filename).read_bytes()
+            _wheel(
+                sources,
+                name,
+                version,
+                module.name,
+                "VALUE = 1\n",
+                requires=("dinkster-inference",),
+            )
         digest = artifact_digest(archive.read_bytes())
         packs.append(LockedPack(name, version, digest, "dinkster", ()))
     (sources / "official-packs.lock").write_text(Lockfile.of(packs).record_json())
@@ -1337,8 +1511,13 @@ def test_official_publication_requires_complete_supported_base_bindings(
         files["/v1/packs/third-pack/versions/2.3"] = json.dumps(
             {"packName": "third-pack", "version": "2.3", "state": "active"}
         ).encode()
-    if problem and (problem.startswith("published-") or problem == "check-published"):
+    if problem and (
+        problem.startswith("published-")
+        or problem in {"check-published", "helper-change", "version-raised"}
+    ):
         for pack in packs:
+            if problem == "published-partial" and pack.pack == "first-pack":
+                continue
             record = {
                 "packName": pack.pack,
                 "version": pack.version,
@@ -1379,15 +1558,22 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     del record["installLocks"]["win-nvidia"]
                 elif problem == "published-publisher":
                     record["publishedBy"]["principalId"] = "other"
-            files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(record).encode()
+            if published_helper is not None and pack.pack == "second-pack":
+                record["version"] = "7.4.0rc1"
+                record["artifact"]["digest"] = artifact_digest(published_helper)
+                record["artifact"]["size"] = len(published_helper)
+            files[f"/v1/packs/{pack.pack}/versions/{record['version']}"] = json.dumps(
+                record
+            ).encode()
     server = _serve_artifacts(files, requests)
     respond = vars(server.RequestHandlerClass)["respond"]
     submitted = []
     clock = [0.0]
     polls = [0]
     activation_polls: dict[str, int] = {}
-    if problem and problem.startswith("dependency-"):
-        monkeypatch.setenv("PUBLICATION_TEST_TOKEN", "test-token")
+    submitted_members = []
+    monkeypatch.setenv("PUBLICATION_TEST_TOKEN", "test-token")
+    if problem and problem.startswith(("dependency-", "submitted-")):
         monkeypatch.setattr("scripts.publish_official_packs.time.monotonic", lambda: clock[0])
 
         def advance(seconds):
@@ -1398,6 +1584,77 @@ def test_official_publication_requires_complete_supported_base_bindings(
     def registry_response(handler):
         if handler.command == "POST":
             submitted.append(handler.path)
+            assert handler.path == "/v1/publish-sets"
+            files[handler.path] = json.dumps(
+                {
+                    "setId": "official-set",
+                    "status": "queued",
+                    "members": [
+                        {
+                            "candidateId": pack.pack,
+                            "packName": pack.pack,
+                            "version": pack.version,
+                            "artifactDigest": pack.artifact_digest,
+                            "status": "queued",
+                        }
+                        for pack in packs
+                        if pack.pack in submitted_members
+                    ],
+                }
+            ).encode()
+            if problem and problem.startswith("receipt-"):
+                receipt = json.loads(files[handler.path])
+                if problem == "receipt-members":
+                    receipt["members"].pop()
+                elif problem == "receipt-digest":
+                    receipt["members"][0]["artifactDigest"] = "blake3:" + "e" * 64
+                else:
+                    receipt["members"][1]["candidateId"] = receipt["members"][0]["candidateId"]
+                files[handler.path] = json.dumps(receipt).encode()
+            for pack in packs:
+                if not (problem and problem.startswith("submitted-")) and not (
+                    problem
+                    and problem.startswith("dependency-")
+                    and problem != "dependency-external"
+                    and pack.pack in {"second-pack", "third-pack"}
+                ):
+                    files[f"/v1/packs/{pack.pack}/versions/{pack.version}"] = json.dumps(
+                        {
+                            "packName": pack.pack,
+                            "version": pack.version,
+                            "state": "active",
+                            "artifact": {"digest": pack.artifact_digest},
+                        }
+                    ).encode()
+        if (
+            problem
+            and problem.startswith("submitted-")
+            and handler.path.startswith("/v1/publish/")
+            and handler.command == "GET"
+        ):
+            name = handler.path.rsplit("/", 1)[1]
+            pack = next(pack for pack in packs if pack.pack == name)
+            count = activation_polls.get(name, 0)
+            activation_polls[name] = count + 1
+            state = ("queued", "scanning", "retrying", "accepted")[min(count, 3)]
+            if problem == "submitted-rejected" and name == "second-pack" and count >= 2:
+                state = "rejected"
+            files[handler.path] = json.dumps(
+                {"status": state, "reason": "probe.timeout" if state == "rejected" else None}
+            ).encode()
+            if count >= 3 and state == "accepted" and problem != "submitted-timeout":
+                files[f"/v1/packs/{name}/versions/{pack.version}"] = json.dumps(
+                    {
+                        "packName": name,
+                        "version": pack.version,
+                        "state": "active",
+                        "artifact": {
+                            "digest": "blake3:" + "f" * 64
+                            if problem == "submitted-digest" and name == "second-pack"
+                            else pack.artifact_digest
+                        },
+                    }
+                ).encode()
         if problem and problem.startswith("dependency-") and submitted:
             if handler.path in {"/v1/publish/second-pack", "/v1/publish/third-pack"}:
                 assert handler.headers.get("Authorization") == "Bearer test-token"
@@ -1411,26 +1668,21 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     }
                 ).encode()
                 if problem == "dependency-active" or (
-                    chained
-                    and activation_polls[handler.path] == 2
-                    and not (
-                        problem == "dependency-levels-timeout"
-                        and handler.path == "/v1/publish/second-pack"
-                    )
+                    problem == "dependency-levels" and activation_polls[handler.path] == 2
                 ):
-                    name = handler.path.rsplit("/", 1)[1]
-                    version = dict(versions)[name]
-                    files[f"/v1/packs/{name}/versions/{version}"] = json.dumps(
-                        {"packName": name, "version": version, "state": "active"}
-                    ).encode()
-            if handler.command == "POST" and "first-pack" in handler.path:
-                assert polls[0] == (
-                    4
-                    if problem == "dependency-levels"
-                    else 0
-                    if problem == "dependency-external"
-                    else 1
-                )
+                    for name, version in versions:
+                        files[f"/v1/packs/{name}/versions/{version}"] = json.dumps(
+                            {
+                                "packName": name,
+                                "version": version,
+                                "state": "active",
+                                "artifact": {
+                                    "digest": next(
+                                        pack.artifact_digest for pack in packs if pack.pack == name
+                                    )
+                                },
+                            }
+                        ).encode()
         if handler.path.startswith("/v1/packs/"):
             assert handler.headers.get("Authorization") is None
         if (
@@ -1446,6 +1698,44 @@ def test_official_publication_requires_complete_supported_base_bindings(
             respond(handler)
 
     monkeypatch.setattr(server.RequestHandlerClass, "respond", registry_response)
+    engine_bindings = []
+    from email import policy
+    from email.parser import BytesParser
+
+    def receive(handler):
+        assert handler.headers.get("Authorization") == "Bearer test-token"
+        body = handler.rfile.read(int(handler.headers["Content-Length"]))
+        message = BytesParser(policy=policy.default).parsebytes(
+            f"Content-Type: {handler.headers['Content-Type']}\r\n\r\n".encode() + body
+        )
+        parts = {
+            part.get_param("name", header="content-disposition"): part
+            for part in message.iter_parts()
+        }
+        payload = parts["manifest"].get_payload(decode=True)
+        assert isinstance(payload, bytes)
+        manifest = json.loads(payload)
+        assert {member["name"] for member in manifest["members"]} == (
+            {"first-pack"} if problem == "published-partial" else {pack.pack for pack in packs}
+        )
+        for member in manifest["members"]:
+            submitted_members.append(member["name"])
+            pack = next(p for p in packs if p.pack == member["name"])
+            assert member["version"] == pack.version
+            assert (
+                parts[member["archive"]].get_payload(decode=True)
+                == (
+                    sources / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
+                ).read_bytes()
+            )
+            assert member["locks"] == json.loads(
+                (output / f"{pack.pack}-{pack.version}.json").read_bytes()
+            )
+            if problem is None:
+                engine_bindings.append(member["engine"])
+        handler.respond()
+
+    monkeypatch.setattr(server.RequestHandlerClass, "do_POST", receive)
     output = tmp_path / "publication"
     before = {path: path.read_bytes() for path in [*sources.iterdir(), *locks, *bases]}
     try:
@@ -1453,15 +1743,55 @@ def test_official_publication_requires_complete_supported_base_bindings(
             "", f"http://127.0.0.1:{server.server_port}", token_env="PUBLICATION_TEST_TOKEN"
         )
         lookup_paths = [f"/v1/packs/{pack.pack}/versions/{pack.version}" for pack in packs]
-        if problem and problem.startswith("dependency-"):
+        if problem and problem.startswith("receipt-"):
+            with pytest.raises(RegistryPublishError, match="malformed receipt"):
+                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+            assert submitted == ["/v1/publish-sets"]
+            assert (output / "set.json").exists()
+            assert {row["state"] for row in json.loads((output / "result.json").read_bytes())} == {
+                "submitting"
+            }
+        elif problem and problem.startswith("submitted-"):
+            if problem == "submitted-progress":
+                result = publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=registry,
+                    activation_timeout=20,
+                )
+                assert [row["state"] for row in result] == ["published", "published"]
+                assert set(activation_polls) == {"first-pack", "second-pack"}
+            else:
+                with pytest.raises(RegistryPublishError) as failure:
+                    publish_official_packs(
+                        tmp_path,
+                        sources,
+                        bases,
+                        locks,
+                        output,
+                        registry=registry,
+                        activation_timeout=20,
+                    )
+                message = str(failure.value)
+                assert "second-pack@7.4.0rc1" in message
+                assert "candidate second-pack" in message
+                if problem == "submitted-rejected":
+                    assert "probe.timeout" in message
+                elif problem == "submitted-timeout":
+                    assert "first-pack@1.2.3" in message
+                    assert "candidate first-pack" in message
+                    assert "timed out" in message
+                else:
+                    assert "digest" in message
+        elif problem and problem.startswith("dependency-"):
             if problem == "dependency-external":
                 result = publish_official_packs(
                     tmp_path, sources, bases, locks, output, registry=registry, activation_timeout=5
                 )
-                assert submitted == [
-                    "/v1/publish/first-pack/versions/1.2.3",
-                    "/v1/publish/second-pack/versions/7.4.0rc1",
-                ]
+                assert submitted == ["/v1/publish-sets"]
                 assert [path for path, _ in requests][2:5] == [
                     "/v1/packs/third-pack/versions?limit=100",
                     "/v1/packs/third-pack/versions?limit=100&cursor=next",
@@ -1476,20 +1806,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
                     if problem == "dependency-levels"
                     else ["second-pack", "first-pack"]
                 )
-                assert submitted == [
-                    *(
-                        [
-                            "/v1/publish/fourth-pack/versions/3.0",
-                            "/v1/publish/third-pack/versions/2.0",
-                        ]
-                        if problem == "dependency-levels"
-                        else []
-                    ),
-                    "/v1/publish/second-pack/versions/7.4.0rc1",
-                    "/v1/publish/first-pack/versions/1.2.3",
-                ]
-                if chained:
-                    assert clock[0] == 8
+                assert submitted == ["/v1/publish-sets"]
             else:
                 with pytest.raises(
                     RegistryPublishError,
@@ -1508,44 +1825,56 @@ def test_official_publication_requires_complete_supported_base_bindings(
                         registry=registry,
                         activation_timeout=5,
                     )
-                assert submitted == [
-                    *(
-                        [
-                            "/v1/publish/fourth-pack/versions/3.0",
-                            "/v1/publish/third-pack/versions/2.0",
-                        ]
-                        if chained
-                        else []
-                    ),
-                    "/v1/publish/second-pack/versions/7.4.0rc1",
-                ]
-                if chained:
-                    assert clock[0] == 9
-                else:
-                    assert clock[0] <= 5
+                assert submitted == ["/v1/publish-sets"]
+                assert clock[0] <= 5
         elif problem in {"lookup-failed", "publish-conflict"}:
             with pytest.raises(
                 RegistryPublishError,
-                match="first-pack@1.2.3.*"
-                + (
-                    "lookup failed"
-                    if problem == "lookup-failed"
-                    else "not retried.*bump the pack version"
-                ),
+                match="first-pack@1.2.3.*lookup failed"
+                if problem == "lookup-failed"
+                else "not retried.*bump the pack version",
             ):
-                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+                publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=None if preflight else registry,
+                    preflight_registry=registry.endpoint if preflight else None,
+                )
             assert [path for path, _ in requests] == (
                 lookup_paths[:1]
                 if problem == "lookup-failed"
-                else lookup_paths + ["/v1/publish/first-pack/versions/1.2.3"]
+                else lookup_paths + ["/v1/publish-sets"]
             )
-        elif problem and problem.startswith("published-") and problem != "published-identical":
+        elif problem == "helper-change" or (
+            problem
+            and problem.startswith("published-")
+            and problem not in {"published-identical", "published-partial"}
+        ):
             with pytest.raises(
                 RegistryPublishError, match="second-pack@7.4.0rc1.*bump the pack version"
             ):
-                publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
+                publish_official_packs(
+                    tmp_path,
+                    sources,
+                    bases,
+                    locks,
+                    output,
+                    registry=None if preflight else registry,
+                    preflight_registry=registry.endpoint if preflight else None,
+                )
             assert [path for path, _ in requests] == lookup_paths
-        elif problem not in {None, "prepare-only", "published-identical", "check-published"}:
+        elif problem not in {
+            None,
+            "prepare-only",
+            "published-identical",
+            "published-partial",
+            "check-published",
+            "unpublished",
+            "version-raised",
+        }:
             with pytest.raises((ValueError, ArtifactError)):
                 publish_official_packs(tmp_path, sources, bases, locks, output, registry=registry)
             assert not output.exists()
@@ -1557,11 +1886,16 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 bases,
                 locks,
                 output,
-                registry=registry if problem in {None, "published-identical"} else None,
-                preflight_registry=registry.endpoint if problem == "check-published" else None,
+                registry=registry
+                if problem in {None, "published-identical", "published-partial"}
+                else None,
+                preflight_registry=registry.endpoint
+                if preflight or problem == "check-published"
+                else None,
+                engine_manifest=engine_manifest if problem is None else None,
             )
             assert len(result) == 2
-            assert [row["version"] for row in result] == ["1.2.3", "7.4.0rc1"]
+            assert [row["version"] for row in result] == [version for _, version in versions]
             for pack, row in zip(packs, result, strict=True):
                 lock_map = row["locks"]
                 assert isinstance(lock_map, str)
@@ -1574,16 +1908,34 @@ def test_official_publication_requires_complete_supported_base_bindings(
                         "lock": expected_locks[pack.pack, variant],
                     }
                 if problem is None:
-                    assert row["state"] == "queued" and row["candidateId"] == pack.pack
+                    assert row["state"] == "published" and row["candidateId"] == pack.pack
                 elif problem == "published-identical":
                     assert row["state"] == "published" and "candidateId" not in row
+                elif problem == "published-partial":
+                    assert row["state"] == "published"
+                    assert ("candidateId" in row) == (pack.pack == "first-pack")
             assert [path for path, _ in requests] == (
-                lookup_paths
-                + [f"/v1/publish/{pack.pack}/versions/{pack.version}" for pack in packs]
+                lookup_paths + ["/v1/publish-sets"] + lookup_paths
                 if problem is None
+                else lookup_paths + ["/v1/publish-sets", lookup_paths[0]]
+                if problem == "published-partial"
                 else lookup_paths
-                if problem in {"check-published", "published-identical"}
+                if preflight or problem in {"check-published", "published-identical"}
                 else []
+            )
+        if preflight:
+            assert submitted == []
+        if problem is None:
+            assert (
+                engine_bindings
+                == [
+                    {
+                        "commit": "c" * 40,
+                        "manifestDigest": "sha256:"
+                        + hashlib.sha256(engine_manifest.read_bytes()).hexdigest(),
+                    }
+                ]
+                * 2
             )
         assert {path: path.read_bytes() for path in before} == before
         assert not list(tmp_path.glob("official-publication-*"))
@@ -1598,7 +1950,9 @@ def test_official_publication_requires_complete_supported_base_bindings(
         ("raw", "queued"),
         ("locks", "queued"),
         ("locks", "scanning"),
+        ("locks", "retrying"),
         ("locks", "accepted"),
+        ("engine", "queued"),
         ("missing", "queued"),
         ("refused", "queued"),
         ("invalid", "rejected"),
@@ -1623,6 +1977,7 @@ def test_publication_client_preserves_archive_and_lock_bytes(
     archive, locks = tmp_path / "demo-1.2.3-py3-none-any.whl", tmp_path / "locks.json"
     archive.write_bytes(b"exact archive\x00\xff\r\n")
     lock_bytes = b'{"win-cpu":{"baseId":"exact binding"}}\n'
+    engine = {"commit": "a" * 40, "manifestDigest": "sha256:" + "b" * 64}
     if mode != "missing":
         locks.write_bytes(lock_bytes)
     requests = []
@@ -1664,7 +2019,12 @@ def test_publication_client_preserves_archive_and_lock_bytes(
                 publish_release(registry, archive, "demo", "1.2.3", locks=locks)
         else:
             result = publish_release(
-                registry, archive, "demo", "1.2.3", locks=locks if mode == "locks" else None
+                registry,
+                archive,
+                "demo",
+                "1.2.3",
+                locks=locks if mode in {"locks", "engine"} else None,
+                engine=engine if mode == "engine" else None,
             )
             assert result.state == state and result.candidate_id == "candidate-1"
         if mode == "missing":
@@ -1683,9 +2043,13 @@ def test_publication_client_preserves_archive_and_lock_bytes(
             assert [part.get_param("name", header="content-disposition") for part in parts] == [
                 "archive",
                 "locks",
-            ]
+            ] + (["engine"] if mode == "engine" else [])
             assert parts[0].get_payload(decode=True) == archive.read_bytes()
             assert parts[1].get_payload(decode=True) == lock_bytes
+            if mode == "engine":
+                payload = parts[2].get_payload(decode=True)
+                assert isinstance(payload, bytes)
+                assert json.loads(payload) == engine
     finally:
         server.shutdown()
         server.server_close()
@@ -1710,7 +2074,7 @@ def test_official_publication_declarations_match_archive_admission(
         if pack.pack == "dinkster-pack-helpers":
             assert library_metadata(archive) == (
                 "dinkster-pack-helpers",
-                "0.0.2",
+                "0.0.5",
                 (
                     "dinkster-api<0.1,>=0.0.2.dev0",
                     "dinkster-inference",
@@ -1818,7 +2182,7 @@ def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(
             assert composition.node_packs["dinkster.text.string_length"] == "dinkster-text"
             assert composition.node_packs["dinkster.image.empty_image"] == "dinkster-image"
             assert composition.packs["dinkster-text"].version == "0.0.3"
-            assert composition.packs["dinkster-image"].version == "0.0.5"
+            assert composition.packs["dinkster-image"].version == "0.0.10"
             result = await composition.make_engine(lambda _event: None).run(
                 graph_from_wire(json.loads(saved.read_bytes())), ["length", "size"]
             )
@@ -1930,6 +2294,7 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
     manifest.write_text(
         MANIFEST.replace('version = "1.0"', 'version = "2.3.0"')
         + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+        + '[pack.extra-requires]\ncpu=["helper>=2"]\ncuda=["cuda-helper>=3"]\n'
     )
     result = run_manifest_admission(root, "archive-test", "2.3.0", engine_version=engine)
     assert result.blocked is (engine in {"0.8.9", "1.0.0"})
@@ -1938,6 +2303,10 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
         assert "archive-test@2.3.0" in message and ">=0.9,<1" in message and engine in message
     else:
         assert result.data is not None and result.data["dinkster"] == ">=0.9,<1"
+        assert result.data["pythonExtraRequirements"] == {
+            "cpu": ["helper>=2"],
+            "cuda": ["cuda-helper>=3"],
+        }
     mismatch = run_manifest_admission(root, "archive-test", "2.3.1")
     assert mismatch.blocked and "does not match submission" in mismatch.findings[0].message
 
@@ -2005,9 +2374,7 @@ def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem:
         assert result.blocked
         expected = {
             "empty": "probe.no-schemas",
-            "exception": "probe.invalid-report"
-            if os.environ.get("DINKSTER_TEST_FULL_PROBE") == "1"
-            else "entry.unresolvable",
+            "exception": "entry.unresolvable",
             "output": "probe.output-limit",
             "timeout": "probe.timeout",
         }[problem]
@@ -2054,6 +2421,7 @@ def test_registry_probe_refuses_degraded_isolation(
         "collection",
         "dependency",
         "teardown",
+        "library-lock-mismatch",
     ],
 )
 def test_selected_pack_tests_cannot_fall_back_to_checkout(
@@ -2061,8 +2429,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     monkeypatch: pytest.MonkeyPatch,
     problem: str | None,
     capfd: pytest.CaptureFixture[str],
+    selected_pack_runtime,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution
+    from test_pack_environment import _wheel
 
     from scripts.run_selected_pack_tests import run_selected_tests
 
@@ -2084,10 +2455,13 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         '[project]\nname = "dinkster-image"\n'
     )
     (checkout_module / "__init__.py").write_text("VALUE = 47\n")
+    dev_module = engine / "packages/dinkster-nodes-dev/src/dinkster_nodes_dev"
+    dev_module.mkdir(parents=True)
+    (dev_module / "__init__.py").write_text("VALUE = 73\n")
     (tests / "test_image_nodes.py").write_text(
         "import importlib.metadata\nimport os\nimport subprocess\nimport sys\nimport pytest\n"
         "import tomllib\n"
-        "from pathlib import Path\nimport dinkster_image\n"
+        "from pathlib import Path\nimport dinkster_image\nimport dinkster_nodes_dev\n"
         "from dinkster_image import VALUE, NEW_NODE as Unpublished\n"
         + ("pytest.skip('unavailable', allow_module_level=True)\n" if problem == "skipped" else "")
         + (
@@ -2105,6 +2479,11 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             else "def test_selected_value():\n"
         )
         + "    assert VALUE == 47\n"
+        "    assert dinkster_nodes_dev.VALUE == 73\n"
+        "    assert Path(dinkster_nodes_dev.__file__).resolve().is_relative_to(\n"
+        "        Path.cwd() / 'packages/dinkster-nodes-dev/src')\n"
+        "    from locked_only_dependency import VALUE as LOCKED_VALUE\n"
+        "    assert LOCKED_VALUE == 61\n"
         "    assert os.environ['CUDA_VISIBLE_DEVICES'] == ''\n"
         "    assert os.environ['DINKSTER_ACCELERATOR'] == 'cpu'\n"
         "    history = Path(os.environ['DINKSTER_TEST_HISTORY_ROOT'])\n"
@@ -2246,6 +2625,7 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     (source / "dinkster-pack.toml").write_text(
         '[pack]\nname = "dinkster-image"\npublisher = "dinkster"\n'
         'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        'requires = ["locked-only-dependency==1.7"]\n'
         'namespaces = ["image-fixture"]\n'
         '[pack.entry]\nnodes = "dinkster_image:NODES"\n'
     )
@@ -2257,7 +2637,8 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
     value = 13 if problem in {"broken", "mixed-class", "shadowed", "class-shadow"} else 47
     (module / "__init__.py").write_text(
         ("import missing_selected_internal_dependency\n" if problem == "dependency" else "")
-        + f"VALUE = {value}\nNODES = []\n"
+        + f"from locked_only_dependency import VALUE as DEPENDENCY_VALUE\n"
+        f"assert DEPENDENCY_VALUE == 61\nVALUE = {value}\nNODES = []\n"
     )
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
@@ -2291,11 +2672,79 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
             )
         ]
     )
+    python, locks = selected_pack_runtime(catalog, artifacts)
+    from dataclasses import replace
+
+    if problem in {None, "library-lock-mismatch"}:
+        helper = _wheel(tmp_path, "selected-helper", "2.4", "selected_helper", "VALUE=83")
+        helper_archive = tmp_path / helper.filename
+        helper_digest = artifact_digest(helper_archive.read_bytes())
+        from dinkster_store import pack_archive_path
+
+        pack_archive_path(artifacts, helper_digest).write_bytes(helper_archive.read_bytes())
+        catalog = Lockfile.of(
+            [*catalog.packs, LockedPack("selected-helper", "2.4", helper_digest, "dinkster", ())]
+        )
+        python, locks = selected_pack_runtime(catalog, artifacts)
+        for name, lock in locks.items():
+            locks[name] = replace(
+                lock,
+                packages=tuple(
+                    replace(
+                        package,
+                        wheels=tuple(
+                            replace(
+                                wheel,
+                                url="http://127.0.0.1:1/unpublished-helper.whl",
+                                sha256=(
+                                    "f" * 64
+                                    if problem == "library-lock-mismatch"
+                                    and name == "dinkster-image"
+                                    else wheel.sha256
+                                ),
+                            )
+                            for wheel in package.wheels
+                        ),
+                    )
+                    if package.name == "selected-helper"
+                    else package
+                    for package in lock.packages
+                ),
+            )
+        test_file = engine / "tests/test_image_nodes.py"
+        test_file.write_text(
+            test_file.read_text()
+            + "\nfrom selected_helper import VALUE as HELPER_VALUE\nassert HELPER_VALUE == 83\n"
+        )
+        subprocess.run(["git", "-C", str(engine), "add", "."], check=True)
+
+    dependency = _wheel(
+        tmp_path, "locked-only-dependency", "1.7", "locked_only_dependency", "VALUE=61"
+    )
+    locks["dinkster-image"] = replace(
+        locks["dinkster-image"],
+        requirements=("locked-only-dependency==1.7",),
+        packages=(
+            *locks["dinkster-image"].packages,
+            LockedDistribution("locked-only-dependency", "1.7", (dependency,)),
+        ),
+    )
+    (tmp_path / "locked_only_dependency.py").write_text("VALUE=13\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/forbidden")
+    context = {"generation_python": python, "locks": locks, "variant": "linux-cpu"}
     if problem is None:
-        run_selected_tests(engine, catalog, artifacts)
+        run_selected_tests(engine, catalog, artifacts, **context)
         output = capfd.readouterr().out
-        assert "3 passed" in output
-        assert "2 skipped" in output
+        outcomes = [
+            json.loads(line[line.index('{"admissionTests"') :])["outcome"]
+            for line in output.splitlines()
+            if '{"admissionTests": "result"' in line
+        ]
+        assert outcomes.count("passed") == 3
+        assert outcomes.count("skipped") == 2
         assert '"admissionTests": "collected"' in output
         assert '"pack": "dinkster-image@1.2.3"' in output
         assert '"nodeid": "tests/test_image_nodes.py::test_selected_value"' in output
@@ -2308,17 +2757,80 @@ def test_selected_pack_tests_cannot_fall_back_to_checkout(
         assert "dinkster_image:NEW_NODE" in output
     elif problem == "missing":
         with pytest.raises(PackArchiveError, match="wheel.import-name"):
-            run_selected_tests(engine, catalog, artifacts)
+            run_selected_tests(engine, catalog, artifacts, **context)
+    elif problem == "library-lock-mismatch":
+        from dinkster_workers.provision import ProvisionError
+
+        with pytest.raises(
+            ProvisionError, match="unpublished-helper.whl: download/verification failed"
+        ):
+            run_selected_tests(engine, catalog, artifacts, **context)
     else:
         with pytest.raises(subprocess.CalledProcessError):
-            run_selected_tests(engine, catalog, artifacts)
+            run_selected_tests(engine, catalog, artifacts, **context)
+
+
+def test_selected_pack_tests_refuse_incompatible_base_before_test_tool_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_workers.pack_lock import LockedDistribution, PackLock
+    from dinkster_workers.provision import ProvisionError
+    from test_pack_environment import _generation, _wheel
+
+    from scripts.run_selected_pack_tests import run_selected_tests
+
+    source = tmp_path / "selected"
+    source.mkdir()
+    (source / "dinkster_text").mkdir()
+    (source / "dinkster_text/__init__.py").write_text("NODES = []\n")
+    (source / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-text"\npublisher = "dinkster"\n'
+        'version = "1.2.3"\nengine = ">=0.0.2.dev0,<2"\n'
+        '[pack.entry]\nnodes = "dinkster_text:NODES"\n'
+    )
+    archive = tmp_path / "dinkster_text-1.2.3-py3-none-any.whl"
+    build_pack_archive(source, archive)
+    digest = artifact_digest(archive.read_bytes())
+    archive.rename(tmp_path / f"{digest.removeprefix('blake3:')}.zip")
+    catalog = Lockfile.of([LockedPack("dinkster-text", "1.2.3", digest, "dinkster", ())])
+    base = _wheel(tmp_path, "simpleeval", "1.0.7", "simpleeval", "")
+    required = _wheel(tmp_path, "simpleeval", "1.0.8", "simpleeval", "")
+    python = _generation(tmp_path / "generation/python", [base])
+    lock = PackLock(
+        "dinkster-text",
+        "linux-cpu",
+        ">=3.12",
+        ("simpleeval==1.0.8",),
+        (),
+        (LockedDistribution("simpleeval", "1.0.8", (required,)),),
+    )
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/forbidden")
+    with (
+        pytest.raises(
+            RuntimeError, match="selected pack admission tests require the Linux CI environment"
+        )
+        if sys.platform != "linux"
+        else pytest.raises(
+            ProvisionError, match="simpleeval: generation has 1.0.7, lock needs 1.0.8"
+        )
+    ):
+        run_selected_tests(
+            tmp_path,
+            catalog,
+            tmp_path,
+            generation_python=python,
+            locks={"dinkster-text": lock},
+            variant="linux-cpu",
+        )
 
 
 @pytest.mark.parametrize("selected_value", [17, 29])
 @pytest.mark.parametrize("vision", [False, True])
 @pytest.mark.skipif(sys.platform != "linux", reason="engine pack admission runs on Linux")
 def test_selected_pack_runtime_id_uses_distribution_layout(
-    tmp_path: Path, selected_value: int, vision: bool
+    tmp_path: Path, selected_value: int, vision: bool, selected_pack_runtime
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
 
@@ -2379,8 +2891,10 @@ def test_selected_pack_runtime_id_uses_distribution_layout(
     digest = artifact_digest(archive.read_bytes())
     archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
     catalog = Lockfile.of([LockedPack(pack_id, "1.2.3", digest, "dinkster", (pack_id,))])
+    python, locks = selected_pack_runtime(catalog, artifacts)
+    context = {"generation_python": python, "locks": locks, "variant": "linux-cpu"}
     if selected_value == 17:
-        run_selected_tests(engine, catalog, artifacts)
+        run_selected_tests(engine, catalog, artifacts, **context)
     else:
         with pytest.raises(subprocess.CalledProcessError):
-            run_selected_tests(engine, catalog, artifacts)
+            run_selected_tests(engine, catalog, artifacts, **context)

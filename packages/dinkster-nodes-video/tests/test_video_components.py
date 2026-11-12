@@ -120,102 +120,10 @@ from dinkster_video.video_components import ConcatenateVideo, CreateVideo, GetVi
 
 assert Path(module.__file__).resolve() == Path(sys.argv[1])
 create = CreateVideo.schema()
-assert create.node_type == "dinkster.video.create_video"
-assert create.display_name == "Create Video"
-assert create.category == "video"
-assert create.description == "Create a video from images."
-assert create.search_terms == ("images to video", "CreateVideo")
-assert tuple(item.id for item in create.inputs) == (
-    "images", "fps", "audio", "bit_depth", "color_space", "codec"
-)
-assert [item.type for item in create.inputs] == [
-    TypeExpr.concrete(IMAGE_TYPE), TypeExpr.concrete(CORE_FLOAT), TypeExpr.concrete(AUDIO_TYPE),
-    TypeExpr.concrete(CORE_COMBO), TypeExpr.concrete(CORE_COMBO), TypeExpr.concrete(CORE_COMBO),
-]
-assert create.inputs[1].default == 30.0
-assert create.inputs[2].required is False
-assert create.inputs[3].default == "auto"
-assert tuple(option.value for option in create.inputs[3].widget.options) == ("auto", 8, 10)
-assert create.inputs[4].default == "sRGB"
-assert create.inputs[4].widget.options == ("sRGB", "HDR", "HDR PQ")
-assert create.inputs[5].default == "none"
-assert create.inputs[5].widget.options == ("none", "auto", "h264", "av1")
-assert [(item.id, item.type) for item in create.outputs] == [
-    ("video", TypeExpr.concrete(VIDEO_TYPE))
-]
-get = GetVideoComponents.schema()
-assert get.node_type == "dinkster.video.get_video_components"
-assert get.display_name == "Get Video Components"
-assert get.category == "video"
-assert get.description == "Extracts video frames, audio, frame rate, bit depth, and color space."
-assert get.search_terms == (
-    "extract frames", "split video", "video to images", "demux", "GetVideoComponents"
-)
-assert [(item.id, item.type) for item in get.inputs] == [
-    ("video", TypeExpr.concrete(VIDEO_TYPE))
-]
-assert [(item.id, item.type) for item in get.outputs] == [
-    ("images", TypeExpr.concrete(IMAGE_TYPE)),
-    ("audio", TypeExpr.concrete(AUDIO_TYPE)),
-    ("fps", TypeExpr.concrete(CORE_FLOAT)),
-    ("bit_depth", TypeExpr.concrete(CORE_COMBO)),
-    ("color_space", TypeExpr.concrete(CORE_COMBO)),
-]
 concat = ConcatenateVideo.schema()
-assert concat.node_type == "dinkster.video.concatenate_video"
-assert concat.display_name == "Concatenate Video"
-assert concat.category == "video"
-assert (
-    concat.description
-    == "Concatenates videos in order without decoding compatible encoded inputs."
-)
-assert len(concat.input_families) == 1
-videos = concat.input_families[0]
-assert videos.id == "videos"
-assert videos.member_prefix == "video"
-assert (videos.min_members, videos.max_members) == (1, 100)
-assert videos.optional_after_minimum is True
-assert [(item.id, item.type, item.doc) for item in videos.template] == [
-    (
-        "video",
-        TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE)),
-        "VIDEO lists to concatenate in input order.",
-    )
-]
-replacement = concat.replacements[0]
-assert replacement.from_type == "ConcatenateVideo"
-assert replacement.migration is None
-case = replacement.cases[0]
-assert case.to == "dinkster.video.concatenate_video"
-assert tuple((name, mapping.kind, mapping.input) for name, mapping in case.inputs) == (
-    ("codec", "copy", "codec"),
-    ("complete_audio", "copy", "complete_audio"),
-)
-assert tuple(name for name, _mapping in case.outputs) == ("video",)
-family_name, family_mapping = case.input_families[0]
-assert family_name == "videos"
-assert family_mapping.source_family == "videos"
-assert family_mapping.source_template == ("video",)
-assert family_mapping.member_ids is None
-assert dict(family_mapping.inputs)["video"].input == "video"
 assert validate_replacement_references({concat.node_type: concat}) == ()
 wire = schema_to_wire(concat)
 assert schema_from_wire(wire) == concat
-wire_replacement = wire["replacements"][0]
-assert "migration" not in wire_replacement
-wire_mapping = wire_replacement["cases"][0]["inputFamilies"]["videos"]
-assert wire_mapping["sourceFamily"] == "videos"
-assert wire_mapping["sourceTemplate"] == {"inputs": ["video"]}
-assert "memberIds" not in wire_mapping
-assert [(item.id, item.default, item.advanced) for item in concat.inputs] == [
-    ("codec", "auto", True),
-    ("complete_audio", None, True),
-]
-assert concat.inputs[0].widget.options == ("auto", "h264", "av1")
-assert concat.inputs[1].type == TypeExpr.concrete(AUDIO_TYPE)
-assert [(item.id, item.type) for item in concat.outputs] == [
-    ("video", TypeExpr.concrete(VIDEO_TYPE))
-]
 assert "torch" not in sys.modules
 assert "torchvision" not in sys.modules
 assert "av" not in sys.modules

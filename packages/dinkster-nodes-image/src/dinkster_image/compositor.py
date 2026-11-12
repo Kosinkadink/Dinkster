@@ -174,6 +174,7 @@ class LayersFromBoundingBoxes(Node):
                     TypeExpr.union(CORE_STRING, BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE),
                     required=False,
                     default=None,
+                    force_input=True,
                 ),
                 InputSpec("crop_to_content", BOOLEAN, required=False, default=True),
             ),

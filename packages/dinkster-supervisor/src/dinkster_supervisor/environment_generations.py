@@ -19,7 +19,11 @@ from typing import cast
 from blake3 import blake3
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 
-from .environment_constraints import requirement_hashes
+from .environment_constraints import (
+    installed_wheel_origins,
+    requirement_hashes,
+    selected_wheel_requirements,
+)
 from .environment_downloads import fetch_artifact
 from .environment_state import (
     EnvironmentError,
@@ -100,16 +104,21 @@ def pack_operation(
     worker_protocol: int,
     own_environment_size: int,
     source_generation: Path | None = None,
+    constraints: Path | None = None,
+    collection_python: Path | None = None,
+    compatibility: dict[str, object] | None = None,
     locks: tuple[Path, ...] = (),
     in_process_packs: tuple[str, ...] = (),
     offline: bool = False,
     uv: str = "uv",
 ) -> dict[str, object]:
-    """Invoke the generation-owned provisioner without importing engine packages."""
-    if operation not in {"preflight", "acquire", "rebuild", "doctor", "references"}:
+    """Run locked pack lifecycle tools without importing engine packages into the supervisor."""
+    if operation not in {"preflight", "collect", "acquire", "rebuild", "doctor", "references"}:
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
+    if operation != "collect" and (collection_python is not None or compatibility is not None):
+        raise EnvironmentError("host-owned diagnostics cannot construct pack environments")
     command = [
-        str(interpreter(generation)),
+        str(collection_python or interpreter(generation)),
         "-I",
         "-B",
         "-m",
@@ -120,7 +129,7 @@ def pack_operation(
         "--generation-python",
         str(interpreter(generation)),
         "--constraints",
-        str(generation / "constraints.txt"),
+        str(constraints if constraints is not None else generation / "constraints.txt"),
         "--variant",
         variant,
         "--worker-protocol",
@@ -136,6 +145,8 @@ def pack_operation(
     ]
     if source_generation is not None:
         command.extend(["--source-generation", str(source_generation)])
+    if compatibility is not None:
+        command.extend(["--compatibility", json.dumps(compatibility)])
     if offline:
         command.append("--offline")
     for lock in locks:
@@ -164,7 +175,11 @@ def pack_operation(
         messages = cast("list[object]", changes)
         if any(not isinstance(message, str) for message in messages):
             raise ValueError("changes must contain strings")
-        errors = list(cast("list[str]", messages)) if operation in {"doctor", "references"} else []
+        errors = (
+            list(cast("list[str]", messages))
+            if operation in {"doctor", "references", "collect"}
+            else []
+        )
         names: set[str] = set()
         for raw_pack in cast("list[object]", packs):
             if not isinstance(raw_pack, dict):
@@ -330,15 +345,61 @@ def retained_pack_archive(store: Path, identity: str, artifacts: Path | None = N
     return None
 
 
+ACQUIRE_PACK_SOURCES = """
+import json, os, sys
+from pathlib import Path
+from dinkster.installer import Installer
+from dinkster.registries import (
+    RegistryConfig, load_registries, routing_registry_fetcher, select_registry,
+)
+from dinkster_registry import Lockfile
+project = Path(sys.argv[1])
+arguments = dict(zip(sys.argv[2::2], sys.argv[3::2], strict=True))
+config_path = project / 'registries.toml'
+if '--registries' in arguments:
+    config = load_registries(Path(arguments['--registries']))
+elif config_path.is_file():
+    config = load_registries(config_path)
+elif os.environ.get('DINKSTER_REGISTRIES'):
+    config = load_registries(Path(os.environ['DINKSTER_REGISTRIES']))
+else:
+    config = RegistryConfig()
+selector = arguments.get('--registry', os.environ.get('DINKSTER_REGISTRY', ''))
+if (not selector and not config_path.is_file()
+        and not os.environ.get('DINKSTER_REGISTRIES') and '--registries' not in arguments):
+    selector = 'https://registry.dinkster.org'
+selected = select_registry(config, selector) if selector else None
+installer = Installer(
+    Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
+)
+missing = {}
+for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
+    try:
+        installer.acquire(entry)
+    except Exception as exc:
+        missing[entry.artifact_digest] = str(exc)
+print(json.dumps(missing))
+"""
+
+
 def restore_pack_sources(
-    generation: Path, *, catalog_lock: Path, artifacts: Path, project: Path, store: Path
+    generation: Path,
+    *,
+    catalog_lock: Path,
+    artifacts: Path,
+    project: Path,
+    store: Path,
+    registry_arguments: tuple[str, ...] = (),
+    python: Path | None = None,
 ) -> None:
-    """Use the target's exact-pin restore in scratch, never the live pack install."""
+    """Acquire exact source bytes in scratch without provisioning or activating packs."""
+    lock = read_document(catalog_lock)
+    if not lock["packs"]:
+        return
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
         scratch = Path(directory)
         cache = scratch / "artifacts"
         cache.mkdir()
-        lock = read_document(catalog_lock)
         for row in cast("list[dict[str, object]]", lock["packs"]):
             identity = row.get("artifactDigest")
             if not isinstance(identity, str):
@@ -347,31 +408,18 @@ def restore_pack_sources(
             if archive is not None:
                 # Older target engines still consume flat digest-named archives.
                 shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
-        snapshot = scratch / "snapshot.json"
-        write_document(
-            snapshot,
-            {
-                "format": "dinkster.snapshot/1",
-                "lockfile": json.loads(catalog_lock.read_bytes()),
-                "venvs": {},
-            },
-        )
-        command = [
-            str(interpreter(generation)),
-            "-I",
-            "-B",
-            "-m",
-            "dinkster.manager",
-            "--root",
-            str(scratch),
-        ]
-        registries = project / "registries.toml"
-        if registries.is_file():
-            command.extend(["--registries", str(registries)])
-        elif not os.environ.get("DINKSTER_REGISTRIES") and not os.environ.get("DINKSTER_REGISTRY"):
-            command.extend(["--registry", "https://registry.dinkster.org"])
         completed = subprocess.run(
-            [*command, "restore", str(snapshot), "--no-venv", "--yes"],
+            [
+                str(python or interpreter(generation)),
+                "-I",
+                "-B",
+                "-c",
+                ACQUIRE_PACK_SOURCES,
+                str(project),
+                *registry_arguments,
+            ],
+            cwd=scratch,
+            input=json.dumps(lock),
             capture_output=True,
             text=True,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DINKSTER_SHARED_STORE": ""},
@@ -380,6 +428,23 @@ def restore_pack_sources(
             raise EnvironmentError(
                 "target exact source restore refused: "
                 + (completed.stderr.strip() or completed.stdout.strip())
+            )
+        try:
+            missing: object = json.loads(completed.stdout)
+            if not isinstance(missing, dict) or any(
+                not isinstance(identity, str) or not isinstance(reason, str)
+                for identity, reason in cast("dict[object, object]", missing).items()
+            ):
+                raise ValueError("expected source identities and errors")
+        except ValueError as exc:
+            raise EnvironmentError(f"invalid source acquisition result: {exc}") from exc
+        if missing:
+            raise EnvironmentError(
+                "target exact source restore refused:\n"
+                + "\n".join(
+                    f"{identity}: {reason}"
+                    for identity, reason in cast("dict[str, str]", missing).items()
+                )
             )
         for row in cast("list[dict[str, object]]", lock["packs"]):
             identity = cast("str", row["artifactDigest"])
@@ -483,6 +548,7 @@ def prepare_engine_interpreter(
     constraints: Path,
     uv: str = "uv",
     refresh_cache: bool = False,
+    uv_cache: Path | None = None,
 ) -> Path:
     """Prepare acquired engine inputs in a new caller-owned, unsealed directory.
 
@@ -546,18 +612,21 @@ def prepare_engine_interpreter(
         "--offline",
         "--no-index",
         "--require-hashes",
+        # A same-version base distribution need not have come from the selected wheel.
+        "--reinstall",
         "--only-binary",
         ":all:",
         "--link-mode",
         link_mode,
         "-",
     ]
-    # Wheel sources can exceed Windows' command-line limit in large stores.
-    requirements = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in links)
-    requirements += constraints.read_text(encoding="utf-8")
+    # Keep selected local wheel URLs off Windows' bounded command line.
+    requirements, selected = selected_wheel_requirements(
+        python, constraints.read_text(encoding="utf-8"), links
+    )
     environment = {
         **os.environ,
-        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_CACHE_DIR": str(uv_cache if uv_cache is not None else store / "uv-cache"),
         "UV_OFFLINE": "1",
         "UV_NO_INDEX": "1",
         "UV_PYTHON_DOWNLOADS": "never",
@@ -575,6 +644,10 @@ def prepare_engine_interpreter(
     )
     if result.returncode:
         raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+    write_document(
+        destination / "installed-wheels.json",
+        {"format": "dinkster.installed-wheels/1", "wheels": selected, "inherited": []},
+    )
     return python
 
 
@@ -812,6 +885,18 @@ def build_generation(
             )
             if manifest_identity != engine_release:
                 raise EnvironmentError("retained engine manifest does not match engine release")
+        receipt = read_document(destination / "installed-wheels.json")
+        receipt["wheels"] = installed_wheel_origins(
+            cast("list[dict[str, object]]", receipt["wheels"]),
+            read_document(destination / "base-manifest.json")
+            if (destination / "base-manifest.json").is_file()
+            else {},
+            read_document(destination / "engine-manifest.json")
+            if (destination / "engine-manifest.json").is_file()
+            else {},
+            cast("str", (artifact_sources or {}).get("dependencyVariant", variant)),
+        )
+        write_document(destination / "installed-wheels.json", receipt)
         provisioned: set[str] = set()
         if (
             source_generation is not None
@@ -906,7 +991,10 @@ def build_generation(
             if path.is_file()
             and (
                 path.relative_to(destination).parts[0] != "packs"
-                or (len(path.relative_to(destination).parts) == 3 and path.name == "pack-lock.json")
+                or (
+                    len(path.relative_to(destination).parts) == 3
+                    and path.name in {"pack-lock.json", "installed-wheels.json"}
+                )
             )
             and (
                 "__pycache__" not in path.relative_to(destination).parts

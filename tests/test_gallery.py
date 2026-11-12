@@ -255,7 +255,7 @@ def test_gallery_explicit_pack_surface(
             assert dev.choices[SAMPLERS_CHOICE_ID] == SAMPLERS
             assert dev.choices[EMPTY_CHOICE_ID] == ()
             pack = dev.packs["dinkster-nodes-dev"]
-            assert [t.id for t in pack.templates] == [GALLERY_TEMPLATE_ID]
+            assert [t.id for t in pack.templates] == [GALLERY_TEMPLATE_ID, "node-features"]
         finally:
             await dev.close()
 
@@ -375,7 +375,7 @@ def test_gallery_template_references_real_ports() -> None:
 def test_gallery_manifest_template_matches_module() -> None:
     """The manifest template matches the package's source bytes and metadata."""
     templates = load_pack_templates(DEV_PACK_MANIFEST, pack="dinkster-nodes-dev")
-    assert len(templates) == 1
+    assert [template.id for template in templates] == [GALLERY_TEMPLATE_ID, "node-features"]
     declared = templates[0]
     assert declared.id == GALLERY_TEMPLATE_ID
     assert declared.name == GALLERY_TEMPLATE_NAME

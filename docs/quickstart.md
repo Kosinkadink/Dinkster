@@ -1,6 +1,6 @@
 # Browser editor quickstart
 
-The `dinkster` command starts the engine and browser frontend on one loopback
+The source run script starts the engine and browser frontend on one loopback
 origin, prepares missing or stale pack catalogs, and opens the editor. These
 source-checkout steps work on Windows x64, Linux x64, and Apple Silicon with
 macOS 14 or newer. Intel macOS is unsupported.
@@ -42,9 +42,15 @@ the published Linux CPU bundle; Apple Silicon uses `mac-arm64` with MPS.
 An empty `CUDA_VISIBLE_DEVICES` (or `-1`)
 forces CPU selection. There is no second local torch pin or fallback resolve.
 
-The scripts create the local library and managed-pack roots under `~/.dinkster`
+The scripts create the local library under `~/.dinkster`
 (`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before launch to
 choose another writable location. They preserve model mounts and output files.
+They explicitly select watched checkout development, not published setup or
+standalone installed packs. The terminal and served node catalog label this
+mode as unreviewed and not reproducible from dependency ranges. Contributor
+environment setup remains locked; live pack sources are not registry-reviewed
+release inputs. For captured development generations with runtime recovery,
+see [development packs](install.md#development-packs-from-local-folders).
 
 ## Launch
 
@@ -72,11 +78,9 @@ run `./run.sh --port 4640` (`.\run.ps1 --port 4640` on Windows).
 Use `--no-browser` on a headless machine and
 open the printed URL from a browser on that machine.
 
-To put the supervisor in front of the engine, run:
-
-```sh
-uv run --no-sync dinkster-supervisor -- uv run --no-sync dinkster-serve
-```
+For a manual source launch without the script, see
+[develop from source](install.md#develop-from-source). For managed published
+generations, use the environment commands rather than the source launcher.
 
 An embedded or headless core installation may omit both optional packages.
 From a source checkout, remove them from the environment and disable automatic
@@ -84,7 +88,7 @@ sync while launching so the default meta-package does not restore them:
 
 ```sh
 uv pip uninstall --python .venv dinkster-collab dinkster-supervisor
-uv run --no-sync dinkster-serve
+uv run --no-sync python -m dinkster.serve --watch-packs
 ```
 
 Installers that select capabilities explicitly can use the `dinkster[collab]`
@@ -106,7 +110,7 @@ priority = 0
 ```
 
 On Windows, use a TOML path such as `C:/Users/name/Models`. Keep the existing
-`[settings]` and `[mounts.output]` sections that `dinkster setup` created. See
+`[settings]` and `[mounts.output]` sections that the source launcher created. See
 [installation](install.md#model-folders) for the full format.
 
 The run scripts select the execution interpreter automatically, including

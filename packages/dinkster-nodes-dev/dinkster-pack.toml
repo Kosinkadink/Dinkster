@@ -6,7 +6,7 @@
 
 [pack]
 name = "dinkster-nodes-dev"
-version = "0.0.2"
+version = "0.0.3"
 engine = ">=0.0.2.dev0,<0.1"
 publisher = "dinkster"
 namespaces = ["dev"]
@@ -32,3 +32,24 @@ name = "Widget & Socket Gallery"
 description = "Every native wire construct on one canvas: widgets, socket variants, lists, match templates - connected and unconnected."
 tags = ["dev", "gallery"]
 file = "src/dinkster_nodes_dev/gallery_template.json"
+
+[pack.docs]
+dir = "docs"
+default_locale = "en"
+
+[pack.settings]
+schema = "settings.schema.json"
+
+[[pack.blueprints]]
+id = "node-features"
+name = "Node Feature Examples"
+description = "Small CPU-only examples of optional node controls and image estimates."
+tags = ["dev", "features"]
+file = "src/dinkster_nodes_dev/features_blueprint.json"
+
+[[pack.templates]]
+id = "node-features"
+name = "Node Feature Examples"
+description = "Try dynamic controls, output profiles, widget forms and image estimates."
+tags = ["dev", "features"]
+file = "src/dinkster_nodes_dev/features_template.json"

@@ -217,6 +217,36 @@ def test_full_validation_preserves_started_main_runs() -> None:
     }
 
 
+def test_linux_root_setup_replaces_the_action_created_environment(tmp_path: Path) -> None:
+    import shlex
+
+    import yaml
+
+    workflow = yaml.safe_load(
+        (evidence_paths.DINKSTER_ROOT / ".github/workflows/full-validation.yml").read_text()
+    )
+    setup = next(
+        step
+        for step in workflow["jobs"]["test"]["steps"]
+        if step.get("name") == "Install the locked Linux workspace with CPU torch"
+    )
+    command = next(line for line in setup["run"].splitlines() if line.startswith("uv venv "))
+    command = command.replace("${{ matrix.python-version }}", sys.executable)
+    subprocess.run(["uv", "venv", "--python", sys.executable], cwd=tmp_path, check=True)
+    stale = tmp_path / ".venv/stale-package"
+    stale.write_text("previous installation")
+    subprocess.run(shlex.split(command), cwd=tmp_path, check=True)
+    assert not stale.exists()
+    python = tmp_path / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    result = subprocess.run(
+        [str(python), "-c", "import sys; print(sys.prefix)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert Path(result.stdout.strip()) == tmp_path / ".venv"
+
+
 def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     import yaml
 

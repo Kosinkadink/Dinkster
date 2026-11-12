@@ -1,13 +1,60 @@
 ## Installed pack startup
 
+- Pack installation, retained rollback and serving selection enforce locally
+  cached verified security notices. Known malicious artifacts and explicitly
+  denied vulnerable releases refuse without deleting retained bytes or changing
+  the active selection. Retained vulnerable releases remain usable while their
+  decision is pending; a new vulnerable release requires exact-notice approval.
+  Installer operations refresh independently trusted issuers before checking,
+  including configured mirrors. Failed refresh preserves cached decisions and
+  blocks without inventing incidents. Feed age does not refuse by default;
+  explicit age limits and vulnerability refusal apply to retained releases too.
+  Serving hosts periodically refresh configured security feeds. A newly blocked
+  isolated worker stops, including work pinned before the notice arrived;
+  pinned work from a retired composition remains subject to the same policy.
+  Unrelated workers continue. Pending vulnerable work continues until denied.
+  A signed lift clears the classification without resuming a stopped worker.
+- Managed engine and pack environments retain the exact selected wheel identities and
+  distinguish them from unused lock alternatives and inherited dependencies.
+  The records are sealed with the generation and preserved in software snapshots.
+  Selected file records retain their issuing origins and distribution versions;
+  changing acquisition mirrors or registry aliases cannot change those origins.
+  Base-owned replacements retain the base issuer even when engine metadata
+  also lists the same wheel bytes.
+  Custom bases retain engine dependency origins from their selected published
+  dependency variant, independently of the custom base's name.
+- Managed generation pack selection checks cached notices against sealed library
+  identities, transitive pack sources and their selected libraries. A malicious
+  dependency blocks its consumer as affected, not malicious. Missing or changed wheel provenance refuses
+  selection when security checking is configured. Generation selection refreshes
+  before checking. Catalog preparation also checks before importing pack code,
+  using the provisioned wheel receipts before the generation is sealed. Sealed
+  generations continue to require the recorded receipt hashes.
+  Dependency vulnerability advice matches the exact issuing registry, distribution,
+  version and file digest, preserving pending continuation and explicit denial.
+  Missing issuing origins refuse security-checked selection rather than guessing
+  authority from download URLs, local cache paths or the pack's registry.
+- Security repair planning can offer one compatible published pack release or
+  dependency-lock change excluding refused files. It checks engine, Python,
+  accelerator-specific, shared-library and pack dependency constraints for the
+  entire proposed selection. No offer retains a blocked release or dependency.
+  Unknown candidate constraints refuse an offer. Already installed vulnerable
+  releases can remain pending; a changed release requires its own approval.
+  Planning downloads metadata only: it does not import packs, acquire payloads,
+  change current software or approve an installation. An offer requires a separate
+  host-owned approval plan; no compatible offer leaves the refusal in effect.
+- Verified ownership notices accept an explicit operator-owned previous owner.
+  An omitted previous owner, empty new publisher or unchanged owner is refused
+  without losing cached release notices.
 - Plain `pip install dinkster` supports CLI, catalog serving and torch-free
   packs without installing torch or the inference runtime. Install
   `dinkster[inference]` for in-process inference packs; missing inference
   dependencies report that extra rather than installing them implicitly.
   Managed generations and contributor setup retain inference support.
-- Static-only registry installs support both the release catalog and the split
-  catalog with per-pack version files. Selection and acquisition share a snapshot
-  within each operation; the next operation reads current publication state.
+- Static-only registry installs require the schema 2 split catalog with per-pack
+  version files; schema 1 all-releases indexes are refused. Selection and
+  acquisition share a snapshot within each operation; the next operation reads
+  current publication state.
   Unknown index schemas refuse with an instruction to update Dinkster.
 - Managed generation hosts can opt into local human pack previews with
   `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
@@ -19,12 +66,22 @@
   it never installs or activates packs. HTTP application is Desktop-gateway-owned.
   Remote, agent and delegated callers cannot use these routes. Authenticated
   loopback callers require a nondelegated human with settings-write authority.
+- Pack review preparation can continue beyond a metadata request deadline.
+  Starting a preparation acknowledges the selection immediately; separate status
+  requests report actual checked-file and preparation-stage progress, then the
+  complete review. Cancellation prevents a late review from becoming usable and
+  never installs software. A preparation with no observed progress for 120 seconds
+  reports a stall; preparation expires after 30 minutes overall. A stalled or
+  cancelled worker can finish its current uninterruptible child in the background;
+  another preparation remains blocked until its scratch cleanup finishes.
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
+- Official pack publication can bind scans to the exact acquired engine commit
+  and manifest digest while retaining the original archive and dependency locks.
 - Dependency locks declaring engine API compatibility can layer unchanged on
   later engines inside that range. The target must supply the API, and all
   ordinary shared dependency versions must still agree exactly. Older exact
@@ -34,8 +91,11 @@
   and all substitutions before a proposal-specific approval; `--yes` alone cannot
   approve an approximate restore. Shared tools are recorded, never replaced.
 - Restoring recorded registry pack sources reacquires exact digest-pinned archives,
-  not newer releases. Interrupted software restores retain a failed-attempt receipt
-  while leaving successful history unchanged.
+  not newer releases. Acquisition collects unavailable or mismatched sources
+  before copying any of the set into the retained cache, without provisioning
+  or activating a standalone installation or importing pack code. Interrupted
+  software restores retain a failed-attempt receipt while leaving successful
+  history unchanged.
 - Restore can recover selected source archives retained by another engine release
   when the recorded source cache was pruned. Retained bytes must match the locked
   BLAKE3 identity; corrupt copies cannot displace an intact retained archive.
@@ -45,7 +105,9 @@
 - Software restore rebuilds isolated and in-process pack dependencies from the
   snapshot's complete locks, including after its old generation was pruned;
   it does not inherit packs from the current generation.
-- Software history records the generation interpreter's wheel compatibility tags.
+- Software history records the generation interpreter's wheel compatibility tags
+  and requirement markers. Replacement previews identify the exact selected
+  engine/base wheels; reconstruction must retain those identities.
   Restore planning reports missing pack dependency wheels before activation,
   honors inherited base/engine and in-process dependencies, and verifies retained
   wheel bytes without creating project or cache files.
@@ -107,6 +169,10 @@
   does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
+  Unpublished selected wheels submit together as one admission set. Already
+  published archives and locks must match exactly and are not resubmitted;
+  changed bindings require a new version. Success requires every submitted
+  member to become publicly active with its expected archive digest.
   Engine-only pushes select no pack. PR, fork and tag events build and
   preflight without submission; only trusted main may submit to the registry.
   A queued submission is not an admission verdict.
@@ -128,6 +194,50 @@
   upper bound for pack wheel bytes. Unavailable releases and invalid locks are
   reported together. Offline metadata discovery reads only retained channel,
   engine and base records and reports missing engine/base records together.
+- Registry planning also supports exact additions/replacements and compatible
+  updates against an installed source lock. Unselected sources stay unchanged,
+  including local development packs. Updates keep recorded registry provenance
+  and do not downgrade; missing releases and invalid published locks are reported
+  together without acquiring pack payloads or changing the project.
+  Resolved selections retain the issuing endpoint, so changing or removing a
+  local registry name cannot redirect their acquisition or security matching.
+- Published pack install/update commands on an active managed project display
+  the retained engine/base/variant, old/new identities, proposed generation,
+  published locks, verified cached versus downloadable payloads, wheel-byte
+  upper bounds and worker cost before confirmation. Non-terminal use
+  requires `--yes` or a saved plan. Declining leaves the project and store
+  unchanged. Saved reviews expire after 15 minutes and refuse changed project
+  or selection metadata; successful add and update activate fresh generations
+  without package-index resolution, retaining the engine and base.
+  After confirmation, a missing retained base is reported alongside unavailable
+  source and dependency wheels, without changing retained project or store bytes.
+  Missing or modified retained dependency locks do not hide other pack payload
+  failures. An unreadable lock cannot identify its unknown dependency wheels.
+  Missing or modified engine metadata, source locks and constraints still refuse;
+  exact software-history copies allow other input failures to be diagnosed without
+  repairing the retained files or activating the damaged generation.
+  The pip command also lists other known unavailable inputs when the target
+  interpreter is unavailable. Missing history or metadata is reported, never
+  silently replaced with another engine or dependency version. A damaged
+  generation cannot be constructed or activated.
+  An absent retained-base interpreter or unreadable history does not hide
+  independent source and wheel failures. Refusal creates no external pack plan.
+  Engine wheel checks use the retained exact constraints, not a package index.
+  A verified vulnerable notice requires approval for that exact notice revision
+  before a new release is installed; a pending or denied answer refuses.
+  Already retained vulnerable releases may remain while a different pack is added
+  with the answer pending. Malicious releases refuse regardless of approval.
+  Security refusal names the release digest, notice revision and decision.
+  Initial refusal does not activate a generation or consume the reviewed plan.
+  A security change that refuses activation requires a new plan and keeps the
+  previous generation selected.
+  Local/git selections require explicit development rather than mixed installation.
+- Standalone pack installation and serving are development-only. Registry-bearing
+  saved plans, snapshots, workflow stamps and rollback targets refuse instead of
+  provisioning published dependencies without reviewed base/variant locks.
+  Published source acquisition remains available to managed software restore;
+  catalog preparation cannot fall back to range resolution outside a labelled
+  development session.
 - Managed setup and update can require a reviewed published engine and base
   using paired `--engine-release` and `--base-id` arguments. A changed channel
   selection refuses before creating project or store state rather than applying
@@ -159,6 +269,11 @@
   manifests. Engine-only changes select none; shared vision changes select all
   affected vision packs. Native dependency locking can consume that independent
   selected catalog without replacing its versions with the engine version.
+- After a successful same-commit engine release, natural main publication selects
+  every declared official pack and library version missing from the public index,
+  even when a predecessor never published. Older or newer public versions do not
+  mask a missing exact version. Unreadable or invalid index metadata refuses
+  selection; interrupted inputs are reused only when they cover the missing set.
 - Official publication requires dependency locks for every selected pack and
   committed supported base before preparing maps or submitting any archive.
   Wrong source/base/lock identities, incompatible Python and nonportable wheel
@@ -166,8 +281,11 @@
   Prepared maps do not imply scanner acceptance or live default availability.
 - Default-set admission checks resolve registry archives against the engine
   under test and require every pack to pass the registry scanner, including
-  the isolated executable probe. Missing defaults, rejected packs and security
-  review requirements fail the check without publishing any pack.
+  the isolated executable probe. Published defaults use their verified dependency
+  locks on the named managed base, without package-index dependency resolution.
+  A missing lock, changed artifact or incompatible base refuses admission.
+  Missing defaults, rejected packs and security review requirements fail the
+  check without publishing any pack.
 - Selected-archive behavioral tests use each first-party pack's independent
   distribution, including vision packs. They verify selected source provenance
   and refuse checkout fallbacks or replacement of engine-owned tests.
@@ -275,6 +393,9 @@
   to start; an explicit engine variant must still match the generation.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
+- A managed engine or supervisor launcher that exits before readiness reports
+  its exit code and up to the last 64 KiB of captured output from that launch.
+  Older launches are excluded; truncation and unavailable output are explicit.
 - Stopped engine bindings retain their assigned ports across update and rollback;
   restarting an existing named binding defaults to its saved port.
 - Generation construction admits verified pack archives before sealing sources.
@@ -327,7 +448,9 @@
   requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
   acquires their verified pack archives, and builds and activates a managed
   generation. `--yes` skips the prompt, not the plan or identity checks.
-  Offline application is refused; `--offline --plan` remains read-only.
+  `--offline --yes` uses retained release and registry metadata, runtime inputs
+  and locked pack wheels without acquisition. Missing or corrupt inputs refuse
+  before installation state changes. `--offline --plan` remains read-only.
 - Public setup, serve, stop, update, rollback and bare launch use the managed
   project at `$DINKSTER_HOME/project` (default `~/.dinkster/project`) or an
   explicit `--root`. Starting without setup refuses without acquiring software.
@@ -335,6 +458,12 @@
   `serve` and `dinkster-serve` do not open a browser. The engine continues under
   the supervisor until stopped. Update and rollback retain their plan/consent
   flow and software-history protections.
+- Pack wheel and dependency-metadata downloads retry dropped connections,
+  TLS transport failures, timeouts and HTTP 5xx responses up to three times.
+  Every attempt has a 30-second network timeout, with a wait between attempts.
+  Exhausted failures name the pack, URL and attempt count. HTTP 4xx,
+  certificate failures and completed size/hash mismatches refuse without retry;
+  offline pack provisioning makes no download request.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
@@ -416,6 +545,24 @@
   projects. Interrupted collection recovers before another confirmed mutation;
   unreadable project references refuse shared-cache deletion. Libraries remain
   untouched.
+- `dinkster-env --root ROOT space --json` observes managed generation and shared
+  store allocation without collecting or changing cleanup settings. Linux uses
+  physical extents, counts hardlinks and overlapping clone extents once, and
+  separates shared bytes from exclusive rows. It reports automatic cleanup
+  policy, generation retention reasons, eligible backlog and additional explicit
+  cleanup allocation. User libraries are excluded. Unsupported, changing,
+  delayed or encoded allocation is unavailable, not replaced by logical file
+  sizes. Shared clone references outside the scan make reclaimability unknown.
+  Protected software history and settings are included separately from disposable
+  generations and stores. Shared-store metadata includes registrations and cached
+  channel, engine and base manifests, without treating them as reclaimable.
+  Empty shared-store categories remain visible. Without
+  `--json`, the command shows the same report with IEC units, exact byte counts,
+  retention reasons and settings guidance.
+  Windows uses native allocation and file identities, including resident data,
+  and checks the volume's clone capability before counting shared extents.
+  Unreadable allocation, reparse points and named streams make sizes unavailable;
+  they are never silently omitted or replaced with logical sizes.
 - `dinkster-env cleanup --plan` reports retained, candidate and deferred
   generation numbers with reasons without recovering or modifying the project.
   Status includes the same preview and visible pending quarantine warnings.
@@ -480,6 +627,10 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
+- Source run scripts explicitly select watched checkout development without
+  invoking published setup or loading a standalone installed-pack root. The
+  terminal and node catalog label the source session as unreviewed and not
+  reproducible from dependency ranges; the browser opens after health succeeds.
 - A pip-installed engine has no implicit official pack selection. Managed
   generations serve their admitted registry sources. Checkout development
   selects verified local sources with each pack's declared version, without
@@ -639,11 +790,23 @@
 
 ### Development generations from local folders
 
+Standalone local-folder and `git+URL[@REF]` pack installs remain available as
+development inputs without a published dependency lock. Their plans report
+range resolution and lack of registry review. Serving an installed local/git
+selection, or an explicit local pack, labels both command output and the node
+catalog as development and not reproducible from ranges. A registry-only
+selection does not gain that label, and standalone install refuses a registry
+version rather than resolving it as development.
+Standalone provisioning, including range resolution, grouped environments and
+captured-pin restore, is only used by development inputs. Published packs use managed
+generation plan/apply; registry archive acquisition only verifies recorded bytes
+and never provisions a standalone environment.
+
 Select local software explicitly; nothing needs publishing first:
 
 ```sh
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
-dinkster-env --root /absolute/project develop --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --data /absolute/store --approve sha256:DIGEST_FROM_PLAN --yes
 dinkster-env --root /absolute/project status
 dinkster-env --root /absolute/project doctor
 dinkster-env --root /absolute/project start --yes

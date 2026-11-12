@@ -26,6 +26,46 @@ Dinkster deliberately stays out of the ComfyUI port neighborhood
 (8188/8189/8199) so a Dinkster install never collides with a running
 ComfyUI or comfy-runner allocation.
 
+## Signed security feed refresh
+
+The supervisor-owned `dinkster_supervisor.security.host.SecurityHost` reads independently provisioned
+trust from `<root>/security.sqlite3`. Refresh requests the complete signed
+`/v1/security/blocks` document from each trusted issuer. A local
+`<root>/security.toml` can select a mirror without changing the issuing identity:
+
+```toml
+refuse_vulnerable = false
+request_timeout_seconds = 5.0
+refresh_interval_seconds = 60.0
+# maximum_feed_age_seconds = 86400
+
+[feed_urls]
+"https://registry.example.org" = "https://mirror.example.org/security/index.json"
+```
+
+The API and supervisor wheels also expose the same source as `dinkster_security`.
+Overrides require independently provisioned trust for the exact issuer. Feed
+responses cannot provision keys. Refresh failures retain the accepted checkpoint
+and decisions; downloads are limited to 32 MiB and do not send registry bearer
+credentials. Default policy has no feed-age refusal. An explicit maximum age
+uses signed `issuedAt`, not the time of the latest successful download. Explicit
+vulnerability refusal applies to retained releases too. Local policy reloads
+on refresh; malformed policy refuses rather than silently reverting to defaults.
+Installer acquisition, install, rollback and serving selection refresh before
+their policy check. Managed generation pack selection also refreshes its project
+root. Serving uses the selected generation's project root, otherwise the install
+root, otherwise the library root, when security trust or configuration exists
+at launch. The serving host owns a periodic refresh task and cancels it during
+cleanup. It checks release identities before catalog preparation, worker import,
+lazy activation and dispatch, including previously pinned routes. A new block
+revokes execution before closing isolated workers or shared process owners;
+affected in-process execution requests whole-engine shutdown. A lift never
+resumes a revoked session. `GET /api/security` reports current findings, decisions,
+configured stale issuers and refresh failures. Flagged releases are logged once
+per notice revision and answer during a host lifetime.
+
+## Ingress
+
 An optional `[ingress]` table adds a fleet-facing port:
 
 ```toml
@@ -206,9 +246,10 @@ Failed restores append separate immutable receipts under
 The activation journal records `restoredFrom` before construction; recovery of an
 interrupted restore appends its failure receipt before making the journal terminal.
 Repeated recovery never duplicates an attempt. Source archives are retained in
-the engine cache after admission. Restore uses the target engine's exact-pin pack
-restore in a disposable install root to reacquire missing sources; it does not
-resolve newer pack versions or mutate the project's standalone pack install.
+the engine cache after admission. Restore uses the target engine's digest-verified
+source acquisition in disposable storage, without standalone provisioning or
+activation. It collects missing sources before copying the set to the retained
+cache; it never resolves newer pack versions.
 Pack provisioning uses the staged snapshot locks as its complete source set,
 not the current generation's locks, so later-added packs are not inherited.
 
@@ -245,6 +286,16 @@ from that discovery walk, not collected and sorted before being ignored. Pack
 environments have separate dependency checks. Recorded files remain checked even
 inside excluded directories; only unexpected files are sorted for diagnostics.
 Pack reviews retain their integrity checks before and after registry preparation.
+
+`packs-plan --progress /absolute/host-owned/progress.json` atomically publishes
+stage-local `{sequence, stage, completed, total}` observations without changing
+its JSON result on stdout. Integrity scans report batches of 128 checked files
+and discovered directories; runtime, registry and preflight transitions report
+their actual starts. This is not a timer heartbeat or overall percentage. Writes
+within a stage are coalesced to at most four per second, except stage completion.
+Creating `progress.json.cancel` requests cancellation at the next observation;
+it never authorizes apply. The host retains the scratch directory until the
+command has actually exited, including while an uninterruptible child finishes.
 
 The channel format is `dinkster.channel/1`, with
 `engine: {version, release, locations}`, `base: {variant: {id, locations}}`,

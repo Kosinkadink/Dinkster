@@ -467,6 +467,15 @@ _PACK_CODEC_EXPORTS = {
     "register_voxel_type": "dinkster_inference_wire.voxel_wire",
 }
 _PACK_MEDIA_EXPORTS = {
+    "parse_color": "dinkster_video_runtime.image_math",
+    "MAX_COMPOSITOR_DIMENSION": "dinkster_image_document.compositor",
+    "MAX_COMPOSITOR_LAYERS": "dinkster_image_document.compositor",
+    "CompositorLayer": "dinkster_image_document.compositor",
+    "CompositorRecipe": "dinkster_image_document.compositor",
+    "CompositorTransform": "dinkster_image_document.compositor",
+    "coerce_compositor_recipe": "dinkster_image_document.compositor",
+    "coerce_delta": "dinkster_image_document.compositor",
+    "register_compositor_type": "dinkster_image_document.compositor",
     "IMAGE_DOCUMENT_MEDIA_TYPE": "dinkster_image_document.format",
     "BLEND_MODES": "dinkster_image_document.format",
     "canonical_json": "dinkster_image_document.format",
@@ -572,6 +581,16 @@ if TYPE_CHECKING:
         register_comfy_compositor,
         register_comfy_layers,
     )
+    from dinkster_image_document.compositor import (
+        MAX_COMPOSITOR_DIMENSION,
+        MAX_COMPOSITOR_LAYERS,
+        CompositorLayer,
+        CompositorRecipe,
+        CompositorTransform,
+        coerce_compositor_recipe,
+        coerce_delta,
+        register_compositor_type,
+    )
     from dinkster_image_document.document import (
         ImageDocument,
         append_raster,
@@ -616,9 +635,18 @@ if TYPE_CHECKING:
     from dinkster_video_runtime import document as timeline_document
     from dinkster_video_runtime import image_math, timeline_runtime
     from dinkster_video_runtime import timeline as timeline_render
+    from dinkster_video_runtime.image_math import parse_color
     from dinkster_workers.execution import current_execution_context
 
 __all__ = [
+    "MAX_COMPOSITOR_DIMENSION",
+    "MAX_COMPOSITOR_LAYERS",
+    "CompositorLayer",
+    "CompositorRecipe",
+    "CompositorTransform",
+    "coerce_compositor_recipe",
+    "coerce_delta",
+    "register_compositor_type",
     "TriangleMeshBatch",
     "materialize_mesh",
     "register_load3d_camera_type",
@@ -694,6 +722,7 @@ __all__ = [
     "timeline_video",
     "video_document",
     "image_math",
+    "parse_color",
     "timeline_document",
     "timeline_render",
     "timeline_runtime",

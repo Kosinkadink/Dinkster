@@ -41,7 +41,10 @@ from dinkster_workers.doctor import (
     diagnose_static,
 )
 from dinkster_workers.manifest import ManifestError, PackManifest, load_manifest
+from dinkster_workers.pack_environment import fetch_pack_wheels, provision_pack
+from dinkster_workers.pack_lock import GenerationPackages, PackLock, plan_pack
 from dinkster_workers.pack_wheel import pack_manifest_path, validate_pack_wheel
+from dinkster_workers.provision import ProvisionError
 from dinkster_workers.sandbox import SandboxError, detect_probe_jail
 from packaging.licenses import InvalidLicenseExpression, canonicalize_license_expression
 from packaging.requirements import InvalidRequirement, Requirement
@@ -195,6 +198,9 @@ def _manifest_payload(manifest: PackManifest, release: dict[str, object]) -> dic
             "writableMounts": manifest.sandbox.writable_mounts,
         },
         "pythonRequirements": list(manifest.requires),
+        "pythonExtraRequirements": {
+            accelerator: list(requirements) for accelerator, requirements in manifest.extra_requires
+        },
         "nodeSource": manifest.node_source,
         "dependencies": [
             {"packName": dependency.pack, "versionRange": dependency.version}
@@ -534,15 +540,68 @@ def _probe_failure_message(stdout: bytes) -> str:
     return "Executable probe failed with a pack error."
 
 
+def run_locked_probe(
+    root: Path,
+    lock: PackLock,
+    *,
+    generation_python: Path,
+    packs: Path,
+    wheel_store: Path,
+    uv_cache: Path,
+    variant: str,
+    settings: ProbeSettings | None = None,
+    require_isolation: bool = True,
+    offline: bool = False,
+    source_roots: tuple[Path, ...] = (),
+) -> StageResult:
+    """Probe caller-verified archives and dependency sources with the user's provisioner."""
+    try:
+        manifest = load_manifest(root / MANIFEST_FILENAME)
+        if lock.pack != manifest.name:
+            raise ProvisionError("dependency lock pack differs from the archive")
+        with admission_timing(manifest.name, "probe-dependency-install"):
+            plan = plan_pack(
+                lock,
+                GenerationPackages.inspect(generation_python),
+                variant=variant,
+                own_environment_size=0,
+            )
+            fetch_pack_wheels(plan, wheel_store, offline=offline)
+            python = provision_pack(
+                plan,
+                generation_python=generation_python,
+                packs=packs,
+                wheel_store=wheel_store,
+                uv_cache=uv_cache,
+                variant=variant,
+                offline=True,
+            )
+    except (ManifestError, ProvisionError) as exc:
+        return StageResult((_block("probe.dependencies-incompatible", str(exc)),))
+    with admission_timing(manifest.name, "probe-execution"):
+        return _run_executable_probe(
+            root,
+            settings or ProbeSettings(),
+            require_isolation,
+            python=python,
+            source_roots=source_roots,
+        )
+
+
 def run_executable_probe(
     root: Path,
     *,
     settings: ProbeSettings | None = None,
     require_isolation: bool = True,
     dependency_wheels: tuple[Path, ...] = (),
+    api_wheel: Path | None = None,
 ) -> StageResult:
-    """Probe with optional caller-verified library wheels, never submission paths."""
+    """Probe caller-verified wheels; a selected engine API runs only in the jail."""
     configured = settings or ProbeSettings()
+    if api_wheel is not None and not require_isolation:
+        return StageResult(
+            (_block("probe.isolation-unavailable", "Selecting an API requires the probe jail."),)
+        )
     try:
         manifest = load_manifest(root / MANIFEST_FILENAME)
         requirements = [Requirement(value) for value in manifest.requires_for("cpu")]
@@ -558,7 +617,7 @@ def run_executable_probe(
                 ),
             )
         )
-    if not requirements and not dependency_wheels:
+    if not requirements and not dependency_wheels and api_wheel is None:
         with admission_timing(manifest.name, "probe-execution"):
             return _run_executable_probe(root, configured, require_isolation)
     installer = shutil.which("uv")
@@ -589,6 +648,7 @@ def run_executable_probe(
             *(["--torch-backend", "cpu"] if configured.probe_dependency_source == "cpu" else []),
             *[str(requirement) for requirement in requirements],
             *[str(wheel.resolve()) for wheel in dependency_wheels],
+            *([str(api_wheel.resolve())] if api_wheel is not None else []),
         ]
         try:
             with admission_timing(manifest.name, "probe-dependency-install"):
@@ -619,6 +679,10 @@ def run_executable_probe(
             )
         # Dependency .pth files must not run before the trusted harness.
         with admission_timing(manifest.name, "probe-execution"):
+            if api_wheel is not None:
+                return _run_executable_probe(
+                    root, configured, require_isolation, dependencies, api_root=dependencies
+                )
             return _run_executable_probe(root, configured, require_isolation, dependencies)
 
 
@@ -627,6 +691,10 @@ def _run_executable_probe(
     configured: ProbeSettings,
     require_isolation: bool,
     dependencies: Path | None = None,
+    *,
+    python: Path | None = None,
+    source_roots: tuple[Path, ...] = (),
+    api_root: Path | None = None,
 ) -> StageResult:
     manifest_path = root / MANIFEST_FILENAME
     jail = None
@@ -648,20 +716,30 @@ def _run_executable_probe(
     probe_module = (
         "dinkster_registry._archive_probe" if jail is None else "dinkster_workers._doctor_probe"
     )
-    command = [sys.executable, "-m", probe_module, str(manifest_path)]
+    executable = str(python) if python is not None else sys.executable
+    command = [executable, "-m", probe_module, str(manifest_path)]
     environment = _probe_environment()
+    if api_root is not None:
+        environment["DINKSTER_PROBE_API_ROOT"] = str(api_root.resolve())
+    paths = [str(path) for path in source_roots]
     if dependencies is not None:
         # Trusted bootstrap imports the harness before adding dependency paths.
-        paths = [path for path in sys.path if path and Path(path).is_absolute()]
-        environment["PYTHONPATH"] = os.pathsep.join([*paths, str(dependencies)])
+        paths = [
+            *(path for path in sys.path if path and Path(path).is_absolute()),
+            str(dependencies),
+            *paths,
+        ]
+    if paths:
+        environment["PYTHONPATH"] = os.pathsep.join(paths)
         if jail is None:
             command = [
-                sys.executable,
+                executable,
                 "-c",
-                "import runpy, sys; "
-                f"sys.path.extend([{str(dependencies)!r}]); "
+                "import importlib, sys; "
+                f"_probe = importlib.import_module({probe_module!r}); "
+                f"sys.path.extend({paths!r}); "
                 "sys.argv = sys.argv[1:]; "
-                f"runpy.run_module({probe_module!r}, run_name='__main__')",
+                "raise SystemExit(_probe.main())",
                 probe_module,
                 str(manifest_path),
             ]
@@ -679,7 +757,7 @@ def _run_executable_probe(
                 environment_file.seek(0)
                 env_fd = environment_file.fileno()
                 completed = _run_probe_process(
-                    jail.wrap(command, root, env_fd=env_fd),
+                    jail.wrap(command, root, env_fd=env_fd, source_roots=source_roots),
                     timeout_seconds=configured.probe_timeout_seconds,
                     output_limit_bytes=configured.probe_output_limit_bytes,
                     pass_fds=(env_fd,),
@@ -732,6 +810,9 @@ def _run_executable_probe(
         if jail is None:
             doctor_report = cast("dict[str, Any]", payload["doctorReport"])
             schemas = cast("list[dict[str, Any]]", payload["schemas"])
+        elif payload["entry_error"] is not None:
+            doctor_report = payload
+            schemas = []
         else:
             doctor_report = payload
             catalog = cast("dict[str, Any]", doctor_report["catalog"])

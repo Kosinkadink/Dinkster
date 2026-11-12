@@ -71,6 +71,7 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "stop",
         "update",
         "rollback",
+        "develop",
         "pack",
         "installs",
         "demo",
@@ -96,6 +97,16 @@ def test_lifecycle_help_lists_project_and_operation_options(command: list[str], 
         assert "--channel" in help_text and "--variant" in help_text
     elif command == ["rollback"]:
         assert "--approve" in help_text
+
+
+def test_development_help_exposes_source_selection_and_consent(capsys) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["develop", "--help"])
+    assert error.value.code == 0
+    help_text = capsys.readouterr().out
+    for option in ("--root", "--source", "--pack-source", "--library-source", "--plan", "--yes"):
+        assert option in help_text
+    assert "dependency ranges resolved at build time" in help_text
 
 
 def test_unknown_command_is_loud_exit_2(capsys) -> None:

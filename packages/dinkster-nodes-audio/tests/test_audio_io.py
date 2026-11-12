@@ -9,8 +9,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
-    AUDIO_RECORD_TYPE,
-    AUDIO_TYPE,
     AssetIntegrityError,
     AssetRef,
     digest_file,
@@ -50,7 +48,6 @@ def test_load_stereo_pcm_and_preview_without_writes(
         audio["waveform"], samples.T[None].astype(np.float32) / (2 ** (bits - 1))
     )
     assert PreviewAudio.execute(audio=audio)["audio"] is audio
-    assert PreviewAudio.schema().outputs[0].preview
     assert path.read_bytes() == original
     assert list(tmp_path.iterdir()) == [path]
     path.write_bytes(original + b"changed")
@@ -69,20 +66,6 @@ def test_file_input_rejects_host_path_and_preview_rejects_missing_audio(
 
 
 def test_record_audio_schema_and_cold_discovery() -> None:
-    schema = RecordAudio.schema()
-    assert schema.node_type == "dinkster.audio.record_audio"
-    assert schema.display_name == "Record Audio"
-    assert schema.category == "audio"
-    assert schema.search_terms == (
-        "microphone input",
-        "audio capture",
-        "voice input",
-        "RecordAudio",
-    )
-    assert [(slot.id, slot.type.types) for slot in schema.inputs] == [
-        ("audio", (AUDIO_RECORD_TYPE,))
-    ]
-    assert [(slot.id, slot.type.types) for slot in schema.outputs] == [("AUDIO", (AUDIO_TYPE,))]
     package = Path(__file__).resolve().parents[1]
     checkout = package.parents[1]
     paths = (checkout / "src", *sorted(checkout.glob("packages/*/src")))

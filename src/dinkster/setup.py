@@ -114,6 +114,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         else RegistryConfig()
     )
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
+    missing: list[str] = []
     sources, locks = plan_registry_sources(
         config,
         select_registry(config, selector),
@@ -124,6 +125,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         index=StaticPackIndex(
             store / "metadata" / "registry", offline=args.offline, read_only=True
         ),
+        errors=missing if args.offline and not args.plan else None,
     )
     runtime = artifacts.runtime_inputs(catalog, variant, store)
     payloads = {
@@ -139,6 +141,79 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
             cached_payloads[identity] = str(fetch_wheel(wheel, store / "wheels", offline=True))
         except ProvisionError:
             cached_payloads[identity] = None
+    if args.offline and not args.plan:
+        from dinkster_store import object_path
+        from dinkster_workers.pack_lock import GenerationPackages, plan_pack
+        from packaging.tags import parse_tag
+        from packaging.utils import parse_wheel_filename
+
+        archives = importlib.import_module("dinkster_supervisor.environment_archives")
+        constraints = importlib.import_module("dinkster_supervisor.environment_constraints")
+        missing.extend(
+            f"runtime input missing or corrupt: {row['path']}; sha256:{row['sha256']}"
+            for row in runtime
+            if not row["cached"]
+        )
+        with tempfile.TemporaryDirectory(prefix="dinkster-offline-preflight-") as directory:
+            retained_base = object_path(store / "bases", base_id)
+            if not retained_base.exists():
+                parts = artifacts.artifact_rows(base["archive"]["parts"], "filename")
+                cached_parts = tuple(
+                    object_path(store / "downloads", base_id) / row["filename"] for row in parts
+                )
+                try:
+                    retained_base = archives.extract_base(
+                        cached_parts,
+                        Path(directory) / "base",
+                        platform=base["platform"]["os"],
+                        executable=base["interpreter"]["executable"],
+                        expected_parts=parts,
+                    ).parent
+                except (OSError, ValueError) as exc:
+                    missing.append(f"cached base interpreter unavailable: {exc}")
+            try:
+                compatibility = constraints.wheel_compatibility(
+                    retained_base / base["interpreter"]["executable"]
+                )
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                missing.append(f"cannot select offline pack wheels: {exc}")
+            else:
+                versions = {
+                    str(parse_wheel_filename(row["name"])[0]): str(
+                        parse_wheel_filename(row["name"])[1]
+                    )
+                    for row in catalog.engine["artifacts"]
+                    if row["name"].endswith(".whl")
+                    and parse_wheel_filename(row["name"])[0] not in base["replaces"]
+                }
+                if catalog.engine.get("dependencies") is not None:
+                    versions.update(
+                        {
+                            row["name"]: row["version"]
+                            for row in artifacts.dependency_wheels(
+                                catalog.engine["dependencies"][variant]
+                            )
+                            if row["name"] not in base["replaces"]
+                        }
+                    )
+                versions.update({row["name"]: row["version"] for row in base["wheels"]})
+                facts = GenerationPackages(
+                    versions,
+                    compatibility["markers"]["python_full_version"],
+                    frozenset(tag for text in compatibility["tags"] for tag in parse_tag(text)),
+                    compatibility["markers"],
+                )
+                for lock in locks:
+                    selected = plan_pack(lock, facts, variant=variant, own_environment_size=0)
+                    missing.extend(f"pack {lock.pack}: {error}" for error in selected.conflicts)
+                    for wheel in selected.wheels:
+                        if cached_payloads[wheel.sha256 + "/" + wheel.filename] is None:
+                            missing.append(
+                                f"pack {lock.pack}: wheel missing or corrupt: {wheel.filename}; "
+                                f"sha256:{wheel.sha256}"
+                            )
+        if missing:
+            raise InstallError("offline setup inputs missing or corrupt:\n" + "\n".join(missing))
     plan = [
         f"Project: {root}",
         f"Store: {store}",
@@ -207,8 +282,6 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
     for key in ("engineRelease", "baseId", "sources", "dependencyLocks"):
         if observed[key] != approved[key]:
             raise InstallError("setup inputs changed after planning; request a new plan")
-    if args.offline:
-        raise InstallError("offline setup apply is not available; --offline --plan changes nothing")
     store = Path(cast("str", approved["store"]))
     sources = Lockfile.from_record_json(json.dumps(approved["sources"]))
     locks = {
@@ -224,7 +297,7 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
             wheel = next(
                 package for package in locks[entry.pack].packages if package.name == entry.pack
             )
-            payload = fetch_wheel(wheel.wheels[0], store / "wheels")
+            payload = fetch_wheel(wheel.wheels[0], store / "wheels", offline=args.offline)
             archive = pack_archive_path(archives, entry.artifact_digest)
             archive.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(payload, archive)
@@ -272,6 +345,8 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
             command.extend(("--gpu", gpu))
         if args.json:
             command.append("--json")
+        if args.offline:
+            command.append("--offline")
         return subprocess.run(command, check=False).returncode
 
 

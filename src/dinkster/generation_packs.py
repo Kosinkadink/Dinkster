@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,11 @@ from dinkster_registry import (
     unpack_artifact,
 )
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.host import SecurityHost
+from dinkster_security.inventory import generation_dependencies
+from dinkster_security.policy import Artifact as SecurityArtifact
+from dinkster_security.policy import Dependency as SecurityDependency
 from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
@@ -139,9 +145,10 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
         or len(set(hosting)) != len(hosting)
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
-    return variant, generation_pack_specs(
+    specs = generation_pack_specs(
         generation, tuple(hosting), local_build=record.get("source") == "local"
     )
+    return variant, specs
 
 
 def generation_pack_specs(
@@ -270,6 +277,80 @@ def generation_pack_specs(
                 )
             },
         )
+    project = generation.parent.parent
+    if (project / "security.sqlite3").is_file() or (project / "security.toml").is_file():
+        security = SecurityHost(project)
+        security.refresh()
+        record = generation / "generation.json"
+        if record.is_file():
+            files = json.loads(record.read_text(encoding="utf-8"))["files"]
+        else:
+            # Catalog preparation precedes sealing. Inspect the provisioner's
+            # current receipts; sealed generations must retain their recorded hashes.
+            receipts = [
+                "installed-wheels.json",
+                *(f"packs/{entry.pack}/installed-wheels.json" for entry in lock.packs),
+            ]
+            files = {
+                name: "sha256:" + hashlib.sha256((generation / name).read_bytes()).hexdigest()
+                for name in receipts
+            }
+        libraries = generation_dependencies(generation, files, tuple(entries), in_process_packs)
+
+        def issuing_registry(entry: LockedPack) -> str:
+            if entry.source.startswith(("registry:http://", "registry:https://")):
+                return entry.source.removeprefix("registry:")
+            if entry.source == "registry" or entry.source.startswith("registry:"):
+                raise CompositionError("security inventory requires a resolved issuing registry")
+            return entry.source
+
+        artifacts: list[SecurityArtifact] = []
+        for index, (entry, spec) in enumerate(zip(lock.packs, specs, strict=True)):
+            dependencies = {
+                SecurityDependency(
+                    issuing_registry(provider),
+                    provider.pack,
+                    provider.version,
+                    provider.artifact_digest,
+                )
+                for path in spec.env["PYTHONPATH"].split(os.pathsep)
+                if Path(path).name != entry.pack
+                for provider in (entries[Path(path).name],)
+            }
+            artifacts.append(
+                SecurityArtifact(
+                    issuing_registry(entry),
+                    SecurityRelease.model_validate(
+                        {
+                            "pack": entry.pack,
+                            "version": entry.version,
+                            "artifactDigest": entry.artifact_digest,
+                        }
+                    ),
+                    tuple(
+                        sorted(
+                            dependencies
+                            | {
+                                dependency
+                                for path in spec.env["PYTHONPATH"].split(os.pathsep)
+                                for dependency in libraries[Path(path).name]
+                            },
+                            key=lambda item: (item.registry, item.name, item.version, item.digest),
+                        )
+                    ),
+                )
+            )
+            specs[index] = replace(spec, security_artifacts=(artifacts[-1],))
+        result = security.assess(tuple(artifacts))
+        if not result.allowed:
+            if result.stale_registries:
+                raise CompositionError("security feed exceeds configured maximum age")
+            finding = next(item for item in result.findings if not item.allowed)
+            raise CompositionError(
+                f"security {finding.state}: {finding.artifact.release.pack}, "
+                f"notice {finding.notice.id} revision {finding.notice.revision}, "
+                f"decision {finding.decision}"
+            )
     return tuple(specs)
 
 

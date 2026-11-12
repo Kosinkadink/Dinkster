@@ -1,5 +1,7 @@
 ## Image operations
 
+- Pack authors can import `parse_color` from `dinkster_api.v1` for normalized
+  float32 RGBA from supported color names, hex RGB/RGBA or comma-separated channels.
 - `WebcamCapture` decodes a granted browser-captured PNG into a single image
   batch. Its `WEBCAM` input retains the uploaded asset identity across worker
   transport; filesystem path literals are not accepted. Width, height and
@@ -271,6 +273,9 @@
   rendering, per-layer previews, flatten/split, structural editing nodes, and
   safe native-placement fallback for stale edits; CPU reference rendering is
   bounded to 4,194,304 canvas pixels and 67,108,864 layer/mask work-pixels
+- Current Add Layer and Image Compositor graphs preserve source pixels across
+  separate worker processes, including empty, default and edited compositor values
+  with cold catalog-based serving.
 - Received image documents validate every non-inline resource against declared
   source references without reading or publishing raster files; auxiliary
   references are retained. Legacy layer stacks validate without publishing,

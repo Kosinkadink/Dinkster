@@ -89,6 +89,7 @@ from dinkster_schema import (
     core_logger,
     validate_name,
 )
+from dinkster_security.host import SecurityHost
 from dinkster_server import (
     SETTINGS_CATEGORIES,
     STATE_KEY,
@@ -243,8 +244,9 @@ def _prepare_default_pack(
     *,
     venv_root: Path,
     accelerator: str,
+    development: bool = False,
 ) -> PackSpec:
-    """Attach a complete interpreter to an isolated installed default pack."""
+    """Resolve a checkout pack only in an explicitly labelled development session."""
     if spec.in_process or spec.python is not None:
         return spec
     manifest = load_manifest(resolve_manifest_path(spec.manifest))
@@ -255,6 +257,11 @@ def _prepare_default_pack(
         environment["PYTHONPATH"] = pythonpath + (os.pathsep + inherited if inherited else "")
     if configured := os.environ.get(_SERVING_PYTHON_ENV):
         return replace(spec, python=configured, env=environment)
+    if not development:
+        raise CompositionError(
+            "published packs require a prepared generation interpreter; use dinkster develop "
+            "for unlocked dependency resolution"
+        )
     if spec.packs is None or len(spec.packs) != 1:
         raise CompositionError("an installed default pack must carry exactly one provenance entry")
     info = next(iter(spec.packs.values()))
@@ -310,6 +317,7 @@ def _prepare_stale_catalogs(
     *,
     venv_root: Path,
     accelerator: str,
+    development: bool = False,
 ) -> None:
     stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
     for entry in specs:
@@ -335,7 +343,9 @@ def _prepare_stale_catalogs(
     completed = 0
     for entry, manifest_paths in stale_by_spec:
         prepared = (
-            _prepare_default_pack(entry, venv_root=venv_root, accelerator=accelerator)
+            _prepare_default_pack(
+                entry, venv_root=venv_root, accelerator=accelerator, development=development
+            )
             if not entry.in_process and _is_standard_vision_pack(entry)
             else entry
         )
@@ -1306,6 +1316,13 @@ def main(argv: list[str] | None = None) -> None:
         if args.install_root or args.pack or args.watch_packs:
             parser.error("--generation cannot be combined with other pack sources or --watch-packs")
         args.no_default_packs = True
+    development = (
+        args.watch_packs
+        or bool(args.pack)
+        or (
+            args.generation is not None and (args.generation / "development-sources.json").is_file()
+        )
+    )
     if args.allow_pack_install and args.generation is None:
         parser.error("--allow-pack-install requires --generation")
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
@@ -1663,6 +1680,26 @@ def main(argv: list[str] | None = None) -> None:
         os.environ["DINKSTER_MOUNTS_SNAPSHOT"] = str(mounts_snapshot)
         # Workers inherit the store where consented acquisition lands bytes.
         os.environ["DINKSTER_ASSET_VAULT"] = str(library_root / "vault")
+    security_root = (
+        args.generation.parent.parent
+        if args.generation is not None
+        else Path(args.install_root)
+        if args.install_root
+        else Path(args.library_root)
+        if args.library_root
+        else None
+    )
+    security = (
+        SecurityHost(security_root)
+        if security_root is not None
+        and (
+            (security_root / "security.sqlite3").is_file()
+            or (security_root / "security.toml").is_file()
+        )
+        else None
+    )
+    if security is not None:
+        security.refresh()
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
     for pack_id in () if args.no_default_packs else default_pack_ids():
@@ -1731,7 +1768,19 @@ def main(argv: list[str] | None = None) -> None:
         # dev additions. Any name collision fails composition loudly.
         installer = Installer(Path(args.install_root))
         specs.extend(installer.packs_for_serving())
+        installed = installer.current_lockfile()
+        development = development or bool(
+            installed
+            and any(entry.source.startswith(("local:", "git:")) for entry in installed.packs)
+        )
     specs.extend(args.pack)
+    development_description = (
+        "development: not reviewed by the registry; not reproducible from dependency ranges"
+        if development
+        else None
+    )
+    if development_description is not None:
+        print(development_description, flush=True)
     default_pack_venv_root = _default_pack_venv_root(args.library_root)
     default_pack_accelerator = resolve_accelerator()
 
@@ -1825,6 +1874,7 @@ def main(argv: list[str] | None = None) -> None:
                 schema_reload_requests.put_nowait(name)
 
         composer = ServingComposer(
+            security=security,
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
@@ -1860,7 +1910,7 @@ def main(argv: list[str] | None = None) -> None:
             cache_memory_entries=args.execution_cache_memory_entries,
             cache_dir=cache_dir,
             cache_disk_budget=args.execution_cache_disk_budget,
-            composition_mode="development" if args.watch_packs else "production",
+            composition_mode="development" if development else "production",
         )
         specs[:resolved_default_pack_count] = list(
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
@@ -1874,6 +1924,7 @@ def main(argv: list[str] | None = None) -> None:
                 specs if args.prepare_stale_catalogs else specs[:resolved_default_pack_count],
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
+                development=development,
             )
         composer.validate_catalogs(specs)
         composition = composer.composition
@@ -2011,6 +2062,7 @@ def main(argv: list[str] | None = None) -> None:
                 frontend_module_read=composer.read_frontend_module,
                 max_running_jobs=max_running_jobs,
                 governor=governor,
+                development_description=development_description,
                 packs=composition.packs,
                 node_packs=composition.node_packs,
                 execution_arms=composition.execution_arms,
@@ -2064,6 +2116,11 @@ def main(argv: list[str] | None = None) -> None:
 
         if resolution_store is not None:
             app.on_cleanup.append(close_federated_assets)
+
+        async def security_status(_: web.Request) -> web.Response:
+            return web.json_response(composer.security_status())
+
+        app.router.add_get("/api/security", security_status)
         _add_collaboration_routes(
             app,
             Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
@@ -2166,6 +2223,25 @@ def main(argv: list[str] | None = None) -> None:
             # what lets a composition failure abort the whole process.
             main_task = asyncio.current_task()
 
+            async def monitor_security() -> None:
+                assert security is not None
+                try:
+                    while True:
+                        await asyncio.to_thread(security.refresh)
+                        if await composer.enforce_security():
+                            raise RuntimeError("security block requires whole-engine stop")
+                        await asyncio.sleep(security.settings.refresh_interval_seconds)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failure.append(exc)
+                    log.error("security monitor stopped the host: %s", exc)
+                    if main_task is not None:
+                        main_task.cancel()
+
+            if security is not None:
+                drive_tasks.append(asyncio.create_task(monitor_security()))
+
             async def drive() -> None:
                 async def publish_delta(delta: PackDelta) -> int:
                     validation = await state.prepare_replace(
@@ -2246,6 +2322,7 @@ def main(argv: list[str] | None = None) -> None:
                                     entry,
                                     venv_root=default_pack_venv_root,
                                     accelerator=default_pack_accelerator,
+                                    development=development,
                                 )
                             async with composer.publication_transaction():
                                 delta = await composer.add_pack(entry)

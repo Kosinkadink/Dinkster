@@ -10,9 +10,11 @@ import sys
 import tempfile
 from contextlib import ExitStack
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from platform import machine
+from time import monotonic
 from typing import cast
 
 from dinkster_store import object_path, pack_archive_path
@@ -58,6 +60,7 @@ from .environment_generations import (
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, plan_pack_install
+from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
@@ -67,6 +70,7 @@ from .environment_runtime import (
     stop_engine,
     validate_assignment,
 )
+from .environment_space import space_report
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -125,6 +129,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     current = read_current(root)
     result["current"] = current
+    if args.operation == "space":
+        result["space"] = space_report(root)
+        return 0
     if args.operation == "history":
         entries = history(root)
         for entry in entries:
@@ -322,6 +329,9 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
+    offline = getattr(args, "offline", False)
+    if offline and (args.from_scratch or args.catalog_lock is None or not args.pack_lock):
+        raise EnvironmentError("offline setup requires published source and dependency locks")
     developing = args.operation == "develop"
     adopting = getattr(args, "adopt_from", None)
     if adopting is not None and (root.exists() or args.root.is_symlink()):
@@ -512,7 +522,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 ]
             )
     else:
-        catalog = discover(mirrors, channel, store=store)
+        catalog = discover(mirrors, channel, store=store, offline=offline)
         if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -793,6 +803,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     base_sources=(str(object_path(store / "downloads", base_id)),)
                     if custom is not None
                     else None,
+                    offline=offline,
                 )
 
                 def custom_locks(
@@ -973,7 +984,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     artifacts=source_artifacts,
                     source_kind="local" if local is not None else "published",
                     prepare_packs=prepare_packs,
-                    acquire_pack_wheels=local is None,
+                    acquire_pack_wheels=local is None and not offline,
                     artifact_sources={
                         "channel": catalog.document,
                         "engine": list(catalog.engine_sources),
@@ -1109,15 +1120,15 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if "artifact-sources.json" in expected
                 else None,
             )
-            added_locks = {
+            added_pack_metadata = {
                 name
                 for name, _ in repaired.files
                 if len(Path(name).parts) == 3
                 and Path(name).parts[0] == "packs"
-                and Path(name).parts[2] == "pack-lock.json"
+                and Path(name).parts[2] in {"pack-lock.json", "installed-wheels.json"}
                 and name not in expected
             }
-            if set(dict(repaired.files)) - added_locks != set(expected):
+            if set(dict(repaired.files)) - added_pack_metadata != set(expected):
                 raise EnvironmentError(
                     "repaired file inventory differs from the retained generation"
                 )
@@ -1387,6 +1398,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
+    space = commands.add_parser("space", help="observe managed software disk allocation")
     history_command = commands.add_parser("history", help="list durable software history")
     history_actions = history_command.add_subparsers(dest="history_action")
     history_show = history_actions.add_parser("show", help="show a snapshot and its diff")
@@ -1396,6 +1408,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_plan = commands.add_parser("packs-plan", help="retain exact additive software inputs")
     packs_plan.add_argument("packs", nargs="+", metavar="PACK@VERSION")
     packs_plan.add_argument("--output", type=Path, required=True)
+    packs_plan.add_argument(
+        "--progress", type=Path, help="atomically publish preparation observations"
+    )
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
@@ -1404,6 +1419,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--repair", action="store_true", help="rebuild offline from the local store"
     )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
+    setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
 
     setup.add_argument(
         "--from-scratch", action="store_true", help="resolve locally; development only"
@@ -1491,6 +1507,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         tools,
         catalog,
         status,
+        space,
         packs_plan,
         packs_apply,
         doctor,
@@ -1535,7 +1552,32 @@ def run(args: argparse.Namespace) -> int:
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
         if args.operation == "packs-plan":
-            result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+            sequence = 0
+            last_write = 0.0
+            last_stage = ""
+
+            def progress(stage: str, completed: int, total: int) -> None:
+                nonlocal sequence, last_write, last_stage
+                sequence += 1
+                if args.progress is not None:
+                    if args.progress.with_name(args.progress.name + ".cancel").exists():
+                        raise EnvironmentError("pack preparation cancelled")
+                    now = monotonic()
+                    if stage == last_stage and now - last_write < 0.25 and completed != total:
+                        return
+                    write_document(
+                        args.progress,
+                        {
+                            "sequence": sequence,
+                            "stage": stage,
+                            "completed": completed,
+                            "total": total,
+                        },
+                    )
+                    last_write, last_stage = now, stage
+
+            with observe_preparation(progress):
+                result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
             code = 0
         elif args.operation == "packs-apply":
             result.update(apply_pack_install(args.root, args.input, args.approval))
@@ -1626,6 +1668,85 @@ def run(args: argparse.Namespace) -> int:
             print(
                 json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
             )
+        if args.operation == "space" and code == 0:
+            report = cast("dict[str, object]", result["space"])
+
+            def size(value: object) -> str:
+                if type(value) is not int:
+                    return "unavailable"
+                amount = float(value)
+                for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+                    if amount < 1024:
+                        return f"{amount:.2f} {unit} ({value} bytes)"
+                    amount /= 1024
+                return f"{amount:.2f} PiB ({value} bytes)"
+
+            print("Managed software disk space (read-only)")
+            print(f"Project: {report['project']}")
+            print(f"Shared store: {report['store'] or 'not configured'}")
+            observed = datetime.fromtimestamp(
+                cast("int", report["observedAt"]) / 1_000_000_000, UTC
+            )
+            print(
+                f"Observed: {observed.isoformat()}; "
+                f"{'complete' if report['complete'] else 'incomplete'}"
+            )
+            print(f"Total allocated: {size(report['allocatedBytes'])}")
+            print(f"Shared allocation counted once: {size(report['sharedAllocatedBytes'])}")
+            print(report["scope"])
+            print(report["sharing"])
+            groups = cast("dict[str, dict[str, object]]", report["groups"])
+            for row in cast("list[dict[str, object]]", report["generations"]):
+                group = groups[cast("str", row["allocationGroup"])]
+                print(
+                    f"Generation {row['generation']} ({row['status']}): "
+                    f"exclusive {size(group['exclusiveAllocatedBytes'])}; "
+                    f"shared {size(group['sharedAllocatedBytes'])}"
+                )
+                for reason in cast("list[str]", row["reasons"]):
+                    print(f"  {reason}")
+            for row in cast("list[dict[str, object]]", report["stores"]):
+                group = groups[cast("str", row["allocationGroup"])]
+                print(
+                    f"{row['label']}: exclusive {size(group['exclusiveAllocatedBytes'])}; "
+                    f"shared {size(group['sharedAllocatedBytes'])}"
+                )
+                for reason in cast("list[str]", row["reasons"]):
+                    print(f"  {reason}")
+            for name, group in groups.items():
+                if name.startswith("project/") or name == "generation-quarantine":
+                    label = (
+                        "Software history and settings"
+                        if name.startswith("project/")
+                        else "Generation quarantine"
+                    )
+                    print(
+                        f"{label} (protected): exclusive {size(group['exclusiveAllocatedBytes'])}; "
+                        f"shared {size(group['sharedAllocatedBytes'])}"
+                    )
+            print(f"Automatic cleanup can release now: {size(report['automaticReclaimableBytes'])}")
+            print(
+                f"Eligible generation backlog: {size(report['eligibleGenerationReclaimableBytes'])}"
+            )
+            print(
+                "Explicit cleanup can release additionally: "
+                f"{size(report['additionalExplicitReclaimableBytes'])}"
+            )
+            policy = cast("dict[str, object]", report["policy"])
+            print(
+                f"Automatic cleanup: {'on' if policy['automatic'] else 'off'}; "
+                f"keep current and {policy['previousSuccessfulActivations']} previous generations"
+            )
+            print(f"Change settings: {report['settingsCommand']}")
+            print(report["settingsHelp"])
+            for key in (
+                "warnings",
+                "cleanupWarnings",
+                "eligibilityWarnings",
+                "reclaimabilityWarnings",
+            ):
+                for warning in cast("list[str]", report[key]):
+                    print(f"Warning: {warning}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     if code == 0 and "url" in result and args.operation == "start" and args.open_browser:

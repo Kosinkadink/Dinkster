@@ -6,11 +6,18 @@ import hashlib
 import json
 import os
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
+import threading
+import urllib.error
 import urllib.request
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -19,6 +26,7 @@ from dinkster_workers.boundary import PROTOCOL_VERSION
 from dinkster_workers.pack_environment import (
     GenerationContext,
     doctor_generation,
+    fetch_pack_wheels,
     fetch_wheel,
     main,
     pack_drift,
@@ -137,11 +145,391 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
     return python
 
 
+@contextmanager
+def _wheel_server(
+    wheel: LockedWheel, payload: bytes, outcome: str
+) -> Iterator[tuple[LockedWheel, list[int]]]:
+    requests: list[int] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(1)
+            if outcome == "exhausted" or outcome == "disconnect" and len(requests) == 1:
+                self.close_connection = True
+                return
+            if outcome == "503" and len(requests) == 1 or outcome == "404":
+                self.send_error(int(outcome))
+                return
+            content = (
+                b"x" * len(payload)
+                if outcome == "hash"
+                else payload[:-1]
+                if outcome == "short"
+                else payload + b"x"
+                if outcome == "oversize"
+                else payload
+            )
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            if outcome == "partial" and len(requests) == 1:
+                self.wfile.write(content[:7])
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.close_connection = True
+                return
+            self.wfile.write(content)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield (
+            replace(wheel, url=f"http://127.0.0.1:{server.server_port}/{wheel.filename}"),
+            requests,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize("outcome", ["disconnect", "partial", "503"])
+def test_pack_install_retries_interrupted_wheel_download(tmp_path: Path, outcome: str) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    payload = (tmp_path / wheel.filename).read_bytes()
+    python = _generation(tmp_path / "generation/python", [])
+    with _wheel_server(wheel, payload, outcome) as (remote, requests):
+        lock = PackLock(
+            "example",
+            "linux-cpu",
+            ">=3.12",
+            ("fixture-extra==1.2",),
+            (),
+            (LockedDistribution("fixture-extra", "1.2", (remote,)),),
+        )
+        plan = plan_pack(
+            lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=0
+        )
+        installed = provision_pack(
+            plan,
+            generation_python=python,
+            packs=tmp_path / "generation/packs",
+            wheel_store=tmp_path / "store",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+        )
+        assert (
+            subprocess.check_output(
+                [str(installed), "-c", "import fixture_extra; print(fixture_extra.VALUE)"],
+                text=True,
+            ).strip()
+            == "23"
+        )
+        assert len(requests) == 2
+        assert not list((tmp_path / "store").rglob("*.partial"))
+
+
+@pytest.mark.parametrize("outcome", ["reset", "eof", "handshake", "timeout", "certificate"])
+def test_wheel_transport_failures_have_a_timeout_on_every_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    payload = (tmp_path / wheel.filename).read_bytes()
+    original = urllib.request.urlopen
+    timeouts: list[float] = []
+
+    def interrupted(url: str, *, timeout: float):
+        timeouts.append(timeout)
+        if outcome == "timeout" or len(timeouts) == 1:
+            error = {
+                "reset": ConnectionResetError("connection reset"),
+                "eof": urllib.error.URLError(ssl.SSLEOFError("TLS unexpected EOF")),
+                "handshake": urllib.error.URLError(TimeoutError("TLS handshake timed out")),
+                "timeout": TimeoutError("read timed out"),
+                "certificate": urllib.error.URLError(
+                    ssl.SSLCertVerificationError("untrusted certificate")
+                ),
+            }[outcome]
+            raise error
+        return original(url, timeout=timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", interrupted)
+    with _wheel_server(wheel, payload, "ok") as (remote, requests):
+        if outcome in {"timeout", "certificate"}:
+            with pytest.raises((ProvisionError, urllib.error.URLError)) as failure:
+                fetch_wheel(remote, tmp_path / "store")
+            assert (
+                "failed after 3 tries" if outcome == "timeout" else "untrusted certificate"
+            ) in str(failure.value)
+            assert not requests
+        else:
+            assert fetch_wheel(remote, tmp_path / "store").read_bytes() == payload
+            assert len(requests) == 1
+        assert len(timeouts) == (
+            3 if outcome == "timeout" else 1 if outcome == "certificate" else 2
+        )
+        assert all(value == 30 for value in timeouts)
+
+
+@pytest.mark.parametrize("outcome", ["exhausted", "404", "hash", "short", "oversize", "offline"])
+def test_pack_download_retry_refusals_preserve_verification_and_offline(
+    tmp_path: Path, outcome: str
+) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    with _wheel_server(wheel, (tmp_path / wheel.filename).read_bytes(), outcome) as (
+        remote,
+        requests,
+    ):
+        lock = PackLock(
+            "example",
+            "linux-cpu",
+            ">=3.12",
+            ("fixture-extra==1.2",),
+            (),
+            (LockedDistribution("fixture-extra", "1.2", (remote,)),),
+        )
+        plan = plan_pack(
+            lock,
+            GenerationPackages.inspect(Path(sys.executable)),
+            variant="linux-cpu",
+            own_environment_size=0,
+        )
+        with pytest.raises(ProvisionError) as failure:
+            fetch_pack_wheels(plan, tmp_path / "store", offline=outcome == "offline")
+        assert "pack example:" in str(failure.value)
+        assert remote.url in str(failure.value)
+        assert {
+            "exhausted": "failed after 3 tries",
+            "404": "HTTP Error 404",
+            "hash": "wheel hash or size mismatch",
+            "short": "wheel hash or size mismatch",
+            "oversize": "wheel exceeds locked size",
+            "offline": "offline pack wheel missing",
+        }[outcome] in str(failure.value)
+        assert len(requests) == (3 if outcome == "exhausted" else 0 if outcome == "offline" else 1)
+        assert not list((tmp_path / "store").rglob("*.whl"))
+        assert not list((tmp_path / "store").rglob("*.partial"))
+
+
+@pytest.mark.parametrize("engine", [None, ">=0.0.3"])
+@pytest.mark.parametrize("issuer", [None, "https://issuer.example.test/simple"])
+def test_dependency_lock_reader_preserves_issuer_and_unchanged_originless_bytes(
+    tmp_path: Path, engine: str | None, issuer: str | None
+) -> None:
+    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    wheel = {
+        "filename": artifact.filename,
+        "size": artifact.size,
+        "sha256": artifact.sha256,
+        "url": artifact.url,
+    }
+    if issuer is not None:
+        wheel["registry"] = issuer
+    document = {
+        "format": "dinkster.pack-lock/2" if engine else "dinkster.pack-lock/1",
+        "pack": "example",
+        "variant": "linux-cpu",
+        "requiresPython": ">=3.12",
+        "requirements": ["fixture-extra==1.2"],
+        "indexes": [],
+        "packages": [{"name": "fixture-extra", "version": "1.2", "wheels": [wheel]}],
+    }
+    if engine is not None:
+        document["engine"] = engine
+    encoded = json.dumps(document, indent=2, sort_keys=True) + "\n"
+    lock = PackLock.from_json(encoded)
+    selected = lock.packages[0].wheels[0]
+    assert selected.registry == issuer
+    assert replace(selected, registry=None) == artifact
+    assert lock.to_json() == encoded
+
+
+@pytest.mark.parametrize(
+    "issuer",
+    [7, "", "file:///wheels", "https://user@issuer.test", "https://issuer.test/?query=1"],
+)
+def test_dependency_lock_reader_refuses_invalid_issuing_endpoint(
+    tmp_path: Path, issuer: object
+) -> None:
+    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    original = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        (),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (artifact,)),),
+    )
+    document = json.loads(original.to_json())
+    document["packages"][0]["wheels"][0]["registry"] = issuer
+    with pytest.raises(ProvisionError, match="invalid wheel issuing registry"):
+        PackLock.from_json(json.dumps(document))
+
+
+@pytest.mark.parametrize("measured", [False, True])
+@pytest.mark.parametrize("outcome", ["partial", "exhausted", "hash"])
+def test_lock_resolution_retries_verified_dependency_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, measured: bool, outcome: str
+) -> None:
+    api = _wheel(tmp_path, "dinkster-api", "0.0.3", "dinkster_api", "VALUE = 3\n")
+    wheel = _wheel(
+        tmp_path,
+        "fixture-extra",
+        "1.2",
+        "fixture_extra",
+        "VALUE = 23\n",
+        requires=("dinkster-api>=0.0.3",),
+    )
+    with _wheel_server(wheel, (tmp_path / wheel.filename).read_bytes(), outcome) as (
+        remote,
+        requests,
+    ):
+
+        def compile_lock(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            output = Path(command[command.index("--output-file") + 1])
+            rows = []
+            for name, version, artifact in (
+                ("dinkster-api", "0.0.3", api),
+                ("fixture-extra", "1.2", remote),
+            ):
+                row = (
+                    f'[[packages]]\nname="{name}"\nversion="{version}"\n'
+                    f"[[packages.wheels]]\nurl={json.dumps(artifact.url)}\n"
+                    f'hashes.sha256="{artifact.sha256}"\n'
+                )
+                if measured or name == "dinkster-api":
+                    row += f"size={artifact.size}\n"
+                rows.append(row)
+            output.write_text("".join(rows))
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", compile_lock)
+        (tmp_path / "constraints.txt").write_text("")
+
+        def resolve() -> PackLock:
+            return resolve_pack_lock(
+                pack="example",
+                variant="linux-cpu",
+                requirements=["fixture-extra==1.2"],
+                python=Path(sys.executable),
+                constraints=tmp_path / "constraints.txt",
+                engine=">=0.0.3",
+            )
+
+        if outcome != "partial":
+            with pytest.raises(ProvisionError) as failure:
+                resolve()
+            assert remote.url in str(failure.value)
+            assert ("failed after 3 tries" if outcome == "exhausted" else "hash mismatch") in str(
+                failure.value
+            )
+            if outcome == "exhausted":
+                assert "pack example:" in str(failure.value)
+            assert len(requests) == (3 if outcome == "exhausted" else 1)
+            return
+        lock = resolve()
+        assert lock.requirements == ("fixture-extra==1.2", "dinkster-api>=0.0.3")
+        assert [package.name for package in lock.packages] == ["fixture-extra"]
+        assert len(requests) == (2 if measured else 3)
+
+
+@pytest.mark.parametrize("source", ["index", "multiple-indexes", "constraint-index", "local"])
+def test_resolved_wheel_issuer_uses_only_explicit_unambiguous_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    content = (tmp_path / artifact.filename).read_bytes()
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+        def do_HEAD(self) -> None:
+            requests.append(self.path)
+            self.send_response(200 if self.path == f"/artifacts/{artifact.filename}" else 404)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            if self.path in {"/simple/fixture-extra/", "/other/fixture-extra/"}:
+                payload = (
+                    f'<a href="/artifacts/{artifact.filename}#sha256={artifact.sha256}">'
+                    f"{artifact.filename}</a>"
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+            elif self.path == f"/artifacts/{artifact.filename}":
+                payload = content
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+            else:
+                payload = b""
+                self.send_response(404)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = f"http://127.0.0.1:{server.server_port}"
+        (tmp_path / "uv.toml").write_text(
+            f'[[index]]\nurl = "{endpoint}/ambient"\n', encoding="ascii"
+        )
+        # The offline CI gate must still reach this test's loopback index.
+        monkeypatch.delenv("UV_OFFLINE", raising=False)
+        monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("UV_INDEX", endpoint + "/ambient")
+        monkeypatch.setenv("UV_EXTRA_INDEX_URL", endpoint + "/ambient")
+        monkeypatch.setenv("UV_FIND_LINKS", endpoint + "/ambient")
+        monkeypatch.setenv("UV_CONFIG_FILE", str(tmp_path / "uv.toml"))
+        constraints = tmp_path / "constraints.txt"
+        constraints.write_text(
+            (f"--extra-index-url {endpoint}/other\n" if source == "constraint-index" else "")
+            + "fixture-extra==1.2\n"
+        )
+        lock = resolve_pack_lock(
+            pack="example",
+            variant="linux-cpu",
+            requirements=["fixture-extra>=1"],
+            python=Path(sys.executable),
+            constraints=constraints,
+            indexes=(endpoint + "/simple",)
+            + ((endpoint + "/other",) if source == "multiple-indexes" else ()),
+            find_links=(tmp_path,) if source == "local" else (),
+        )
+        wheel = lock.packages[0].wheels[0]
+        assert wheel.filename == artifact.filename and wheel.sha256 == artifact.sha256
+        assert wheel.registry == (endpoint + "/simple" if source == "index" else None)
+        assert not any("ambient" in path for path in requests)
+        assert wheel.url == (
+            artifact.url if source == "local" else endpoint + "/artifacts/" + artifact.filename
+        )
+        encoded_wheel = json.loads(lock.to_json())["packages"][0]["wheels"][0]
+        assert encoded_wheel.get("registry") == wheel.registry
+        assert ("registry" in encoded_wheel) == (wheel.registry is not None)
+        assert PackLock.from_json(lock.to_json()) == lock
+    finally:
+        server.shutdown()
+        thread.join(timeout=10)
+        server.server_close()
+
+
 @pytest.mark.parametrize("failure", ["missing", "hash", "short", "oversize"])
 def test_pack_download_failure_names_pack_url_and_verification_result(
     tmp_path: Path, failure: str
 ) -> None:
     wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
+    other = _wheel(tmp_path, "another-extra", "2.3", "another_extra", "value = 47\n")
+    (tmp_path / other.filename).unlink()
     source = tmp_path / wheel.filename
     if failure == "missing":
         source.unlink()
@@ -160,7 +548,10 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
         ">=3.12",
         ("fixture-extra==1.2",),
         (),
-        (LockedDistribution("fixture-extra", "1.2", (wheel,)),),
+        (
+            LockedDistribution("fixture-extra", "1.2", (wheel,)),
+            LockedDistribution("another-extra", "2.3", (other,)),
+        ),
     )
     generation = tmp_path / "generations/1"
     python = _generation(generation / "python", [])
@@ -179,6 +570,7 @@ def test_pack_download_failure_names_pack_url_and_verification_result(
         )
     message = str(error.value)
     assert f"pack example: {wheel.url}: download/verification failed:" in message
+    assert f"pack example: {other.url}: download/verification failed:" in message
     assert {
         "missing": "urlopen error",
         "hash": "wheel hash or size mismatch",
@@ -203,6 +595,12 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         "fixture_extra",
         "import torch, cv2\ndef node(): return torch.value + cv2.value\n",
     )
+    extra = replace(extra, registry="https://issuer.example.test")
+    alternative_source = tmp_path / "alternative"
+    alternative_source.mkdir()
+    alternative = _wheel(
+        alternative_source, "fixture-extra", "1.2", "fixture_extra", "def node(): return -999\n"
+    )
     lock = PackLock(
         "example",
         "linux-cpu",
@@ -214,7 +612,9 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         ),
         (),
         tuple(
-            LockedDistribution(name, version, (wheel,))
+            LockedDistribution(
+                name, version, (wheel, alternative) if name == "fixture-extra" else (wheel,)
+            )
             for name, version, wheel in (
                 ("torch", "2.14.1", torch),
                 ("opencv-contrib-python-headless", "5.0", cv),
@@ -261,21 +661,37 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
             [
                 str(python),
                 "-c",
-                "import fixture_extra, torch, cv2, json; "
-                "print(json.dumps([fixture_extra.node(), torch.__file__, cv2.__file__]))",
+                "import fixture_extra, torch, cv2, json, importlib.metadata as m; "
+                "print(json.dumps([fixture_extra.node(), torch.__file__, cv2.__file__, "
+                "json.loads(m.distribution('fixture-extra').read_text('direct_url.json'))]))",
             ],
             capture_output=True,
             text=True,
             check=True,
         )
-        value, torch_file, cv_file = json.loads(result.stdout)
+        value, torch_file, cv_file, origin = json.loads(result.stdout)
         assert value == 58
+        with urllib.request.urlopen(origin["url"]) as installed_wheel:
+            assert hashlib.sha256(installed_wheel.read()).hexdigest() == extra.sha256
         assert Path(torch_file).is_relative_to(generation)
         assert Path(cv_file).is_relative_to(generation)
         assert not Path(torch_file).is_relative_to(generation / "packs")
         assert not Path(cv_file).is_relative_to(generation / "packs")
         assert pack_drift(python, lock, facts) == ()
         assert PackLock.read(generation / "packs/example/pack-lock.json") == lock
+        receipt = json.loads((generation / "packs/example/installed-wheels.json").read_text())
+        assert receipt == {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [
+                {
+                    "filename": extra.filename,
+                    "sha256": extra.sha256,
+                    "size": extra.size,
+                    "registry": extra.registry,
+                }
+            ],
+            "inherited": ["opencv-contrib-python-headless", "torch"],
+        }
         assert [path.name for path in store.rglob("*.whl")] == [extra.filename]
         assert not list((generation / "packs").rglob("torch*"))
 
@@ -439,6 +855,83 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         manifest = load_manifest(pack_manifest_path(extracted))
         assert set(manifest.requires) == set(lock.requirements)
         assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
+
+
+@pytest.mark.parametrize("accelerator", ["cpu", "cuda"])
+def test_official_pack_locks_include_transitive_helper_requirements(
+    tmp_path: Path, accelerator: str
+) -> None:
+    from scripts.build_official_packs import build
+
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    for name, versions in (
+        ("consumer-extra", ("1",)),
+        ("helper-extra", ("2",)),
+        ("leaf-extra", ("3", "4")),
+    ):
+        for version in versions:
+            _wheel(wheels, name, version, name.replace("-", "_"), "")
+    source = tmp_path / "source"
+    source.mkdir()
+    for name, requirement, helper in (
+        ("consumer", "consumer-extra==1", "helper"),
+        ("helper", "helper-extra==2", "leaf"),
+        ("leaf", "leaf-extra==3", None),
+    ):
+        root = source / "packages" / f"dinkster-nodes-{name}"
+        root.mkdir(parents=True)
+        text = (
+            f'[pack]\nname="dinkster-{name}"\npublisher="dinkster"\n'
+            f'version="1.0.0"\nengine=">=0.0.2"\nrequires=["{requirement}"]\n'
+        )
+        if name == "leaf":
+            text += '[pack.extra-requires]\ncuda=["leaf-extra==4"]\n'
+            text = text.replace('requires=["leaf-extra==3"]', "requires=[]")
+            text += 'cpu=["leaf-extra==3"]\n'
+        if helper is not None:
+            text += f'[pack.dependencies]\ndinkster-{helper}=">=1"\n'
+        text += f'[pack.entry]\nnodes="dinkster_{name}:NODES"\n'
+        (root / "dinkster-pack.toml").write_text(text)
+        module = root / f"dinkster_{name}"
+        module.mkdir()
+        (module / "__init__.py").write_text("raise AssertionError('pack code must not load')\n")
+        (root / "pyproject.toml").write_text(
+            f'[project]\nname="dinkster-{name}"\nversion="1.0.0"\nrequires-python=">=3.12"\n'
+        )
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(source), "write-tree"], text=True).strip()
+    (source / ".git/HEAD").write_text(tree + "\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    output = tmp_path / "output"
+    variant = "linux-cpu" if accelerator == "cpu" else "linux-nvidia"
+    build(
+        source,
+        output,
+        packs=("dinkster-consumer",),
+        variant=variant,
+        accelerator=accelerator,
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=(wheels,),
+    )
+    lock = PackLock.read(output / f"dinkster-consumer-1.0.0-{variant}.pack-lock.json")
+    leaf_version = "3" if accelerator == "cpu" else "4"
+    assert lock.requirements == (
+        "consumer-extra==1",
+        "helper-extra==2",
+        f"leaf-extra=={leaf_version}",
+    )
+    assert {(package.name, package.version) for package in lock.packages} == {
+        ("consumer-extra", "1"),
+        ("helper-extra", "2"),
+        ("leaf-extra", leaf_version),
+    }
+    with zipfile.ZipFile(output / "dinkster_consumer-1.0.0-py3-none-any.whl") as archive:
+        manifest = next(name for name in archive.namelist() if name.endswith("dinkster-pack.toml"))
+        assert 'requires=["consumer-extra==1"]' in archive.read(manifest).decode()
 
 
 def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_path: Path) -> None:
@@ -869,6 +1362,75 @@ def test_generation_preflight_never_silently_omits_packs(tmp_path: Path) -> None
     ].conflicts
 
 
+def test_collection_lists_unreadable_locks_and_valid_sibling_wheel_failures(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "source"
+    for name in ("absent", "corrupt", "healthy"):
+        (source / "packs" / name).mkdir(parents=True)
+    (source / "packs/corrupt/pack-lock.json").write_text("not a lock")
+    extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 73\n")
+    (tmp_path / extra.filename).write_bytes(b"corrupt wheel")
+    PackLock(
+        "healthy",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (extra,)),),
+    ).write(source / "packs/healthy/pack-lock.json")
+    target = tmp_path / "target"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+    arguments = [
+        "--generation",
+        str(target),
+        "--generation-python",
+        str(python),
+        "--constraints",
+        str(constraints),
+        "--variant",
+        "linux-cpu",
+        "--worker-protocol",
+        str(PROTOCOL_VERSION),
+        "--wheel-store",
+        str(tmp_path / "wheels"),
+        "--uv-cache",
+        str(tmp_path / "cache"),
+        "--own-environment-size",
+        "1000",
+        "--source-generation",
+        str(source),
+        "--in-process-pack",
+        "absent",
+    ]
+    assert main(["collect", *arguments]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "pack absent: recorded dependency lock missing" in diagnostic
+    assert "pack corrupt:" in diagnostic and "corrupt/pack-lock.json" in diagnostic.replace(
+        "\\", "/"
+    )
+    assert "in-process packs have no dependency lock: absent" in diagnostic
+    assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
+    observed = GenerationPackages.inspect(python)
+    recorded = json.dumps(
+        {"tags": [str(tag) for tag in observed.tags], "markers": dict(observed.markers)}
+    )
+    unavailable = list(arguments)
+    unavailable[unavailable.index("--generation-python") + 1] = str(tmp_path / "absent-python")
+    assert main(["collect", *unavailable, "--compatibility", recorded]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "pack absent: recorded dependency lock missing" in diagnostic
+    assert f"pack healthy: {extra.filename}: wheel hash or size mismatch" in diagnostic
+    assert "cannot inspect generation interpreter" not in diagnostic
+    assert {path: path.read_bytes() for path in source.rglob("*") if path.is_file()} == before
+    assert not (target / "packs").exists()
+    assert main(["preflight", *arguments]) == 1
+    assert "pack absent: recorded dependency lock missing" in capsys.readouterr().err
+
+
 def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -916,9 +1478,24 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     seal.unlink()
     rebuild_generation(context, plans)
     for name in context.in_process_packs:
-        assert list((target / "packs" / name).iterdir()) == [
-            target / "packs" / name / "pack-lock.json"
+        assert {path.name for path in (target / "packs" / name).iterdir()} == {
+            "pack-lock.json",
+            "installed-wheels.json",
+        }
+    first_receipt = json.loads((target / "packs/in-process/installed-wheels.json").read_text())
+    shared_receipt = json.loads((target / "packs/shared/installed-wheels.json").read_text())
+    isolated_receipt = json.loads((target / "packs/isolated/installed-wheels.json").read_text())
+    assert [wheel["sha256"] for wheel in first_receipt["wheels"]] == [extra.sha256]
+    assert first_receipt["inherited"] == ["dinkster-api"]
+    assert shared_receipt["wheels"] == isolated_receipt["wheels"] == []
+    assert (
+        shared_receipt["inherited"]
+        == isolated_receipt["inherited"]
+        == [
+            "dinkster-api",
+            "fixture-extra",
         ]
+    )
     isolated = venv_python(target / "packs/isolated")
     result = subprocess.check_output(
         [
@@ -961,6 +1538,46 @@ def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
     assert main(["doctor", *args]) == 1
     drift = json.loads(capsys.readouterr().out)["changes"]
     assert any("in-process: fixture-extra: expected 1.2, found 9.0" in item for item in drift)
+
+
+def test_collection_replaces_in_process_versions_before_layering_siblings(tmp_path: Path) -> None:
+    old = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    updated = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 79\n")
+    target = tmp_path / "generations/2"
+    python = _generation(target / "python", [old])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    paths = []
+    for name in ("a-isolated", "z-parent"):
+        path = tmp_path / f"{name}.json"
+        PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            ("fixture-extra==2.0",),
+            (),
+            (LockedDistribution("fixture-extra", "2.0", (updated,)),),
+        ).write(path)
+        paths.append(path)
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        1000,
+        in_process_packs=("z-parent",),
+    )
+    before = {path: path.read_bytes() for path in target.rglob("*") if path.is_file()}
+    plans = preflight_generation(context, locks=paths, engine_only=True)
+    assert [plan.lock.pack for plan in plans] == ["z-parent", "a-isolated"]
+    assert [plan.wheels for plan in plans] == [(updated,), ()]
+    assert all(not plan.conflicts for plan in plans)
+    assert {path: path.read_bytes() for path in target.rglob("*") if path.is_file()} == before
+    assert not context.wheel_store.exists()
+    assert not (target / "packs").exists()
 
 
 def test_in_process_dependencies_conflict_before_downloads(tmp_path: Path) -> None:

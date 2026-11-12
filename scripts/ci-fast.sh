@@ -25,6 +25,8 @@ if [ "${1:-all}" = checks ]; then exit 0; fi
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_disabled_features.py \
   tests/test_settings.py \
+  tests/test_supervisor_limits.py \
+  tests/test_security_notices.py \
   tests/test_dependency_rule.py::test_core_paths_do_not_import_optional_packages_at_module_scope \
   tests/test_dependency_rule.py::test_umbrella_optional_packages_are_locked \
   tests/test_extension_factory_guard.py \
@@ -49,6 +51,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_environment_cli.py::test_custom_cli_setup_retains_base_on_update_without_definition \
   tests/test_environment_history.py \
   tests/test_environment_runtime.py::test_start_status_idempotence_and_stop \
+  tests/test_environment_runtime.py::test_start_failure_preserves_exit_code_and_current_output \
   'tests/test_environment_transactions.py::test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation[crlf-None]' \
   tests/test_environment_transactions.py::test_completed_activation_recovers_history_publication_once_after_process_exit \
   tests/test_workflow_requirements.py \
@@ -61,7 +64,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_installer.py::test_http_registry_fetcher_uses_verified_static_wheel \
   tests/test_installer.py::test_registry_download_retries_only_transport \
   tests/test_installer.py::test_http_registry_fetcher_rejects_invalid_wheel_size \
-  tests/test_installer.py::test_cli_restore_downloads_registry_sources \
+  tests/test_installer.py::test_cli_published_restore_routes_require_managed_generation \
   tests/test_installer.py::test_routing_fetcher_dispatches_on_recorded_provenance \
   tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
   tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
@@ -83,6 +86,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
   tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
   tests/test_library_publication.py::test_default_admission_probes_and_tests_selected_library_dependency \
+  tests/test_library_publication.py::test_locked_default_admission_uses_verified_unpublished_library \
   tests/test_library_publication.py::test_admission_library_closure_intersects_ranges_and_activates_extras \
   tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \

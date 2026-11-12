@@ -32,13 +32,201 @@ from scripts.build_release import (
     select_dependency_wheels,
     validate_engine_wheels,
     versioned_sources,
-    wheel_metadata,
     workspace_projects,
     write_constraints,
 )
 from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_disposable_scan_timings_preserve_candidates_attempts_and_admission(tmp_path: Path) -> None:
+    import inspect
+    import sqlite3
+
+    from scripts.check_disposable_publication import read_scan_timings
+
+    database = tmp_path / "registry.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            "CREATE TABLE release_candidates (id, release_id, pack_name, status, submitted_at);"
+            "CREATE TABLE audit_events (id, event_type, subject_id, created_at, data);"
+            "CREATE TABLE release_scan_runs "
+            "(id, candidate_id, release_id, stage, attempt, accepted, created_at);"
+            "INSERT INTO release_candidates VALUES "
+            "('aabb', 'release-a', 'first', 'accepted', '2026-11-12 07:00:00'),"
+            "('ccdd', NULL, 'second', 'scanning', '2026-11-12 07:00:01');"
+            "INSERT INTO audit_events VALUES "
+            "(1, 'release_candidate.claimed', 'aa-bb', '2026-11-12 07:00:02', "
+            '\'{"attempt": 1, "secret": "must-not-appear"}\'),'
+            "(2, 'release_candidate.claimed', 'cc-dd', '2026-11-12 07:00:04', "
+            "'{\"attempt\": 1}'),"
+            "(3, 'release_candidate.claimed', 'cc-dd', '2026-11-12 07:00:12', "
+            "'{\"attempt\": 2}');"
+            "INSERT INTO release_scan_runs VALUES "
+            "(1, 'aabb', NULL, 'ingest_integrity', 1, 1, '2026-11-12 07:00:03'),"
+            "(2, 'ccdd', NULL, 'ingest_integrity', 1, 1, '2026-11-12 07:00:06'),"
+            "(3, 'aabb', NULL, 'executable_probe', 1, 1, '2026-11-12 07:00:10'),"
+            "(4, NULL, 'release-a', 'admission', 1, 1, '2026-11-12 07:00:11'),"
+            "(5, 'ccdd', NULL, 'ingest_integrity', 2, 0, '2026-11-12 07:00:15');"
+        )
+    before = database.read_bytes()
+    # Run the same self-contained reader sent to the container, without host imports.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            inspect.getsource(read_scan_timings)
+            + f"\nimport json; print(json.dumps(read_scan_timings({str(database)!r})))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    first, second = json.loads(result.stdout)
+    assert (first["pack"], second["pack"]) == ("first", "second")
+    assert [row["stage"] for row in first["stages"]] == [
+        "ingest_integrity",
+        "executable_probe",
+        "admission",
+    ]
+    assert [row["intervalSeconds"] for row in first["stages"]] == [1, 7, 1]
+    assert [row["intervalSeconds"] for row in second["stages"]] == [2, 3]
+    assert second["stages"][-1]["accepted"] is False
+    assert second["stages"][-1]["intervalStartAt"] == "2026-11-12 07:00:12"
+    assert "must-not-appear" not in result.stdout
+    assert database.read_bytes() == before
+
+
+def test_disposable_scan_timings_normalize_postgresql_values(monkeypatch) -> None:
+    import importlib
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    from scripts.check_disposable_publication import read_scan_timings
+
+    candidate_id = UUID("00000000-0000-0000-0000-0000000000aa")
+
+    class Connection:
+        def execute(self, query, parameters=()):
+            if query.startswith("SELECT id,"):
+                return [
+                    dict(
+                        id=candidate_id,
+                        release_id=None,
+                        pack_name="postgres-pack",
+                        status="scanning",
+                        submitted_at=datetime(2026, 11, 12, 7, tzinfo=UTC),
+                    )
+                ]
+            if query.startswith("SELECT created_at,"):
+                return [
+                    dict(
+                        created_at=datetime(2026, 11, 12, 7, 0, 2, tzinfo=UTC),
+                        data={"attempt": 2, "secret": "must-not-appear"},
+                    )
+                ]
+            if query.startswith("SELECT stage,"):
+                return [
+                    dict(
+                        stage="executable_probe",
+                        attempt=2,
+                        accepted=False,
+                        created_at=datetime(2026, 11, 12, 7, 0, 9, tzinfo=UTC),
+                    )
+                ]
+            return []
+
+        def close(self):
+            pass
+
+    adapter = SimpleNamespace(connect=lambda *args, **kwargs: Connection(), dict_row=object())
+    monkeypatch.setattr(importlib, "import_module", lambda name: adapter)
+    result = read_scan_timings("postgresql://postgres@database/registry")
+    assert result[0]["candidateId"] == candidate_id.hex
+    assert result[0]["stages"][0]["intervalSeconds"] == 7
+    assert result[0]["stages"][0]["accepted"] is False
+    assert "must-not-appear" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("failure", [None, "publication", "capture"])
+def test_disposable_publication_retains_timings_without_changing_verdict(
+    tmp_path: Path, monkeypatch, capsys, failure: str | None
+) -> None:
+    from scripts.check_disposable_publication import check_publication
+
+    inputs = tmp_path / "inputs"
+    for name in (
+        "bases/cpu/manifest.json",
+        "locks/cpu.pack-lock.json",
+        "sources/official-packs.lock",
+    ):
+        path = inputs / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "runtime/wheels").mkdir(parents=True)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        stdout = ""
+        if "mint-token" in command:
+            stdout = "private-token"
+        elif "scripts.publish_official_packs" in command:
+            if failure == "publication":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            stdout = "[]"
+        elif "-c" in command and "def read_scan_timings" in command[-1]:
+            if failure == "capture":
+                return subprocess.CompletedProcess(command, 1, "", "private-token")
+            stdout = '[{"pack": "timed-candidate"}]'
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if failure == "publication":
+        with pytest.raises(subprocess.TimeoutExpired):
+            check_publication(tmp_path, inputs, index, "service", "publisher")
+        report = json.loads(capsys.readouterr().out)
+    else:
+        report = check_publication(tmp_path, inputs, index, "service", "publisher")
+        assert report["externalNetworkDenied"] is True
+        assert report["submissions"] == [[], []]
+    phases = report["timings"]["phases"]
+    assert phases[0]["phase"] == "startup"
+    assert phases[-1]["phase"] == "cleanup"
+    assert all(row["endSeconds"] >= row["startSeconds"] >= 0 for row in phases)
+    if failure == "capture":
+        assert report["timings"]["captureError"] == "scan timing reader exited 1"
+    else:
+        assert report["timings"]["candidates"] == [{"pack": "timed-candidate"}]
+    assert "private-token" not in json.dumps(report)
+    scanners = [command for command in commands if "scanner" in command]
+    assert len(scanners) == 2
+    mounts = [
+        [command[i + 1] for i, arg in enumerate(command) if arg == "--mount"]
+        for command in scanners
+    ]
+    shared = [next(mount for mount in row if mount.endswith("dst=/data")) for row in mounts]
+    private = [
+        next(mount for mount in row if mount.endswith("dst=/data/objects/.probe-runtime"))
+        for row in mounts
+    ]
+    assert shared[0] == shared[1]
+    assert private[0] != private[1]
+    for mount in private:
+        seeds = [
+            command
+            for command in commands
+            if mount in command and "/seed,readonly" in " ".join(command)
+        ]
+        assert len(seeds) == 1
+        assert str(index / "runtime/wheels") in " ".join(seeds[0])
+        volume = mount.split("src=", 1)[1].split(",", 1)[0]
+        assert ["docker", "volume", "rm", volume] in commands
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
@@ -85,6 +273,15 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+        if project in {"dinkster-api", "dinkster-supervisor"}:
+            security = ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security"
+            for path in security.glob("*.py"):
+                assert actual.read(f"dinkster_security/{path.name}") == path.read_bytes()
+                if project == "dinkster-supervisor":
+                    assert (
+                        actual.read(f"dinkster_supervisor/security/{path.name}")
+                        == path.read_bytes()
+                    )
     if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [
@@ -106,9 +303,10 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
 
 
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")
-def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) -> None:
-    _, rebuilt = _distribution_wheels(tmp_path, "dinkster-api")
-    environment = tmp_path / "standalone-api"
+@pytest.mark.parametrize("project", ["dinkster-api", "dinkster-supervisor"])
+def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, project: str) -> None:
+    _, rebuilt = _distribution_wheels(tmp_path, project)
+    environment = tmp_path / "standalone"
     subprocess.run(
         ["uv", "venv", "--python", sys.executable, str(environment)],
         cwd=tmp_path,
@@ -128,17 +326,56 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
         cwd=tmp_path,
         check=True,
     )
+    if project == "dinkster-api":
+        imports = (
+            "import importlib.util; "
+            "assert importlib.util.find_spec('dinkster_supervisor') is None; "
+            "from dinkster_api.v1 import Node; "
+            "print(Node.__name__); "
+        )
+        expected = "Node\nSecurityHost"
+    else:
+        imports = (
+            "from dinkster_supervisor.environment import main; "
+            "from dinkster_supervisor.security.host import SecurityHost; "
+            "from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES; "
+            "assert SECURITY_FEED_LIMIT_BYTES == 33554432; "
+            "print(main.__name__, SecurityHost.__name__); "
+        )
+        expected = "main SecurityHost\nSecurityHost"
     result = subprocess.check_output(
         [
             str(python),
             "-I",
             "-c",
-            "from dinkster_api.v1 import Node; print(Node.__name__)",
+            imports + "from dinkster_security.host import SecurityHost; "
+            "print(SecurityHost.__name__)",
         ],
         cwd=tmp_path,
         text=True,
     )
-    assert result.strip() == "Node"
+    assert result.strip() == expected
+
+    if project == "dinkster-supervisor":
+        alias = tmp_path / "source-security"
+        shutil.copytree(
+            ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security",
+            alias / "dinkster_security",
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                f"import sys; sys.path.insert(0, {str(alias)!r}); "
+                "from pathlib import Path; "
+                "import dinkster_security.host as host; "
+                f"assert Path(host.__file__).is_relative_to({str(alias)!r}); "
+                "assert host.SECURITY_FEED_LIMIT_BYTES == 33554432",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
@@ -328,7 +565,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
         "uses": "softprops/action-gh-release@v2",
         "with": {
             "tag_name": "${{ steps.identity.outputs.tag }}",
-            "target_commitish": "${{ github.sha }}",
             "prerelease": "${{ github.ref == 'refs/heads/main' }}",
             "make_latest": "${{ github.ref != 'refs/heads/main' }}",
             "generate_release_notes": True,
@@ -336,6 +572,67 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
             "files": "dist/*",
         },
     }
+
+
+@pytest.mark.parametrize("state", ["absent", "matching", "annotated", "wrong", "release", "denied"])
+def test_engine_release_tag_is_bound_to_built_commit(tmp_path: Path, state: str) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    script = next(
+        step["with"]["script"]
+        for step in workflow["jobs"]["release"]["steps"]
+        if step.get("id") == "identity"
+    )
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist/release-manifest.json").write_text(
+        json.dumps({"commit": "a" * 40, "tag": "main-test"})
+    )
+    harness = """
+    const assert = require('assert');
+    const state = process.argv[1];
+    const sha = 'a'.repeat(40);
+    const calls = [];
+    let pushed = false;
+    const fixtureRequire = name => name === 'child_process' ? {
+      execFileSync: (command, args) => {
+        assert.equal(command, 'git');
+        assert.deepEqual(args, ['push', 'origin', sha + ':refs/tags/main-test']);
+        calls.push('push');
+        pushed = true;
+      },
+    } : require(name);
+    const missing = () => { throw Object.assign(new Error('missing'), { status: 404 }); };
+    const github = { rest: { repos: {
+      getReleaseByTag: async () => { calls.push('release'); if (state !== 'release') missing(); },
+    }, git: {
+      getRef: async () => {
+        calls.push('get');
+        if (state === 'absent' && !pushed) missing();
+        if (state === 'denied') throw Object.assign(new Error('denied'), { status: 403 });
+        return { data: { object: { type: state === 'annotated' ? 'tag' : 'commit',
+          sha: state === 'wrong' ? 'b'.repeat(40) : sha } } };
+      },
+      getTag: async () => {
+        calls.push('peel');
+        return { data: { object: { type: 'commit', sha } } };
+      },
+    } } };
+    const context = { sha, ref: 'refs/heads/main',
+      repo: { owner: 'Kosinkadink', repo: 'Dinkster' } };
+    const core = { setOutput: () => {} };
+    (async () => {
+      let error;
+      try { await new Function('github', 'context', 'core', 'require',
+        'return (async () => {' + SCRIPT + '})()')(github, context, core, fixtureRequire); }
+      catch (caught) { error = caught; }
+      const refused = ['wrong', 'release', 'denied'].includes(state);
+      assert.equal(Boolean(error), refused, String(error));
+      assert.equal(pushed, state === 'absent');
+      if (pushed) assert.deepEqual(calls, ['release', 'get', 'push', 'get']);
+      if (state === 'release') assert.deepEqual(calls, ['release']);
+      if (state === 'annotated') assert(calls.includes('peel'));
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+    """.replace("SCRIPT", json.dumps(script))
+    subprocess.run(["node", "-e", harness, state], cwd=tmp_path, check=True)
 
 
 def test_release_acquires_each_selected_base_without_pack_lock_matrix(
@@ -453,6 +750,72 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     )
 
 
+@pytest.mark.parametrize("problem", [None, "base", "engine", "constraints", "python", "packages"])
+def test_admission_runtime_binds_the_engine_base_and_installed_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+) -> None:
+    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+    from dinkster_workers.pack_lock import GenerationPackages
+    from test_environment_artifacts import _mirror
+    from test_pack_environment import _generation
+
+    from scripts import prepare_admission_engine as admission
+
+    base, engine, channel = _mirror(tmp_path / "mirror")
+    root = tmp_path / "checkout"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/base_bundles.json").write_text(json.dumps({base["variant"]: base["id"][7:]}))
+    monkeypatch.setattr(admission, "git_head", lambda root: engine["commit"])
+    runtime = tmp_path / "runtime"
+    _generation(runtime / "generation/python", [])
+    python = interpreter(runtime / "generation")
+    if not python.exists():
+        python.symlink_to("python")
+    constraints = runtime / "generation/constraints.txt"
+    constraints.write_text("locked-extra==1.2\n")
+    shutil.copyfile(
+        tmp_path / f"mirror/base/{base['variant']}/{base['id'][7:]}/manifest.json",
+        runtime / "base-manifest.json",
+    )
+    shutil.copytree(
+        tmp_path / f"mirror/engine/{channel['engine']['release'][7:]}", runtime / "engine"
+    )
+    facts = GenerationPackages.inspect(python)
+    record = {
+        "commit": engine["commit"],
+        "engineVersion": engine["version"],
+        "engineRelease": channel["engine"]["release"],
+        "baseId": base["id"],
+        "variant": base["variant"],
+        "python": str(python),
+        "constraints": str(constraints),
+        "constraintsSha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        "packages": dict(facts.versions),
+        "pythonVersion": facts.python_version,
+    }
+    if problem == "base":
+        record["baseId"] = "sha256:" + "e" * 64
+    elif problem == "engine":
+        record["engineRelease"] = "sha256:" + "e" * 64
+    elif problem == "constraints":
+        constraints.write_text("locked-extra==9\n")
+    elif problem == "python":
+        record["python"] = sys.executable
+    elif problem == "packages":
+        record["packages"] = {"uninstalled": "1.2"}
+    (runtime / "runtime.json").write_text(json.dumps(record))
+    if problem:
+        with pytest.raises((ValueError, EnvironmentError)):
+            admission.read_runtime(runtime, root, engine["version"])
+    else:
+        assert admission.read_runtime(runtime, root, engine["version"]) == (
+            python,
+            base["id"],
+            constraints,
+            base["variant"],
+        )
+
+
 def test_default_pack_admission_uses_complete_version_history() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/default-pack-admission.yml").read_text(encoding="utf-8")
@@ -546,7 +909,11 @@ def test_default_admission_workflow_selects_publication_candidates(
         echo development-engine
       elif [ "$4" = "-" ]; then
         "$TEST_PYTHON" -
+      elif [ "$5" = "scripts.prepare_admission_engine" ]; then
+        mkdir -p admission-runtime/engine
+        echo '{}' > admission-runtime/base-manifest.json
       else
+        mkdir -p admission-sources
         printf '%s\\0' "$@" > admission-arguments
         echo '{"groups": [["dinkster-image"], ["dinkster-audio", "dinkster-video"]]}'
       fi
@@ -582,6 +949,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         ("0" * 40 if all_candidates else base)
         if pull_request
         else ".publication/sources/official-packs.lock",
+        "--runtime",
+        "admission-runtime",
         "--prepare-output",
         "admission-sources",
     ]
@@ -591,7 +960,6 @@ def test_default_admission_workflow_selects_publication_candidates(
         {"group": 2, "packs": '["dinkster-audio", "dinkster-video"]'},
     ]
     prepared = tmp_path / "admission-sources"
-    prepared.mkdir()
     (prepared / "engine.json").write_text('{"engineVersion": "prepared-engine"}')
     command = workflow["jobs"]["admission"]["steps"][-1]["run"]
     subprocess.run(
@@ -608,6 +976,8 @@ def test_default_admission_workflow_selects_publication_candidates(
         "scripts.check_default_pack_admission",
         "--engine-version",
         "prepared-engine",
+        "--runtime",
+        "admission-runtime",
         "--prepared-sources",
         "admission-sources",
         "--pack",
@@ -1047,11 +1417,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         helper = tomllib.loads(
             (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.2"
+        assert helper["version"] == "0.0.5"
         models = tomllib.loads(
             (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
         )["project"]
-        assert "dinkster-pack-helpers==0.0.2" in models["dependencies"]
+        assert "dinkster-pack-helpers==0.0.5" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -1919,6 +2289,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     engine = {
         "version": "1.2.3",
         "label": "2026-10-31-1.2.3",
+        "repository": "Kosinkadink/Dinkster",
         "workerProtocol": 11,
         "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
     }
@@ -2015,6 +2386,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         )
     assert first_lock.packages[0].wheels[0].url == expected
     assert first_lock.packages[0].wheels[0].sha256 == digest
+    assert first_lock.packages[0].wheels[0].registry == "https://github.com/Kosinkadink/Dinkster"
     if published:
         assert hashlib.sha256(metadata.read_bytes()).hexdigest() == before
         return
@@ -2103,6 +2475,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
                 "size": 17,
                 "sha256": "b" * 64,
                 "url": "https://example.test/fixture.whl",
+                "index": "https://issuer.example.test/simple" if mode == "independent" else None,
             }
         ],
         "nvidia": None,
@@ -2158,6 +2531,9 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
             lock = PackLock.read(path)
             assert lock.pack in expected and lock.variant == "fixture-base"
             assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
+            assert lock.packages[0].wheels[0].registry == (
+                "https://issuer.example.test/simple" if mode == "independent" else None
+            )
     assert {path: path.read_bytes() for path in before} == before
     assert not list(tmp_path.glob("release-pack-locks-*"))
 
@@ -2522,6 +2898,101 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         }
 
 
+@pytest.mark.parametrize("selected", [False, True])
+def test_disposable_registry_acquisition_uses_public_source_for_all_pull_requests(
+    selected: bool,
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    assert "pull_request_target" not in workflow[True]
+    assert "paths" not in workflow[True]["pull_request"]
+    job = workflow["jobs"]["registry-service-image"]
+    assert job["needs"] == "select"
+    assert "registry-service-unavailable" not in workflow["jobs"]
+    assert "secrets." not in yaml.safe_dump(job)
+    for event in ("pull_request", "workflow_run", "workflow_dispatch", "push"):
+        for fork in (False, True):
+            for actor in ("contributor", "dependabot[bot]"):
+                values = {
+                    "github.event_name": event,
+                    "github.event.pull_request.head.repo.full_name": "fork/Dinkster"
+                    if fork
+                    else "Kosinkadink/Dinkster",
+                    "github.repository": "Kosinkadink/Dinkster",
+                    "github.actor": actor,
+                    "needs.select.outputs.packs": '["dinkster-test"]' if selected else "[]",
+                }
+                condition = job["if"]
+                for name, value in values.items():
+                    condition = condition.replace(name, repr(value))
+                condition = condition.replace("&&", " and ").replace("||", " or ")
+                assert eval(condition, {"__builtins__": {}}) is (
+                    event == "pull_request" and selected
+                )
+    checkout = next(step for step in job["steps"] if step.get("uses") == "actions/checkout@v4")
+    assert checkout["with"]["repository"] == "Kosinkadink/dinkster-registry-service"
+    pin = checkout["with"]["ref"]
+    assert len(pin) == 40 and all(char in "0123456789abcdef" for char in pin)
+    assert checkout["with"]["persist-credentials"] is False
+    assert "ssh-key" not in checkout["with"]
+    service_build = next(
+        step["run"]
+        for step in job["steps"]
+        if "docker build --tag" in step.get("run", "")
+        and ".disposable-registry-source" in step["run"]
+    )
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
+    build = subprocess.run(
+        [bash, "-e", "-c", "docker() { printf '%s\\n' \"$@\"; }\n" + service_build],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert build.stdout.splitlines() == [
+        "build",
+        "--tag",
+        "dinkster-disposable-registry:local",
+        checkout["with"]["path"],
+    ]
+    assert job["timeout-minutes"] == 15
+    acquisition = workflow["jobs"]["probe-index"]["steps"]
+    assert any("check_publication_controls prepare" in step.get("run", "") for step in acquisition)
+    upload = next(
+        step["with"]
+        for step in acquisition
+        if step.get("with", {}).get("name") == "disposable-publication-controls"
+    )
+    assert upload["include-hidden-files"] is True
+    isolated = workflow["jobs"]["disposable-publication"]["steps"]
+    controls = next(
+        index
+        for index, step in enumerate(isolated)
+        if "check_publication_controls check" in step.get("run", "")
+    )
+    publication = next(
+        index
+        for index, step in enumerate(isolated)
+        if "python3 scripts/check_disposable_publication.py" in step.get("run", "")
+    )
+    assert controls < publication
+    assert any(
+        step.get("with", {}).get("name") == "disposable-publication-controls"
+        for step in isolated[:controls]
+    )
+    # The isolated runner must not install host packages to execute staged controls.
+    help_result = subprocess.run(
+        [sys.executable, "-S", "-m", "scripts.check_publication_controls", "check", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--fixtures" in help_result.stdout
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -2533,7 +3004,24 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         "main-failure",
         "main-skipped",
         "main-workflow",
+        "main-unrelated",
+        "main-served",
+        "main-other-versions",
+        "main-schema1",
+        "main-invalid",
+        "main-substitution",
+        "main-error",
         "workflow_dispatch",
+        "pr-source",
+        "pr-pack-source",
+        "pr-api-source",
+        "pr-package-docs",
+        "pr-build-input",
+        "pr-dependency",
+        "pr-unknown",
+        "pr-docs",
+        "pr-tests",
+        "pr-markdown",
     ],
 )
 def test_official_publication_workflow_selects_committed_versions_without_engine_coupling(
@@ -2565,13 +3053,56 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         'version = "2.7rc1"\nengine = ">=0.2,<1"\n'
         '[pack.entry]\nnodes = "nodes:NODES"\n'
     )
+    if event.startswith(("main-", "pr-")):
+        library = tmp_path / "packages/dinkster-pack-helpers/pyproject.toml"
+        library.parent.mkdir()
+        library.write_text(
+            '[project]\nname = "dinkster-pack-helpers"\nversion = "1.3"\n'
+            "[tool.dinkster]\nofficial-library = true\n"
+        )
     subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
     tree = subprocess.check_output(["git", "-C", str(tmp_path), "write-tree"], text=True).strip()
     (tmp_path / ".git/HEAD").write_text(tree + "\n")
     after = tree
-    if event in {"lockstep", "main-success", "main-failure", "main-skipped", "main-workflow"}:
+    if event.startswith("pr-"):
+        changed = (
+            tmp_path
+            / {
+                "pr-source": "packages/dinkster-pack-helpers/src/helpers.py",
+                "pr-pack-source": "packages/dinkster-nodes-foundation/src/nodes.py",
+                "pr-api-source": "packages/dinkster-api/src/api.py",
+                "pr-package-docs": "packages/dinkster-pack-helpers/README.md",
+                "pr-build-input": "scripts/base_bundles.json",
+                "pr-dependency": "uv.lock",
+                "pr-unknown": "unknown-input",
+                "pr-docs": "docs/usage.md",
+                "pr-tests": "tests/test_helpers.py",
+                "pr-markdown": "README.md",
+            }[event]
+        )
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text("changed\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+        after = subprocess.check_output(
+            ["git", "-C", str(tmp_path), "write-tree"], text=True
+        ).strip()
+        (tmp_path / ".git/HEAD").write_text(after + "\n")
+    if event == "lockstep" or event.startswith("main-"):
         changed = tmp_path / (
-            ".github/workflows/official-packs.yml" if event == "main-workflow" else "uv.lock"
+            ".github/workflows/official-packs.yml"
+            if event == "main-workflow"
+            else "unrelated-test.py"
+            if event
+            in {
+                "main-unrelated",
+                "main-served",
+                "main-other-versions",
+                "main-schema1",
+                "main-invalid",
+                "main-substitution",
+                "main-error",
+            }
+            else "uv.lock"
         )
         changed.parent.mkdir(parents=True, exist_ok=True)
         changed.write_text("version = 1\n")
@@ -2608,11 +3139,87 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     monkeypatch.setenv(
         "PACK_TAG", "pack/dinkster-nodes-foundation/v2.7rc1" if event == "tag" else ""
     )
+
+    def read_metadata(registry, path):
+        assert event.startswith("main-") and event not in {"main-failure", "main-skipped"}
+        assert registry == "https://registry.dinkster.org"
+        if event == "main-error":
+            raise OSError("registry unavailable")
+        if event == "main-invalid":
+            return b'{"schemaVersion": 2, "items": [null]}'
+        if event == "main-schema1":
+            return json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "items": [
+                        {"name": "dinkster-nodes-foundation", "version": "2.7rc1"},
+                        {"name": "dinkster-pack-helpers", "version": "1.2"},
+                    ],
+                }
+            ).encode()
+        versions = (
+            {"dinkster-nodes-foundation": ["2.7rc1", "9.0"], "dinkster-pack-helpers": ["1.3"]}
+            if event in {"main-served", "main-substitution"}
+            else {"dinkster-nodes-foundation": ["0.4", "9.0"], "dinkster-pack-helpers": ["1.3"]}
+            if event == "main-other-versions"
+            else {}
+        )
+        if path == "static/packs/index.json":
+            return json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "items": [
+                        {
+                            "name": name,
+                            "latestVersion": values[-1],
+                            "url": f"packs/{name}/index.json",
+                        }
+                        for name, values in versions.items()
+                    ],
+                }
+            ).encode()
+        name = path.split("/")[2]
+        return json.dumps(
+            {
+                "schemaVersion": 2,
+                "name": "substituted" if event == "main-substitution" else name,
+                "items": [{"name": name, "version": version} for version in versions[name]],
+            }
+        ).encode()
+
+    monkeypatch.setattr("dinkster_supervisor.environment_downloads.read_metadata", read_metadata)
+    if event in {"main-invalid", "main-substitution", "main-error"}:
+        with pytest.raises(
+            OSError if event == "main-error" else ValueError, match="index|unavailable"
+        ):
+            exec(compile(script, "official-packs.yml", "exec"), {})
+        assert not output.exists()
+        return
+    if event == "main-unrelated":
+        monkeypatch.setenv("ENGINE_PUBLISHED", "false")
+        exec(compile(script, "official-packs.yml", "exec"), {})
+        skipped = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        assert json.loads(skipped["packs"]) == [] and skipped["applicable"] == "false"
+        output.unlink()
+        monkeypatch.setenv("ENGINE_PUBLISHED", "true")
     exec(compile(script, "official-packs.yml", "exec"), {})
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert json.loads(outputs["packs"]) == (
         []
-        if event in {"engine-only", "main-failure", "main-skipped"}
+        if event
+        in {
+            "engine-only",
+            "main-failure",
+            "main-skipped",
+            "main-served",
+            "pr-docs",
+            "pr-tests",
+            "pr-markdown",
+        }
+        else ["dinkster-pack-helpers"]
+        if event == "main-schema1"
+        else ["dinkster-nodes-foundation", "dinkster-pack-helpers"]
+        if event.startswith(("main-", "pr-")) and event != "main-other-versions"
         else ["dinkster-nodes-foundation"]
     )
     assert outputs["applicable"] == (
@@ -2629,6 +3236,12 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
         "needs.select.outputs.packs != '[]' && needs.select.outputs.applicable == 'true'"
         " && !needs.select.outputs.recovery_run"
     )
+    continuation = next(
+        step for step in jobs["select"]["steps"] if step.get("id") == "continuation"
+    )
+    assert jobs["select"]["steps"].index(select) < jobs["select"]["steps"].index(continuation)
+    assert continuation["env"]["PACKS"] == "${{ steps.select.outputs.packs }}"
+    assert '--packs "$PACKS"' in continuation["run"]
     assert jobs["locks"]["needs"] == ["select", "sources"]
     assert jobs["locks"]["runs-on"] == "${{ matrix.runner }}"
     native = next(step for step in jobs["locks"]["steps"] if "--sources" in step.get("run", ""))
@@ -2655,7 +3268,10 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
             else "${{ needs.select.outputs.engine }}"
         )
     [submission] = [
-        step for job in jobs.values() for step in job["steps"] if "secrets." in json.dumps(step)
+        step
+        for job in jobs.values()
+        for step in job["steps"]
+        if "secrets.DINKSTER_REGISTRY_TOKEN" in json.dumps(step)
     ]
     assert submission["if"] == (
         "github.repository == 'Kosinkadink/Dinkster' && "
@@ -2674,6 +3290,130 @@ def test_official_publication_workflow_selects_committed_versions_without_engine
     assert "--publish" not in preflight["run"]
     assert "--check-published" in preflight["run"]
     assert jobs["publish"]["steps"].index(preflight) < jobs["publish"]["steps"].index(submission)
+
+
+@pytest.mark.parametrize(
+    ("selection", "packs", "comparison", "passes"),
+    [
+        ("success", "[]", "skipped", True),
+        ("success", '["dinkster-pack-helpers"]', "success", True),
+        ("success", '["dinkster-pack-helpers"]', "failure", False),
+        ("success", '["dinkster-pack-helpers"]', "skipped", False),
+        ("failure", "[]", "skipped", False),
+    ],
+)
+def test_published_version_check_refuses_failed_or_missing_comparison(
+    monkeypatch: pytest.MonkeyPatch, selection: str, packs: str, comparison: str, passes: bool
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    job = workflow["jobs"]["published-pack-versions"]
+    assert "github.event.pull_request.draft != true" in job["if"]
+    assert "github.event.pull_request.draft != true" in workflow["jobs"]["select"]["if"]
+    monkeypatch.setenv("SELECTION", selection)
+    monkeypatch.setenv("PACKS", packs)
+    monkeypatch.setenv("COMPARISON", comparison)
+    if passes:
+        exec(compile(job["steps"][0]["run"], "official-packs.yml", "exec"), {})
+    else:
+        with pytest.raises(SystemExit, match="failed"):
+            exec(compile(job["steps"][0]["run"], "official-packs.yml", "exec"), {})
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [None, "repository", "head", "event", "workflow", "expired", "locks", "engine"],
+)
+def test_recovery_dispatch_requires_trusted_exact_head_artifacts(problem: str | None) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    script = next(
+        step["with"]["script"]
+        for step in workflow["jobs"]["select"]["steps"]
+        if step.get("id") == "engine_release"
+    )
+    head = "a" * 40
+    run = {
+        "id": 70,
+        "head_sha": head,
+        "head_branch": "main",
+        "head_repository": {"full_name": "Kosinkadink/Dinkster"},
+        "path": ".github/workflows/official-packs.yml",
+        "event": "workflow_run",
+        "conclusion": "success",
+    }
+    fixture = {
+        "head": head,
+        "run": run,
+        "engineRun": {**run, "event": "push"},
+        "engine": problem != "engine",
+        "artifact": {
+            "id": 100,
+            "name": "official-publication-inputs",
+            "expired": problem == "expired",
+            "workflow_run": {"id": 70},
+        },
+        "locks": [
+            {"id": index, "name": "publication-locks-" + variant, "expired": False}
+            for index, variant in enumerate(
+                json.loads((ROOT / "scripts/base_bundles.json").read_bytes()), 101
+            )
+        ],
+        "script": script,
+    }
+    if problem == "repository":
+        run["head_repository"] = {"full_name": "other/Dinkster"}
+    elif problem == "head":
+        run["head_sha"] = "b" * 40
+    elif problem == "event":
+        run["event"] = "pull_request"
+    elif problem == "workflow":
+        run["path"] = ".github/workflows/other.yml"
+    elif problem == "locks":
+        fixture["locks"] = []
+    # Execute the workflow's actual script, replacing only GitHub transport and outputs.
+    harness = r"""
+const fs = require('fs');
+const fixture = JSON.parse(fs.readFileSync(0, 'utf8'));
+const outputs = {};
+const context = {eventName: 'workflow_dispatch', repo: {owner: 'Kosinkadink', repo: 'Dinkster'},
+  payload: {inputs: {head: fixture.head, recovery_artifact: '100'}}};
+const core = {setOutput: (key, value) => outputs[key] = value};
+const actions = {getArtifact: async () => ({data: fixture.artifact}),
+  getWorkflowRun: async () => ({data: fixture.run}), listWorkflowRuns: () => {},
+  listJobsForWorkflowRun: () => {}, listWorkflowRunArtifacts: () => {}};
+const github = {rest: {repos: {compareCommitsWithBasehead: async () =>
+  ({data: {status: 'ahead'}})}, actions}, paginate: async (operation) => {
+    if (operation === actions.listWorkflowRuns) return [fixture.engineRun];
+    if (operation === actions.listJobsForWorkflowRun)
+      return fixture.engine ? [{name: 'release', conclusion: 'success'}] : [];
+    if (operation === actions.listWorkflowRunArtifacts) return fixture.locks;
+    throw new Error('unexpected endpoint');
+  }};
+new Function('context', 'core', 'github', 'return (async () => {' + fixture.script + '})()')
+  (context, core, github).then(() => console.log(JSON.stringify({outputs})))
+  .catch(error => console.log(JSON.stringify({error: error.message})));
+"""
+    result = json.loads(
+        subprocess.check_output(
+            ["node", "-e", harness], input=json.dumps(fixture), text=True, timeout=30
+        )
+    )
+    if problem is None:
+        assert result == {
+            "outputs": {
+                "recovery_run": 70,
+                "recovery_locks": "101,102,103,104,105,106",
+                "published": True,
+            }
+        }
+    else:
+        expected = (
+            "Catch-up publication requires a successful same-commit engine release"
+            if problem == "engine"
+            else "Recovery requires unexpired unique native lock artifacts"
+            if problem == "locks"
+            else "Recovery requires original successful main publication inputs at head"
+        )
+        assert result == {"error": expected}
 
 
 @pytest.mark.parametrize("recovery", [False, True])
@@ -2736,6 +3476,8 @@ def test_official_publication_recovery_reuses_inputs_without_resolving_locks(
         "missing-artifact",
         "artifact-head",
         "invalid-head",
+        "invalid-engine-head",
+        "engine-ancestor",
         "foreign-branch",
         "foreign-path",
         "foreign-event",
@@ -2749,10 +3491,13 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     from scripts import recover_official_publication
     from scripts.recover_official_publication import recovery_inputs
 
+    engine_head = {"invalid-engine-head": "main", "engine-ancestor": "b" * 40}.get(
+        problem or "", "a" * 40
+    )
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as inputs:
         inputs.writestr("sources/official-packs.lock", "{}")
-        inputs.writestr("engine/release-manifest.json", "{}")
+        inputs.writestr("engine/release-manifest.json", json.dumps({"commit": engine_head}))
     monkeypatch.setattr(
         recover_official_publication, "validate_recovered_sources", lambda *args: None
     )
@@ -2837,7 +3582,12 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *a, **kw: subprocess.CompletedProcess(a, 1 if problem == "ancestor" else 0),
+        lambda command, **kw: subprocess.CompletedProcess(
+            command,
+            1
+            if problem == "ancestor" or (problem == "engine-ancestor" and command[-2] == "b" * 40)
+            else 0,
+        ),
     )
     if problem in {"completed", "foreign-run", "foreign-branch", "foreign-path", "foreign-event"}:
         assert recovery_inputs(tmp_path, 90) == {}
@@ -2861,6 +3611,8 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
                 "missing-artifact": "unexpired and unique",
                 "invalid-head": "source commit must belong to main",
                 "ancestor": "source commit must belong to main",
+                "invalid-engine-head": "engine commit must belong",
+                "engine-ancestor": "engine commit must belong",
             }[problem],
         ):
             recovery_inputs(tmp_path, 90)
@@ -2874,7 +3626,18 @@ def test_interrupted_publication_recovery_requires_original_complete_inputs(
 
 
 @pytest.mark.parametrize(
-    "change", [None, "code", "older-valid", "pack-tests", "removed", "engine", "catalog", "bases"]
+    "change",
+    [
+        None,
+        "code",
+        "older-valid",
+        "pack-tests",
+        "removed",
+        "engine",
+        "catalog",
+        "bases",
+        "workflow-head",
+    ],
 )
 def test_publication_continuation_requires_unchanged_selected_git_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, change: str | None
@@ -2940,7 +3703,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
             }
         )
     )
-    if change in {None, "pack-tests"}:
+    if change in {None, "pack-tests", "workflow-head"}:
         validate_recovered_sources(root, work, head)
     else:
         assert change is not None
@@ -2986,8 +3749,14 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
     jobs = [{"name": "sources", "conclusion": "success"}] + [
         {"name": f"locks ({v}, runner)", "conclusion": "success"} for v in variants
     ]
+    workflow_head = after if change == "workflow-head" else head
     artifacts = [
-        {"id": i, "name": name, "expired": False, "workflow_run": {"id": 70, "head_sha": head}}
+        {
+            "id": i,
+            "name": name,
+            "expired": False,
+            "workflow_run": {"id": 70, "head_sha": workflow_head},
+        }
         for i, name in enumerate(
             ["official-publication-inputs", *(f"publication-locks-{v}" for v in variants)], 100
         )
@@ -3009,7 +3778,7 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
                     "workflow_runs": [
                         {
                             "id": 70,
-                            "head_sha": head,
+                            "head_sha": workflow_head,
                             "head_branch": "main",
                             "head_repository": {"full_name": "Kosinkadink/Dinkster"},
                             "path": ".github/workflows/official-packs.yml",
@@ -3046,8 +3815,19 @@ def test_publication_continuation_requires_unchanged_selected_git_sources(
 
     monkeypatch.setattr(subprocess, "check_output", read)
     monkeypatch.setattr(subprocess, "run", run)
-    if change in {None, "pack-tests"}:
+    if change in {None, "pack-tests", "workflow-head"}:
         assert recovery_inputs(root, 90)["recovery_run"] == "70"
+        assert recovery_inputs(root, 90)["recovery_head"] == head
+        assert (
+            recovery_inputs(root, 90, packs=["dinkster-nodes-foundation"])["recovery_run"] == "70"
+        )
+        assert recovery_inputs(root, 90, packs=[]) == {}
+        assert (
+            recovery_inputs(
+                root, 90, packs=["dinkster-nodes-foundation", "missing-predecessor-pack"]
+            )
+            == {}
+        )
     elif change == "older-valid":
         assert recovery_inputs(root, 90)["recovery_run"] == "60"
         assert "publication run 70: continuation skipped; recovered" in capsys.readouterr().out
@@ -3110,6 +3890,51 @@ def test_official_publication_submits_only_from_trusted_main(
         )
 
 
+@pytest.mark.parametrize("outcome", ["published", "refused", "interrupted"])
+def test_official_publication_summary_reports_every_submitted_version(
+    tmp_path: Path, outcome: str
+) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
+    summary = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step.get("name") == "Summarize publication verdicts"
+    )
+    assert summary["if"] == "always()"
+    output = tmp_path / ".official-publication/submitted"
+    output.mkdir(parents=True)
+    rows = [
+        {"pack": "first", "version": "1.2", "state": "published", "candidateId": "candidate-a"},
+        {
+            "pack": "second",
+            "version": "3.4",
+            "state": "published" if outcome == "published" else "queued",
+            "candidateId": "candidate-b",
+        },
+    ]
+    if outcome == "refused":
+        rows[1]["reason"] = "probe.invalid: rejected"
+        (output / "failure.txt").write_text("second@3.4 (candidate candidate-b): probe.invalid\n")
+    (output / "result.json").write_text(json.dumps(rows))
+    destination = tmp_path / "summary"
+    subprocess.run(
+        [sys.executable, "-c", summary["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "GITHUB_STEP_SUMMARY": str(destination)},
+        check=True,
+    )
+    rendered = destination.read_text()
+    assert "first@1.2: published; candidate candidate-a; public digest verified" in rendered
+    assert "second@3.4:" in rendered and "candidate candidate-b" in rendered
+    assert (
+        "probe.invalid: rejected"
+        if outcome == "refused"
+        else "not observed public before the run stopped"
+        if outcome == "interrupted"
+        else "second@3.4: published; candidate candidate-b; public digest verified"
+    ) in rendered
+
+
 def test_official_publication_refuses_missing_credential_before_submission(tmp_path: Path) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/official-packs.yml").read_text())
     submission = next(
@@ -3147,6 +3972,7 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
         "missing",
         "digest",
         "candidate",
+        "candidate-head",
         "index-commit",
         "index-digest",
         "index-path",
@@ -3210,7 +4036,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
         entry["path"] = "engine/" + "a" * 64
 
     def metadata(mirror, path):
-        assert problem != "candidate"
+        assert problem not in {"candidate", "candidate-head"}
         assert mirror == "https://releases.dinkster.org" and path == "engine/index.json"
         entries = [{**entry, "commit": "b" * 40}, entry]
         if problem == "index-duplicate":
@@ -3259,19 +4085,30 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(preparation, "fetch_artifact", fetch)
     candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
-    if problem == "candidate":
-        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.4.dev456")
-        monkeypatch.setattr(
-            preparation,
-            "versioned_sources",
-            lambda root, version: versioned_sources(ROOT, version),
-        )
+    if problem in {"candidate", "candidate-head"}:
+        pin = {"repository": "Kosinkadink/Dinkster-Frontend", "commit": "f" * 40}
+        (tmp_path / "scripts/release_sources.json").write_text(json.dumps(pin))
 
-        def candidate_wheels(root, uv, bases):
-            assert root == tmp_path and uv == "uv" and len(bases) == 2
-            return candidate_dependencies
+        def frontend(sources, destination):
+            assert sources == pin
+            destination.write_bytes(b"verified frontend artifact")
 
-        monkeypatch.setattr(preparation, "select_dependency_wheels", candidate_wheels)
+        def candidate_engine(root, destination, tag, frontend, *, base_manifests):
+            assert root == tmp_path and tag is None and len(base_manifests) == 2
+            assert frontend.read_bytes() == b"verified frontend artifact"
+            destination.mkdir()
+            (destination / "constraints.txt").write_bytes(b"pins")
+            result = {
+                **engine,
+                "commit": ("e" if problem == "candidate-head" else "c") * 40,
+                "version": "0.0.4.dev456",
+                "dependencies": candidate_dependencies,
+            }
+            (destination / "release-manifest.json").write_text(json.dumps(result))
+            return result
+
+        monkeypatch.setattr(preparation, "download_frontend", frontend)
+        monkeypatch.setattr(preparation, "build_release", candidate_engine)
     monkeypatch.setattr(
         preparation,
         "build",
@@ -3289,6 +4126,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                     tmp_path / ".official-publication",
                     "c" * 40,
                     ["dinkster-image"],
+                    candidate=problem == "candidate-head",
                 )
             assert not output.exists()
         else:
@@ -3297,7 +4135,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 tmp_path / ".official-publication",
                 "c" * 40,
                 ["dinkster-image"],
-                candidate=problem == "candidate",
+                candidate=problem in {"candidate", "candidate-head"},
             ) == [
                 {"variant": "linux-cpu", "runner": "ubuntu-latest"},
                 {"variant": "win-nvidia", "runner": "windows-latest"},
@@ -3308,20 +4146,12 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert manifest["dependencies"] == candidate_dependencies
                 assert manifest["version"] == "0.0.4.dev456"
                 assert manifest["commit"] == "c" * 40
-                api = work / "engine/dinkster_api-0.0.4.dev456-py3-none-any.whl"
-                assert wheel_metadata(api) == ("dinkster-api", "0.0.4.dev456")
-                assert manifest["artifacts"] == [
-                    {
-                        "name": api.name,
-                        "size": api.stat().st_size,
-                        "sha256": hashlib.sha256(api.read_bytes()).hexdigest(),
-                    }
-                ]
+                assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             else:
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.5")
+                ("dinkster-image", "0.0.10")
             ]
     finally:
         server.shutdown()

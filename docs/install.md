@@ -34,7 +34,9 @@ payload sizes and cache reuse before asking for confirmation. It acquires the
 reviewed runtime and locked pack wheels only after confirmation. Declining
 changes nothing. `--plan` only inspects metadata; `--yes` prints and applies the
 plan without prompting for unattended deployment. Without a terminal, applying
-requires `--yes`. Offline application is not supported.
+requires `--yes`. With runtime inputs, metadata, locks and selected wheels
+already cached, `--offline --yes` applies without network access. Missing or
+corrupt inputs are listed before installation state changes.
 
 The default project is `~/.dinkster/project`, or `$DINKSTER_HOME/project`.
 Pass `--root PATH` to each command to select a different project and `--data PATH`
@@ -87,6 +89,14 @@ index for updates; `update --package-index URL` changes it transactionally.
 This option is separate from `--mirror`, which selects channel, base and
 Dinkster release artifact locations. Warm shared-store wheels need no index
 access. Repair and move remain offline.
+
+For cached published setup, use `dinkster setup --offline --yes --variant VARIANT`
+with the same `--channel`, `--mirror`, `--registry` and `--data` selection used
+to populate the cache. Retained channel, release, registry and dependency-lock
+metadata, runtime payloads and locked pack wheels must all be available.
+Missing or corrupt inputs refuse before changing the project or store; the
+command does not fetch replacements. `--offline --plan` inspects cached inputs
+without creating or changing installation state.
 
 Download the three Dinkster wheels and `constraints.txt` from the same release.
 A manual installation for inspection can be created without Git credentials;
@@ -142,6 +152,36 @@ registry. Other installed selections are preserved for admission. Update
 preparation refuses unavailable compatible releases and does not allow
 `--allow-missing`.
 
+For metadata-only review, `plan-registry-sources` takes `--engine-manifest`,
+`--engine-release`, `--variant` and `--base-id`. Add `--installed-lock` and
+repeat `--add PACK@VERSION` to inspect exact additions or replacements, or
+use `--update [PACK ...]` for compatible installed registry updates. No names
+means all installed registry packs. Unselected sources remain unchanged;
+updates use their recorded registry and never downgrade. The JSON plan includes
+published dependency locks and a pack payload size upper bound, but acquires
+no pack archives and does not create a generation or write a cache.
+
+For an active managed project, `dinkster pack --root PROJECT install PACK@VERSION`
+reviews published pack additions or replacements against its retained engine,
+base and variant. `update [PACK ...]` reviews compatible installed registry
+updates. The terminal displays old/new source identities, the proposed generation,
+published dependency-lock identities, verified cached versus downloadable payloads,
+wheel-byte upper bounds and worker cost before confirmation. Use `--yes` for unattended
+application, or `--plan FILE` to save the review outside the project and store.
+`dinkster pack --root PROJECT apply FILE` rechecks that review before using the
+shared generation builder and activation. Saved reviews expire after 15 minutes;
+changed project or selected release metadata requires a new review. Local/git
+sources cannot be mixed with published selections; use `dinkster develop` for
+explicit unlocked development.
+
+Both confirmed commands acquire the selected archives and their published
+dependency locks, then build and activate a fresh generation without package-index
+resolution. The retained engine and base do not change. Release and lock metadata
+failures are reported together; confirmed source and dependency-wheel acquisition
+failures are also collected together. A missing retained base refuses before
+source or dependency-wheel acquisition, so that refusal does not list later
+payload failures.
+
 For a source lock containing registry packs, `prepare-registry-locks` accepts
 `--catalog-lock`, a new `--output` directory, `--variant` and the exact
 `--base-id sha256:...`. It downloads the dependency locks already published
@@ -184,11 +224,15 @@ cd ../Dinkster-Frontend
 pnpm install --frozen-lockfile
 pnpm --filter @dinkster/app build
 cd ../Dinkster
-uv run --no-sync dinkster setup
-uv run --no-sync dinkster
+uv run --no-sync python -m dinkster.serve --watch-packs --library-root .run/library --allow-mount-changes --prepare-stale-catalogs --frontend-root ../Dinkster-Frontend/packages/app/dist
 ```
 
-The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
+Open `http://127.0.0.1:3639` in the browser. This explicitly selects live checkout
+development, not published setup: the terminal and served catalog label it as
+unreviewed and not reproducible from dependency ranges. Changes reload from the
+selected source folders. For a captured development generation instead, use
+[`dinkster develop`](#development-packs-from-local-folders).
+Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
@@ -293,6 +337,40 @@ explains how to rebuild the custom base. Editing `variants.toml` alone does
 not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
+
+### Development packs from local folders
+
+The standalone local/git path is development-only. `dinkster pack --root ROOT
+install --yes ./pack` and `dinkster pack --root ROOT install --yes
+git+https://host/pack.git@REF` retain plan/consent and resolve dependency ranges
+without requiring a published lock. The plan labels these sources as unreviewed
+and not reproducible from ranges. Serve that selection explicitly with
+`python -m dinkster.serve --no-default-packs --install-root ROOT`; the terminal
+and node catalog carry the development label. A published registry spec is
+refused on the standalone install route, never silently resolved as development.
+Published entries in standalone saved plans, snapshots, workflow stamps and
+rollback targets also refuse, as does serving a standalone published inventory.
+Use the managed project's pack install/update and software history instead;
+there is no automatic conversion of a standalone root. Catalog preparation
+cannot range-resolve a published pack missing its generation interpreter.
+
+Use the explicit development command when an engine, pack or helper library has
+not been published. The source engine must be a Dinkster checkout. Select a new
+project outside those folders and the base variant for the host:
+
+```sh
+dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --plan
+dinkster develop --root /absolute/project --source /absolute/Dinkster --pack-source /absolute/pack --library-source /absolute/helper --variant linux-cpu --yes
+```
+
+Repeat `--pack-source` and `--library-source` for additional local folders; omit
+the library option when none is needed. The command shows its plan before
+confirmation. `--yes` confirms unattended builds. Dependency ranges resolve at
+build time, without a published lock. Command output and the served catalog label
+this as development, not reproducible from ranges. Captured runtime artifacts
+can still be restored exactly. Published setup never selects development mode
+automatically. See [development generations](supported/installed-pack-startup.md#development-generations-from-local-folders)
+for rebuilding, starting, inspecting and restoring the captured runtime.
 
 ### Explicit from-scratch development setup
 

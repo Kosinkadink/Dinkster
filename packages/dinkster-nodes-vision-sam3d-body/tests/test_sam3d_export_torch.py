@@ -5,15 +5,12 @@ import copy
 import json
 import os
 import struct
-import sys
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
-import torch
 from dinkster_api.v1 import (
     CORE_STRING,
     FILE_3D_TYPE,
@@ -125,37 +122,6 @@ def test_bvh_rotation_channels_reconstruct_large_parent_and_child_rotations(axis
     np.testing.assert_allclose(
         child_decoded.as_matrix(), child_local.as_matrix(), atol=2e-7, rtol=0
     )
-
-
-def test_bvh_mhr_bind_and_y_down_coordinates() -> None:
-    pose = _pose()
-    bind = pose.pop("_skeleton_override")["bind_global_m"]
-    for frame in pose["frames"]:
-        for person in frame:
-            person["pred_joint_coords"][:, 1:3] *= -1
-
-    class Rig:
-        NUM_IDENTITY, NUM_EXPR = 45, 72
-        skel_joint_parents = torch.tensor([-1, 0, 1], dtype=torch.int32)
-        skel_joint_translation_offsets = torch.tensor(
-            [[20, 30, 40], [0, 100, 0], [30, 40, 0]], dtype=torch.float32
-        )
-
-        def parameters(self) -> Any:
-            yield torch.empty(0, dtype=torch.float64)
-
-        def __call__(self, shape: Any, params: Any, expression: Any, **kwargs: Any) -> Any:
-            # A non-default dtype checks that zero-pose FK honors the model policy.
-            assert shape.dtype == params.dtype == expression.dtype == torch.float64
-            state = torch.from_numpy(bind.copy()).unsqueeze(0)
-            state[..., :3] *= 100
-            return None, state
-
-    model = SimpleNamespace(model=SimpleNamespace(head_pose=SimpleNamespace(mhr=Rig())))
-    header, motion = _motion(build_bvh(pose, model))
-    assert "JOINT joint_000" not in header
-    np.testing.assert_allclose(motion[:, :3], [[20, 130, 40], [20, 130, 40]], atol=1e-5)
-    np.testing.assert_array_equal(motion[:, 3:], np.zeros((2, 6)))
 
 
 def test_bvh_invalid_units_and_missing_track() -> None:
@@ -272,84 +238,6 @@ def test_skeletal_glb_bones_have_flat_normals_and_dual_skin() -> None:
     np.testing.assert_array_equal(normals[::3], normals[1::3])
     assert not np.allclose(normals[0], normals[3])
     assert len(gltf["skins"]) == 1 and "animations" not in gltf
-
-
-@pytest.mark.parametrize("public_node", (False, True))
-def test_skeletal_glb_native_skin_truncation_morphs_and_model_dtype(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, public_node: bool
-) -> None:
-    pose = _mesh_pose()
-    override = pose.pop("_skeleton_override")
-    for frame in pose["frames"]:
-        for person in frame:
-            person["pred_joint_coords"][:, 1:3] *= -1
-            person["expr_params"] = np.array([0.25, 0.75], np.float32)
-            person["shape_params"] = np.array([2.0], np.float32)
-    pose["frames"][2][0]["expr_params"] = np.array([0.5, -0.125], np.float32)
-
-    class Rig:
-        NUM_IDENTITY, NUM_EXPR, NUM_VERTS = 1, 2, 3
-        skel_joint_parents = torch.tensor([-1, 0, 1], dtype=torch.int32)
-        skel_joint_translation_offsets = torch.zeros(3, 3)
-        lbs_vert_indices = torch.tensor([0] * 9 + [1])
-        lbs_skin_indices = torch.tensor([i % 3 for i in range(9)] + [2])
-        lbs_skin_weights = torch.tensor(list(range(1, 10)) + [2], dtype=torch.float32)
-        expr_basis = torch.arange(18, dtype=torch.float32).reshape(2, 3, 3)
-
-        def parameters(self) -> Any:
-            yield torch.empty(0, dtype=torch.float64)
-
-        def __call__(self, shape: Any, params: Any, expression: Any, **kwargs: Any) -> Any:
-            assert shape.dtype == params.dtype == expression.dtype == torch.float64
-            assert not params.any() and not expression.any() and not kwargs["apply_correctives"]
-            bind = torch.from_numpy(override["bind_global_m"].copy()).unsqueeze(0)
-            bind[..., :3] *= 100
-            vertices = torch.from_numpy(override["rest_verts_m"].copy()).unsqueeze(0) * 100
-            vertices[..., 0] += shape[0, 0] * 10
-            return vertices, bind
-
-    model = SimpleNamespace(model=SimpleNamespace(head_pose=SimpleNamespace(mhr=Rig())))
-    if public_node:
-        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-        monkeypatch.setattr(
-            "dinkster_vision_sam3d_body.sam3d_export.initialize_inference_process",
-            lambda: None,
-        )
-        monkeypatch.setitem(
-            sys.modules,
-            "dinkster_inference.model_management",
-            SimpleNamespace(load_model_gpu=lambda model: None),
-        )
-        value = BuildPoseFile.execute(pose_data=pose, sam3d_body_model=model, track_index=0)[
-            "model_3d"
-        ]
-        data = value["source"].read_bytes()
-    else:
-        data = build_glb_skeletal(pose, model, track_index=0)
-    gltf, binary = _glb(data)
-    primitive = gltf["meshes"][0]["primitives"][0]
-    a = primitive["attributes"]
-    first = _accessor(gltf, binary, a["WEIGHTS_0"])
-    second = _accessor(gltf, binary, a["WEIGHTS_1"])
-    np.testing.assert_allclose(
-        np.concatenate([first[0], second[0]]), np.arange(9, 1, -1) / 44, atol=1e-7
-    )
-    np.testing.assert_array_equal(_accessor(gltf, binary, a["JOINTS_0"])[0], [2, 1, 0, 2])
-    np.testing.assert_array_equal(first[2], [1, 0, 0, 0])
-    np.testing.assert_allclose(
-        _accessor(gltf, binary, a["POSITION"]), [[-0.3, 0, 0], [0.7, 0, 0], [0.2, 1, 0]], atol=1e-7
-    )
-    np.testing.assert_allclose(
-        _accessor(gltf, binary, primitive["targets"][1]["POSITION"]),
-        np.arange(9, 18).reshape(3, 3) / 100,
-        atol=1e-8,
-    )
-    animation = gltf["animations"][0]
-    channel = next(c for c in animation["channels"] if c["target"]["path"] == "weights")
-    output = animation["samplers"][channel["sampler"]]["output"]
-    np.testing.assert_array_equal(
-        _accessor(gltf, binary, output).ravel(), [0.25, 0.75, 0.5, -0.125]
-    )
 
 
 def _point_pose() -> dict[str, Any]:

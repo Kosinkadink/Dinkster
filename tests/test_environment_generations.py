@@ -133,14 +133,12 @@ def test_registry_preparation_allows_custom_locks_from_selected_inputs(
     assert explicit.read_text() == "explicit input bytes"
 
 
-@pytest.mark.parametrize("schema", [1, 2])
 def test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks(
     tmp_path: Path,
-    schema: int,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-    from test_installer import _serve_artifacts, _static_release, write_pack
+    from test_installer import _serve_artifacts, _static_indexes, _static_release, write_pack
 
     from dinkster.pack_archive import build_pack_archive
     from tests.fixtures.environments.build import wheel
@@ -202,28 +200,10 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
     }
     wheel_record = release["wheels"][0]
     files = {
-        "/static/packs/index.json": json.dumps({"schemaVersion": 1, "items": [release]}).encode(),
+        **_static_indexes([release]),
         "/static/" + lock_url: lock_bytes,
         "/static/" + wheel_record["url"]: payloads["added"],
     }
-    if schema == 2:
-        files["/static/packs/index.json"] = json.dumps(
-            {
-                "schemaVersion": 2,
-                "items": [
-                    {
-                        "name": "added",
-                        "publisher": "dinkster",
-                        "latestVersion": "1.2",
-                        "library": False,
-                        "url": "packs/added/index.json",
-                    }
-                ],
-            }
-        ).encode()
-        files["/static/packs/added/index.json"] = json.dumps(
-            {"schemaVersion": 2, "name": "added", "items": [release]}
-        ).encode()
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     (project / "registries.toml").write_text(
@@ -262,6 +242,7 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
                                 len(payloads["added"]),
                                 hashlib.sha256(payloads["added"]).hexdigest(),
                                 endpoint + "/static/" + wheel_record["url"],
+                                endpoint,
                             ),
                         ),
                     ),
@@ -278,7 +259,7 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         assert not catalog.exists() and not artifacts.exists() and not locks[0].exists()
         assert requests == [
             ("/static/packs/index.json", None),
-            *([("/static/packs/added/index.json", None)] if schema == 2 else []),
+            ("/static/packs/added/index.json", None),
             ("/static/" + wheel_record["url"], None),
             ("/static/" + lock_url, None),
         ]
@@ -451,10 +432,11 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
     constraints = deep / "constraints.txt"
     rows = []
     for number in range(directories):
-        digest = f"{number:064x}"
+        payload = f"wheel fixture {number}".encode()
+        digest = hashlib.sha256(payload).hexdigest()
         wheel = store / "wheels" / digest / f"fixture_{number}-1.0-py3-none-any.whl"
         wheel.parent.mkdir(parents=True)
-        wheel.write_bytes(b"wheel fixture")
+        wheel.write_bytes(payload)
         rows.append(f"fixture-{number}==1.0 --hash=sha256:{digest}")
     constraints.write_text("\n".join(rows) + "\n")
 
@@ -486,13 +468,18 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
         assert previous_units == 32768
 
     def sync(command, **kwargs):
+        if command[1:4] == ["-I", "-B", "-S"]:
+            return subprocess.CompletedProcess(
+                command, 0, json.dumps({"tags": ["py3-none-any"], "markers": {}}), ""
+            )
         assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
         assert command[1:3] == ["pip", "sync"]
         assert "--offline" in command and "--no-index" in command
         assert "--require-hashes" in command and "--only-binary" in command
         assert command[command.index("--link-mode") + 1] in {"hardlink", "clone"}
-        assert kwargs["input"].count("--find-links ") == directories + 1
-        assert kwargs["input"].endswith(constraints.read_text())
+        assert kwargs["input"].count(" @ file:") == directories
+        assert kwargs["input"].count("--hash=sha256:") == directories
+        assert "--find-links" not in command
         raise RuntimeError("sync inspected")
 
     monkeypatch.setattr(subprocess, "run", sync)
@@ -776,7 +763,7 @@ def test_checkout_pack_commands_do_not_expand_wheel_sources(
         if "--find-links-stdin" in command:
             assert json.loads(kwargs["input"]) == [str(path) for path in links]
         else:
-            source = Path(command[3]).read_text()
+            source = Path(command[command.index("--no-config") + 1]).read_text()
             assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
             assert "--no-index" in command
         raise RuntimeError("command inspected")
@@ -847,11 +834,11 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             )
             module = target / "pack_environment.py"
             text = module.read_text()
-            text = text.replace(
-                'choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")',
-                'choices=("preflight", "rebuild", "doctor", "terminal", "references")',
-            )
-            module.write_text(text)
+            start = text.index("choices=(")
+            end = text.index(")", start)
+            choices = text[start:end]
+            assert '"acquire", ' in choices
+            module.write_text(text[:start] + choices.replace('"acquire", ', "") + text[end:])
 
     monkeypatch.setattr(publisher, "standalone_tree", standalone)
     monkeypatch.setattr(publisher, "canonical_json", canonical_json)
@@ -1197,7 +1184,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             for entry in entries
         } == {path.name: path.read_bytes() for path in artifacts.glob("*.zip")}
         if problem == "restore":
-            from test_installer import _serve_artifacts, _static_release
+            from test_installer import _serve_artifacts, _static_indexes, _static_release
 
             retained = store / "engines" / ("b" * 64) / "artifacts"
             responses: dict[str, bytes] = {}
@@ -1215,9 +1202,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     f"{entry.pack}-{entry.version}-py3-none-any.whl"
                 )
                 responses[wheel_urls[entry.pack]] = data
-            responses["/static/packs/index.json"] = json.dumps(
-                {"schemaVersion": 1, "items": releases}
-            ).encode()
+            responses.update(_static_indexes(releases))
             before = (target / "generation.json").read_bytes()
             requests: list[tuple[str, str | None]] = []
             server = _serve_artifacts(responses, requests)
@@ -1226,7 +1211,14 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 rebuilt = invoke(number=2, artifacts=retained, acquire_pack_sources=True)
                 assert [path for path, _ in requests] == [
                     "/static/packs/index.json",
-                    *(wheel_urls[entry.pack] for entry in entries),
+                    *(
+                        path
+                        for entry in entries
+                        for path in (
+                            f"/static/packs/{entry.pack}/index.json",
+                            wheel_urls[entry.pack],
+                        )
+                    ),
                 ]
                 assert rebuilt.drift(root / "generations/2") == ()
                 assert (root / "generations/2/dinkster.lock").read_bytes() == (
@@ -1634,6 +1626,131 @@ environment.main()
     assert read_current(root) == (1 if problem in {"update", "custom"} else None)
 
 
+@pytest.mark.parametrize("base_owned", [False, True])
+def test_selected_root_wheel_origin_respects_base_replacement_ownership(base_owned: bool) -> None:
+    from dinkster_supervisor.environment_constraints import installed_wheel_origins
+
+    wheel = {"filename": "helper-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
+    base: dict[str, object] = {
+        "replaces": ["helper"] if base_owned else [],
+        "wheels": [{**wheel, "index": "https://base-issuer.example.test/simple"}],
+    }
+    engine: dict[str, object] = {
+        "dependencies": {
+            "cpu": {"wheels": [{**wheel, "index": "https://engine-issuer.example.test/simple"}]}
+        }
+    }
+    assert installed_wheel_origins([wheel], base, engine, "cpu") == [
+        {
+            **wheel,
+            "registry": "https://base-issuer.example.test/simple"
+            if base_owned
+            else "https://engine-issuer.example.test/simple",
+        }
+    ]
+
+
+@pytest.mark.parametrize("origin", ["base", "engine", "custom-engine"])
+def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existing_version(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    store = tmp_path / "store"
+    base = store / "bases" / ("a" * 64) / "python"
+    _standalone_tree(base)
+    original = tmp_path / "original"
+    original.mkdir()
+    existing, _ = _wheel(original, "selected_fixture", "1.0", -999)
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(interpreter(base.parent)),
+            "--break-system-packages",
+            "--offline",
+            "--no-index",
+            str(existing),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    wheels = store / "wheels"
+    wheels.mkdir()
+    selected, sha = _wheel(wheels, "selected_fixture", "1.0", 73)
+    alternative, other_sha = _wheel(original, "selected_fixture", "1.0", 444)
+    alternative.rename(wheels / "selected_fixture-1.0-cp999-cp999-any.whl")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(
+        f"selected-fixture==1.0 --hash=sha256:{sha} --hash=sha256:{other_sha}\n"
+        'inactive-fixture==1.0; sys_platform == "not-a-platform" --hash=sha256:' + "0" * 64 + "\n"
+    )
+    wheel_row = {
+        "filename": selected.name,
+        "size": selected.stat().st_size,
+        "sha256": sha,
+        "index": "https://issuer.example.test/simple",
+    }
+    (base.parent / "manifest.json").write_text(
+        json.dumps({"wheels": [wheel_row] if origin == "base" else []})
+    )
+    engine_manifest = json.dumps(
+        {"dependencies": {"linux-cpu": {"wheels": [wheel_row] if origin != "base" else []}}}
+    ).encode()
+    engine_sha = hashlib.sha256(engine_manifest).hexdigest()
+    engine = store / "engines" / engine_sha
+    engine.mkdir(parents=True)
+    (engine / "release-manifest.json").write_bytes(engine_manifest)
+    root = tmp_path / "project"
+    generation = root / "generations/1"
+    sealed = build_generation(
+        root=root,
+        number=1,
+        store=store,
+        base="sha256:" + "a" * 64,
+        engine_version="1.0",
+        engine_release="sha256:" + engine_sha,
+        constraints=constraints,
+        variant="custom-base" if origin == "custom-engine" else "linux-cpu",
+        worker_protocol=1,
+        artifact_sources={"dependencyVariant": "linux-cpu"},
+    )
+    python = interpreter(generation)
+    assert (
+        subprocess.check_output(
+            [str(python), "-I", "-c", "import selected_fixture; print(selected_fixture.VALUE)"]
+        ).strip()
+        == b"73"
+    )
+    assert (
+        subprocess.check_output(
+            [
+                str(interpreter(base.parent)),
+                "-I",
+                "-c",
+                "import selected_fixture; print(selected_fixture.VALUE)",
+            ]
+        ).strip()
+        == b"-999"
+    )
+    assert json.loads((generation / "installed-wheels.json").read_text()) == {
+        "format": "dinkster.installed-wheels/1",
+        "wheels": [
+            {
+                "filename": selected.name,
+                "size": selected.stat().st_size,
+                "sha256": sha,
+                "registry": "https://issuer.example.test/simple",
+            }
+        ],
+        "inherited": [],
+    }
+    assert dict(sealed.files)["installed-wheels.json"] == (
+        "sha256:" + hashlib.sha256((generation / "installed-wheels.json").read_bytes()).hexdigest()
+    )
+
+
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1741,7 +1858,11 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         ).strip()
         == b"47"
     )
-    assert {path.name for path in scratch.iterdir()} == {"python", "constraints.txt"}
+    assert {path.name for path in scratch.iterdir()} == {
+        "python",
+        "constraints.txt",
+        "installed-wheels.json",
+    }
     assert read_current(root) == 1
     assert first.drift(first_dir) == ()
     assert not list(base.rglob("stable_fixture.py"))
@@ -1786,7 +1907,7 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert read_current(root) == 1
 
     for digest in (decoy_hash, "f" * 64):
-        with pytest.raises(EnvironmentError, match="offline generation sync failed"):
+        with pytest.raises(EnvironmentError, match="offline generation wheel missing or corrupt"):
             build(3, "3.0", digest)
     assert read_current(root) == 1
     assert not (root / "generations" / "3").exists()

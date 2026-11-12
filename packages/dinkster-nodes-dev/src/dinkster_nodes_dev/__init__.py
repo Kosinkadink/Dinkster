@@ -10,6 +10,7 @@ from dinkster_api.v1 import TypeRegistry
 
 from .conformance import CONFORMANCE_NODES
 from .execution import EXECUTION_NODES
+from .features import FEATURE_NODES, register_feature_types
 from .gallery import (
     GALLERY_NODES,
     GalleryAssets,
@@ -47,6 +48,7 @@ PACK_NODES = [
     *GALLERY_NODES,
     *CONFORMANCE_NODES,
     *EXECUTION_NODES,
+    *FEATURE_NODES,
 ]
 """Manifest-loadable development and conformance nodes."""
 
@@ -56,6 +58,7 @@ def register_dev_types(registry: TypeRegistry) -> None:
     the gallery's marker/shared types."""
     _register_image_types(registry)
     register_gallery_types(registry)
+    register_feature_types(registry)
 
 
 __all__ = [

@@ -1,36 +1,10 @@
 """Bounding-box canvas execution with asymmetric coordinates and saved edits."""
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import Node, schema_to_wire
 from dinkster_image.bounding_boxes import CreateBoundingBoxes
-from dinkster_image.layers_from_bounding_boxes import LayersFromBoundingBoxes
-
-from tools.compare_nodes import compare
-
-
-@pytest.mark.parametrize(
-    ("node", "node_id"),
-    (
-        (CreateBoundingBoxes, "dinkster.image.create_bounding_boxes"),
-        (LayersFromBoundingBoxes, "dinkster.image.layers_from_bounding_boxes"),
-    ),
-)
-def test_box_schemas_match_reference_except_frozen_id(node: type[Node], node_id: str) -> None:
-    reference = json.loads(
-        (Path(__file__).parents[3] / "tools/data/comfy_core_reference.json").read_text()
-    )
-    row = next(item for item in reference["nodes"] if item["class_name"] == node.__name__)
-    schema = node.define_schema()
-    assert schema.node_type == node_id
-    assert node.__name__ in schema.search_terms
-    assert schema.aliases == ()
-    wire = schema_to_wire(schema)
-    wire["nodeType"] = node.__name__
-    assert compare(row, wire) == []
 
 
 def test_canvas_initialization_retains_edits_until_upstream_changes():

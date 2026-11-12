@@ -1,11 +1,14 @@
 """Torch-free public schema for native Stable Video image conditioning."""
 
+import pytest
 from dinkster_api.v1 import NumberWidget, schema_to_wire
-from dinkster_sd import NODES
-from dinkster_sd.video_conditioning import SVD_img2vid_Conditioning
 
 
+@pytest.mark.pack_runtime("dinkster-sd")
 def test_stable_video_conditioning_schema_matches_comfyui() -> None:
+    from dinkster_sd import NODES
+    from dinkster_sd.video_conditioning import SVD_img2vid_Conditioning
+
     schema = SVD_img2vid_Conditioning.schema()
     assert SVD_img2vid_Conditioning in NODES
     assert schema.node_type == "dinkster.sd.svd_img2vid_conditioning"

@@ -62,6 +62,9 @@ from dinkster_registry import (
 )
 from dinkster_registry.artifact import MANIFEST_FILENAME, build_artifact, unpack_artifact
 from dinkster_schema import canonical_claim, canonical_name
+from dinkster_security.documents import Release as SecurityRelease
+from dinkster_security.host import SecurityHost
+from dinkster_security.policy import Artifact as SecurityArtifact
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 from dinkster_workers import (
     PackManifest,
@@ -84,11 +87,10 @@ from dinkster_workers.provision import (
 from packaging.requirements import Requirement
 
 from . import __version__ as dinkster_version
-from .compose import PackSpec
-from .packs import pack_info_from_manifest
 from .storelock import StoreLockTimeout, hold_lock
 
 if TYPE_CHECKING:
+    from .compose import PackSpec
     from .registries import StaticPackIndex
 
 LOCAL_PUBLISHER = "local"
@@ -163,6 +165,15 @@ def _is_registry_source(source: str) -> bool:
     """Whether a lockfile source names a registry release (the bare
     ``"registry"`` default, or a ``registry:``-qualified variant)."""
     return source == "registry" or source.startswith("registry:")
+
+
+def require_development_sources(target: Lockfile) -> None:
+    published = sorted(entry.pack for entry in target.packs if _is_registry_source(entry.source))
+    if published:
+        raise InstallError(
+            "registry.managed-generation-required: published packs require reviewed "
+            "base/variant locks and managed generation plan/apply: " + ", ".join(published)
+        )
 
 
 def read_registry_response(
@@ -928,6 +939,7 @@ class Installer:
         NEVER silently substituted.
         The store only ever gains the recorded bytes; a mismatched
         candidate is discarded with the scratch directory."""
+        self._check_security(Lockfile.of([entry]), installing=True)
         if self.artifact_available(entry):
             return
         source = entry.source
@@ -1205,7 +1217,7 @@ class Installer:
             if entry.pack in in_process:
                 self._validate_in_process_runtime(entry.pack, manifest, runtime_pins or {})
             report = diagnose(manifest.path, interpreter=interpreter)
-            if not report.ok and entry.source.startswith(("local:", "git:")):
+            if not report.ok:
                 rendered = render_text(report)
                 if not allow_doctor_findings:
                     raise InstallError(f"doctor refused staged pack {entry.pack!r}:\n{rendered}")
@@ -1285,7 +1297,7 @@ class Installer:
                 self._serving_interpreter if entry.pack in in_process else sys.executable,
             )
             report = diagnose(manifests[entry.pack].path, interpreter=interpreter)
-            if report.ok or not entry.source.startswith(("local:", "git:")):
+            if report.ok:
                 continue
             rendered = render_text(report)
             if not allow_doctor_findings:
@@ -1359,8 +1371,10 @@ class Installer:
         applies produce one generation, not two. A nonempty expected_base
         pins a reviewed lockfile digest; None requires an empty root. The
         default empty string leaves ordinary unreviewed callers unchanged."""
+        require_development_sources(target)
         with self._locked():
             current = self.current_lockfile()
+            self._check_security(target, installing=True)
             if (
                 expected_base != ""
                 and (current.record_digest() if current is not None else None) != expected_base
@@ -1433,6 +1447,7 @@ class Installer:
                         in_process,
                         runtime_pins,
                     )
+                    self._check_security(target, installing=True)
                     return current_number, InstallPlan()
                 if topology == current_topology:
                     return current_number, InstallPlan()
@@ -1447,6 +1462,7 @@ class Installer:
                 in_process,
                 runtime_pins,
             )
+            self._check_security(target, installing=True)
             numbers = self.generation_numbers()
             number = (numbers[-1] if numbers else 0) + 1
             generation_path = self._generation_path(number)
@@ -1584,6 +1600,63 @@ class Installer:
                     path.unlink()
         return removed
 
+    def _check_security(self, target: Lockfile, *, installing: bool) -> None:
+        database = self.root / "security.sqlite3"
+        if not database.is_file() and not (self.root / "security.toml").is_file():
+            return
+        host = SecurityHost(self.root)
+        host.refresh()
+        installed = {
+            (entry.pack, entry.version, entry.artifact_digest, entry.source)
+            for number in self.generation_numbers()
+            for entry in self.lockfile_of(number).packs
+        }
+        for entry in target.packs:
+            artifact = self._security_artifact(entry)
+            result = host.assess(
+                (artifact,),
+                installing=installing
+                and (entry.pack, entry.version, entry.artifact_digest, entry.source)
+                not in installed,
+            )
+            if not result.allowed:
+                if result.stale_registries:
+                    raise InstallError(
+                        "security feed exceeds configured maximum age: "
+                        + ", ".join(result.stale_registries)
+                    )
+                finding = next(item for item in result.findings if not item.allowed)
+                raise InstallError(
+                    f"security {finding.state}: {entry.pack}=={entry.version} "
+                    f"({entry.artifact_digest}), notice {finding.notice.id} "
+                    f"revision {finding.notice.revision}, decision {finding.decision}"
+                )
+
+    def _security_artifact(self, entry: LockedPack) -> SecurityArtifact:
+        from .registries import RegistryConfig, load_registries
+
+        config = self.root / "registries.toml"
+        registries = load_registries(config) if config.is_file() else RegistryConfig()
+        registry = (
+            registries.registry_for(entry).endpoint
+            if _is_registry_source(entry.source)
+            and (
+                config.is_file()
+                or entry.source.startswith(("registry:http://", "registry:https://"))
+            )
+            else entry.source
+        )
+        return SecurityArtifact(
+            registry,
+            SecurityRelease.model_validate(
+                {
+                    "pack": entry.pack,
+                    "version": entry.version,
+                    "artifactDigest": entry.artifact_digest,
+                }
+            ),
+        )
+
     # -- serving ---------------------------------------------------------
 
     def packs_for_serving(self) -> list[PackSpec]:
@@ -1591,16 +1664,18 @@ class Installer:
         the immutable store, interpreters from the per-artifact venvs
         (host interpreter where no venv was staged).
 
-        Each spec carries its own packs-table entry so the lockfile's
-        provenance (the digest pin, install source, publisher, and - for
-        registry releases - the version) reaches /api/nodes. Unpublished
-        installs (local/git) omit the version rather than surface the
-        ``0.0.0`` sentinel: they have no release identity, the digest is
-        the real pin, and wire omission MEANS unpinned."""
+        Development specs carry their locked source and publisher but omit
+        the release version: local/git content has no reviewed release identity.
+        Published sources must use the managed generation inventory instead."""
+        from .compose import PackSpec
+        from .packs import pack_info_from_manifest
+
         number = self.current_number()
         if number is None:
             return []
         lockfile = self.lockfile_of(number)
+        require_development_sources(lockfile)
+        self._check_security(lockfile, installing=False)
         topology = self._hosting_of(number)
         groups = topology.groups
         in_process = set(topology.in_process)
@@ -1629,7 +1704,7 @@ class Installer:
             python = _venv_python(venv_dir) if venv_dir is not None else None
             info = replace(
                 pack_info_from_manifest(manifest),
-                version=entry.version if entry.publisher != LOCAL_PUBLISHER else "",
+                version="",
                 artifact_digest=entry.artifact_digest,
                 source=entry.source,
                 publisher=entry.publisher,
@@ -1646,8 +1721,11 @@ class Installer:
                         else str(store)
                     },
                     require_catalog=True,
-                    trust_reserved=_is_registry_source(entry.source)
-                    and entry.publisher == "dinkster",
+                    security_artifacts=tuple(
+                        self._security_artifact(entries[member])
+                        for member in (group[1] if group is not None else (entry.pack,))
+                    ),
+                    trust_reserved=False,
                     packs={manifest.name: info},
                     worker_group=group[0] if group is not None else None,
                     group_manifests=(
@@ -1678,4 +1756,5 @@ __all__ = [
     "http_registry_fetcher",
     "lock_git_pack",
     "lock_local_pack",
+    "require_development_sources",
 ]

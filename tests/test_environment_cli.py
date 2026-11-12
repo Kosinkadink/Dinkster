@@ -35,7 +35,7 @@ from test_environment_state import _generation
 from tests.fixtures.environments.build import executable_release as _executable_release
 
 
-def _run(root: Path, *arguments: str, timeout: float = 30) -> tuple[int, dict]:
+def _run(root: Path, *arguments: str, timeout: float = 120) -> tuple[int, dict]:
     command = [
         sys.executable,
         "-m",
@@ -81,15 +81,7 @@ sys.addaudithook(audit)
 runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
 """,
         ]
-    result = (
-        run_with_diagnostics(command, timeout=timeout)
-        if "setup" in arguments
-        or "update" in arguments
-        or "restore" in arguments
-        or "move" in arguments
-        or ("doctor" in arguments and "--repair" in arguments)
-        else subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-    )
+    result = run_with_diagnostics(command, timeout=timeout)
     assert result.stdout, result.stderr
     document = json.loads(result.stdout)
     assert document["format"] == "dinkster.environment-result/1"
@@ -1661,7 +1653,7 @@ environment.main()
         verified = cached_wheel.read_bytes()
         cached_wheel.write_bytes(b"corrupt local wheel")
         code, repair_failed = _run(root, "doctor", "--repair", "--yes")
-        assert code == 1 and "offline generation sync failed" in repair_failed["error"]
+        assert code == 1 and "offline generation wheel missing or corrupt" in repair_failed["error"]
         assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         cached_wheel.write_bytes(verified)
@@ -1874,9 +1866,10 @@ def test_public_fixture_commands_install_update_and_rollback(
             assert all(row["state"] == "stopped" for row in run("status")["engines"])
 
 
+@pytest.mark.parametrize("public_command", [False, True])
 @pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
 def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
-    tmp_path: Path, problem: str | None
+    tmp_path: Path, problem: str | None, public_command: bool, capsys
 ):
     source = Path(__file__).resolve().parents[1]
     engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
@@ -1909,7 +1902,16 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
         "--data",
         str(store),
     )
-    code, plan = _run(root, *arguments, "--plan")
+
+    def invoke(*extra):
+        if not public_command:
+            return _run(root, *arguments, *extra)
+        from dinkster.cli import main
+
+        code = main(["develop", "--root", str(root), *arguments[1:], *extra, "--json"])
+        return code, json.loads(capsys.readouterr().out)
+
+    code, plan = invoke("--plan")
     if problem == "missing":
         assert code == 1 and "source folder is missing" in plan["error"]
     else:
@@ -1924,7 +1926,7 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
         if problem is not None:
             changed = {"engine": engine, "pack": pack, "library": library}[problem]
             (changed / "untracked.py").write_text("VALUE = 23\n")
-            code, refused = _run(root, *arguments, "--approve", plan["sourceApproval"], "--plan")
+            code, refused = invoke("--approve", plan["sourceApproval"], "--plan")
             assert code == 1 and "changed from the approved plan" in refused["error"]
     assert not root.exists()
     assert not store.exists()

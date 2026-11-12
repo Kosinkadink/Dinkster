@@ -130,10 +130,12 @@ class DispatchWorker:
         arm_domains: Mapping[str, ResidencyDomain],
         default_arms: Mapping[str, str],
         producer_targets: Mapping[str, str] | None = None,
+        check_arm: Callable[[str], None] | None = None,
     ) -> None:
         if not arms:
             raise ValueError("DispatchWorker needs at least one arm")
         self._arms = dict(arms)
+        self._check_arm = check_arm
         # The schema-owning/default body owns lazy demand decisions. Alternate
         # implementations receive the resulting resolved inputs at execution.
         self._owner_arm = next(iter(self._arms))
@@ -161,7 +163,9 @@ class DispatchWorker:
     async def prepare(self, node_types: Sequence[str]) -> None:
         # Every arm must be ready: prepare() runs before any per-node
         # selection exists, and residency can pin an invocation to any arm.
-        for worker in self._arms.values():
+        for name, worker in self._arms.items():
+            if self._check_arm is not None:
+                self._check_arm(name)
             await worker.prepare(node_types)
 
     def _error(self, invocation: Invocation, message: str) -> InvocationResult:
@@ -247,6 +251,8 @@ class DispatchWorker:
         problem = self._ownership_problem(invocation.inputs, target, "input")
         if problem is not None:
             return self._error(invocation, problem)
+        if self._check_arm is not None:
+            self._check_arm(target)
         result = await worker.invoke(invocation, on_event=on_event)
         if result.outputs is not None:
             # The cache entry this result lands under is tagged with the
@@ -273,6 +279,8 @@ class DispatchWorker:
                 error=NodeError(invocation.node_id, invocation.node_type, problem)
             )
         worker = self._arms[self._owner_arm]
+        if self._check_arm is not None:
+            self._check_arm(self._owner_arm)
         if not callable(getattr(worker, "check_lazy_status", None)):
             return LazyStatusResult(
                 error=NodeError(
@@ -289,6 +297,8 @@ class DispatchWorker:
         self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
     ) -> AdmissionResult:
         worker = self._arms[self._owner_arm]
+        if self._check_arm is not None:
+            self._check_arm(self._owner_arm)
         if not callable(getattr(worker, "validate_admission", None)):
             return AdmissionResult(
                 "admission-protocol-skew: dispatch owner does not support admission validation"

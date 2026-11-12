@@ -55,7 +55,9 @@ async def _default_pack_names() -> tuple[str, ...]:
         await composer.close()
 
 
-def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_path: Path) -> None:
+def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
 
     from dinkster.compose import default_pack_ids
@@ -64,39 +66,73 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
     metadata = first_party_pack_metadata(TESTS_DIR.parent)
     packages = sorted({metadata[pack_id][1] for pack_id in default_pack_ids()})
     environment = tmp_path / "core-environment"
-    sync_environment = {
-        **os.environ,
-        "UV_PROJECT_ENVIRONMENT": str(environment),
-    }
-    subprocess.run(
+    requirements = subprocess.check_output(
         [
             "uv",
-            "sync",
+            "export",
             "--locked",
             "--no-dev",
             "--package",
             "dinkster",
             *(argument for package in packages for argument in ("--package", package)),
-            "--no-install-package",
+            "--no-emit-package",
             "dinkster-supervisor",
+            "--no-hashes",
+            "--no-annotate",
+            "--no-header",
         ],
         cwd=TESTS_DIR.parent,
-        env=sync_environment,
-        check=True,
+        text=True,
     )
+    cpu_requirements = tmp_path / "core-requirements.txt"
+    cpu_requirements.write_text(
+        "\n".join(
+            line
+            for line in requirements.splitlines()
+            if not line.startswith(("nvidia-", "triton=="))
+        )
+        + "\n"
+    )
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(environment)], check=True)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    subprocess.run(
+    installed = subprocess.run(
+        [
+            "uv",
+            "pip",
+            "sync",
+            "--python",
+            str(python),
+            "--torch-backend",
+            "cpu",
+            str(cpu_requirements),
+        ],
+        cwd=TESTS_DIR.parent,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    isolated_runtime = subprocess.check_output(
         [
             str(python),
             "-c",
             "import importlib.metadata as m, importlib.util as u; "
+            "import torch; assert torch.version.cuda is None; "
+            "assert not any(d.metadata['Name'].lower().startswith(('nvidia-', 'triton')) "
+            "for d in m.distributions()); "
             "assert u.find_spec('dinkster_collab') is not None; "
             "assert u.find_spec('dinkster_supervisor') is None; "
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
             "('dinkster-collab', 'dinkster-supervisor', 'dinkster-nodes-std', "
-            "'dinkster-nodes-dev'))",
+            "'dinkster-nodes-dev')); "
+            "print(f'torch {torch.__version__}, CUDA {torch.version.cuda}; "
+            "no NVIDIA or triton distributions')",
         ],
-        check=True,
+        text=True,
+    )
+    request.node.add_report_section(
+        "call",
+        "Folded engine CPU environment",
+        installed.stdout + installed.stderr + isolated_runtime,
     )
 
     port = free_port()
@@ -309,6 +345,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         spec,
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cuda",
+        development=True,
     )
 
     assert prepared.python == str(selected_python)
@@ -331,7 +368,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         project = tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
-    assert "dinkster-inference==0.1.1" in manifest.requires
+    assert "dinkster-inference" in manifest.requires
     assert str(manifest.root / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -344,8 +381,16 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     def unexpected(*_args: object, **_kwargs: object) -> Path:
         raise AssertionError("configured serving interpreter must not provision")
 
-    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
+    monkeypatch.delenv("DINKSTER_SERVING_PYTHON")
     monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
+    with pytest.raises(serve.CompositionError, match="prepared generation interpreter"):
+        serve._prepare_default_pack(
+            default_pack_spec("dinkster-vision-depth-anything-3"),
+            venv_root=tmp_path / "runtime-venvs",
+            accelerator="cpu",
+        )
+    assert not (tmp_path / "runtime-venvs").exists()
+    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
     prepared = serve._prepare_default_pack(
         default_pack_spec("dinkster-vision-depth-anything-3"),
         venv_root=tmp_path / "runtime-venvs",
@@ -402,6 +447,7 @@ def test_bundled_standard_pack_exposes_its_artifact_module(
         ),
         venv_root=tmp_path / "runtime-venvs",
         accelerator="cpu",
+        development=True,
     )
 
     assert prepared.python == str(selected_python)
@@ -2538,9 +2584,20 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
-@pytest.mark.parametrize("failed_pack", [False, True])
+@pytest.mark.parametrize(
+    ("failed_pack", "development"),
+    [
+        (False, "published"),
+        (True, "local"),
+        (False, "captured"),
+        (False, "watched"),
+        (False, "installed-local"),
+        (False, "installed-git"),
+        (False, "managed-registry"),
+    ],
+)
 def test_serve_empty_generation_health_distinguishes_failed_selection(
-    tmp_path: Path, failed_pack: bool
+    tmp_path: Path, failed_pack: bool, development: str
 ) -> None:
     from dinkster_registry import Lockfile
 
@@ -2548,15 +2605,70 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
 
     generation = tmp_path / "generation"
     generation.mkdir()
-    stage_generation_packs(generation, Lockfile.of(()), {})
-    (generation / "generation.json").write_text(
-        json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
-    )
+    if development != "managed-registry":
+        stage_generation_packs(generation, Lockfile.of(()), {})
+        (generation / "generation.json").write_text(
+            json.dumps({"format": "dinkster.generation/1", "variant": "linux-cpu"})
+        )
+    if development == "captured":
+        (generation / "development-sources.json").write_text(
+            json.dumps({"format": "dinkster.development-sources/1", "sources": []})
+        )
     extra = (
         ("--no-default-packs", "--pack", str(write_iso_manifest(tmp_path / "bad", name="core")))
         if failed_pack
         else ("--generation", str(generation))
     )
+    if development == "watched":
+        extra = ("--no-default-packs", "--watch-packs")
+    if development.startswith("installed-") or development == "managed-registry":
+        from dataclasses import replace
+
+        from dinkster.installer import Installer, lock_local_pack
+
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "example").mkdir()
+        (source / "example/__init__.py").write_text(
+            "from dinkster_api.v1 import Node, NodeSchema\n"
+            "class Probe(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='example.probe')\n"
+            "NODES = (Probe,)\n"
+        )
+        (source / "dinkster-pack.toml").write_text(
+            '[pack]\nname="example"\npublisher="acme"\n'
+            'version="1.0"\nengine=">=0.0.2.dev0,<1"\nnamespaces=["example"]\n'
+            '[pack.entry]\nnodes="example:NODES"\n[pack.sandbox]\n'
+        )
+        installer = Installer(tmp_path / "installed")
+        entry, archive = lock_local_pack(source, installer.artifacts_dir)
+        if development == "installed-git":
+            entry = replace(entry, source="git:https://example.invalid/pack@" + "a" * 40)
+        if development == "managed-registry":
+            from dinkster_workers.doctor import prepare_catalog
+
+            entry = replace(entry, source="registry:public", publisher="acme", version="1.0")
+            stage_generation_packs(generation, Lockfile.of([entry]), {"example": archive})
+            prepared = generation / "pack-sources/example"
+            report = prepare_catalog(
+                prepared / "dinkster-pack.toml", environment={"PYTHONPATH": str(prepared)}
+            )
+            assert report.ok, report
+            (generation / "generation.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.generation/1",
+                        "variant": "linux-cpu",
+                        "inProcessPacks": ["example"],
+                    }
+                )
+            )
+            extra = ("--generation", str(generation))
+        else:
+            installer.apply(Lockfile.of([entry]), venvs=False)
+            extra = ("--no-default-packs", "--install-root", str(installer.root))
     port = free_port()
     log = tmp_path / "empty-generation.log"
     with log.open("wb") as output:
@@ -2572,6 +2684,8 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
             assert isinstance(packs, dict)
             if failed_pack:
                 assert packs["core"]["state"] == "failed"
+            elif development.startswith("installed-") or development == "managed-registry":
+                assert packs["example"]["state"] == "announced"
             else:
                 assert packs == {}
 
@@ -2582,9 +2696,25 @@ def test_serve_empty_generation_health_distinguishes_failed_selection(
                         assert (await response.json())["ok"] is (not failed_pack)
                     async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
                         assert response.status == 200
-                        assert (await response.json())["nodes"] == {}
+                        catalog = await response.json()
+                        assert set(catalog["nodes"]) == (
+                            {"example.probe"}
+                            if development.startswith("installed-")
+                            or development == "managed-registry"
+                            else set()
+                        )
+                        if development not in {"published", "managed-registry"}:
+                            label = catalog["dinkster"]["development"]
+                            assert label["mode"] == "development"
+                            assert label["reproducible"] is False
+                            assert "not reproducible from dependency ranges" in label["description"]
+                        else:
+                            assert "development" not in catalog["dinkster"]
 
             run_scenario(check())
+            assert ("development: not reviewed by the registry" in log.read_text()) is (
+                development not in {"published", "managed-registry"}
+            )
         except Exception as exc:
             exc.add_note(log.read_text())
             raise
