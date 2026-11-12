@@ -80,7 +80,8 @@ def test_selected_files_run_concurrently_and_exactly_once(tmp_path: Path) -> Non
             source = tmp_path / f"test_selected_{index}.py"
             source.write_text(
                 "import socket\nfrom pathlib import Path\n"
-                "def test_selected():\n"
+                "def test_selected(pytestconfig):\n"
+                f"    pytestconfig.cache.set('selected-runner/owner', {index})\n"
                 + (
                     "    with socket.create_connection(\n"
                     f"        {listener.getsockname()!r}, timeout=30\n"
@@ -89,6 +90,7 @@ def test_selected_files_run_concurrently_and_exactly_once(tmp_path: Path) -> Non
                     if index < 2
                     else ""
                 )
+                + f"    assert pytestconfig.cache.get('selected-runner/owner', None) == {index}\n"
                 + f"    with Path({str(tmp_path / f'executed-{index}')!r}).open('a') as output:\n"
                 f"        output.write('{index}')\n",
                 encoding="ascii",
