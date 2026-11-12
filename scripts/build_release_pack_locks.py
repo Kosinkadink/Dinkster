@@ -16,7 +16,10 @@ from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_archives import extract_base
 from dinkster_supervisor.environment_artifacts import engine_constraints
 from dinkster_supervisor.environment_channels import engine_publication_names
-from dinkster_supervisor.environment_constraints import effective_constraints, installed_wheel_origins
+from dinkster_supervisor.environment_constraints import (
+    effective_constraints,
+    installed_wheel_origins,
+)
 from dinkster_supervisor.environment_downloads import fetch_artifact
 from dinkster_workers.pack_lock import PackLock
 
