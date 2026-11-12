@@ -19,6 +19,8 @@
   The records are sealed with the generation and preserved in software snapshots.
   Selected file records retain their issuing origins and distribution versions;
   changing acquisition mirrors or registry aliases cannot change those origins.
+  Base-owned replacements retain the base issuer even when engine metadata
+  also lists the same wheel bytes.
 - Managed generation pack selection checks cached notices against sealed library
   identities, transitive pack sources and their selected libraries. A malicious
   dependency blocks its consumer as affected, not malicious. Missing or changed wheel provenance refuses

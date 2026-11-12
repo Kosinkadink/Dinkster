@@ -1640,6 +1640,30 @@ environment.main()
     assert read_current(root) == (1 if problem in {"update", "custom"} else None)
 
 
+@pytest.mark.parametrize("base_owned", [False, True])
+def test_selected_root_wheel_origin_respects_base_replacement_ownership(base_owned: bool) -> None:
+    from dinkster_supervisor.environment_constraints import installed_wheel_origins
+
+    wheel = {"filename": "helper-1.0-py3-none-any.whl", "size": 7, "sha256": "a" * 64}
+    base = {
+        "replaces": ["helper"] if base_owned else [],
+        "wheels": [{**wheel, "index": "https://base-issuer.example.test/simple"}],
+    }
+    engine = {
+        "dependencies": {
+            "cpu": {"wheels": [{**wheel, "index": "https://engine-issuer.example.test/simple"}]}
+        }
+    }
+    assert installed_wheel_origins([wheel], base, engine, "cpu") == [
+        {
+            **wheel,
+            "registry": "https://base-issuer.example.test/simple"
+            if base_owned
+            else "https://engine-issuer.example.test/simple",
+        }
+    ]
+
+
 def test_engine_wheel_receipt_records_selected_bytes_not_alternatives_or_existing_version(
     tmp_path: Path,
 ) -> None:

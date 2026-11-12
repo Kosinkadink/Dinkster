@@ -135,13 +135,18 @@ def installed_wheel_origins(
     origins: dict[tuple[object, object, object], object] = {}
     for row in cast("list[dict[str, object]]", base.get("wheels", [])):
         origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+    owned = set(cast("list[str]", base.get("replaces", [])))
     selections = cast("dict[str, dict[str, object]]", engine.get("dependencies", {}))
     for row in cast("list[dict[str, object]]", selections.get(variant, {}).get("wheels", [])):
-        origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+        if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned:
+            origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
     repository = engine.get("repository")
     issuer = f"https://github.com/{repository}" if repository else None
     for row in cast("list[dict[str, object]]", engine.get("artifacts", [])):
-        if str(row["name"]).endswith(".whl"):
+        if (
+            str(row["name"]).endswith(".whl")
+            and parse_wheel_filename(cast("str", row["name"]))[0] not in owned
+        ):
             origins[row["name"], row["size"], row["sha256"]] = issuer
     return [
         {**row, "registry": origins.get((row["filename"], row["size"], row["sha256"]))}
