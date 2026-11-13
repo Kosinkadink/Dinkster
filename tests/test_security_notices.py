@@ -1844,6 +1844,7 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(
         "other-accelerator",
         "pending-retained",
         "unnormalized-retained",
+        "pending-fix",
     ],
 )
 def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
@@ -2092,7 +2093,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     documents.update(_static_indexes(rows))
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
-    feed = _feed("malicious")
+    feed = _feed("vulnerable" if case == "pending-fix" else "malicious")
     feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
     if case in {"other-blocked", "pending-retained"}:
         other = copy.deepcopy(feed["notices"][0])
@@ -2180,6 +2181,46 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 manifest.write_bytes(intact)
             assert host.store.cached(REGISTRY) == cached
             assert requests == []
+            pointer = tmp_path / "store"
+            pointer.write_text(str(tmp_path / "cache"))
+            try:
+                preview = inspect("fix-one", "--pack", "consumer")
+                assert preview["status"] == "planned", preview
+                proposal = preview["metadata"]
+                assert proposal["generation"] == 1
+                assert proposal["software"] == content_digest(generation / "generation.json")
+                assert (
+                    proposal["dependencyLocks"]["provider"]["packages"][0]["wheels"][0]["sha256"]
+                    == good_sha
+                )
+                assert (
+                    proposal["sources"]["packs"][0]
+                    == json.loads(Lockfile.of(entries).record_json())["packs"][0]
+                )
+                assert set(proposal["retainedDependencyLocks"]) == {"consumer"}
+                assert preview["next"] == 2
+                provider_index = "/static/packs/provider/index.json"
+                intact_index = documents[provider_index]
+                unavailable = json.loads(intact_index)
+                for item in unavailable["items"]:
+                    item["engine"] = ">=99"
+                try:
+                    documents[provider_index] = json.dumps(unavailable).encode()
+                    output = tmp_path.parent / "unavailable-security-review"
+                    no_fix = inspect("fix-one", "--pack", "consumer", "--output", str(output))
+                    assert no_fix["status"] == "no-compatible-fix", no_fix
+                    assert no_fix["securityRepair"]["pack"] == "consumer"
+                    assert no_fix["securityRepair"]["reasons"]
+                    assert not output.exists()
+                finally:
+                    documents[provider_index] = intact_index
+                assert inspect("fix-one", "--pack", "absent")["status"] == "error"
+                assert (
+                    inspect("fix-one", "--input", str(tmp_path / "not-a-plan"))["status"] == "error"
+                )
+                assert not (tmp_path / "generations/2").exists()
+            finally:
+                pointer.unlink()
         result = plan_security_repair(
             generation,
             "consumer",
@@ -2198,6 +2239,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 "other-accelerator",
                 "pending-retained",
                 "unnormalized-retained",
+                "pending-fix",
             }
             else "no-compatible-fix"
         ), result

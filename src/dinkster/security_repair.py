@@ -222,7 +222,7 @@ def plan_security_repair(
         markers,
     )
     before = security.assess(_artifacts(installed, libraries, constraints))
-    affected = {item.artifact.release.pack for item in before.findings if not item.allowed}
+    affected = {item.artifact.release.pack for item in before.findings}
     if pack not in affected:
         return {"status": "not-required", "pack": pack, "offer": None}
     refused_files = {
@@ -373,8 +373,14 @@ def plan_security_repair(
                 proposed_artifacts = _artifacts(sources, dependencies, requirements)
                 result = security.assess(proposed_artifacts)
                 changed = tuple(item for item in proposed_artifacts if item.release.pack == name)
-                if not result.allowed or not security.assess(changed, installing=True).allowed:
-                    raise InstallError("candidate still contains blocked or unapproved files")
+                if (
+                    not result.allowed
+                    or any(item.artifact.release.pack == pack for item in result.findings)
+                    or not security.assess(changed, installing=True).allowed
+                ):
+                    raise InstallError(
+                        "candidate still contains flagged, blocked or unapproved files"
+                    )
                 if "sha256:" + hashlib.sha256(
                     (generation / "generation.json").read_bytes()
                 ).hexdigest() != software or record.drift(generation):
@@ -384,7 +390,22 @@ def plan_security_repair(
                     "pack": pack,
                     "offer": {
                         "sources": json.loads(sources.record_json()),
+                        "previousSources": json.loads(installed.record_json()),
                         "dependencyLocks": {name: json.loads(replacement.to_json())},
+                        "engineVersion": record.engine_version,
+                        "engineRelease": record.engine_release,
+                        "variant": record.variant,
+                        "baseId": record.base,
+                        "sourceWheels": {},
+                        "securityRegistries": {
+                            item.source: item.source.removeprefix("registry:")
+                            for item in sources.packs
+                        },
+                        "plan": [
+                            f"repair {pack} by selecting {name}@{candidate.version} "
+                            f"({candidate.artifact_digest}) with the reviewed dependency lock",
+                            "retain engine, base, other pack locks and placement",
+                        ],
                         "changedPack": name,
                         "approvalRequired": True,
                         "generation": record.number,

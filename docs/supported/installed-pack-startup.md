@@ -64,6 +64,11 @@
   Planning downloads metadata only: it does not import packs, acquire payloads,
   change current software or approve an installation. An offer requires a separate
   host-owned approval plan; no compatible offer leaves the refusal in effect.
+  `security --json fix-one --pack PACK` previews a repair for the current
+  generation, including a pending vulnerable pack. `--output DIR` prepares the
+  exact offered source and dependency locks for review rather than resolving
+  the release again. Applying retained inputs requires `--input DIR --approval
+  DIGEST` and uses the existing generation build and activation checks.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.

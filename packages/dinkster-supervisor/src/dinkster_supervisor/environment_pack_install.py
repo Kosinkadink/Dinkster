@@ -147,6 +147,7 @@ def inspect_pack_install(
     updates: tuple[str, ...] | None = None,
     registry_arguments: tuple[str, ...] = (),
     diagnostic_python: Path | None = None,
+    security_pack: str | None = None,
 ) -> dict[str, object]:
     """Inspect published metadata against sealed target identities without acquiring payloads."""
     root = root.resolve()
@@ -184,6 +185,24 @@ def inspect_pack_install(
         "--base-id",
         generation.base,
     ]
+    if security_pack is not None:
+        if selections or updates is not None or diagnostic_python is not None:
+            raise EnvironmentError("security repair cannot be combined with other pack changes")
+        command = [
+            str(interpreter(source)),
+            "-I",
+            "-B",
+            "-m",
+            "dinkster.manager",
+            "--root",
+            str(root),
+            *registry_arguments,
+            "plan-security-repair",
+            "--generation",
+            str(source),
+            "--pack",
+            security_pack,
+        ]
     for selection in selections:
         command.extend(["--add", selection])
     if updates is not None:
@@ -201,8 +220,12 @@ def inspect_pack_install(
         command.extend(["--collect-errors", "--engine-version", generation.engine_version])
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-metadata-") as directory:
         for flag, name in (
-            ("--engine-manifest", "engine-manifest.json"),
-            ("--installed-lock", "dinkster.lock"),
+            ()
+            if security_pack is not None
+            else (
+                ("--engine-manifest", "engine-manifest.json"),
+                ("--installed-lock", "dinkster.lock"),
+            )
         ):
             path = Path(directory) / name
             path.write_bytes(
@@ -225,6 +248,34 @@ def inspect_pack_install(
         if not isinstance(raw, dict):
             raise ValueError("expected an object")
         metadata = cast("dict[str, object]", raw)
+        if security_pack is not None:
+            repair = metadata
+            if repair.get("pack") != security_pack:
+                raise ValueError("target engine returned another security repair")
+            if repair.get("status") != "approval-required":
+                if repair.get("status") not in {"not-required", "no-compatible-fix"}:
+                    raise ValueError("target engine returned an invalid security repair status")
+                if (
+                    _project_inputs(root) != inputs
+                    or content_digest(source / "generation.json") != software
+                    or generation.drift(source)
+                ):
+                    raise EnvironmentError("project changed after planning; request a new plan")
+                return {
+                    "current": generation.number,
+                    "status": repair["status"],
+                    "securityRepair": repair,
+                    "plan": [],
+                }
+            offer = repair.get("offer")
+            if not isinstance(offer, dict):
+                raise ValueError("target engine returned no security repair offer")
+            metadata = cast("dict[str, object]", offer)
+            if (
+                metadata.get("generation") != generation.number
+                or metadata.get("software") != software
+            ):
+                raise ValueError("target engine returned a stale security repair")
         if (
             metadata.get("engineRelease") != generation.engine_release
             or metadata.get("engineVersion") != generation.engine_version
@@ -385,10 +436,11 @@ def plan_pack_install(
     updates: tuple[str, ...] | None = None,
     registry_arguments: tuple[str, ...] = (),
     diagnostic_python: Path | None = None,
+    security_pack: str | None = None,
 ) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
-    if updates is None and (not selections or len(selections) > 64):
+    if security_pack is None and updates is None and (not selections or len(selections) > 64):
         raise EnvironmentError("pack installation requires 1 to 64 exact selections")
     source, generation, store = _current(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
@@ -401,7 +453,10 @@ def plan_pack_install(
         updates=updates,
         registry_arguments=registry_arguments,
         diagnostic_python=diagnostic_python,
+        security_pack=security_pack,
     )
+    if "metadata" not in review:
+        return review
     metadata = cast("dict[str, object]", review["metadata"])
     with writer_lock(store), writer_lock(root):
         source, generation, actual_store = _current(
@@ -616,7 +671,9 @@ print(Lockfile.of(entries).record_json())
     return {
         "current": generation.number,
         "status": "planned",
-        "plan": [f"select {selection}" for selection in selections]
+        "plan": cast("list[str]", metadata["plan"])
+        if security_pack is not None
+        else [f"select {selection}" for selection in selections]
         + ["retain engine, base, unselected pack locks and placement; preserve project data"],
         "packPlan": record,
         "approval": _approval(record),

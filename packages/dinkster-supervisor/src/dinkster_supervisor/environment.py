@@ -61,7 +61,7 @@ from .environment_generations import (
 )
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
-from .environment_pack_install import apply_pack_install, plan_pack_install
+from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -1393,6 +1393,22 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not (args.root / "security.sqlite3").is_file():
         raise EnvironmentError("security operation requires an independently provisioned install")
     host = SecurityHost(args.root)
+    if args.security_action == "fix-one":
+        if args.input is not None:
+            if args.approval is None or args.pack is not None or args.output is not None:
+                raise EnvironmentError("apply a repair with only --input and its exact --approval")
+            result.update(apply_pack_install(args.root, args.input, args.approval))
+        else:
+            if args.pack is None or args.approval is not None:
+                raise EnvironmentError("security repair preview requires --pack")
+            if args.output is None:
+                result.update(status="planned")
+                result.update(inspect_pack_install(args.root, (), security_pack=args.pack))
+            else:
+                result.update(
+                    plan_pack_install(args.root, (), args.output, security_pack=args.pack)
+                )
+        return 0
     if args.security_action in {"list", "details"}:
         number = args.generation if args.generation is not None else read_current(args.root)
         if number is None:
@@ -1519,6 +1535,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     security_details.add_argument("--pack", required=True)
     for inspection in (security_list, security_details):
         inspection.add_argument("--generation", type=int, help="inspect a retained generation")
+    fix = security_actions.add_parser(
+        "fix-one", help="preview or explicitly apply a reviewed repair"
+    )
+    fix.add_argument("--pack")
+    retained = fix.add_mutually_exclusive_group()
+    retained.add_argument("--output", type=Path, help="retain exact repair inputs for review")
+    retained.add_argument("--input", type=Path, help="apply retained repair inputs")
+    fix.add_argument("--approval", help="digest of the exact retained plan being approved")
     policy = security_actions.add_parser("policy", help="read or explicitly change local policy")
     policy.add_argument("--refuse-vulnerable", action=argparse.BooleanOptionalAction, default=None)
     age = policy.add_mutually_exclusive_group()
