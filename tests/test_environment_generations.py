@@ -358,6 +358,40 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     assert content_digest(source / "uv.lock") == selection["lockDigest"]
 
 
+def test_pack_lock_resolution_does_not_expand_wheel_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.pack_lock import resolve_pack_lock
+
+    store = tmp_path / ("x" * max(1, 200 - len(str(tmp_path)) - 1))
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    constraints = generation / "constraints.txt"
+    constraints.write_text(
+        "\n".join(f"fixture-{number}==1.0 --hash=sha256:{number:064x}" for number in range(500))
+        + "\n"
+    )
+    links = [store / "wheels" / f"{number:064x}" for number in range(500)]
+
+    def captured(command, **kwargs):
+        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
+        source = Path(command[command.index("--no-config") + 1]).read_text()
+        assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
+        assert "--no-index" in command
+        raise RuntimeError("command inspected")
+
+    monkeypatch.setattr(subprocess, "run", captured)
+    with pytest.raises(RuntimeError, match="command inspected"):
+        resolve_pack_lock(
+            pack="fixture",
+            variant="win-cpu",
+            requirements=["fixture-0==1.0"],
+            python=interpreter(generation),
+            constraints=constraints,
+            find_links=links,
+        )
+
+
 def _standalone_tree(root: Path) -> None:
     source = Path(sys.base_prefix)
     if os.name == "nt":

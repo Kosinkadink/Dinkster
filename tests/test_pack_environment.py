@@ -813,6 +813,99 @@ def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_pa
     assert not (generation / "dinkster.lock").exists()
 
 
+@pytest.mark.parametrize("pack", ["dinkster-test-helpers", "dinkster-test-consumer"])
+def test_helper_and_consumer_locks_layer_on_later_compatible_engine(
+    tmp_path: Path, pack: str
+) -> None:
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    engine_a = "0.0.3.dev235+g3a30be8a6f04"
+    engine_b = "0.0.3.dev236+g0123456789ab"
+    _wheel(wheels, "dinkster-api", engine_a, "dinkster_api", "VALUE = 1\n")
+    torch = _wheel(wheels, "torch", "2.14.1", "torch", "VALUE = 41\n")
+    _wheel(
+        wheels,
+        "dinkster-test-helpers",
+        "0.0.2",
+        "dinkster_test_helpers",
+        "from importlib.metadata import version\n"
+        "def engine_version(): return version('dinkster-api')\n",
+        requires=("dinkster-api", "torch"),
+    )
+    _wheel(
+        wheels,
+        "dinkster-test-consumer",
+        "0.0.4",
+        "dinkster_test_consumer",
+        "NODES = []\n",
+        requires=("dinkster-test-helpers>=0.0.2,<1",),
+    )
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(f"dinkster-api=={engine_a}\ntorch==2.14.1\n")
+    version = "0.0.2" if pack == "dinkster-test-helpers" else "0.0.4"
+    lock = resolve_pack_lock(
+        pack=pack,
+        variant="linux-cpu",
+        requirements=[f"{pack}=={version}"],
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=[wheels],
+        engine=">=0.0.3.dev0,<0.1",
+    )
+    lock_path = tmp_path / "lock.json"
+    lock.write(lock_path)
+    lock = PackLock.read(lock_path)
+    newer = tmp_path / "newer"
+    newer.mkdir()
+    api = _wheel(newer, "dinkster-api", engine_b, "dinkster_api", "VALUE = 2\n")
+    parent = _generation(tmp_path / "generation/python", [api, torch])
+    facts = GenerationPackages.inspect(parent)
+    artifacts = {path.name: path.read_bytes() for path in wheels.iterdir()}
+    plan = plan_pack(lock, facts, variant="linux-cpu", own_environment_size=9000)
+    assert not plan.conflicts, plan.conflicts
+    assert "dinkster-api" not in {package.name for package in lock.packages}
+    for versions, refused in (
+        ({**facts.versions, "torch": "2.15.0"}, "torch"),
+        ({**facts.versions, "dinkster-api": "0.1.0"}, "dinkster-api"),
+        (
+            {key: value for key, value in facts.versions.items() if key != "dinkster-api"},
+            "dinkster-api",
+        ),
+    ):
+        bad = plan_pack(
+            lock,
+            replace(facts, versions=versions),
+            variant="linux-cpu",
+            own_environment_size=9000,
+        )
+        assert any(refused in conflict for conflict in bad.conflicts), bad.conflicts
+    store = tmp_path / "store"
+    store.mkdir()
+    for wheel in plan.wheels:
+        (store / wheel.filename).write_bytes(artifacts[wheel.filename])
+    python = provision_pack(
+        plan,
+        generation_python=parent,
+        packs=tmp_path / "generation/packs",
+        wheel_store=store,
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+        offline=True,
+    )
+    if pack == "dinkster-test-consumer":
+        result = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from dinkster_test_helpers import engine_version; print(engine_version())",
+            ],
+            text=True,
+        )
+        assert result.strip() == engine_b
+    assert {path.name: path.read_bytes() for path in wheels.iterdir()} == artifacts
+
+
 def test_transitive_api_constraints_and_legacy_exact_locks_remain_binding(tmp_path: Path) -> None:
     api = _wheel(tmp_path, "dinkster-api", "0.0.3.dev235", "dinkster_api", "value = 235\n")
     _wheel(
