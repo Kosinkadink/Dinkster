@@ -108,7 +108,7 @@ def prepare_pack_locks(
             manifests.append(_manifest(source, entry))
         for entry, manifest in zip(lock.packs, manifests, strict=True):
             pack_indexes = tuple(indexes)
-            if entry.source == "registry" or entry.source.startswith("registry:"):
+            if entry.source.startswith("registry:"):
                 registry = RegistryConfig().registry_for(entry)
                 pack_indexes += (registry.endpoint + f"/static/{variant}/simple/",)
             dependency_lock = resolve_pack_lock(
