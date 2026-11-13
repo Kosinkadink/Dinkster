@@ -190,6 +190,19 @@ def retain_wheels(
                     / filename
                 )
                 fetch_artifact((directory,), filename, destination, sha, size)
+        if sha is not None and size is None:
+            cached = (
+                object_path(
+                    store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+                )
+                / filename
+            )
+            if (
+                cached.is_file()
+                and not cached.is_symlink()
+                and content_digest(cached) == "sha256:" + sha
+            ):
+                size = cached.stat().st_size
         if sha is not None and size is None and urlsplit(url).scheme == "https":
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])

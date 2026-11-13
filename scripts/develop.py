@@ -18,6 +18,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     environment = dict(os.environ)
+    for name in ("VIRTUAL_ENV", "UV_PROJECT", "PYTHONPATH", "PYTHONHOME"):
+        environment.pop(name, None)
     environment["UV_PROJECT_ENVIRONMENT"] = str(ROOT / ".run/bootstrap")
     environment["UV_PYTHON_PREFERENCE"] = "only-managed"
     command = [

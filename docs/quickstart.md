@@ -83,13 +83,9 @@ For a manual source launch without the script, see
 generations, use the environment commands rather than the source launcher.
 
 An embedded or headless core installation may omit both optional packages.
-From a source checkout, remove them from the environment and disable automatic
-sync while launching so the default meta-package does not restore them:
-
-```sh
-uv pip uninstall --python .venv dinkster-collab dinkster-supervisor
-uv run --no-sync python -m dinkster.serve --watch-packs
-```
+Use a separate environment for that installation. Contributor tools and the
+source launcher use the active development generation, not the checkout's
+root environment.
 
 Installers that select capabilities explicitly can use the `dinkster[collab]`
 and `dinkster[supervisor]` extras. The default `dinkster` install selects both.

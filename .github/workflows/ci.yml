@@ -46,7 +46,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
         if: steps.paths.outputs.docs != 'true'
       - run: bash scripts/ci-fast.sh checks
         if: steps.paths.outputs.docs != 'true'
@@ -114,7 +114,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
         if: needs.checks.outputs.docs != 'true'
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
@@ -125,11 +125,12 @@ jobs:
           for package in dinkster dinkster-api dinkster-engine; do
             uv build --package "$package" --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
           done
-          uv venv --python .venv/bin/python "$RUNNER_TEMP/fast-wheel-host"
+          execution_python=$(python scripts/develop.py run -- python -c 'import sys; print(sys.executable)')
+          uv venv --python "$execution_python" "$RUNNER_TEMP/fast-wheel-host"
           uv pip install --python "$RUNNER_TEMP/fast-wheel-host/bin/python" --no-sources "$RUNNER_TEMP/fast-build-setup/"*.whl
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python tools/verify_pinned_inference.py
+        run: python scripts/develop.py run -- python tools/verify_pinned_inference.py
       - name: Create a disposable XFS clone-test volume
         if: needs.checks.outputs.engine == 'true'
         run: |
@@ -146,14 +147,11 @@ jobs:
           echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
       - name: Require real Linux clone allocation coverage
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
+        run: python scripts/develop.py run -- python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:
           DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
-      - name: Install the CPU base for selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
       - name: Install the CPU software shader renderer
         if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
         uses: ./.github/actions/torch-cpu-suite/renderer-setup
@@ -162,10 +160,10 @@ jobs:
         env:
           PACKS: ${{ needs.checks.outputs.packs }}
           DINKSTER_ACCELERATOR: cpu
-        run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
+        run: python scripts/develop.py run -- python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
+        run: python scripts/develop.py run -- pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
@@ -173,7 +171,7 @@ jobs:
         if: needs.checks.outputs.engine == 'true'
         id: frontend
         run: |
-          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          python scripts/develop.py run -- python - <<'PY' >> "$GITHUB_OUTPUT"
           from pathlib import Path
           import yaml
 

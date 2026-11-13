@@ -922,7 +922,7 @@ Source paths, package roots, content digests and available Git commit/dirty stat
 describe the captured working bytes, including selected untracked edits. Recovery
 does not reset, clean, overwrite or back up author folders. Workflows, models,
 outputs and other project data are not recovered by software restore. No bundled
-Git, Git-URL fetching or contributor-environment synchronization is provided by
-this operation. When invoking tools through `uv run`, `--no-sync` prevents uv from
-silently changing that tool environment to match a checkout lock; it does not
-capture an environment or make arbitrary unrecorded edits recoverable.
+Git or Git-URL fetching is provided by this operation. Contributor commands
+run in their selected generation, separately from any checkout-managed uv
+environment. That separation does not make live edits recoverable; omit live
+marks when an exactly restorable capture is needed.
