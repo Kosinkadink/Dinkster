@@ -84,7 +84,9 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    # Hosted contributor setup and admission preparation take four minutes.
+    # Keep more than three times that measured runtime for the complete job.
+    timeout-minutes: 15
     outputs:
       groups: ${{ steps.sources.outputs.groups }}
     env:
