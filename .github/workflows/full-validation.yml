@@ -95,21 +95,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Prepare the contributor generation
-        shell: bash
-        run: |
-          arguments=(--library-source "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance")
-          variant=win-cpu
-          if [ "$RUNNER_OS" = Linux ]; then
-            variant=linux-cpu
-            arguments+=(--python "$(uv python find --managed-python '${{ matrix.python-version }}')")
-          fi
-          uv run --no-project python scripts/develop.py setup --variant "$variant" --yes "${arguments[@]}"
-      - name: Verify the Linux CPU runtime
+      - uses: ./.github/actions/windows-python
+        if: matrix.os == 'windows'
+      - run: uv sync --all-packages
+        if: matrix.os == 'windows'
+      - name: Install the locked Linux workspace with CPU torch
         if: matrix.os == 'linux'
         shell: bash
         run: |
-          python scripts/develop.py run -- python - <<'PY'
+          uv export --locked --all-packages --no-hashes --no-annotate --no-header \
+            | sed '/^nvidia-/d; /^triton==/d' > "$RUNNER_TEMP/linux-root-requirements.txt"
+          uv venv --clear --python '${{ matrix.python-version }}'
+          uv pip sync --python .venv/bin/python --torch-backend cpu "$RUNNER_TEMP/linux-root-requirements.txt"
+          echo 'UV_NO_SYNC=1' >> "$GITHUB_ENV"
+          .venv/bin/python - <<'PY'
           from importlib.metadata import distributions
           import torch
           import torchvision
@@ -121,22 +120,24 @@ jobs:
               for distribution in distributions()
           )
           PY
-      - name: Verify published Windows engine dependencies
+      - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          python scripts/develop.py run -- python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - run: python scripts/develop.py run -- ruff format --check .
+          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
+          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
+            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+      - run: uv run --locked ruff format --check .
         if: matrix.run_checks
-      - run: python scripts/develop.py run -- ruff check .
+      - run: uv run ruff check .
         if: matrix.run_checks
-      - run: python scripts/develop.py run -- pyright
+      - run: uv run pyright
         if: matrix.run_checks
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - run: >
-          python scripts/develop.py run -- python -m pytest -q ${{ matrix.pytest_args }}
+          uv run python -m pytest -q ${{ matrix.pytest_args }}
           --ignore-glob=tests/test_environment_*.py
           --ignore=tests/test_installer.py
           --ignore=tests/test_release_install.py
@@ -149,7 +150,7 @@ jobs:
         env:
           DINKSTER_SLOW_TESTS: "1"
       - run: >
-          python scripts/develop.py run -- python -m pytest -q ${{ matrix.pytest_args }}
+          uv run python -m pytest -q ${{ matrix.pytest_args }}
           --case-shard-file tests/test_environment_history.py
           --case-shard-file tests/test_environment_generations.py
           --deselect=tests/test_sandbox.py::TestLiveJail
@@ -187,13 +188,13 @@ jobs:
           name: test-timings-windows-${{ matrix.shard }}
           path: test-results/windows-${{ matrix.shard }}.xml
           if-no-files-found: error
-      - run: python scripts/develop.py run -- dinkster demo
+      - run: uv run dinkster demo
         if: matrix.run_checks
-      - run: python scripts/develop.py run -- dinkster-isolated
+      - run: uv run dinkster-isolated
         if: matrix.run_checks
       - name: Export the published default catalog
         if: matrix.os == 'linux' && matrix.run_checks
-        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        run: uv run --no-sync python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
       - uses: actions/checkout@v4
         if: matrix.os == 'linux' && matrix.run_checks
         with:
@@ -245,17 +246,16 @@ jobs:
           python-version: "3.14.10"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Prepare the Windows contributor generation
+      - uses: ./.github/actions/windows-python
+      - name: Set up Windows runtime environment
+        run: uv sync --locked --all-packages
+      - name: Install and verify published Windows engine dependencies
         shell: pwsh
         run: |
-          uv run --no-project python scripts/develop.py setup --variant win-cpu --yes `
-            --library-source "$env:DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify published Windows engine dependencies
-        shell: pwsh
-        run: |
-          python scripts/develop.py run -- python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
+          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
+            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
       - name: Create a disposable ReFS clone-test volume
         shell: pwsh
         run: |
@@ -299,7 +299,7 @@ jobs:
             '--case-shard-file', 'tests/test_environment_history.py',
             '--case-shard-file', 'tests/test_environment_transactions.py'
           )
-          python scripts/develop.py run -- python -m pytest -q @files `
+          uv run --no-sync python -m pytest -q @files `
             -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/8 --durations=0 `
             @caseShardArgs `
             --cov=dinkster_api --cov=dinkster_assets `
@@ -340,7 +340,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --only-group dev
+      - run: uv sync --all-packages
       - uses: actions/download-artifact@v4
         with:
           pattern: coverage-shard-*
@@ -358,8 +358,8 @@ jobs:
             done
           fi
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
-          uv run --no-project --python .venv coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
-          uv run --no-project --python .venv coverage report
+          uv run coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
+          uv run coverage report
 
   main-status:
     name: main validation status
@@ -428,7 +428,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
-          python scripts/develop.py run -- python -m pytest -v \
+          uv sync --locked --all-packages
+          uv run --no-sync python -m pytest -v \
             tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
             'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'

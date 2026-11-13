@@ -134,7 +134,7 @@ bounded regression contract, not a claim that arbitrarily large packs or catalog
 take constant time.
 
 ```sh
-python scripts/develop.py run -- python tools/benchmark_schema_catalog.py --repeats 3
+uv run --no-sync python tools/benchmark_schema_catalog.py --repeats 3
 ```
 
 Measured on 2026-09-06 with Python 3.12.3, Linux 7.0.0-29, local storage,
@@ -273,9 +273,10 @@ DINKSTER_ACCELERATOR=cpu dinkster-serve --comfy-root /path/to/ComfyUI \
 On Apple Silicon, install native arm64 PyTorch in the worker environment.
 MPS is selected automatically when available; `DINKSTER_ACCELERATOR=mps`
 requires it and refuses an unavailable backend rather than silently using CPU.
-Contributor setup with `python scripts/develop.py setup --yes` selects
-`mac-arm64` on Apple Silicon and creates an isolated development generation.
-Use `python scripts/develop.py run -- COMMAND` for its tools and interpreter.
+The source setup command `uv run --no-project python scripts/setup_envs.py`
+requires a published platform base. macOS setup currently stops pending the
+[Apple Silicon base bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575);
+it does not resolve a local MPS environment.
 
 `DINKSTER_ACCELERATOR` applies to the process and its children, including native
 inference and compatibility workers. Set it on each remote worker service or

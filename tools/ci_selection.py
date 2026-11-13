@@ -17,13 +17,14 @@ def runtime_path(path: str) -> bool:
             ("packages/dinkster-supervisor/", "src/dinkster/installer", "src/dinkster/environment")
         )
         or re.match(
-            r"tests/test_(environment_|supervisor|installer\.|release_install\.|run_scripts\.|launch\.)",
+            r"tests/test_(environment_|supervisor|installer\.|release_install\.|setup_envs\.|run_scripts\.|launch\.)",
             path,
         )
         is not None
+        or path.startswith(("setup_env", "run_dinkster"))
         or path
         in {
-            "scripts/develop.py",
+            "scripts/setup_envs.py",
             "scripts/base_bundles.json",
             "src/dinkster/cli.py",
             "src/dinkster/__main__.py",

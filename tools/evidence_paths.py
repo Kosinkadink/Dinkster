@@ -23,5 +23,5 @@ def validate_evidence_revision(root: Path = EVIDENCE_ROOT) -> None:
     if actual != EVIDENCE_REVISION:
         raise RuntimeError(
             f"validation requires dinkster-evidence {EVIDENCE_REVISION}, found {actual} at "
-            f"{root}; run `uv run --no-project python scripts/prepare_validation_inputs.py`"
+            f"{root}; run `uv run --no-sync python scripts/prepare_validation_inputs.py`"
         )

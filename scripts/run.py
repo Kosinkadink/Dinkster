@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -17,8 +19,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
-    subprocess.run(args, cwd=cwd, env=env, check=True)
+def run(*args: str, cwd: Path = ROOT) -> None:
+    subprocess.run(args, cwd=cwd, check=True)
 
 
 def output(*args: str, cwd: Path = ROOT) -> str:
@@ -45,6 +47,7 @@ def main() -> int:
     if not 1 <= args.port <= 65535:
         parser.error("--port must be in 1..65535")
 
+    windows = platform.system() == "Windows"
     for name in ("uv", "git", "node", "npm"):
         if not shutil.which(name):
             raise RuntimeError(f"{name} is required; install it and restart your terminal")
@@ -75,28 +78,35 @@ def main() -> int:
         run(*pnpm, "--filter", "@dinkster/app", "build", cwd=frontend)
         stamp.write_text(pin["commit"])
 
+    os.environ["UV_PYTHON_PREFERENCE"] = "only-managed"
+    run(sys.executable, str(ROOT / "scripts/setup_envs.py"))
+    relative_python = "Scripts/python.exe" if windows else "bin/python"
+    python = str(ROOT / ".venv" / relative_python)
+    os.environ["DINKSTER_EXECUTION_PYTHON"] = python
     home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
-    environment = dict(os.environ)
-    environment.setdefault("DINKSTER_LIBRARY_ROOT", str(home / "library"))
-    develop = str(ROOT / "scripts/develop.py")
-    run(
-        sys.executable,
-        develop,
-        "setup",
+    launch = [
+        python,
+        "-m",
+        "dinkster.serve",
+        "--watch-packs",
+        "--host",
+        "127.0.0.1",
         "--port",
         str(args.port),
+        "--library-root",
+        str(home / "library"),
+        "--install-root",
+        "",
+        "--prepare-stale-catalogs",
+        "--allow-mount-changes",
         "--frontend-root",
         str(frontend / "packages/app/dist"),
-        "--yes",
-        env=environment,
-    )
-    run(sys.executable, develop, "stop", "--yes", env=environment)
-    launch = [sys.executable, develop, "start", "--port", str(args.port), "--yes"]
+    ]
     url = f"http://127.0.0.1:{args.port}"
     print(f"Development editor: {url}", flush=True)
-    run(*launch, env=environment)
     if not args.no_browser:
-        open_browser_when_ready(url)
+        threading.Thread(target=open_browser_when_ready, args=(url,), daemon=True).start()
+    run(*launch)
     return 0
 
 

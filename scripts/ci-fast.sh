@@ -5,18 +5,24 @@ set -euo pipefail
 export UV_OFFLINE=1
 
 if [ "${1:-all}" != tests ]; then
-python scripts/develop.py run -- python tools/gen_extension_contribution_kinds.py --check
-python scripts/develop.py run -- python scripts/check_extension_factories.py \
+uv run --locked python tools/gen_extension_contribution_kinds.py --check
+uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
-python scripts/develop.py run -- python scripts/check_builtin_type_spellings.py
-python scripts/develop.py run -- ruff format --check .
-python scripts/develop.py run -- ruff check .
-python scripts/develop.py run -- pyright
-python scripts/develop.py run -- pyright --pythonplatform Windows
+uv run --locked python scripts/check_builtin_type_spellings.py
+uv run --locked ruff format --check .
+uv run --locked ruff check .
+uv run --locked pyright &
+linux_types=$!
+uv run --locked pyright --pythonplatform Windows &
+windows_types=$!
+check_status=0
+wait "$linux_types" || check_status=$?
+wait "$windows_types" || check_status=$?
+if [ "$check_status" != 0 ]; then exit "$check_status"; fi
 fi
 if [ "${1:-all}" = checks ]; then exit 0; fi
 
-python scripts/develop.py run -- python -m pytest -q -m 'not network' -p tools.ci_selection \
+uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_settings.py \
   tests/test_security_notices.py \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \

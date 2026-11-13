@@ -159,7 +159,7 @@ jobs:
       - name: Enforce finalized release contents and size
         run: |
           uv sync --locked --no-dev --package dinkster-supervisor
-          uv run --no-project --python .venv python -m scripts.build_release --check --max-bytes 100000000
+          uv run --locked --no-sync python -m scripts.build_release --check --max-bytes 100000000
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
@@ -172,7 +172,7 @@ jobs:
         run: |
           arguments=()
           for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
-          uv run --no-project --python .venv python -m dinkster_supervisor.environment_channels \
+          uv run --locked --no-sync python -m dinkster_supervisor.environment_channels \
             --release dist "${arguments[@]}" --channel "$CHANNEL" \
             --output-root .release/channel --minimum-desktop-version 0.2.0
       - uses: actions/upload-artifact@v4
@@ -277,7 +277,7 @@ jobs:
           R2_BUCKET: ${{ vars.R2_BUCKET }}
         run: |
           uv sync --locked --only-group release-publication
-          uv run --no-project --python .venv python -m scripts.publish_environment_channel --release dist --preflight
+          uv run --locked --no-sync python -m scripts.publish_environment_channel --release dist --preflight
       - uses: actions/github-script@v7
         id: identity
         with:
@@ -374,7 +374,7 @@ jobs:
           uv sync --locked --only-group release-publication
           arguments=()
           for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
-          uv run --no-project --python .venv python .release/retention/retention.py \
+          uv run --locked --no-sync python .release/retention/retention.py \
             --command python -m scripts.publish_environment_channel \
             --release dist "${arguments[@]}" --channel "$CHANNEL" --minimum-desktop-version 0.2.0
       - name: Retain engine releases after verified channel publication
@@ -386,7 +386,7 @@ jobs:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
-        run: uv run --no-project --python .venv python .release/retention/retention.py --scope engine --old-naming --output retention-report.json
+        run: uv run --locked --no-sync python .release/retention/retention.py --scope engine --old-naming --output retention-report.json
       - uses: actions/upload-artifact@v4
         if: always() && github.ref == 'refs/heads/main'
         with:

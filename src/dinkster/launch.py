@@ -16,7 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     operation = "start"
     program = "dinkster"
     browser = True
-    if arguments and arguments[0] in {"serve", "stop", "update", "rollback", "run"}:
+    if arguments and arguments[0] in {"serve", "stop", "update", "rollback"}:
         operation = arguments.pop(0)
         program += " " + operation
         browser = False
