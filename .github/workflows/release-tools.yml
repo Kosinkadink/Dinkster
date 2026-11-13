@@ -57,7 +57,7 @@ jobs:
           BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           uv sync --locked --no-dev --package dinkster-supervisor
-          uv run --locked --no-sync python -m scripts.build_tools_release --changed-from "$BEFORE" >> "$GITHUB_OUTPUT"
+          uv run --no-project --python .venv python -m scripts.build_tools_release --changed-from "$BEFORE" >> "$GITHUB_OUTPUT"
 
   wheel:
     needs: changes
@@ -201,7 +201,7 @@ jobs:
       - name: Finalize the independent tools manifest and checksums
         run: |
           uv sync --locked --no-dev --package dinkster-supervisor
-          uv run --locked --no-sync python -m scripts.build_tools_release --output .release/tools
+          uv run --no-project --python .venv python -m scripts.build_tools_release --output .release/tools
           (cd .release/tools && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
@@ -247,7 +247,7 @@ jobs:
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
         run: |
           uv sync --locked --only-group release-publication
-          uv run --locked --no-sync python .release/retention/retention.py \
+          uv run --no-project --python .venv python .release/retention/retention.py \
             --command python -m scripts.publish_tools_release --release .release/tools
       - name: Report tools retention after verified channel publication
         env:
@@ -257,7 +257,7 @@ jobs:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
-        run: uv run --locked --no-sync python .release/retention/retention.py --scope tools --dry-run --output tools-retention-report.json
+        run: uv run --no-project --python .venv python .release/retention/retention.py --scope tools --dry-run --output tools-retention-report.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
