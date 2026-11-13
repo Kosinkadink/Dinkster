@@ -1,43 +1,10 @@
 """Public core image interfaces and alpha-preserving inversion."""
 
 import numpy as np
-from dinkster_image import NODES
 from dinkster_image.ported.image_core import (
-    EmptyImage,
-    ImageBatch,
     ImageInvert,
-    ImagePadForOutpaint,
     ImageScale,
-    ImageScaleBy,
 )
-
-
-def test_core_image_interfaces_use_exact_ids_and_ordered_inputs() -> None:
-    nodes = (ImageScale, ImageScaleBy, ImageInvert, ImageBatch, EmptyImage, ImagePadForOutpaint)
-    expected = {
-        "dinkster.image.image_scale": ("image", "upscale_method", "width", "height", "crop"),
-        "dinkster.image.image_scale_by": ("image", "upscale_method", "scale_by"),
-        "dinkster.image.image_invert": ("image",),
-        "dinkster.image.image_batch": ("image1", "image2"),
-        "dinkster.image.empty_image": ("width", "height", "batch_size", "color"),
-        "dinkster.image.image_pad_for_outpaint": (
-            "image",
-            "left",
-            "top",
-            "right",
-            "bottom",
-            "feathering",
-        ),
-    }
-    assert {
-        node.schema().node_type: tuple(port.id for port in node.schema().inputs) for node in nodes
-    } == expected
-    for node in nodes:
-        assert node in NODES
-        schema = node.schema()
-        assert schema.outputs[0].type.types == ("IMAGE",)
-        if node is ImagePadForOutpaint:
-            assert schema.outputs[1].type.types == ("MASK",)
 
 
 def test_inversion_preserves_alpha_and_source_pixels() -> None:

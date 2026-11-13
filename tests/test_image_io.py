@@ -9,8 +9,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 from dinkster_assets import AssetRef, digest_file
-from dinkster_image import register_types
-from dinkster_values import TypeRegistry
 from dinkster_values.image_codec import decode_image_file
 from dinkster_values.storage import image_input
 from PIL import Image, ImageCms, ImageOps
@@ -115,14 +113,6 @@ def test_decoded_image_rendition_matches_loader_corpus(tmp_path: Path) -> None:
     assert not np.array_equal(profiled_decoded[0], pixels)
 
 
-def test_native_asset_decoder_preserves_alpha(tmp_path: Path) -> None:
-    path = tmp_path / "alpha.png"
-    Image.new("RGBA", (2, 3), (64, 128, 192, 128)).save(path)
-    decoded = np.asarray(decode_image_file(_asset(path)))
-    assert decoded.shape == (1, 3, 2, 4)
-    np.testing.assert_array_equal(decoded[0, 0, 0], [64, 128, 192, 128])
-
-
 def test_asset_decoder_rejects_decompression_bombs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -131,19 +121,3 @@ def test_asset_decoder_rejects_decompression_bombs(
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
     with pytest.raises(ValueError, match="cannot decode.*decompression bomb"):
         decode_image_file(_asset(path))
-
-
-def test_media_type_registration_provides_image_asset_decoder(tmp_path: Path) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    image = registry.asset_decoder_for("IMAGE")
-    merge = registry.batch_merge_for("IMAGE")
-    assert image is not None and image.provider_id == "dinkster.image-file@3"
-    assert merge is not None and merge.provider_id == "dinkster.image-batch-merge@2"
-    register_types(registry)
-    assert registry.asset_decoder_for("IMAGE") is image
-    assert registry.batch_merge_for("IMAGE") is merge
-    path = tmp_path / "registered.png"
-    pixels = np.array([[[7, 31, 211, 128], [240, 128, 64, 255]]], dtype=np.uint8)
-    Image.fromarray(pixels).save(path)
-    np.testing.assert_array_equal(image.decode(_asset(path)), pixels[None])

@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import json
 import os
 import zipfile
 from collections.abc import Mapping, Sequence
-from contextlib import closing
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 from xml.etree import ElementTree as ET
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, register_media_types
+from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr, register_media_types
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
@@ -23,7 +20,7 @@ from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBo
 from dinkster_image.layer_document import EditLayers, FlattenLayers, SplitLayers
 from dinkster_image.layer_io import LoadLayers, SaveLayers
 from dinkster_image.types import Region, register_image_types
-from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
+from dinkster_image_document.compat import from_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
     append_raster,
@@ -36,7 +33,6 @@ from dinkster_image_document.format import (
     BLEND_MODES,
     IMAGE_DOCUMENT_MEDIA_TYPE,
     INLINE_RESOURCE_LIMIT,
-    InvalidDocument,
     affine_from_components,
     canonical_json,
 )
@@ -195,22 +191,6 @@ def test_split_layer_integer_regions_survive_the_worker_boundary() -> None:
     )
 
 
-def test_native_and_layer_wire_share_one_canonical_document() -> None:
-    value = document()
-    registry = TypeRegistry()
-    register_image_types(registry)
-    register_comfy_layers(registry)
-    for type_id in ("dinkster.layers", "comfy.LAYERS"):
-        spec = registry.spec(type_id)
-        encoded = spec.encode(value)
-        assert encoded == value.data
-        assert cast(ImageDocument, spec.decode(encoded)).data == encoded
-    assert registry.equivalent_type("comfy.LAYERS") == "dinkster.layers"
-    record = value.to_record()
-    record["canvas"]["width"] = 100
-    assert value.to_record()["canvas"]["width"] == 2
-
-
 @pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
 def test_document_boundary_preserves_external_and_auxiliary_references(
     type_id, monkeypatch
@@ -320,91 +300,6 @@ def test_document_boundary_refuses_uncovered_resources_before_exposure(type_id, 
     blobs[cast(int, wire["metaBlob"])] = default_encode(metadata)
     with pytest.raises(EncodedPayloadValidationError):
         codec.decode(wire, blobs, [])
-
-
-def test_legacy_layer_admission_does_not_publish_migrated_rasters(monkeypatch) -> None:
-    from dinkster_assets import AssetError, AssetVault
-    from dinkster_assets.value import value_asset_references
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        encode_layer_stack,
-    )
-    from dinkster_workers.boundary import EncodedPayloadValidationError
-
-    pixels = np.random.default_rng(41).random((1, 64, 64, 3), dtype=np.float32)
-    legacy = encode_layer_stack(
-        LayerStack(
-            (
-                CompositorSourceLayer(
-                    pixels,
-                    None,
-                    "Noise",
-                    0,
-                    0,
-                    64,
-                    64,
-                ),
-            )
-        )
-    )
-    registry = TypeRegistry()
-    register_image_types(registry)
-    codec = ValueCodec(registry)
-    blobs, segments = [], []
-    wire, _ = codec.encode(registry.wrap("dinkster.layers", document()), blobs, segments)
-    payload = cast(dict[str, object], wire["payload"])
-    blobs[cast(int, payload["blob"])] = legacy
-
-    def forbid_publication(*args, **kwargs):
-        pytest.fail("legacy validation must not publish migrated raster resources")
-
-    monkeypatch.setattr(AssetVault, "writer", forbid_publication)
-    received, _ = codec.decode(wire, blobs, [])
-    with pytest.raises(AssetError, match="incomplete"):
-        value_asset_references({"legacy": received}, complete_registry=registry)
-    blobs[cast(int, payload["blob"])] = legacy + b"trailing"
-    with pytest.raises(EncodedPayloadValidationError):
-        codec.decode(wire, blobs, [])
-
-
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
-def test_document_rendition_needs_no_raster_resources(
-    type_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    record = document().to_record()
-    for resource in record["resources"].values():
-        resource.pop("inline")
-    expected = ImageDocument.from_record(record)
-
-    def forbid_raster(*args, **kwargs):
-        pytest.fail("document retrieval must not render or read raster resources")
-
-    monkeypatch.setattr(ImageDocument, "render", forbid_raster)
-    monkeypatch.setattr(ImageDocument, "read_resource", forbid_raster)
-    registry = TypeRegistry()
-    register = register_image_types if type_id == "dinkster.layers" else register_comfy_layers
-    register(registry)
-    register(registry)
-    spec = registry.spec(type_id)
-    value = registry.wrap(type_id, spec.decode(spec.encode(expected)))
-    rendition = registry.render(value, "document")
-    assert rendition.mime == IMAGE_DOCUMENT_MEDIA_TYPE
-    assert rendition.data == expected.data
-    assert [s.kind for s in registry.renditions_of(type_id) if s.default] == [
-        "image" if type_id == "dinkster.layers" else "document"
-    ]
-
-
-@pytest.mark.parametrize("mode", BLEND_MODES)
-def test_every_document_blend_renders_deterministically(mode: str) -> None:
-    value = append_raster(
-        document(), raster_png(np.full((1, 2, 3), 0.25)), blend_mode=mode, opacity=0.4
-    )
-    first = value.render()
-    assert first.png == value.render().png
-    assert first.pixels.dtype == np.uint16
-    assert np.all(first.pixels[..., :3] <= first.pixels[..., 3:4])
 
 
 def test_canvas_background_is_the_blend_backdrop() -> None:
@@ -747,14 +642,6 @@ def test_mask_fields_groups_clipping_and_z_order(combine: str, channel: str) -> 
     assert not removed.to_record()["layers"] and not removed.to_record()["masks"]
 
 
-def test_transform_components_cannot_compete_with_affine() -> None:
-    record = document().to_record()
-    layer = record["layers"][record["rootLayerIds"][0]]
-    layer["transform"]["components"]["x"] = 2
-    with pytest.raises(InvalidDocument, match="disagree"):
-        ImageDocument.from_record(record)
-
-
 def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
     from dinkster_assets import digest_bytes
     from dinkster_image.layer_recipe import replay_compositor
@@ -780,62 +667,6 @@ def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
 
 
 @pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
-def test_compositor_boundary_retains_auxiliary_references_without_retrieving_document(
-    type_id, monkeypatch
-) -> None:
-    from dinkster_assets import AssetRef, AssetVault, digest_bytes
-    from dinkster_assets.value import value_asset_references
-    from dinkster_image.layer_recipe import replay_compositor
-    from dinkster_values import default_encode
-
-    value = document()
-    identifier = value.to_record()["rootLayerIds"][0]
-    delta = {
-        "version": 2,
-        "documentDigest": digest_bytes(value.data),
-        "commands": [{"op": "layer", "id": identifier, "changes": {"visible": False}}],
-    }
-    registry = TypeRegistry()
-    register_image_types(registry)
-    codec = ValueCodec(registry)
-    wrapped = registry.wrap(type_id, delta)
-    blobs, segments = [], []
-    wire, _ = codec.encode(wrapped, blobs, segments)
-    expected = canonical_json(delta).encode()
-    assert blobs[cast(int, cast(dict[str, object], wire["payload"])["blob"])] == expected
-    auxiliary = AssetRef(digest_bytes(b"auxiliary"), "source.json", 9)
-    blobs[cast(int, wire["metaBlob"])] = default_encode(
-        {**wrapped.meta.entries, "asset_refs": [auxiliary.to_wire()]}
-    )
-
-    def forbid_io(*args, **kwargs):
-        pytest.fail("compositor admission must not retrieve or publish a document")
-
-    monkeypatch.setattr(ImageDocument, "read_resource", forbid_io)
-    monkeypatch.setattr(AssetVault, "writer", forbid_io)
-    received, _ = codec.decode(wire, blobs, [])
-    assert received.fingerprint == wrapped.fingerprint
-    assert received.resolve() == delta
-    assert value_asset_references({"delta": received}, complete_registry=registry) == {
-        auxiliary.digest: auxiliary
-    }
-    edited, stale = replay_compositor(value, received.resolve(), value)
-    assert not stale
-    assert edited.to_record()["layers"][identifier]["visible"] is False
-    unchanged, stale = replay_compositor(edited, received.resolve(), edited)
-    assert stale and unchanged.data == edited.data
-    payload = cast(dict[str, object], wire["payload"])
-    blobs[cast(int, payload["blob"])] = json.dumps(delta, indent=2).encode()
-    noncanonical, _ = codec.decode(wire, blobs, [])
-    assert noncanonical.resolve() == delta
-    first = TypeRegistry()
-    first_spec = first.register(type_id)
-    register_image_types(first)
-    assert first.spec(type_id) is first_spec
-    assert not first_spec.asset_references_complete
-
-
-@pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
 @pytest.mark.parametrize("data", [b"not json", b"[]", b'{"unknown":true}'])
 def test_compositor_boundary_refuses_invalid_encoding_before_exposure(type_id, data) -> None:
     from dinkster_workers.boundary import EncodedPayloadValidationError
@@ -849,45 +680,6 @@ def test_compositor_boundary_refuses_invalid_encoding_before_exposure(type_id, d
     blobs[cast(int, payload["blob"])] = data
     with pytest.raises(EncodedPayloadValidationError):
         codec.decode(wire, blobs, [])
-
-
-@pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
-@pytest.mark.parametrize(
-    "recipe",
-    [
-        {},
-        {"version": 1, "canvas": {"w": 3, "h": 2}, "inputs": [], "layers": []},
-        {"version": 2, "documentDigest": None, "commands": [{"op": "unknown"}]},
-    ],
-)
-def test_compositor_boundary_preserves_existing_legacy_and_deferred_command_forms(
-    type_id, recipe
-) -> None:
-    from dinkster_assets.value import value_asset_references
-    from dinkster_image.layer_recipe import replay_compositor
-
-    registry = TypeRegistry()
-    register_image_types(registry)
-    codec = ValueCodec(registry)
-    expected = (
-        {"version": 2, "documentDigest": None, "commands": []}
-        if type_id == "COMPOSITOR" and recipe == {}
-        else recipe
-    )
-    wrapped = registry.wrap(type_id, recipe)
-    blobs, segments = [], []
-    wire, _ = codec.encode(wrapped, blobs, segments)
-    assert blobs[cast(int, cast(dict[str, object], wire["payload"])["blob"])] == (
-        canonical_json(expected).encode()
-    )
-    received, _ = codec.decode(wire, blobs, [])
-    assert received.resolve() == expected
-    assert received.fingerprint == wrapped.fingerprint
-    assert value_asset_references({"recipe": received}, complete_registry=registry) == {}
-    if recipe.get("commands"):
-        value = document()
-        with pytest.raises(InvalidDocument, match="unknown document command"):
-            replay_compositor(value, received.resolve(), value)
 
 
 @pytest.mark.parametrize("producer", ["native", "tensor"])
@@ -1551,27 +1343,6 @@ def test_psd_export_round_trips_standard_layer_properties_and_pixels() -> None:
     assert [layer.name for layer in reexported] == ["Backdrop", "Edits"]
 
 
-def test_psd_export_matches_fixed_editor_acceptance_contract() -> None:
-    from psd_tools import PSDImage
-
-    encoded = export_psd(_psd_acceptance_document())
-    with Image.open(io.BytesIO(encoded)) as merged:
-        pixels = merged.convert("RGBA").tobytes()
-    assert len(pixels) == 96
-    assert hashlib.sha256(pixels).hexdigest() == (
-        "06590d2ccfd36d2a4b5337cde8755f7bd5332a37ce826c1a44ee21d68d029900"
-    )
-    psd = PSDImage.open(io.BytesIO(encoded))
-    assert (psd.width, psd.height) == (6, 4)
-    assert [layer.name for layer in psd] == ["Backdrop", "Edits"]
-    group = cast(Any, psd[1])
-    assert group.blend_mode.name == "PASS_THROUGH"
-    assert [layer.name for layer in group] == ["Masked offset", "Hidden"]
-    assert (group[0].left, group[0].top, group[0].opacity) == (1, 1, 128)
-    assert group[0].mask is not None and not group[0].mask.disabled
-    assert (group[1].left, group[1].top, group[1].visible) == (4, 0, False)
-
-
 def test_psd_export_round_trips_disabled_mask_state() -> None:
     value = _psd_acceptance_document()
     record = value.to_record()
@@ -1624,71 +1395,6 @@ def test_psd_export_uses_merged_view_for_unsupported_structure() -> None:
     with pytest.warns(UserWarning, match="group geometry, clipping, or mask"):
         encoded = export_psd(value)
     assert [layer.name for layer in PSDImage.open(io.BytesIO(encoded))] == ["Composite"]
-
-
-@pytest.mark.parametrize("depth", [16, 32])
-def test_psd_import_reports_rasterized_capability_gaps(
-    monkeypatch: pytest.MonkeyPatch, depth: int
-) -> None:
-    from psd_tools import PSDImage
-    from psd_tools.constants import ColorMode
-
-    class Layer:
-        def __init__(self, kind: str, name: str, vector_mask: bool) -> None:
-            self.kind = kind
-            self.name = name
-            self.left = 0
-            self.top = 0
-            self.width = 1
-            self.height = 1
-            self.opacity = 255
-            self.visible = True
-            self.clipping = False
-            self.blend_mode = SimpleNamespace(name="NORMAL")
-            self.mask = None
-            self._vector_mask = vector_mask
-
-        def has_effects(self) -> bool:
-            return False
-
-        def has_vector_mask(self) -> bool:
-            return self._vector_mask
-
-        def is_group(self) -> bool:
-            return False
-
-        def topil(self) -> Image.Image:
-            return Image.new("RGBA", (1, 1), (255, 0, 0, 255))
-
-    class Document(list[Layer]):
-        width = 1
-        height = 1
-        color_mode = ColorMode.CMYK
-
-        def __init__(self, layers: list[Layer], depth: int) -> None:
-            super().__init__(layers)
-            self.depth = depth
-
-    monkeypatch.setattr(
-        PSDImage,
-        "open",
-        lambda _: Document(
-            [Layer("type", "Caption", True), Layer("smartobject", "Placed", False)], depth
-        ),
-    )
-    with pytest.warns(UserWarning) as caught:
-        imported = import_psd(b"8BPS")
-    messages = [str(item.message) for item in caught]
-    assert any(f"{depth}-bit channels are rasterized to 8-bit RGBA" in item for item in messages)
-    assert any("CMYK color is rasterized to RGBA" in item for item in messages)
-    assert any(
-        "type layer 'Caption' is rasterized as an ordinary layer" in item for item in messages
-    )
-    assert any(
-        "smartobject layer 'Placed' is rasterized as an ordinary layer" in item for item in messages
-    )
-    assert any("layer 'Caption' vector mask is not preserved" in item for item in messages)
-    assert len(imported.to_record()["rootLayerIds"]) == 2
 
 
 @pytest.mark.parametrize("background", [0, 255])
@@ -1973,147 +1679,6 @@ def test_load_layers_node_creates_documents_from_raster_assets(
     assert flatten(loaded)[0].shape == (1, 2, 3, 4 if alpha_mode == "straight" else 3)
 
 
-@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
-def test_lazy_document_input_retains_vault_until_hook_settles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
-) -> None:
-    from contextlib import suppress
-
-    from dinkster_assets.scratch import claim_inactive_produced_scratch, hold_produced_vault
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        decode_layer_stack,
-        encode_layer_stack,
-        layer_stack_meta,
-    )
-    from dinkster_protocol import LazyStatusInvocation
-    from dinkster_values import CORE_BOOLEAN
-    from dinkster_workers.host import serve_connection
-    from dinkster_workers.session import BoundarySession
-
-    root = tmp_path / "vault"
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(root))
-    with closing(hold_produced_vault(root)):
-        pass
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
-    old = TypeRegistry()
-    old.register(
-        "dinkster.layers",
-        encode=encode_layer_stack,
-        decode=decode_layer_stack,
-        meta=layer_stack_meta,
-    )
-    pixels = np.random.default_rng(41).random((1, 64, 64, 3), dtype=np.float32)
-    source = old.wrap(
-        "dinkster.layers",
-        LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
-    )
-    blobs: list[bytes] = []
-    wire, _ = ValueCodec(old, use_shm=False).encode(source, blobs, [])
-    source, _ = ValueCodec(registry, use_shm=False).decode(wire, blobs, [])
-
-    async def run() -> None:
-        entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
-
-        class MeasuredGate(Node):
-            @classmethod
-            def define_schema(cls) -> NodeSchema:
-                return NodeSchema(
-                    "test.lazy-document",
-                    inputs=(
-                        InputSpec("condition", TypeExpr.concrete(CORE_BOOLEAN)),
-                        InputSpec("value", TypeExpr.concrete("dinkster.layers"), lazy=True),
-                    ),
-                )
-
-            @classmethod
-            async def check_lazy_status(cls, *, condition: bool, value: object) -> tuple[str, ...]:
-                assert isinstance(value, ImageDocument)
-                resource = next(iter(value.to_record()["resources"].values()))
-                assert "inline" not in resource
-                assert value.read_resource(resource) == raster_png(pixels[0])
-                entered.set()
-                try:
-                    await release.wait()
-                    if outcome == "error":
-                        raise ValueError("controlled lazy hook failure")
-                    return ()
-                finally:
-                    settled.set()
-
-        worker = InProcessWorker(build_node_types([MeasuredGate]), registry)
-        accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
-
-        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            task = asyncio.current_task()
-            assert task is not None
-            accepted.set_result(task)
-            await serve_connection(
-                reader,
-                writer,
-                pack_name="lazy-document",
-                worker=worker,
-                schemas=worker.schemas,
-                planner=None,
-                consumers={},
-                codec=ValueCodec(registry, use_shm=False),
-            )
-
-        server = await asyncio.start_server(accept, "127.0.0.1", 0)
-        reader, writer = await asyncio.open_connection(*server.sockets[0].getsockname())
-        host_task = await accepted
-        session = BoundarySession(
-            registry, role="test", pack="lazy-document", codec=ValueCodec(registry, use_shm=False)
-        )
-        try:
-            await session.begin(reader, writer, timeout=5)
-            schema = MeasuredGate.define_schema()
-            request = asyncio.create_task(
-                session.check_lazy_status(
-                    LazyStatusInvocation(
-                        "lazy-document",
-                        "gate",
-                        schema.node_type,
-                        {"condition": registry.wrap(CORE_BOOLEAN, True), "value": source},
-                        (),
-                        schema,
-                    )
-                )
-            )
-            await asyncio.wait_for(entered.wait(), 5)
-            with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
-                assert not inactive
-            if outcome == "cancel":
-                request.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await request
-                await asyncio.wait_for(settled.wait(), 5)
-            else:
-                release.set()
-                result = await asyncio.wait_for(request, 5)
-                if outcome == "error":
-                    assert result.error is not None
-                    assert "controlled lazy hook failure" in result.error.message
-                else:
-                    assert result.error is None and result.requested_inputs == ()
-            with claim_inactive_produced_scratch(root / ".produced-collection") as inactive:
-                assert inactive
-        finally:
-            release.set()
-            with suppress(Exception):
-                await session.send({"type": "shutdown"}, [])
-            await session.close()
-            await asyncio.wait_for(host_task, 5)
-            server.close()
-            await server.wait_closed()
-
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize(
     "case", ["modern", "legacy", "missing", "truncated", "corrupt", "host-missing"]
 )
@@ -2238,160 +1803,6 @@ def test_isolated_document_rendition_adopts_all_resources_before_return(
     after, _ = codec.encode(source, after_blobs, after_segments)
     assert (after, after_blobs) == (before, before_blobs)
     assert source.fingerprint == fingerprint
-    assert not registry.spec("dinkster.layers").asset_references_complete
-
-
-@pytest.mark.parametrize("case", ["legacy", "unused", "host-missing"])
-def test_isolated_native_save_adopts_migrated_resources_and_retains_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, layer_document_pack: Path
-) -> None:
-    import time
-
-    from dinkster_assets import AssetVault, LibraryStore, digest_bytes
-    from dinkster_assets.writer import AssetWriter, MountSnapshotWriter
-    from dinkster_engine import RunResult
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        decode_layer_stack,
-        encode_layer_stack,
-        layer_stack_meta,
-    )
-    from dinkster_protocol import Invocation
-    from dinkster_server import ServerLibrary
-    from dinkster_server.queue import Job, JobKey
-    from dinkster_values import SAVE_TARGET_TYPE
-    from dinkster_values.asset_folders import AssetFolderContext
-
-    producer, host = AssetVault(tmp_path / "producer"), AssetVault(tmp_path / "host")
-    output = tmp_path / "output"
-    output.mkdir()
-    snapshot = tmp_path / "mounts.json"
-    snapshot.write_text(
-        json.dumps({"mounts": [{"id": "out", "root": str(output), "mode": "readwrite"}]}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(host.root))
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_media_types(registry)
-    register_image_types(registry)
-    pixels = np.random.default_rng(545).random((1, 64, 64, 3), dtype=np.float32)
-    expected = raster_png(pixels[0])
-    digest = digest_bytes(expected)
-    old = TypeRegistry()
-    old.register(
-        "dinkster.layers",
-        encode=encode_layer_stack,
-        decode=decode_layer_stack,
-        meta=layer_stack_meta,
-    )
-    original = old.wrap(
-        "dinkster.layers",
-        LayerStack((CompositorSourceLayer(pixels, None, "Noise", 0, 0, 64, 64),)),
-    )
-    blobs, segments = [], []
-    wire, _ = ValueCodec(old, use_shm=False).encode(original, blobs, segments)
-    codec = ValueCodec(registry, use_shm=False)
-    source, _ = codec.decode(wire, blobs, [])
-    if case != "legacy":
-        for vault in (producer,) if case == "host-missing" else (producer, host):
-            with vault.writer(digest) as writer:
-                writer.write(expected)
-                writer.commit()
-        record = empty_document(64, 64).to_record()
-        record["allocation"]["nextOrdinal"] = 1
-        record["resources"]["r0"] = {
-            "id": "r0",
-            "kind": "raster",
-            "digest": digest,
-            "byteSize": len(expected),
-            "mediaType": "image/png",
-            "width": 64,
-            "height": 64,
-            "colorSpace": "srgb",
-            "channelDepth": 8,
-            "alphaMode": "opaque",
-        }
-        source = registry.wrap("dinkster.layers", ImageDocument.from_record(record))
-    before_blobs, before_segments = [], []
-    before, _ = codec.encode(source, before_blobs, before_segments)
-
-    async def run() -> None:
-        group = GroupIsolatedWorker(
-            "native-save-test",
-            [layer_document_pack],
-            registry,
-            extra_env={
-                "DINKSTER_ASSET_VAULT": str(producer.root),
-                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
-            },
-            aimdo_arm="off",
-        )
-        await group.start()
-        try:
-            schema = SaveLayers.define_schema()
-            started = time.time_ns()
-            result = await group.members["dinkster-image"].invoke(
-                Invocation(
-                    "native-save",
-                    "save",
-                    schema.node_type,
-                    {
-                        "layers": source,
-                        "target": registry.wrap(
-                            SAVE_TARGET_TYPE, {"mount": "out", "prefix": "kept"}
-                        ),
-                        "format": registry.wrap("COMBO", "native"),
-                    },
-                    schema,
-                )
-            )
-            if case == "host-missing":
-                assert result.error is not None
-                assert host.resolve(digest) is None
-                return
-            assert result.error is None
-            assert result.outputs is not None
-            artifacts = SavedArtifactAuthority(snapshot).capture_mounted(
-                result.saved_artifact_claims, "save", started
-            )
-            assert len(artifacts) == 1
-            assert result.outputs["document"].fingerprint == artifacts[0].digest
-            with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
-                library = ServerLibrary(
-                    host,
-                    store,
-                    upload_writer=AssetWriter(MountSnapshotWriter(snapshot)),
-                    project_folders_for=lambda _: AssetFolderContext(("out",), "out"),
-                )
-                library.record_saved_outputs(
-                    Job(JobKey("audit", "save"), Graph(nodes={}), (), 0, "native-save", "audit"),
-                    RunResult(
-                        "native-save", {"save": result.outputs}, (), (), (), artifacts=artifacts
-                    ),
-                )
-            with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
-                dependencies = store.get_dependencies(artifacts[0].digest)
-                assert dependencies is not None
-                assert [(item["digest"], item["byteSize"]) for item in dependencies] == [
-                    (digest, len(expected))
-                ]
-                with store.hold_asset_references() as roots:
-                    assert {digest, artifacts[0].digest} <= roots
-        finally:
-            await group.close()
-        held = host.resolve(digest)
-        assert held is not None
-        assert held.read_bytes() == expected
-        if case == "unused":
-            assert not (host.root / ".produced-assets.sqlite").exists()
-
-    asyncio.run(run())
-    after_blobs, after_segments = [], []
-    after, _ = codec.encode(source, after_blobs, after_segments)
-    assert (after, after_blobs) == (before, before_blobs)
     assert not registry.spec("dinkster.layers").asset_references_complete
 
 

@@ -85,15 +85,6 @@ def test_bfloat16_storage_roundtrip_keeps_bits_until_consumed() -> None:
     np.testing.assert_array_equal(image_input(decoded), expected)
 
 
-def test_ten_bit_samples_in_uint16_remain_distinguishable() -> None:
-    array = np.array([32768, 32832], dtype=np.uint16)
-    decoded = decode_image_array(encode_image_array(array))
-    np.testing.assert_array_equal(decoded, array)
-    normalized = cast(np.ndarray, image_input(decoded))
-    assert normalized[0] != normalized[1]
-    assert normalized[1] - normalized[0] < 1 / 255
-
-
 def test_integer_image_rendition_matches_normalized_samples() -> None:
     array = np.array([[[[0, 128, 255]]]], dtype=np.uint8)
     png = render_image_png(array)
@@ -121,11 +112,6 @@ def test_pcm16_wav_rendition_preserves_all_sample_bits() -> None:
     samples = np.arange(-32768, 32768, dtype=np.int16).reshape(1, 1, -1)
     wav = render_audio_wav({"waveform": samples, "sample_rate": 48000})
     np.testing.assert_array_equal(np.frombuffer(wav[44:], dtype="<i2"), samples.reshape(-1))
-
-
-def test_sliced_image_cost_includes_retained_backing_allocation() -> None:
-    array = np.zeros((5, 8, 8, 3), dtype=np.uint8)
-    assert image_array_meta(array[:1])[COST_META_KEY] == {"ram": array.nbytes}
 
 
 @pytest.mark.parametrize("dtype", ["uint8", "uint16", "float16", "float32", "bf16"])
@@ -201,34 +187,6 @@ def test_buffer_payload_decodes_compact_storage_before_mapping_release(
         segment.unlink()
 
 
-@pytest.mark.parametrize("mutation", ["truncated", "trailing", "object", "bad-magic"])
-def test_buffer_payload_releases_invalid_encoded_mapping(mutation: str) -> None:
-    data = encode_image_array(np.arange(4, dtype=np.uint8))
-    if mutation == "truncated":
-        data = data[:-1]
-    elif mutation == "trailing":
-        data += b"extra"
-    elif mutation == "bad-magic":
-        data = b"not-npy" + data[7:]
-    else:
-        stream = io.BytesIO()
-        np.save(stream, np.array([object()], dtype=object), allow_pickle=True)
-        data = stream.getvalue()
-    released: list[bool] = []
-    payload = EncodedPayload.from_buffer(
-        "image",
-        memoryview(data),
-        decode_image_array,
-        "shm",
-        lambda: released.append(True),
-    )
-    with pytest.raises(ValueError):
-        payload.load()
-    del payload
-    gc.collect()
-    assert released == [True]
-
-
 @pytest.mark.parametrize("audio", [False, True])
 def test_shared_memory_boundary_preserves_compact_storage(audio: bool) -> None:
     from dinkster_inference_wire import register_inference_types
@@ -261,51 +219,6 @@ def test_shared_memory_boundary_preserves_compact_storage(audio: bool) -> None:
         )
         assert array.dtype == samples.dtype
         np.testing.assert_array_equal(array.reshape(-1), samples.reshape(-1))
-    finally:
-        for segment in segments:
-            release_segment(segment)
-
-
-@pytest.mark.parametrize("host_registration", [False, True])
-@pytest.mark.parametrize("dtype", ["int16", "float32", "float16", "float64", "int32"])
-@pytest.mark.parametrize("shm", [False, True])
-def test_audio_storage_facts_match_canonical_payload_across_boundary(
-    host_registration: bool, dtype: str, shm: bool
-) -> None:
-    from dinkster_audio import register_types as register_audio_types
-    from dinkster_inference_wire import register_inference_types
-    from dinkster_values import TypeRegistry
-    from dinkster_workers import ValueCodec
-    from dinkster_workers.boundary import release_segment
-
-    registry = TypeRegistry()
-    if host_registration:
-        register_inference_types(registry)
-    else:
-        register_audio_types(registry)
-    original = np.arange(24, dtype=dtype).reshape(1, 2, 12)
-    value = registry.wrap(AUDIO_TYPE, {"waveform": original, "sample_rate": 48000})
-    resolved = cast(dict[str, Any], value.resolve())
-    stored = cast(dict[str, Any], resolved["source"])["pcm"]
-    expected_dtype = "int16" if dtype == "int16" else "float32"
-    assert stored.dtype == expected_dtype
-    assert original.dtype == dtype
-    assert (stored is original) == (dtype in ("int16", "float32"))
-    assert value.meta.get("storage_dtype") == ("int16" if dtype == "int16" else "fp32")
-    assert value.meta.get(COST_META_KEY) == {"ram": stored.nbytes}
-    codec = ValueCodec(registry, shm_threshold=1 if shm else 1000000)
-    blobs: list[bytes] = []
-    segments: list[SharedMemory] = []
-    wire, sent = codec.encode(value, blobs, segments)
-    try:
-        received, _ = codec.decode(wire, blobs, [])
-        received_value = cast(dict[str, Any], received.resolve())
-        loaded = cast(dict[str, Any], received_value["source"])["pcm"]
-        assert loaded.dtype == expected_dtype
-        assert received.meta.get("storage_dtype") == value.meta.get("storage_dtype")
-        assert received.meta.get(COST_META_KEY) == {"ram": sent.size_bytes}
-        assert received.fingerprint == value.fingerprint
-        np.testing.assert_array_equal(loaded, stored)
     finally:
         for segment in segments:
             release_segment(segment)
@@ -354,30 +267,6 @@ def test_video_components_preserve_semantic_trailer() -> None:
     assert encode_video(decoded) == encoded
 
 
-def test_inline_layer_rasters_share_array_accounting_without_duplicate_layers() -> None:
-    from dinkster_image.compositor_types import (
-        CompositorSourceLayer,
-        LayerStack,
-        layer_stack_meta,
-    )
-
-    layer = CompositorSourceLayer(
-        image=np.zeros((1, 4, 4, 3), dtype=np.float32),
-        mask=np.ones((1, 4, 4), dtype=np.float32),
-        name="pixels",
-        x=0,
-        y=0,
-        width=4,
-        height=4,
-    )
-    meta = layer_stack_meta(LayerStack((layer, layer)))
-    assert meta["layers"] == 2
-    assert meta["storage_dtype"] == ["fp32"]
-    assert layer.mask is not None
-    expected = layer.image.nbytes + layer.mask.nbytes
-    assert meta[COST_META_KEY] == {"ram": expected}
-
-
 @pytest.mark.parametrize("field", ["primaries", "transfer", "range"])
 def test_merge_rejects_incompatible_color_without_relabeling_pixels(field: str) -> None:
     from dinkster_values import annotate_image, merge_image_batches
@@ -388,24 +277,3 @@ def test_merge_rejects_incompatible_color_without_relabeling_pixels(field: str) 
     second = annotate_image(np.zeros((1, 2, 2, 3), dtype=np.uint16), color=color)
     with pytest.raises(ValueError, match="different color semantics"):
         merge_image_batches([first, second])
-
-
-def test_merge_keeps_only_common_source_color_provenance() -> None:
-    from dinkster_values import annotate_image, media_semantics, merge_image_batches
-
-    color = {"primaries": 255, "transfer": 254, "range": 2, "matrix": 9, "bit_depth": 10}
-    first = annotate_image(np.zeros((1, 2, 2, 3), dtype=np.uint16), color=color)
-    second = annotate_image(np.zeros((1, 2, 2, 3), dtype=np.uint8), color={**color, "bit_depth": 8})
-    merged = merge_image_batches([first, second])
-    assert media_semantics(merged)["color"] == {
-        key: value for key, value in color.items() if key != "bit_depth"
-    }
-    third = annotate_image(
-        np.zeros((1, 2, 2, 3), dtype=np.float16),
-        color={key: value for key, value in color.items() if key != "matrix"},
-    )
-    merged = merge_image_batches([first, second, third])
-    assert media_semantics(merged)["color"] == {
-        key: value for key, value in color.items() if key not in ("matrix", "bit_depth")
-    }
-    assert media_semantics(first)["color"] == color

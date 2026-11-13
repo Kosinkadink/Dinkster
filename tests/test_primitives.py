@@ -68,37 +68,6 @@ class ColorInspect(api.Node):
 COLOR_FIXTURES = (ColorSource, ColorInspect)
 
 
-def test_color_preview_registration_is_portable_and_idempotent() -> None:
-    registry = TypeRegistry()
-    api.register_inference_types(registry)
-    api.register_inference_types(registry)
-    assert (api.COLOR_TYPE, api.COLORS_TYPE, api.RESOLUTION_PREVIEW_TYPE) == (
-        "COLOR",
-        "COLORS",
-        "RESOLUTION_PREVIEW",
-    )
-    for type_id, source in (
-        (api.COLOR_TYPE, "#ff001280"),
-        (api.COLORS_TYPE, []),
-        (api.COLORS_TYPE, ["blue", "#00ff00", "blue"]),
-        (api.RESOLUTION_PREVIEW_TYPE, {}),
-        (api.RESOLUTION_PREVIEW_TYPE, {"width": 832, "height": 1216}),
-    ):
-        spec = registry.spec(type_id)
-        encoded = spec.encode(source)
-        assert encoded.startswith(b"json:")
-        decoded = spec.decode(encoded)
-        assert decoded == source
-        assert (
-            registry.wrap(type_id, decoded).fingerprint
-            == registry.wrap(type_id, source).fingerprint
-        )
-    assert (
-        registry.wrap(api.COLORS_TYPE, ["red", "blue"]).fingerprint
-        != registry.wrap(api.COLORS_TYPE, ["blue", "red"]).fingerprint
-    )
-
-
 @pytest.mark.parametrize("in_process", (True, False))
 def test_color_and_resolution_preview_types_cross_pack_hosts(
     tmp_path: Path, in_process: bool

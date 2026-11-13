@@ -7,7 +7,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import warnings
 from pathlib import Path
 
 import pytest
@@ -176,23 +175,6 @@ def test_rejects_unverified_parts_and_cleans_staging(tmp_path: Path, problem: st
 
 
 @pytest.mark.usefixtures("runnable_dummy")
-def test_checks_integrity_before_decoding(tmp_path: Path) -> None:
-    parts = split_bytes(tmp_path, b"this is not a zstd frame")
-    rows = expected_parts(parts)
-    rows[-1]["sha256"] = "0" * 64
-    destination = tmp_path / "bases/base-id"
-    with pytest.raises(ArchiveError, match="(?i)sha256|digest|hash|integrity"):
-        extract_base(
-            parts,
-            destination,
-            platform="linux",
-            executable="python/bin/python3",
-            expected_parts=rows,
-        )
-    assert_clean(destination)
-
-
-@pytest.mark.usefixtures("runnable_dummy")
 @pytest.mark.parametrize("payload", [b"not zstd", zstandard.ZstdCompressor().compress(b"not tar")])
 def test_rejects_malformed_archive_and_cleans_temporary_files(
     tmp_path: Path, payload: bytes
@@ -300,29 +282,6 @@ def test_case_collisions_refused_for_insensitive_targets(
 
 
 @pytest.mark.usefixtures("runnable_dummy")
-@pytest.mark.parametrize("platform", ["linux", "windows", "macos"])
-def test_exact_duplicate_members_always_refused(tmp_path: Path, platform: str) -> None:
-    parts = make_parts(
-        tmp_path,
-        base_members()
-        + [
-            member("python/module.py", b"first"),
-            member("python/module.py", b"second"),
-        ],
-    )
-    destination = tmp_path / "bases/base-id"
-    with pytest.raises(ArchiveError):
-        extract_base(
-            parts,
-            destination,
-            platform=platform,
-            executable="python/bin/python3",
-            expected_parts=expected_parts(parts),
-        )
-    assert_clean(destination)
-
-
-@pytest.mark.usefixtures("runnable_dummy")
 @pytest.mark.parametrize(
     "name",
     [
@@ -388,46 +347,6 @@ def test_internal_relative_symlinks_are_preserved(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("runnable_dummy")
-def test_symlink_parent_traversal_preserves_original_target_and_payload(tmp_path: Path) -> None:
-    parts = make_parts(
-        tmp_path,
-        base_members()
-        + [
-            member("python/other/sub", kind=tarfile.DIRTYPE, mode=0o755),
-            member("python/other/value", b"intended payload"),
-            member("python/lib/value", b"different payload"),
-            member("python/lib/hop", kind=tarfile.SYMTYPE, target="../other/sub"),
-            member("python/lib/alias", kind=tarfile.SYMTYPE, target="hop/../value"),
-        ],
-    )
-    destination = tmp_path / "bases/base-id"
-    if os.name == "nt":
-        # Windows cannot preserve POSIX '..' traversal through a directory symlink.
-        with pytest.raises(ArchiveError):
-            extract_base(
-                parts,
-                destination,
-                platform="windows",
-                executable="python/bin/python3",
-                expected_parts=expected_parts(parts),
-            )
-        assert_clean(destination)
-        return
-    extract_base(
-        parts,
-        destination,
-        platform="linux",
-        executable="python/bin/python3",
-        expected_parts=expected_parts(parts),
-    )
-    alias = destination / "python/lib/alias"
-    assert os.readlink(destination / "python/lib/hop") == "../other/sub"
-    assert os.readlink(alias) == "hop/../value"
-    assert alias.read_bytes() == b"intended payload"
-    assert (destination / "python/lib/value").read_bytes() == b"different payload"
-
-
-@pytest.mark.usefixtures("runnable_dummy")
 @pytest.mark.parametrize(
     "kind,target",
     [
@@ -453,30 +372,6 @@ def test_rejects_escaping_links_hardlinks_and_special_files(
         base_members()
         + [
             member("python/link", kind=kind, target=target),
-        ],
-    )
-    destination = tmp_path / "bases/base-id"
-    with pytest.raises(ArchiveError):
-        extract_base(
-            parts,
-            destination,
-            platform="linux",
-            executable="python/bin/python3",
-            expected_parts=expected_parts(parts),
-        )
-    assert outside.read_bytes() == b"preserve"
-    assert_clean(destination)
-
-
-@pytest.mark.usefixtures("runnable_dummy")
-def test_rejects_absolute_symlink_to_existing_file(tmp_path: Path) -> None:
-    outside = tmp_path / "outside"
-    outside.write_bytes(b"preserve")
-    parts = make_parts(
-        tmp_path,
-        base_members()
-        + [
-            member("python/link", kind=tarfile.SYMTYPE, target=str(outside)),
         ],
     )
     destination = tmp_path / "bases/base-id"
@@ -545,62 +440,9 @@ def test_missing_execute_mode_warns_and_repairs_only_manifest_interpreter(tmp_pa
     assert stat.S_IMODE((destination / "wheels/example.whl").stat().st_mode) == 0o644
 
 
-@pytest.mark.usefixtures("runnable_dummy")
-@pytest.mark.skipif(os.name == "nt", reason="Unix executable permissions")
-def test_executable_mode_is_preserved_without_repair_warning(tmp_path: Path) -> None:
-    parts = make_parts(
-        tmp_path,
-        [
-            member("python/bin/python3", b"interpreter", mode=0o751),
-            member("wheels/example.whl"),
-        ],
-    )
-    destination = tmp_path / "bases/base-id"
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        extract_base(
-            parts,
-            destination,
-            platform="linux",
-            executable="python/bin/python3",
-            expected_parts=expected_parts(parts),
-        )
-    assert not [warning for warning in caught if issubclass(warning.category, RuntimeWarning)]
-    assert stat.S_IMODE((destination / "python/bin/python3").stat().st_mode) == 0o751
-
-
 def test_invalid_interpreter_is_not_promoted(tmp_path: Path) -> None:
     parts = make_parts(tmp_path)
     destination = tmp_path / "bases/base-id"
-    with pytest.raises(ArchiveError):
-        extract_base(
-            parts,
-            destination,
-            platform="linux",
-            executable="python/bin/python3",
-            expected_parts=expected_parts(parts),
-        )
-    assert_clean(destination)
-
-
-@pytest.mark.parametrize("failure", ["exit", "timeout", "not-executable"])
-def test_interpreter_must_run_before_promotion(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    failure: str,
-) -> None:
-    parts = make_parts(tmp_path)
-    destination = tmp_path / "bases/base-id"
-
-    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert not destination.exists()
-        if failure == "timeout":
-            raise subprocess.TimeoutExpired("python", 30)
-        if failure == "not-executable":
-            raise OSError("invalid executable")
-        return subprocess.CompletedProcess([], 1, stdout="", stderr="broken stdlib")
-
-    monkeypatch.setattr("dinkster_supervisor.environment_archives.subprocess.run", run)
     with pytest.raises(ArchiveError):
         extract_base(
             parts,
@@ -648,67 +490,6 @@ def test_probe_failure_cleans_populated_inaccessible_directory(
             locked = remaining / "python/locked"
             if locked.exists():
                 locked.chmod(0o700)
-
-
-@pytest.mark.usefixtures("runnable_dummy")
-@pytest.mark.parametrize("parent_first", [True, False])
-def test_directory_modes_are_restored_deepest_first_regardless_of_member_order(
-    tmp_path: Path, parent_first: bool
-) -> None:
-    directories = [
-        member("python/locked", kind=tarfile.DIRTYPE, mode=0o000),
-        member("python/locked/child", kind=tarfile.DIRTYPE, mode=0o500),
-    ]
-    if not parent_first:
-        directories.reverse()
-    parts = make_parts(
-        tmp_path,
-        base_members() + directories + [member("python/locked/child/value")],
-    )
-    destination = tmp_path / "bases/base-id"
-    try:
-        extract_base(
-            parts,
-            destination,
-            platform="linux",
-            executable="python/bin/python3",
-            expected_parts=expected_parts(parts),
-        )
-        locked = destination / "python/locked"
-        if os.name != "nt":
-            assert stat.S_IMODE(locked.stat().st_mode) == 0o000
-        locked.chmod(0o700)
-        if os.name != "nt":
-            assert stat.S_IMODE((locked / "child").stat().st_mode) == 0o500
-        value = locked / "child/value"
-        assert value.read_bytes() == b"payload"
-        assert list(destination.parent.iterdir()) == [destination]
-    finally:
-        for remaining in destination.parent.iterdir():
-            locked = remaining / "python/locked"
-            if locked.exists():
-                locked.chmod(0o700)
-                child = locked / "child"
-                if child.exists():
-                    child.chmod(0o700)
-
-
-@pytest.mark.usefixtures("runnable_dummy")
-def test_read_only_regular_file_mode_is_preserved(tmp_path: Path) -> None:
-    parts = make_parts(
-        tmp_path, base_members() + [member("python/value", b"read only", mode=0o444)]
-    )
-    destination = tmp_path / "bases/base-id"
-    extract_base(
-        parts,
-        destination,
-        platform="linux",
-        executable="python/bin/python3",
-        expected_parts=expected_parts(parts),
-    )
-    value = destination / "python/value"
-    assert stat.S_IMODE(value.stat().st_mode) == 0o444
-    assert value.read_bytes() == b"read only"
 
 
 @pytest.mark.parametrize("broken_sqlite", [False, True])

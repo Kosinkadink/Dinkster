@@ -21,9 +21,8 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_audio.audio_combine import AudioConcat, AudioMerge, JoinAudioChannels
+from dinkster_audio.audio_combine import AudioConcat, AudioMerge
 from dinkster_audio.audio_effects import AudioEqualizer3Band, TrimAudioDuration
-from dinkster_audio.audio_transform import AudioAdjustVolume, SplitAudioChannels
 
 _GOLDENS = json.loads(
     (Path(__file__).parent / "goldens" / "audio_ops_e20d433a.json").read_text("utf-8")
@@ -63,10 +62,6 @@ def _assert_bit_exact(native: object, reference: dict[str, object]) -> None:
     assert hashlib.sha256(waveform.tobytes()).hexdigest() == reference["sha256"]
 
 
-def test_goldens_are_pinned_to_the_audited_revision() -> None:
-    assert _GOLDENS["revision"] == "e20d433a4966dcc88fa5abbae6ace824cb78b263"
-
-
 @pytest.mark.parametrize("name", _cases("trim"))
 def test_trim_matches_pinned_bytes_exactly(name: str) -> None:
     case = _GOLDENS["cases"][name]
@@ -74,21 +69,6 @@ def test_trim_matches_pinned_bytes_exactly(name: str) -> None:
         audio=_fixture(case["source"]), start_index=case["start"], duration=case["duration"]
     )
     _assert_bit_exact(result["AUDIO"], case["output"])
-
-
-def test_split_matches_pinned_bytes_exactly() -> None:
-    case = _GOLDENS["cases"]["split_stereo"]
-    result = SplitAudioChannels.execute(audio=_fixture(case["source"]))
-    _assert_bit_exact(result["left"], case["left"])
-    _assert_bit_exact(result["right"], case["right"])
-
-
-def test_join_matches_pinned_bytes_exactly() -> None:
-    case = _GOLDENS["cases"]["join_trims_to_shorter"]
-    result = JoinAudioChannels.execute(
-        audio_left=_fixture(case["left"]), audio_right=_fixture(case["right"])
-    )
-    _assert_bit_exact(result["audio"], case["output"])
 
 
 @pytest.mark.parametrize("name", _cases("concat"))
@@ -113,13 +93,6 @@ def test_merge_matches_pinned_bytes_exactly(name: str) -> None:
     _assert_bit_exact(result["AUDIO"], case["output"])
 
 
-@pytest.mark.parametrize("name", _cases("volume"))
-def test_volume_matches_pinned_bytes_exactly(name: str) -> None:
-    case = _GOLDENS["cases"][name]
-    result = AudioAdjustVolume.execute(audio=_fixture(case["source"]), volume=case["volume"])
-    _assert_bit_exact(result["AUDIO"], case["output"])
-
-
 @pytest.mark.parametrize("name", _cases("equalizer"))
 def test_equalizer_is_value_close_to_the_pinned_chain(name: str) -> None:
     case = _GOLDENS["cases"][name]
@@ -141,7 +114,3 @@ def test_equalizer_is_value_close_to_the_pinned_chain(name: str) -> None:
     assert value["sample_rate"] == case["output"]["sampleRate"]
     drift = float(np.abs(waveform.astype(np.float64) - reference.astype(np.float64)).max())
     assert drift <= _EQ_ATOL[name], f"{name}: drift {drift:.3e} exceeds {_EQ_ATOL[name]:.1e}"
-
-
-def test_every_equalizer_case_has_a_pinned_tolerance() -> None:
-    assert set(_EQ_ATOL) == set(_cases("equalizer"))

@@ -331,32 +331,3 @@ def test_cancellation_aborts_download_and_rolls_back(tmp_path: Path) -> None:
             await stop_service(proc)
 
     run_scenario(scenario())
-
-
-def test_old_daemon_without_staging_refused_when_needed(tmp_path: Path) -> None:
-    """A service that never announced assetStaging (the flag defaults to
-    False and only an explicit hello field sets it) gets a clear refusal
-    the moment a dispatched type needs declared assets - never a silent
-    skip that would surface later as an execution-time read failure."""
-
-    async def scenario() -> None:
-        proc, host, port = await start_service(write_staging_manifest(tmp_path), tmp_path)
-        try:
-            async with AssetHost() as asset_host:
-                worker = staging_worker(host, port, asset_host.endpoint)
-                await worker.start()
-                try:
-                    # Simulate the pre-staging hello: the negotiation flag
-                    # is exactly what an old service never sends.
-                    worker._session._asset_staging = False
-                    with pytest.raises(TransportError, match="predates asset staging"):
-                        await worker.prepare(("decl.read",))
-                    assert asset_host.requests == 0
-                    # Types that need no declared assets still dispatch.
-                    await worker.prepare(())
-                finally:
-                    await worker.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())

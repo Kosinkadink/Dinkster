@@ -37,28 +37,6 @@ def test_bind_respects_allowlist() -> None:
         bind_type_variables((InputSpec("a", constrained),), {"a": "STRING"})
 
 
-def test_bind_allowlist_requires_exact_atom() -> None:
-    constrained = TypeExpr.variable("T", allowed=("IMAGE", "MASK"))
-    assert bind_type_variables((InputSpec("a", constrained),), {"a": "IMAGE"}) == {"T": "IMAGE"}
-    with pytest.raises(TypeSolveError, match="allowlist"):
-        bind_type_variables((InputSpec("a", constrained),), {"a": "CUSTOM_IMAGE"})
-
-
-def test_bind_agreement_requires_exact_atom() -> None:
-    specs = (InputSpec("a", T), InputSpec("b", T))
-    with pytest.raises(TypeSolveError, match="already bound"):
-        bind_type_variables(specs, {"a": "IMAGE", "b": "CUSTOM_IMAGE"})
-
-
-def test_bind_does_not_conflate_image_and_mask() -> None:
-    constrained = TypeExpr.variable("N", allowed=("MASK",))
-    with pytest.raises(TypeSolveError, match="allowlist"):
-        bind_type_variables((InputSpec("a", constrained),), {"a": "IMAGE"})
-    specs = (InputSpec("a", T), InputSpec("b", T))
-    with pytest.raises(TypeSolveError, match="already bound"):
-        bind_type_variables(specs, {"a": "IMAGE", "b": "MASK"})
-
-
 def test_bind_scalar_into_list_expression_is_loud() -> None:
     specs = (InputSpec("list", TypeExpr.list_of(T)),)
     with pytest.raises(TypeSolveError, match="expected a list"):

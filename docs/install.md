@@ -372,6 +372,15 @@ can still be restored exactly. Published setup never selects development mode
 automatically. See [development generations](supported/installed-pack-startup.md#development-generations-from-local-folders)
 for rebuilding, starting, inspecting and restoring the captured runtime.
 
+To edit without rebuilding, add `--live-engine`, `--live-pack /absolute/pack`
+and/or `--live-library /absolute/helper` to the plan and build commands. Each
+live pack/library must also be selected with its source option. Mark inference
+with `--library-source /absolute/dinkster-inference --live-library /absolute/dinkster-inference`.
+Pack code reloads while serving; engine and library changes need stop/start,
+not another build. Dependency or manifest edits need a new build. Live packs
+require isolated hosting. Live generations change with their author folders and
+cannot be restored exactly; capture without live marks for exact recovery.
+
 ### Explicit from-scratch development setup
 
 Published bundles remain the supported default. For development or a platform

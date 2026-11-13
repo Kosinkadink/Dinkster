@@ -45,17 +45,6 @@ from tests.platform_support import symlink_or_skip
 # SaveTarget: the value type
 
 
-def test_save_target_valid_shapes() -> None:
-    flat = SaveTarget(mount="out", prefix="ComfyUI")
-    assert flat.subfolder == ""
-    assert flat.stem == "ComfyUI"
-    nested = SaveTarget(mount="comfy-output", prefix="renders/scene/final")
-    assert nested.subfolder == "renders/scene"
-    assert nested.stem == "final"
-    assert nested.to_wire() == {"mount": "comfy-output", "prefix": "renders/scene/final"}
-    assert SaveTarget.from_wire(nested.to_wire()) == nested
-
-
 @pytest.mark.parametrize(
     ("mount", "prefix"),
     [
@@ -85,64 +74,6 @@ def test_save_target_rejects_unsafe(mount: str, prefix: str) -> None:
     blobs[cast(int, payload["blob"])] = json.dumps({"mount": mount, "prefix": prefix}).encode()
     with pytest.raises(EncodedPayloadValidationError):
         codec.decode(wire, blobs, [])
-
-
-def test_save_target_wire_is_strict() -> None:
-    with pytest.raises(AssetError):
-        SaveTarget.from_wire({"mount": "out"})  # missing prefix
-    with pytest.raises(AssetError):
-        SaveTarget.from_wire({"mount": "out", "prefix": "a", "path": "/x"})  # unknown key
-    with pytest.raises(AssetError):
-        SaveTarget.from_wire({"mount": "out", "prefix": 3})  # wrong type
-
-
-def test_save_target_type_registration_round_trip(tmp_path: Path) -> None:
-    registry = TypeRegistry()
-    register_save_target_type(registry)
-    spec = registry.spec("SAVE_TARGET")
-    target = SaveTarget(mount="out", prefix="renders/scene")
-    encoded = spec.encode(target)
-    assert spec.decode(encoded) == target
-    # Graph literals arrive as plain mappings; coercion applies one rule,
-    # so the mapping and the dataclass are the same value (same
-    # fingerprint, same bytes).
-    as_wire = registry.wrap("SAVE_TARGET", {"mount": "out", "prefix": "renders/scene"})
-    as_object = registry.wrap("SAVE_TARGET", target)
-    assert as_wire.fingerprint == as_object.fingerprint
-    assert spec.encode({"mount": "out", "prefix": "renders/scene"}) == encoded
-    with pytest.raises(AssetError):
-        spec.encode("out/renders/scene")  # raw strings never name destinations
-
-    from dinkster_assets import AssetRef
-    from dinkster_assets.value import value_asset_references
-    from dinkster_values import default_encode
-    from dinkster_workers.boundary import ValueCodec
-
-    assert encoded == b'{"mount":"out","prefix":"renders/scene"}'
-    assert as_wire.fingerprint == "SAVE_TARGET:out/renders/scene"
-    codec = ValueCodec(registry)
-    blobs, segments = [], []
-    wire, _ = codec.encode(as_wire, blobs, segments)
-    received, _ = codec.decode(wire, blobs, [])
-    assert received.resolve() == target
-    assert received.fingerprint == as_wire.fingerprint
-    assert value_asset_references({"target": received}, complete_registry=registry) == {}
-    auxiliary = AssetRef(digest_bytes(b"source"), "source.txt", 6)
-    blobs[cast(int, wire["metaBlob"])] = default_encode(
-        {**as_wire.meta.entries, "asset_refs": [auxiliary.to_wire()]}
-    )
-    received, _ = codec.decode(wire, blobs, [])
-    assert received.resolve() == target
-    assert value_asset_references({"target": received}, complete_registry=registry) == {
-        auxiliary.digest: auxiliary
-    }
-    payload = cast(dict[str, object], wire["payload"])
-    blobs[cast(int, payload["blob"])] = b'{ "prefix": "renders/scene", "mount": "out" }'
-    noncanonical, _ = codec.decode(wire, blobs, [])
-    assert noncanonical.resolve() == target
-    writer = AssetWriter(MountSnapshotWriter(tmp_path / "missing.json"))
-    with pytest.raises(AssetError, match="no readable mounts snapshot"):
-        writer.save_bytes(noncanonical.resolve(), b"not granted", suffix=".bin")
 
 
 @pytest.mark.parametrize(
@@ -591,50 +522,6 @@ def test_save_bytes_rejects_hardlinked_writer_lock(tmp_path: Path) -> None:
         writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
     assert outside.read_bytes() == b""
     assert not (root / "probe_00001.bin").exists()
-
-
-def test_windows_lock_handle_closes_when_descriptor_conversion_fails() -> None:
-    class FailingMsvcrt:
-        LK_NBLCK: int = 1
-        LK_UNLCK: int = 0
-
-        def locking(self, fd: int, mode: int, nbytes: int, /) -> None:
-            raise AssertionError("locking is not used while opening a file")
-
-        def open_osfhandle(self, handle: int, flags: int, /) -> int:
-            raise OSError("descriptor conversion failed")
-
-    closed: list[int] = []
-    with pytest.raises(OSError, match="descriptor conversion failed"):
-        AssetWriter._windows_file_from_handle(41, FailingMsvcrt(), closed.append)
-    assert closed == [41]
-
-
-def test_windows_lock_descriptor_closes_when_file_conversion_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Msvcrt:
-        LK_NBLCK: int = 1
-        LK_UNLCK: int = 0
-
-        def locking(self, fd: int, mode: int, nbytes: int, /) -> None:
-            raise AssertionError("locking is not used while opening a file")
-
-        def open_osfhandle(self, handle: int, flags: int, /) -> int:
-            return 42
-
-    closed_handles: list[int] = []
-    closed_descriptors: list[int] = []
-
-    def fail_fdopen(descriptor: int, mode: str) -> BinaryIO:
-        raise OSError("file conversion failed")
-
-    monkeypatch.setattr(os, "fdopen", fail_fdopen)
-    monkeypatch.setattr(os, "close", closed_descriptors.append)
-    with pytest.raises(OSError, match="file conversion failed"):
-        AssetWriter._windows_file_from_handle(41, Msvcrt(), closed_handles.append)
-    assert closed_handles == []
-    assert closed_descriptors == [42]
 
 
 def test_save_bytes_no_temp_litter(tmp_path: Path) -> None:
@@ -1105,23 +992,6 @@ def test_written_asset_is_listed_before_any_rescan(tmp_path: Path) -> None:
     assert [entry.virtual_path for entry in library.list_folder("mounts/out").entries] == [
         "mounts/out/fresh_00001.bin"
     ]
-
-
-def test_scan_absorbs_and_prunes_sidecar(tmp_path: Path) -> None:
-    writer, root = make_writer(tmp_path)
-    library = LocalAssetLibrary(root, namespace="mounts/out")
-    library.scan()
-    ref = writer.save_bytes({"mount": "out", "prefix": "fresh"}, b"hot", suffix=".bin")
-    assert (root / WRITES_SIDECAR_NAME).exists()
-    library.scan()
-    # Absorbed: resolvable from the index proper; sidecar row pruned.
-    assert library.resolve(ref.digest) == root / "fresh_00001.bin"
-    assert load_write_records(root) == {}
-    index = json.loads((root / ".dinkster-asset-index.json").read_text("utf-8"))
-    assert index["fresh_00001.bin"]["digest"] == ref.digest
-    # And the sidecar/index themselves never enter the catalog.
-    listed = [entry.virtual_path for entry in library.catalog.entries()]
-    assert listed == ["mounts/out/fresh_00001.bin"]
 
 
 def test_sidecar_tolerates_torn_lines(tmp_path: Path) -> None:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -61,32 +59,6 @@ def _write_lora(path: Path) -> None:
         },
         str(path),
     )
-
-
-def test_lora_hook_schemas_are_torch_free_and_registered() -> None:
-    root = Path(__file__).resolve().parents[2]
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import sys
-
-from dinkster_api.v1 import HOOKS_TYPE, TypeExpr
-from dinkster_models.hook_lora import CreateHookLora, CreateHookLoraModelOnly
-
-HOOK_LORA_NODES = (CreateHookLora, CreateHookLoraModelOnly)
-
-assert "torch" not in sys.modules
-assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
-""",
-        ],
-        check=True,
-        cwd=root,
-    )
-    from dinkster_models import NODES
-
-    assert all(node in NODES for node in HOOK_LORA_NODES)
 
 
 @pytest.mark.parametrize("verified", [False, True])

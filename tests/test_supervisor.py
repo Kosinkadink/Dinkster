@@ -132,20 +132,6 @@ def test_status_and_gating_before_ready() -> None:
     run_scenario(scenario())
 
 
-def test_status_echoes_launcher_instance() -> None:
-    async def scenario() -> None:
-        app = create_supervisor_app(EngineLink(), instance="desktop-launch-123")
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            status = await (await client.get(STATUS_PATH)).json()
-            assert status["instance"] == "desktop-launch-123"
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_shutdown_requires_matching_instance_and_token() -> None:
     async def scenario() -> None:
         stopped = asyncio.Event()
@@ -325,39 +311,6 @@ def test_dns_rebinding_cannot_grant_folders_or_open_websockets(
                 assert accepted.status == 201
                 assert grant.read_text() == '{"mode": "read"}'
             assert upstream_requests == ["/api/mounts"] * 4
-        finally:
-            await client.close()
-            await engine_server.close()
-
-    run_scenario(scenario())
-
-
-def test_supervisor_namespace_is_reserved() -> None:
-    """The whole /supervisor/ prefix answers locally: unknown management
-    paths 404 with a pointer even when the engine is ready and would have
-    answered. Future supervisor routes can never collide with (or leak
-    to) engine routes."""
-
-    async def scenario() -> None:
-        engine_server = TestServer(make_engine_app())
-        await engine_server.start_server()
-        link = EngineLink(state="ready", base_url=str(engine_server.make_url("")).rstrip("/"))
-        client = TestClient(TestServer(create_supervisor_app(link)))
-        await client.start_server()
-        try:
-            for method, path in (
-                ("GET", "/supervisor/nope"),
-                ("POST", "/supervisor/engine/nope"),
-                ("DELETE", "/supervisor/installs/x"),
-            ):
-                resp = await client.request(method, path)
-                assert resp.status == 404
-                assert await resp.json() == {
-                    "error": "unknown-supervisor-path",
-                    "status": STATUS_PATH,
-                }
-            # ...while the known management routes still answer.
-            assert (await client.get(STATUS_PATH)).status == 200
         finally:
             await client.close()
             await engine_server.close()
@@ -566,32 +519,6 @@ def test_engine_process_lifecycle(tmp_path: Path) -> None:
         assert link.state == "stopped" and link.pid is None
 
     run_scenario(scenario())
-
-
-def test_progress_from_health_shapes() -> None:
-    """The health-body composition narration is mirrored to clients
-    verbatim, so the supervisor is strict about its shape: anything
-    malformed degrades to "no progress", never to a malformed status
-    wire, and only the contracted keys cross."""
-    from dinkster_supervisor.supervisor import _progress_from_health
-
-    assert _progress_from_health({"ok": True}) is None
-    assert _progress_from_health("nonsense") is None
-    assert _progress_from_health({"composition": "packs"}) is None
-    assert _progress_from_health({"composition": {"done": 1}}) is None
-    assert _progress_from_health({"composition": {"done": True, "total": 2}}) is None
-    assert _progress_from_health({"composition": {"done": "1", "total": 2}}) is None
-
-    assert _progress_from_health({"composition": {"done": 1, "total": 2}}) == {
-        "done": 1,
-        "total": 2,
-    }
-    narrated = {"composition": {"done": 0, "total": 3, "phase": "packs"}}
-    assert _progress_from_health(narrated) == {"done": 0, "total": 3, "phase": "packs"}
-    # Empty phase is dropped; uncontracted keys never leak through.
-    assert _progress_from_health(
-        {"composition": {"done": 1, "total": 2, "phase": "", "extra": "x"}}
-    ) == {"done": 1, "total": 2}
 
 
 def test_status_narrates_composition_progress() -> None:

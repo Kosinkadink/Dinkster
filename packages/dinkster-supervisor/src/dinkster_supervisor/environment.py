@@ -49,7 +49,7 @@ from .environment_custom import (
     prepare_custom_pack_locks,
     variant_file,
 )
-from .environment_development import DEVELOPMENT_DESCRIPTION
+from .environment_development import development_description, live_source_status
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -96,6 +96,7 @@ from .environment_stores import (
 from .environment_tools import acquire_tools
 from .environment_transactions import (
     activate,
+    activation_status,
     begin_activation,
     begin_setup,
     next_generation,
@@ -140,7 +141,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         for entry in entries:
             snapshot = cast("dict[str, object]", entry["snapshot"])
             if "development-sources.json" in cast("dict[str, str]", snapshot["metadata"]):
-                entry["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+                entry["sourceDescription"] = development_description(
+                    json.loads(
+                        cast("dict[str, str]", snapshot["metadata"])["development-sources.json"]
+                    )
+                )
         if args.history_action == "show":
             selected = next((entry for entry in entries if entry["id"] == args.entry), None)
             if selected is None:
@@ -155,7 +160,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
         if "development-sources.json" in dict(generation.files):
-            result["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+            development = read_document(generation_root / "development-sources.json")
+            result["sourceDescription"] = development_description(development)
+            result["liveSources"] = live_source_status(development)
         manifest = generation_root / "base-manifest.json"
         if generation.source != "local" and manifest.is_file():
             base = read_document(manifest)
@@ -231,10 +238,13 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
             missing = missing_inputs(snapshots[-1], store, offline=True)
-            result["exactRecovery"] = {"available": not missing, "missing": missing}
+            live = bool(result["liveSources"])
+            result["exactRecovery"] = {"available": not live and not missing, "missing": missing}
             result["plan"] = [
-                DEVELOPMENT_DESCRIPTION,
-                "exact recovery artifacts retained"
+                cast("str", result["sourceDescription"]),
+                "live sources cannot be restored exactly; run develop without live marks to capture"
+                if live
+                else "exact recovery artifacts retained"
                 if not missing
                 else "exact recovery artifacts missing; restore will refuse",
             ]
@@ -488,7 +498,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             from .environment_development import development_selection
 
             development = development_selection(
-                args.source, tuple(args.pack_source), tuple(args.library_source)
+                args.source,
+                tuple(args.pack_source),
+                tuple(args.library_source),
+                git_origins=getattr(args, "git_origins", None),
+                live_engine=args.live_engine,
+                live_packs=tuple(args.live_pack),
+                live_libraries=tuple(args.live_library),
             )
             for row in development["sources"]:
                 source = Path(row["path"])
@@ -498,8 +514,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
             local["development"] = development
             result["development"] = development
+            approval_inputs = {
+                **local,
+                "development": {
+                    **development,
+                    "sources": [
+                        {**row, "path": row["git"]} if "git" in row else row
+                        for row in development["sources"]
+                    ],
+                },
+            }
             approval = (
-                "sha256:" + hashlib.sha256(json.dumps(local, sort_keys=True).encode()).hexdigest()
+                "sha256:"
+                + hashlib.sha256(json.dumps(approval_inputs, sort_keys=True).encode()).hexdigest()
             )
             result["sourceApproval"] = approval
             if args.approve is not None and args.approve != approval:
@@ -516,12 +543,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if development is not None:
             plan.extend(
                 [
-                    DEVELOPMENT_DESCRIPTION,
+                    development_description(development),
                     *[
-                        f"capture {row['kind']} {row['path']} ({row['contentDigest']})"
+                        f"{'live' if row.get('live') else 'capture'} {row['kind']} "
+                        f"{row['path']} ({row['contentDigest']})"
                         for row in development["sources"]
                     ],
-                    "restore recovers the captured runtime only; author folders stay untouched",
+                    "author folders stay untouched; only captured generations restore exactly",
                 ]
             )
     else:
@@ -1463,6 +1491,7 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
             or (args.generation is None and read_current(args.root) != number)
         ):
             raise EnvironmentError("selected software changed during security inspection")
+        report["recovery"] = activation_status(args.root)
         result.update(current=read_current(args.root), security=report)
         return 0
     if args.security_action == "policy":
@@ -1609,10 +1638,27 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
-    develop = commands.add_parser("develop", help="capture and build explicit local sources")
-    develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
-    develop.add_argument("--pack-source", type=Path, action="append", required=True)
-    develop.add_argument("--library-source", type=Path, action="append", default=[])
+    develop = commands.add_parser(
+        "develop", help="capture and build explicit local or public git sources"
+    )
+    develop.add_argument("--source", required=True, help="engine folder or HTTPS git URL")
+    develop.add_argument("--pack-source", action="append", required=True)
+    develop.add_argument("--library-source", action="append", default=[])
+    develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
+    develop.add_argument(
+        "--live-pack",
+        type=Path,
+        action="append",
+        default=[],
+        help="watch this selected pack folder for edits",
+    )
+    develop.add_argument(
+        "--live-library",
+        type=Path,
+        action="append",
+        default=[],
+        help="import this selected library folder; restart after edits",
+    )
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
@@ -1777,7 +1823,12 @@ def run(args: argparse.Namespace) -> int:
             code = 0
         elif args.operation == "doctor" and args.repair:
             code = _repair(args, result)
-        elif args.operation in {"setup", "update", "develop"}:
+        elif args.operation == "develop":
+            from .environment_development import acquired_development_sources
+
+            with acquired_development_sources(args) as selected:
+                code = _install(selected, result)
+        elif args.operation in {"setup", "update"}:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
@@ -1798,6 +1849,26 @@ def run(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
+    if args.operation == "security" and args.security_action in {"fix-one", "fix-all"}:
+        try:
+            result["current"] = read_current(args.root)
+            result["recovery"] = recovery = activation_status(args.root)
+            if (
+                code != 0
+                and recovery["state"] != "interrupted"
+                and recovery.get("error") != result.get("error")
+            ):
+                result["recovery"] = {
+                    "state": "cancelled"
+                    if result["error"] == "pack preparation cancelled"
+                    else "refused",
+                    "current": result["current"],
+                    "error": result["error"],
+                    "action": "Selection is unchanged; inspect the error and review a new plan.",
+                }
+        except (OSError, ValueError) as exc:
+            code = 1
+            result.update(status="error", error=str(exc))
     if (
         code == 0
         and result["status"] == "applied"
@@ -1845,6 +1916,9 @@ def run(args: argparse.Namespace) -> int:
             print(step)
         for change in cast("list[str]", result.get("changes", [])):
             print(change)
+        if "recovery" in result:
+            recovery = cast("dict[str, object]", result["recovery"])
+            print(f"Recovery: {recovery['state']}. {recovery['action']}")
         if "error" in result:
             print(result["error"], file=sys.stderr)
         if "url" in result:

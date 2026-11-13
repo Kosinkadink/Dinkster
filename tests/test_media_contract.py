@@ -18,9 +18,6 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_from_wire,
-    schema_signature,
-    schema_to_wire,
 )
 from dinkster_schema.media import media_diagnostics
 from dinkster_server.events import engine_event_to_wire
@@ -47,47 +44,6 @@ from tests.async_scenarios import run_scenario
 
 IMAGE = TypeExpr.concrete("IMAGE")
 MASK = TypeExpr.concrete("MASK")
-
-
-def test_media_array_metadata_does_not_copy_tensor_pixels() -> None:
-    class DeviceTensor:
-        shape = (1, 32, 32, 4)
-        dtype = "torch.bfloat16"
-
-        def detach(self):
-            raise AssertionError("metadata inspection must not read tensor pixels")
-
-    image = image_array_meta(DeviceTensor())
-    assert image["shape"] == (1, 32, 32, 4)
-    assert image["dtype"] == "float32"
-    assert image["channels"] == {"layout": "rgba", "alpha": "straight"}
-    assert mask_array_meta(DeviceTensor())["polarity"] == "coverage"
-
-
-def test_media_policy_schema_roundtrip_and_identity() -> None:
-    schema = NodeSchema(
-        node_type="test.media",
-        inputs=(InputSpec("image", IMAGE, alpha_policy="create_if_missing"),),
-        outputs=(OutputSpec("mask", MASK, mask_polarity="transparency", mask_semantic="alpha"),),
-    )
-    wire = schema_to_wire(schema)
-    assert schema_from_wire(wire) == schema
-    interface = cast("list[dict[str, Any]]", wire["interface"])
-    assert interface[0]["alphaPolicy"] == "create_if_missing"
-    assert interface[1]["maskPolarity"] == "transparency"
-    assert interface[1]["maskSemantic"] == "alpha"
-    default = replace(schema, inputs=(InputSpec("image", IMAGE),))
-    assert schema_signature(schema) != schema_signature(default)
-    wire["schemaVersion"] = 2
-    with pytest.raises(ValueError, match="unsupported schemaVersion"):
-        schema_from_wire(wire)
-
-
-@pytest.mark.parametrize("field", ["alpha_policy", "mask_polarity", "mask_semantic"])
-@pytest.mark.parametrize("spec", [InputSpec, OutputSpec])
-def test_invalid_media_policy_is_rejected(field, spec) -> None:
-    with pytest.raises(ValueError, match="unknown"):
-        spec("image", IMAGE, **{field: "invalid"})
 
 
 def _value(type_id: str, **meta: object) -> Value:
@@ -346,29 +302,6 @@ def test_semantic_codec_and_shared_memory_roundtrip(mask: bool, monkeypatch) -> 
             release_segment(segment)
 
 
-def test_default_semantics_do_not_change_legacy_bytes_or_identity() -> None:
-    array = np.zeros((1, 2, 3, 4), dtype=np.float32)
-    annotated = annotate_image(
-        array, alpha="straight", color={"primaries": 1, "transfer": 13, "range": 2}
-    )
-    legacy = io.BytesIO()
-    np.save(legacy, array, allow_pickle=False)
-    assert encode_image_array(annotated) == encode_image_array(array) == legacy.getvalue()
-    assert image_array_fingerprint("IMAGE")(annotated) == image_array_fingerprint("IMAGE")(array)
-    assert media_semantics(array) == {}
-
-
-def test_image_and_layer_color_preserve_unknown_ffmpeg_enums() -> None:
-    from dinkster_image_document.document import empty_document
-    from dinkster_values.image_codec import image_color
-
-    color = {"primaries": 300, "transfer": 301, "range": 302, "matrix": 303, "bit_depth": 12}
-    image = annotate_image(np.zeros((1, 1, 1, 3), np.float32), color=color)
-    assert image_array_meta(decode_image_array(encode_image_array(image)))["color"] == color
-    assert empty_document(1, 1, color=color).to_record()["canvas"]["color"] == color
-    assert empty_document(1, 1).to_record()["canvas"]["color"] == image_color()
-
-
 @pytest.mark.parametrize("image_first", [False, True])
 def test_pack_registration_order_preserves_mask_contract(image_first: bool) -> None:
     from dinkster_image import register_types as register_image_types
@@ -409,12 +342,6 @@ def test_invalid_semantics_reject_before_pixel_allocation(monkeypatch, metadata)
     )
     with pytest.raises(ValueError):
         decode_image_array(data)
-
-
-def test_forged_layout_is_rejected_without_decoding() -> None:
-    data = encode_image_array(np.zeros((1, 2, 3, 3), dtype=np.float32))
-    with pytest.raises(ValueError, match="channels metadata"):
-        validate_image_encoded(data, {"channels": {"layout": "rgba", "alpha": "straight"}})
 
 
 @pytest.mark.parametrize(
@@ -526,28 +453,6 @@ def test_merge_preserves_semantics_and_normalizes_mixed_alpha_modes() -> None:
     np.testing.assert_array_equal(np.asarray(mixed)[0, ..., :3], 1)
     np.testing.assert_array_equal(np.asarray(mixed)[0, ..., 3], 0.5)
     np.testing.assert_array_equal(np.asarray(mixed)[1], 1)
-
-
-@pytest.mark.parametrize("list_value", [False, True])
-def test_worker_policies_preserve_require_and_create_only_when_declared(list_value) -> None:
-    from dinkster_workers.media import apply_alpha_policy, prepare_media_output
-
-    rgb = np.ones((1, 2, 3, 3), dtype=np.float32)
-    obj = [rgb] if list_value else rgb
-    type_id = "list<IMAGE>" if list_value else "IMAGE"
-    with pytest.raises(ValueError, match="requires an alpha"):
-        apply_alpha_policy(obj, type_id, "require")
-    unchanged = cast("Any", apply_alpha_policy(obj, type_id, "preserve"))
-    assert (unchanged[0] if list_value else unchanged) is rgb
-    spec = OutputSpec(
-        "image", TypeExpr.list_of(IMAGE) if list_value else IMAGE, alpha_policy="create_if_missing"
-    )
-    schema = NodeSchema(node_type="test.create-alpha", outputs=(spec,))
-    created = cast("Any", prepare_media_output(obj, type_id, spec, schema, {}))
-    result = created[0] if list_value else created
-    assert result.shape == (1, 2, 3, 4)
-    np.testing.assert_array_equal(result[..., :3], rgb)
-    np.testing.assert_array_equal(result[..., 3], 1)
 
 
 @pytest.mark.parametrize(

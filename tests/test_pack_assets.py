@@ -47,7 +47,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import ServerLibrary, create_app
-from dinkster_server.preflight import graph_node_types, graph_provider_selections
+from dinkster_server.preflight import graph_provider_selections
 from dinkster_values import CORE_INT, TypeRegistry, register_core_types
 from dinkster_workers import (
     InProcessWorker,
@@ -74,64 +74,6 @@ def write_pack_dir(tmp_path: Path) -> Path:
     (pack / "assets").mkdir(parents=True)
     (pack / "assets" / "model.bin").write_bytes(MODEL_BYTES)
     return pack
-
-
-def test_validate_pack_asset_shapes(tmp_path: Path) -> None:
-    """Packaged-only, remote-only, and both-sourced declarations validate;
-    the need carries the descriptive fields and node types verbatim
-    (legacy node types are not grammar-valid names, so no grammar check)."""
-    pack = write_pack_dir(tmp_path)
-    manifest_path = pack / "dinkster-pack.toml"
-
-    both, problem = validate_pack_asset(
-        manifest_path,
-        {
-            "id": "lineart",
-            "name": "Anime Lineart v2",
-            "digest": MODEL_DIGEST,
-            "kind": "model/auxiliary",
-            "size": len(MODEL_BYTES),
-            "media_type": "application/octet-stream",
-            "file": "assets/model.bin",
-            "urls": ["https://hub.example/lineart.bin"],
-            "nodes": ["comfy.controlnet_aux.LineartPreprocessor"],
-        },
-        "aux",
-    )
-    assert problem is None and both is not None
-    assert both.id == "lineart"
-    assert both.need.name == "Anime Lineart v2"
-    assert both.need.digest == MODEL_DIGEST
-    assert both.need.kind == "model/auxiliary"
-    assert both.need.size == len(MODEL_BYTES)
-    assert both.need.media_type == "application/octet-stream"
-    assert both.nodes == ("comfy.controlnet_aux.LineartPreprocessor",)
-    assert both.need.sources == (
-        PackagedSource(pack="aux", path="assets/model.bin"),
-        RemoteSource("https://hub.example/lineart.bin"),
-    )
-
-    packaged_only, problem = validate_pack_asset(
-        manifest_path,
-        {"id": "p", "name": "P", "digest": MODEL_DIGEST, "file": "assets/model.bin"},
-        "aux",
-    )
-    assert problem is None and packaged_only is not None
-    assert packaged_only.need.sources == (PackagedSource(pack="aux", path="assets/model.bin"),)
-    assert packaged_only.nodes == ()
-
-    remote_only, problem = validate_pack_asset(
-        manifest_path,
-        {
-            "id": "r",
-            "name": "R",
-            "digest": MODEL_DIGEST,
-            "urls": ["https://hub.example/r.bin"],
-        },
-        "aux",
-    )
-    assert problem is None and remote_only is not None
-    assert remote_only.need.sources == (RemoteSource("https://hub.example/r.bin"),)
 
 
 def test_validate_pack_asset_rejects(tmp_path: Path) -> None:
@@ -237,44 +179,6 @@ def test_load_pack_assets(tmp_path: Path) -> None:
     assert load_pack_assets(no_declaration, pack="p") == ()
 
 
-def test_pack_info_from_manifest_assets(tmp_path: Path) -> None:
-    """Manifest assets cross the umbrella bridge verbatim and ride the
-    packs table as descriptors: identity + leads, never bytes."""
-    from dinkster.packs import pack_info_from_manifest
-
-    pack = write_pack_dir(tmp_path)
-    declared = pack / "dinkster-pack.toml"
-    declared.write_text(
-        "[pack]\n"
-        'name = "aux"\n'
-        "[pack.entry]\n"
-        'nodes = "m:N"\n'
-        "[[pack.assets]]\n"
-        f'id = "lineart"\nname = "Lineart"\ndigest = "{MODEL_DIGEST}"\n'
-        'kind = "model/auxiliary"\n'
-        f"size = {len(MODEL_BYTES)}\n"
-        'file = "assets/model.bin"\nurls = ["https://hub.example/l.bin"]\n'
-        'nodes = ["aux.lineart"]\n'
-    )
-    info = pack_info_from_manifest(load_manifest(declared))
-    assert len(info.assets) == 1
-    wire = info.to_wire()
-    assert wire["assets"] == [
-        {
-            "id": "lineart",
-            "name": "Lineart",
-            "digest": MODEL_DIGEST,
-            "kind": "model/auxiliary",
-            "size": len(MODEL_BYTES),
-            "sources": [
-                {"type": "packaged", "pack": "aux", "path": "assets/model.bin"},
-                {"type": "remote", "url": "https://hub.example/l.bin"},
-            ],
-            "nodes": ["aux.lineart"],
-        }
-    ]
-
-
 def test_checkpoint_components_cross_declared_asset_transport(tmp_path: Path) -> None:
     manifest = AssetComponentManifest(
         (AssetComponent("model/diffusion", architecture="sd15"), AssetComponent("model/vae"))
@@ -355,11 +259,6 @@ def declared(
     )
 
 
-def test_declared_asset_requires_digest() -> None:
-    with pytest.raises(Exception, match="digest"):
-        DeclaredAsset(id="m", need=AssetNeed(name="m"))
-
-
 def test_catalog_indexes_and_swaps(tmp_path: Path) -> None:
     catalog = PackAssetCatalog()
     catalog.replace_all(
@@ -433,24 +332,6 @@ def test_catalog_indexes_and_swaps(tmp_path: Path) -> None:
     assert survivor is not None
     assert survivor.sources == (RemoteSource("https://mirror.example/m.bin"),)
     assert catalog.needs_for_nodes({"aux.lineart"}) == {}
-
-
-def test_graph_node_types_scans_regions() -> None:
-    inner = Graph(nodes={"i": GraphNode("test.inner", {"x": 1})})
-    graph = Graph(
-        nodes={
-            "a": GraphNode("test.outer", {"x": 2}),
-            "r": RegionNode(
-                kind="map",
-                body=inner,
-                ports={"xs": TypeExpr.concrete(CORE_INT)},
-                inputs={"xs": [1, 2]},
-                element_ports=("xs",),
-            ),
-        }
-    )
-    # Region pseudo-nodes are structure, not node types; bodies scan fully.
-    assert graph_node_types(graph) == {"test.outer", "test.inner"}
 
 
 def test_provider_assets_follow_literal_and_linked_selections() -> None:

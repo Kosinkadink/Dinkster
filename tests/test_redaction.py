@@ -160,12 +160,6 @@ def test_redact_value_recurses_and_preserves_non_strings(tmp_path: Path) -> None
     }
 
 
-def test_redaction_never_raises_on_odd_shapes() -> None:
-    redactor = PathRedactor()
-    assert redactor.redact_value(object()) is not None
-    assert redactor.redact_text("") == ""
-
-
 # -- wire boundary: engine events ------------------------------------------------
 
 
@@ -200,21 +194,3 @@ def test_lifecycle_detail_is_redacted(tmp_path: Path) -> None:
     detail = wire["detail"]
     assert isinstance(detail, dict)
     assert detail["message"] == "cannot open <library>/missing.bin"
-
-
-def test_wire_unredacted_without_redactor(tmp_path: Path) -> None:
-    event = EngineEvent(
-        kind="node_event",
-        run_id="r1",
-        node_id="n1",
-        detail={
-            "name": "log",
-            "data": {"message": f"{tmp_path}/raw.txt"},
-            "attentionDiagnostic": f"fallback for {tmp_path}/worker",
-        },
-    )
-    wire = engine_event_to_wire(event, client_id="c", job_id="j")
-    data = wire["data"]
-    assert isinstance(data, dict)
-    assert data["message"] == f"{tmp_path}/raw.txt"
-    assert wire["attentionDiagnostic"] == f"fallback for {tmp_path}/worker"

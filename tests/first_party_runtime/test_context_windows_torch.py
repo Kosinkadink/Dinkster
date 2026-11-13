@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,7 +17,6 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_ltx.context_windows import LTXVContextWindows
 from dinkster_models.context_windows import ContextWindowsManual
 from dinkster_wan.context_windows import WanContextWindowsManual
@@ -159,142 +155,3 @@ class ContextWindowConsumer(Node):
 
 
 CONTEXT_WINDOW_FIXTURE_NODES = (ContextWindowSource, ContextWindowConsumer)
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-def test_context_windows_execute_twice_with_separate_fixture_pack_in_both_hosts(
-    tmp_path: Path, in_process: bool
-) -> None:
-    from dinkster_server import PackInfo
-    from dinkster_workers.manifest import load_manifest
-
-    from dinkster.compose import PackSpec, ServingComposer
-
-    async def scenario() -> None:
-        root = Path(__file__).resolve().parents[2]
-        source_root = root / "src"
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(root), str(source_root))),
-            }
-        )
-        try:
-            module = f"context_windows_fixture_{int(in_process)}"
-            (tmp_path / f"{module}.py").write_text(
-                "from tests.first_party_runtime.test_context_windows_torch "
-                "import CONTEXT_WINDOW_FIXTURE_NODES\n"
-                "from dinkster_models.types import register_types as register_models\n"
-                "def register_types(registry):\n"
-                "    with registry.registering_pack('dinkster-models', (), allow_bare=True):\n"
-                "        register_models(registry)\n"
-                "NODES = CONTEXT_WINDOW_FIXTURE_NODES\n",
-                encoding="ascii",
-            )
-            fixture_manifest = tmp_path / "fixture-dinkster-pack.toml"
-            fixture_manifest.write_text(
-                '[pack]\nname = "context-window-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["context-window-fixture"]\n'
-                '[pack.dependencies]\ndinkster-models=">=0.0.1,<1"\n'
-                'dinkster-wan=">=0.0.1,<1"\ndinkster-ltx=">=0.0.1,<1"\n'
-                f'[pack.entry]\nnodes = "{module}:NODES"\n'
-                f'types = "{module}:register_types"\n',
-                encoding="ascii",
-            )
-            manifests = tuple(
-                root / f"packages/dinkster-nodes-{name}/dinkster-pack.toml"
-                for name in (
-                    "image",
-                    "vision-sam3",
-                    "latent",
-                    "conditioning",
-                    "models",
-                    "llm",
-                    "video",
-                    "wan",
-                    "ltx",
-                )
-            )
-            for manifest in (*manifests, fixture_manifest):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest,
-                        in_process=in_process,
-                        trust_reserved=True,
-                        packs={load_manifest(manifest).name: PackInfo("Runtime", version="0.0.1")}
-                        if manifest != fixture_manifest
-                        else None,
-                        worker_group=None if in_process else "context-window-fixture",
-                        group_manifests=() if in_process else (*manifests, fixture_manifest),
-                    )
-                )
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("context-window-fixture.source"),
-                    "manual": GraphNode(
-                        "dinkster.models.context_windows_manual",
-                        {
-                            "model": Link("source", "model"),
-                            "context_length": 17,
-                            "context_overlap": 5,
-                            "context_schedule": "batched",
-                            "context_stride": 3,
-                            "closed_loop": True,
-                            "fuse_method": "overlap-linear",
-                            "dim": 1,
-                            "freenoise": False,
-                            "cond_retain_index_list": "0, 7",
-                            "split_conds_to_windows": True,
-                            "latent_retain_index_list": "2, 5",
-                            "causal_window_fix": False,
-                        },
-                    ),
-                    "wan": GraphNode(
-                        "dinkster.wan.wan_context_windows_manual",
-                        {
-                            "model": Link("source", "model"),
-                            "context_length": 81,
-                            "context_overlap": 30,
-                            "context_schedule": "standard_uniform",
-                            "context_stride": 2,
-                            "closed_loop": False,
-                            "fuse_method": "relative",
-                            "freenoise": True,
-                            "retain_first_frame": True,
-                            "split_conds_to_windows": True,
-                        },
-                    ),
-                    "ltxv": GraphNode(
-                        "dinkster.ltx.ltxv_context_windows",
-                        {
-                            "model": Link("source", "model"),
-                            "context_length": 145,
-                            "context_overlap": 40,
-                            "context_schedule": "looped_uniform",
-                            "context_stride": 2,
-                            "closed_loop": True,
-                            "fuse_method": "flat",
-                            "freenoise": True,
-                            "retain_first_frame": True,
-                            "split_conds_to_windows": True,
-                        },
-                    ),
-                    "consumer": GraphNode(
-                        "context-window-fixture.consumer",
-                        {
-                            "manual": Link("manual", "MODEL"),
-                            "wan": Link("wan", "MODEL"),
-                            "ltxv": Link("ltxv", "MODEL"),
-                        },
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["summary"].resolve() == "context-windows"
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

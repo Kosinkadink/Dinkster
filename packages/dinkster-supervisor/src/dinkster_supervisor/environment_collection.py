@@ -15,7 +15,7 @@ from typing import cast
 from dinkster_store import object_entries
 
 from .environment_constraints import requirement_hashes
-from .environment_development import DEVELOPMENT_DESCRIPTION
+from .environment_development import development_description
 from .environment_generations import pack_operation
 from .environment_history import (
     generation_history_coverage,
@@ -340,7 +340,9 @@ def collection_preview(root: Path) -> dict[str, object]:
             if generation.number != number:
                 raise EnvironmentError("generation directory and recorded number disagree")
             if "development-sources.json" in dict(generation.files):
-                description["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+                description["sourceDescription"] = development_description(
+                    read_document(tree / "development-sources.json")
+                )
             reason = generation_runtime_reason(root, number)
             if reason is not None:
                 state = "retained"

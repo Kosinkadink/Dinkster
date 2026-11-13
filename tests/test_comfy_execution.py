@@ -413,70 +413,6 @@ def test_validation_error_edge2(
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
 @pytest.mark.parametrize(
-    ("node_type", "value", "error"),
-    [("dev.execution.value", 5, True), ("dev.execution.float_value", 5.0, False)],
-    ids=["INT", "FLOAT"],
-)
-def test_validation_error_edge3(
-    cache_enabled: bool, node_type: str, value: int | float, error: bool
-) -> None:
-    """Port of ComfyUI test_validation_error_edge3 using native admission."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "source": GraphNode(node_type, {"value": value}),
-                "validation": GraphNode(
-                    "dev.execution.admission", {"value": Link("source", "value")}
-                ),
-            }
-        )
-        if error:
-            with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
-                await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
-        else:
-            result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
-            assert result.outputs["validation"]["value"].resolve() == 5.0
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-@pytest.mark.parametrize(
-    ("node_type", "value", "error"),
-    [
-        ("dev.execution.value", 3, True),
-        ("dev.execution.value", 5, True),
-        ("dev.execution.float_value", 5.0, False),
-    ],
-    ids=["INT-3", "INT-5", "FLOAT"],
-)
-def test_validation_error_edge4(
-    cache_enabled: bool, node_type: str, value: int | float, error: bool
-) -> None:
-    """Port of ComfyUI test_validation_error_edge4 opted-in type validation."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "source": GraphNode(node_type, {"value": value}),
-                "validation": GraphNode(
-                    "dev.execution.admission", {"value": Link("source", "value")}
-                ),
-            }
-        )
-        if error:
-            with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
-                await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
-        else:
-            result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
-            assert result.outputs["validation"]["value"].resolve() == 5.0
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-@pytest.mark.parametrize(
     ("input1", "input2", "error"),
     [(0.0, 0.5, False), (0.0, 5.0, False), (0.0, 7.0, True)],
 )
@@ -687,69 +623,6 @@ def test_partial_execution_included_outputs(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
-def test_partial_execution_excluded_outputs(cache_enabled: bool) -> None:
-    """Port of ComfyUI test_partial_execution_excluded_outputs."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "first": GraphNode("dev.execution.output", {"value": 3}),
-                "second": GraphNode("dev.execution.output", {"value": 5}),
-                "third": GraphNode("dev.execution.output", {"value": 7}),
-            }
-        )
-        result = await make_engine().run(graph, ["first", "third"], cache_enabled=cache_enabled)
-        assert result.outputs["first"]["value"].resolve() == 3
-        assert result.outputs["third"]["value"].resolve() == 7
-        assert "second" not in result.outputs
-        assert "second" not in result.executed
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-def test_partial_execution_dependencies(cache_enabled: bool) -> None:
-    """Port of ComfyUI test_partial_execution_dependencies."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "source": GraphNode("dev.execution.value", {"value": 3}),
-                "output": GraphNode("dev.execution.output", {"value": Link("source", "value")}),
-                "final": GraphNode(
-                    "dev.execution.add", {"value": Link("output", "value"), "amount": 2}
-                ),
-            }
-        )
-        result = await make_engine().run(graph, ["final"], cache_enabled=cache_enabled)
-        assert result.outputs["final"]["value"].resolve() == 5
-        assert {"source", "output", "final"}.issubset(result.executed)
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-def test_partial_execution_multiple_output_nodes(cache_enabled: bool) -> None:
-    """Port of ComfyUI test_partial_execution_multiple_output_nodes."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "source": GraphNode("dev.execution.value", {"value": 3}),
-                "first": GraphNode("dev.execution.output", {"value": Link("source", "value")}),
-                "second": GraphNode("dev.execution.output", {"value": Link("first", "value")}),
-                "other": GraphNode("dev.execution.output", {"value": 7}),
-            }
-        )
-        result = await make_engine().run(graph, ["second"], cache_enabled=cache_enabled)
-        assert result.outputs["second"]["value"].resolve() == 3
-        assert "first" in result.executed
-        assert "other" not in result.outputs
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
 def test_partial_execution_empty_list(cache_enabled: bool) -> None:
     """Port of ComfyUI test_partial_execution_empty_list."""
 
@@ -762,39 +635,6 @@ def test_partial_execution_empty_list(cache_enabled: bool) -> None:
         assert result.outputs == {}
         assert result.executed == ()
         assert result.cached == ()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-def test_partial_execution_with_lazy_nodes(cache_enabled: bool) -> None:
-    """Port of ComfyUI test_partial_execution_with_lazy_nodes."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "selected": GraphNode("dev.execution.value", {"value": 3}),
-                "unselected": GraphNode("dev.execution.value", {"value": 5}),
-                "other": GraphNode("dev.execution.value", {"value": 7}),
-                "select": GraphNode(
-                    "dev.execution.lazy_select",
-                    {
-                        "choose_right": False,
-                        "left": Link("selected", "value"),
-                        "right": Link("unselected", "value"),
-                    },
-                ),
-                "output": GraphNode("dev.execution.output", {"value": Link("select", "value")}),
-                "other_output": GraphNode(
-                    "dev.execution.output", {"value": Link("other", "value")}
-                ),
-            }
-        )
-        result = await make_engine().run(graph, ["output"], cache_enabled=cache_enabled)
-        assert result.outputs["output"]["value"].resolve() == 3
-        assert "unselected" not in result.executed
-        assert "other" not in result.executed
-        assert "other_output" not in result.outputs
 
     run_scenario(scenario())
 

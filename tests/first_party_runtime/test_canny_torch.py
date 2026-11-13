@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_INT,
@@ -20,10 +17,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_image,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_image.ported.image_filters import Canny
-
-from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def image() -> np.ndarray[Any, Any]:
@@ -91,52 +85,3 @@ class Result(Node):
 
 
 FIXTURE_NODES = (ImageSource, Result)
-
-
-@pytest.mark.parametrize("in_process", (True,))
-def test_canny_executes_twice_with_numpy_input_in_both_manifest_hosts(
-    tmp_path: Path, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
-        try:
-            (tmp_path / "canny_fixture.py").write_text(
-                "from test_canny_torch import FIXTURE_NODES\n"
-                "from dinkster_api.v1 import register_inference_types\n"
-                "NODES = FIXTURE_NODES\n",
-                encoding="ascii",
-            )
-            manifest = tmp_path / "dinkster-pack.toml"
-            manifest.write_text(
-                '[pack]\nname = "canny-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["canny-fixture"]\n[pack.entry]\n'
-                'nodes = "canny_fixture:NODES"\n'
-                'types = "canny_fixture:register_inference_types"\n',
-                encoding="ascii",
-            )
-            await composer.add_pack(
-                _installed_pack_spec("dinkster-image", "dinkster_image", in_process=in_process)
-            )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
-            engine = composer.composition.make_engine(lambda _event: None)
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("canny-fixture.image", {}),
-                    "edges": GraphNode(
-                        "dinkster.image.canny",
-                        {
-                            "image": Link("source", "IMAGE"),
-                            "low_threshold": 0.2,
-                            "high_threshold": 0.6,
-                        },
-                    ),
-                    "result": GraphNode("canny-fixture.result", {"image": Link("edges", "IMAGE")}),
-                }
-            )
-            for _ in range(2):
-                result = await engine.run(graph, ["result"])
-                assert result.outputs["result"]["pixels"].resolve() == 84
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

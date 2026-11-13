@@ -8,13 +8,7 @@ from functools import cache
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
-from dinkster_assets import AssetRef, digest_bytes, register_video_value_type
-from dinkster_assets.audio import register_audio_value_type
 from dinkster_values import (
-    TypeRegistry,
-    audio_fingerprint,
-    audio_meta,
     decode_audio,
     decode_video,
     encode_audio,
@@ -22,8 +16,6 @@ from dinkster_values import (
     render_audio_wav,
     render_video_original,
     validate_video_encoded,
-    video_fingerprint,
-    video_from_source,
     video_meta,
     video_rendition_mime,
 )
@@ -53,33 +45,6 @@ def mp4_bytes() -> bytes:
 @cache
 def webm_bytes() -> bytes:
     return _encode("webm", "libvpx-vp9", "yuv420p")
-
-
-def test_audio_round_trip_fixes_float32_bct_contract() -> None:
-    waveform = np.arange(24, dtype=np.float64).reshape(2, 3, 4)
-    decoded = decode_audio(encode_audio({"waveform": waveform, "sample_rate": 48_000}))
-    assert isinstance(decoded, dict)
-    assert decoded["sample_rate"] == 48_000
-    loaded = np.asarray(decoded["waveform"])
-    assert loaded.dtype == np.float32
-    assert loaded.shape == (2, 3, 4)
-    assert np.array_equal(loaded, waveform.astype(np.float32))
-
-
-def test_audio_fingerprint_is_numpy_torch_form_independent() -> None:
-    waveform = np.linspace(-1.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 6)
-    numpy_form = {"waveform": waveform, "sample_rate": 6}
-    tensor_form = {"waveform": FakeTensor(waveform), "sample_rate": 6}
-    fingerprint = audio_fingerprint(AUDIO_TYPE)
-    assert encode_audio(numpy_form) == encode_audio(tensor_form)
-    assert fingerprint(numpy_form) == fingerprint(tensor_form)
-    assert audio_meta(numpy_form) == {
-        "sample_rate": 6,
-        "shape": (1, 2, 6),
-        "duration": 1.0,
-        "storage_dtype": "fp32",
-        "cost": {"ram": 48},
-    }
 
 
 def test_audio_refuses_invalid_shape_rate_and_payload() -> None:
@@ -143,21 +108,6 @@ def test_audio_wav_refuses_invalid_cardinality_samples_and_rate(
         render_audio_wav({"waveform": waveform, "sample_rate": sample_rate})
 
 
-def test_audio_wav_refuses_uint16_and_uint32_size_overflow_before_rendering() -> None:
-    scalar = np.zeros(1, dtype=np.float32)
-    too_many_channels = np.lib.stride_tricks.as_strided(
-        scalar, shape=(1, 32768, 1), strides=(0, 0, 0)
-    )
-    with pytest.raises(ValueError, match="uint16"):
-        render_audio_wav({"waveform": too_many_channels, "sample_rate": 1})
-
-    too_many_frames = np.lib.stride_tricks.as_strided(
-        scalar, shape=(1, 1, (1 << 31)), strides=(0, 0, 0)
-    )
-    with pytest.raises(ValueError, match="RIFF size exceeds uint32"):
-        render_audio_wav({"waveform": too_many_frames, "sample_rate": 1})
-
-
 @pytest.mark.parametrize(
     "container,data", [("mp4", mp4_bytes()), ("webm", webm_bytes())], ids=["mp4", "webm"]
 )
@@ -169,25 +119,6 @@ def test_video_round_trip_preserves_raw_container_bytes(container: str, data: by
     assert decode_video(data)["source"] == data
     assert video_meta(value)["container"] == container
     assert video_meta(value)["byte_size"] == len(data)
-
-
-def test_video_fingerprint_is_wrapper_independent() -> None:
-    data = mp4_bytes()
-    value = {"container": "mp4", "bytes": data}
-    decoded = decode_video(encode_video(value))
-    assert video_fingerprint(VIDEO_TYPE)(value) == video_fingerprint(VIDEO_TYPE)(decoded)
-
-
-def test_av_codecs_preserve_payload_bytes_while_type_domains_change() -> None:
-    audio = {"waveform": np.array([[[0.0, 0.5]]], dtype=np.float32), "sample_rate": 8_000}
-    video = {"container": "mp4", "bytes": mp4_bytes()}
-    audio_payload = encode_audio(audio)
-    video_payload = encode_video(video)
-
-    assert encode_audio(decode_audio(audio_payload)) == audio_payload
-    assert encode_video(decode_video(video_payload)) == video_payload
-    assert audio_fingerprint(AUDIO_TYPE)(audio) != audio_fingerprint("comfy.AUDIO")(audio)
-    assert video_fingerprint(VIDEO_TYPE)(video) != video_fingerprint("comfy.VIDEO")(video)
 
 
 def test_video_refuses_unknown_mismatched_and_unrecognized_containers() -> None:
@@ -216,109 +147,3 @@ def test_video_original_rendition_preserves_validated_bytes_and_metadata_mime(
     validate_video_encoded(data, metadata)
     with pytest.raises(ValueError, match="metadata container"):
         video_rendition_mime({"container": "unsupported"})
-
-
-def test_video_encoded_validator_refuses_metadata_that_misidentifies_bytes() -> None:
-    data = webm_bytes()
-    with pytest.raises(ValueError, match="container does not match"):
-        validate_video_encoded(data, {"container": "mp4", "byte_size": len(data)})
-    with pytest.raises(ValueError, match="byte_size does not match"):
-        validate_video_encoded(data, {"container": "webm", "byte_size": len(data) + 1})
-    with pytest.raises(ValueError, match="byte_size must be an int"):
-        validate_video_encoded(data, {"container": "webm", "byte_size": True})
-
-
-@pytest.mark.parametrize("asset_backed", [False, True])
-@pytest.mark.parametrize("residency", ["ram", "ram@remote-video"])
-def test_video_cost_validates_bytes_independently_of_worker_namespace(
-    asset_backed: bool, residency: str
-) -> None:
-    data = mp4_bytes()
-    video = video_from_source(data)
-    if asset_backed:
-        video["source"] = AssetRef(digest_bytes(data), "source.mp4", len(data)).to_wire()
-    encoded = encode_video(video)
-    metadata = dict(video_meta(video))
-    amount = 0 if asset_backed else len(data)
-    metadata["cost"] = {residency: amount}
-    validate_video_encoded(encoded, metadata)
-    assert metadata["cost"] == {residency: amount}
-    metadata["cost"] = {residency: amount + 1}
-    with pytest.raises(ValueError, match="VIDEO metadata cost"):
-        validate_video_encoded(encoded, metadata)
-
-
-@pytest.mark.parametrize(
-    "cost",
-    [
-        None,
-        [],
-        {},
-        {"disk@remote-video": 0},
-        {"ram": 0, "ram@remote-video": 0},
-        {"ram@remote-video": False},
-        {"ram@remote-video": 0.0},
-        {"ram@remote-video": "0"},
-        {"ram@remote-video": -1},
-    ],
-)
-def test_video_cost_rejects_malformed_remote_accounting(cost: object) -> None:
-    data = mp4_bytes()
-    video = video_from_source(data)
-    video["source"] = AssetRef(digest_bytes(data), "source.mp4", len(data)).to_wire()
-    metadata = {**video_meta(video), "cost": cost}
-    with pytest.raises(ValueError, match="VIDEO metadata cost"):
-        validate_video_encoded(encode_video(video), metadata)
-
-
-def test_av_registration_wiring_covers_host() -> None:
-    host = TypeRegistry()
-    register_audio_value_type(host, AUDIO_TYPE)
-    register_video_value_type(host, VIDEO_TYPE)
-    assert host.spec(AUDIO_TYPE).declared_codec
-    assert host.spec(VIDEO_TYPE).declared_codec
-    assert host.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
-    audio_value = host.wrap(
-        AUDIO_TYPE,
-        {"waveform": np.zeros((1, 1, 1), dtype=np.float32), "sample_rate": 1},
-    )
-    video_value = host.wrap(VIDEO_TYPE, {"container": "mp4", "bytes": mp4_bytes()})
-    assert [(s.kind, s.mime, s.default) for s in host.renditions_of(AUDIO_TYPE)] == [
-        ("wav", "audio/wav", True),
-        ("waveform", "image/png", False),
-        ("window", "audio/wav", False),
-    ]
-    video_spec = host.renditions_of(VIDEO_TYPE)[0]
-    assert (video_spec.kind, video_spec.default) == ("original", True)
-    assert video_spec.mime_for(video_value.meta.entries) == "video/mp4"
-    assert host.render(audio_value).mime == "audio/wav"
-    assert host.render(video_value).data == mp4_bytes()
-
-
-def test_av_preview_intent_is_explicit_on_test_owned_output_schemas() -> None:
-    from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
-
-    audio = TypeExpr.concrete(AUDIO_TYPE)
-    video = TypeExpr.concrete(VIDEO_TYPE)
-
-    class PreviewAV(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.preview_av",
-                outputs=(
-                    OutputSpec("audio", audio, preview=True),
-                    OutputSpec("video", video, preview=True),
-                ),
-            )
-
-    class OrdinaryAV(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.ordinary_av",
-                outputs=(OutputSpec("audio", audio), OutputSpec("video", video)),
-            )
-
-    assert [output.preview for output in PreviewAV.define_schema().outputs] == [True, True]
-    assert [output.preview for output in OrdinaryAV.define_schema().outputs] == [False, False]

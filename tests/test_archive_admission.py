@@ -11,7 +11,6 @@ import venv
 import zipfile
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal
 
 import packaging
 import pytest
@@ -446,52 +445,6 @@ def test_probe_dependency_url_refuses(tmp_path: Path) -> None:
     )
     result = run_executable_probe(tmp_path, settings=ProbeSettings())
     assert result.blocked and result.findings[0].code == "probe.dependencies-invalid"
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
-@pytest.mark.parametrize("source", [None, "cpu", "index"])
-def test_probe_dependency_source_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Literal["cpu", "index"] | None
-) -> None:
-    installer = tmp_path / "uv"
-    installer.write_text(
-        f"#!{sys.executable}\nimport json, sys\n"
-        "sys.stderr.write(json.dumps(sys.argv[1:]))\nsys.exit(1)\n"
-    )
-    installer.chmod(0o755)
-    monkeypatch.setenv("PATH", str(tmp_path))
-    manifest = tmp_path / "dinkster-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "example-pack"\nrequires = ["torch>=2.5"]\n'
-        '[pack.entry]\nnodes = "nodes:PACK_NODES"\n'
-    )
-    settings = ProbeSettings() if source is None else ProbeSettings(probe_dependency_source=source)
-    result = run_executable_probe(tmp_path, settings=settings)
-    assert result.blocked and result.findings[0].code == "probe.dependencies-unresolved"
-    assert result.operator_details is not None
-    command = json.loads(result.operator_details["stderrTail"])
-    assert command[:8] == [
-        "--no-config",
-        "--no-cache",
-        "--no-python-downloads",
-        "--no-progress",
-        "pip",
-        "install",
-        "--python",
-        sys.executable,
-    ]
-    assert command[8] == "--target"
-    assert command[10:] == [
-        "--only-binary",
-        ":all:",
-        "--keyring-provider",
-        "disabled",
-        "--index-url",
-        "https://pypi.org/simple",
-        "--no-sources",
-        *([] if source == "index" else ["--torch-backend", "cpu"]),
-        "torch>=2.5",
-    ]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")

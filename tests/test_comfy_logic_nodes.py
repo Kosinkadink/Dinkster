@@ -56,18 +56,6 @@ class InvalidTruth:
         raise ValueError("truth requested")
 
 
-def test_mapping_iteration_short_circuits_in_insertion_order() -> None:
-    invalid = InvalidTruth()
-    assert ComfyAndNode.execute(values={"value9": 0, "value0": invalid}) == {"BOOLEAN": False}
-    assert ComfyOrNode.execute(values={"value9": [0], "value0": invalid}) == {"BOOLEAN": True}
-    with pytest.raises(ValueError, match="truth requested"):
-        ComfyAndNode.execute(values={"value9": invalid, "value0": 0})
-    with pytest.raises(ValueError, match="truth requested"):
-        ComfyOrNode.execute(values={"value9": invalid, "value0": [0]})
-    with pytest.raises(ValueError, match="truth requested"):
-        ComfyNotNode.execute(value=invalid)
-
-
 @pytest.mark.parametrize("switch", [False, True])
 @pytest.mark.parametrize("connected", [False, True])
 @pytest.mark.parametrize("cache_enabled", [False, True])

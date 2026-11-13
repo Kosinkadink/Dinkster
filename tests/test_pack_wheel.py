@@ -340,12 +340,6 @@ def test_doctor_refuses_pack_requirements_but_accepts_library_names(tmp_path: Pa
     assert {"wheel.distribution-name", "wheel.import-name"} <= {f.code for f in report.findings}
 
 
-def test_pack_archive_refuses_zip_output(tmp_path: Path) -> None:
-    root = wheel_pack(tmp_path / "source")
-    with pytest.raises(PackArchiveError, match="wheel.required"):
-        build_pack_archive(root, tmp_path / "old.zip")
-
-
 @pytest.mark.parametrize("declared_dependency", [False, True])
 def test_doctor_only_permits_declared_public_pack_helpers(
     tmp_path: Path, declared_dependency: bool

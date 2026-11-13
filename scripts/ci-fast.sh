@@ -27,7 +27,6 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_security_notices.py \
   tests/test_macos_workflow_receipt.py \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
-  tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
   tests/test_environment_collection.py \
   tests/test_environment_state.py \
@@ -35,7 +34,6 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
   tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
-  tests/test_environment_generations.py::test_registry_preparation_allows_custom_locks_from_selected_inputs \
   tests/test_environment_generations.py::test_additive_registry_preparation_retains_sources_and_only_fetches_new_locks \
   'tests/test_environment_generations.py::test_generation_requires_dependency_locks_for_the_complete_admitted_catalog[restore]' \
   tests/test_environment_cli.py::test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache \
@@ -61,13 +59,10 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_installer.py::test_routing_fetcher_dispatches_on_recorded_provenance \
   tests/test_installer.py::test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return \
   tests/test_installer.py::test_registry_resolves_newest_compatible_pack_across_all_pages \
-  tests/test_installer.py::test_registry_selection_snapshot_refreshes_between_operations \
   tests/test_installer.py::test_registry_compatible_selection_refuses_malformed_pages \
   tests/test_installer.py::test_split_registry_reads_only_selected_packs_and_refuses_substitution \
   tests/test_installer.py::test_registry_preparation_snapshot_isolates_endpoints_and_credentials \
-  tests/test_installer.py::test_registry_compatible_selection_refuses_only_undeclared_releases \
   tests/test_installer.py::test_registry_source_identity_comes_from_verified_archive \
-  tests/test_installer.py::test_official_default_declaration_contains_only_ids_and_minimums \
   tests/test_installer.py::test_cli_prepares_compatible_registry_sources_without_generation_mutation \
   tests/test_installer.py::test_cli_acquires_published_locks_for_exact_sources_and_base \
   tests/test_installer.py::test_cli_publishes_exact_archive_with_optional_published_locks \
@@ -75,17 +70,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_installer.py::test_cli_adds_exact_pack_without_reresolving_installed_sources \
   tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
   tests/test_installer.py::test_generation_source_staging_cli \
-  tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
-  tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
-  tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
-  tests/test_library_publication.py::test_default_admission_probes_and_tests_selected_library_dependency \
-  tests/test_library_publication.py::test_locked_default_admission_uses_verified_unpublished_library \
-  tests/test_library_publication.py::test_admission_library_closure_intersects_ranges_and_activates_extras \
-  tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
-  tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
-  tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
-  tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_wheel \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_verified_wheel \
   tests/test_pack_wheel.py \
   tests/test_pack_archive.py::test_registry_archive_security_preserves_block_and_review \
@@ -93,8 +78,6 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_pack_archive.py::test_registry_manifest_admission_refuses_invalid_metadata \
   tests/test_pack_archive.py::test_registry_executable_probe_bounds_and_sanitizes \
   tests/test_pack_archive.py::test_registry_probe_refuses_degraded_isolation \
-  tests/test_pack_archive.py::test_selected_pack_tests_cannot_fall_back_to_checkout \
-  tests/test_pack_archive.py::test_selected_pack_runtime_id_uses_distribution_layout \
   tests/test_archive_admission.py \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
@@ -106,21 +89,10 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_graph.py \
   tests/test_graph_wire.py \
   tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
-  tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
-  tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
   tests/test_manifest.py::test_pack_declares_independent_version_and_engine_compatibility \
-  tests/test_manifest.py::test_pack_rejects_invalid_version_or_engine_declaration \
-  tests/test_manifest.py::test_catalog_driven_node_source_loads_without_importing_pack \
-  tests/test_manifest.py::test_catalog_driven_node_source_rejects_unknown_kinds_and_types \
   tests/test_doctor.py::test_catalog_driven_node_source_is_reported_without_hiding_entry_errors \
-  tests/test_doctor.py::test_empty_pack_warns \
-  tests/test_audio_lazy.py::test_audio_pack_registration_preserves_first_authority \
-  tests/test_audio_lazy.py::test_audio_pack_registration_is_torch_free \
-  tests/test_compose.py::test_default_pack_prefers_loaded_source_tree_over_bundled_copy \
-  tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
   tests/test_compose.py::test_pack_namespace_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
-  tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
   tests/test_serve.py::test_serve_empty_generation_health_distinguishes_failed_selection

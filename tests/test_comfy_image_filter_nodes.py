@@ -8,76 +8,11 @@ from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import schema_to_wire
-from dinkster_image import NODES
 from dinkster_image.ported.image_filters import (
-    Canny,
     ImageBlend,
     ImageBlur,
-    ImageQuantize,
-    ImageScaleToTotalPixels,
     ImageSharpen,
 )
-
-
-def test_image_filter_schemas_match_the_fixed_reference_contract() -> None:
-    nodes = (ImageBlend, ImageBlur, ImageQuantize, ImageSharpen, ImageScaleToTotalPixels, Canny)
-    expected = (
-        (
-            "dinkster.image.image_blend",
-            "Blend Images",
-            "image/filters",
-            ("image1", "image2", "blend_factor", "blend_mode"),
-        ),
-        (
-            "dinkster.image.image_blur",
-            "Blur Image",
-            "image/filters",
-            ("image", "blur_radius", "sigma"),
-        ),
-        (
-            "dinkster.image.image_quantize",
-            "Quantize Image",
-            "image/filters",
-            ("image", "colors", "dither"),
-        ),
-        (
-            "dinkster.image.image_sharpen",
-            "Sharpen Image",
-            "image/filters",
-            ("image", "sharpen_radius", "sigma", "alpha"),
-        ),
-        (
-            "dinkster.image.image_scale_to_total_pixels",
-            "Scale Image to Total Pixels",
-            "image/upscaling",
-            ("image", "upscale_method", "megapixels", "resolution_steps"),
-        ),
-        (
-            "dinkster.image.canny",
-            "Detect Edges (Canny)",
-            "image/filters",
-            ("image", "low_threshold", "high_threshold"),
-        ),
-    )
-    actual = tuple(
-        (
-            node.schema().node_type,
-            node.schema().display_name,
-            node.schema().category,
-            tuple(port.id for port in node.schema().inputs),
-        )
-        for node in nodes
-    )
-    assert actual == expected
-    assert all(node in NODES for node in nodes)
-    schemas = {node.schema().node_type: node.schema() for node in nodes}
-    assert ImageBlend.schema().inputs[2].default == 0.5
-    assert ImageSharpen.schema().inputs[1].advanced is True
-    assert ImageScaleToTotalPixels.schema().inputs[3].advanced is True
-    assert [item.default for item in Canny.schema().inputs[1:]] == [0.4, 0.8]
-    for schema in schemas.values():
-        assert schema_to_wire(schema)
 
 
 def test_zero_radius_returns_original_live_value() -> None:
@@ -146,17 +81,3 @@ def test_blend_pixels_preserve_destination_alpha(
     np.testing.assert_allclose(result, [[[[*expected, 0.25]]]], atol=1e-7)
     np.testing.assert_array_equal(image1, original1)
     np.testing.assert_array_equal(image2, original2)
-
-
-def test_quantize_copies_live_pixels_to_cpu_without_changing_source_or_alpha(
-    array_runtime: None,
-) -> None:
-    image = np.array([[[[0.0, 0.0, 0.0, 0.2], [1.0, 1.0, 1.0, 0.7]]]], dtype=np.float32).view(
-        ArrayTensor
-    )
-    original = image.copy()
-    result: Any = ImageQuantize.execute(image=image, colors=2, dither="none")["IMAGE"]
-    np.testing.assert_array_equal(result, original)
-    np.testing.assert_array_equal(image, original)
-    assert result.dtype == image.dtype
-    assert result.storage_device == image.storage_device

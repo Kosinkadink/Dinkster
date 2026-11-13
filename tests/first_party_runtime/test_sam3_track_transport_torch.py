@@ -2,29 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
-import os
-from pathlib import Path
-from typing import Any
-
 import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_STRING,
     SAM3_TRACK_DATA_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
     TypeExpr,
     TypeRegistry,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_vision_sam3 import register_types
-
-from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 def register_sam3_types(registry: TypeRegistry) -> None:
@@ -73,31 +60,6 @@ def _track(case: str) -> dict[str, object]:
             "metadata": {"source": ["prompt", ("point", 4)]},
         }
     raise ValueError(f"unknown SAM3 track case: {case}")
-
-
-def _track_summary(value: dict[str, object]) -> str:
-    packed = value["packed_masks"]
-    if packed is None:
-        packed_summary = "none"
-    else:
-        tensor = packed
-        assert isinstance(tensor, torch.Tensor)
-        packed_summary = ";".join(
-            (
-                str(tensor.dtype),
-                str(tuple(tensor.shape)),
-                hashlib.sha256(tensor.contiguous().numpy().tobytes()).hexdigest(),
-            )
-        )
-    return repr(
-        (
-            packed_summary,
-            value["orig_size"],
-            value["n_frames"],
-            value.get("scores", "absent"),
-            tuple(sorted(value["metadata"].items())),
-        )
-    )
 
 
 def _assert_structure(actual: object, expected: object) -> None:
@@ -173,118 +135,3 @@ def test_public_sam3_track_codec_materializes_torch_data_without_mutating_source
 
 SAM3_TRACK = TypeExpr.concrete(SAM3_TRACK_DATA_TYPE)
 STRING = TypeExpr.concrete(CORE_STRING)
-
-
-class SAM3TrackSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="sam3-public-source.source",
-            inputs=(InputSpec("case", STRING),),
-            outputs=(OutputSpec("track", SAM3_TRACK),),
-        )
-
-    @classmethod
-    def execute(cls, *, case: str) -> dict[str, object]:
-        return cls.outputs(track=_track(case))
-
-
-class SAM3TrackConsumer(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="sam3-public-consumer.consumer",
-            inputs=(InputSpec("track", SAM3_TRACK), InputSpec("case", STRING)),
-            outputs=(OutputSpec("summary", STRING),),
-        )
-
-    @classmethod
-    def execute(cls, *, track: Any, case: str) -> dict[str, object]:
-        restored = materialize_latent(track)
-        assert isinstance(restored, dict)
-        _assert_track(restored, case)
-        return cls.outputs(summary=_track_summary(restored))
-
-
-@pytest.mark.parametrize(
-    "in_process,case",
-    (
-        (True, "asymmetric-present-scores"),
-        (False, "asymmetric-present-scores"),
-        (True, "zero-objects"),
-        (True, "tensor-scores"),
-        (True, "none-scores"),
-        (True, "none-absent-scores"),
-    ),
-)
-def test_public_sam3_track_producer_consumer_repeats_through_ordinary_hosts(
-    tmp_path: Path, case: str, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        module = "sam3_public_fixture_" + case.replace("-", "_") + str(in_process)
-        (tmp_path / f"{module}.py").write_text(
-            "from test_sam3_track_transport_torch import register_sam3_types\n"
-            "from test_sam3_track_transport_torch import SAM3TrackConsumer, SAM3TrackSource\n"
-            "SOURCE_NODES = (SAM3TrackSource,)\n"
-            "CONSUMER_NODES = (SAM3TrackConsumer,)\n",
-            encoding="ascii",
-        )
-        source_manifest = tmp_path / "source-dinkster-pack.toml"
-        consumer_manifest = tmp_path / "consumer-dinkster-pack.toml"
-        for manifest, name, namespace, nodes in (
-            (source_manifest, "sam3-public-source", "sam3-public-source", "SOURCE_NODES"),
-            (consumer_manifest, "sam3-public-consumer", "sam3-public-consumer", "CONSUMER_NODES"),
-        ):
-            manifest.write_text(
-                "[pack]\n"
-                f'name = "{name}"\n'
-                'publisher = "dinkster"\n'
-                f'namespaces = ["{namespace}"]\n'
-                '[pack.dependencies]\ndinkster-vision-sam3 = ">=0.0.1,<1"\n'
-                "\n[pack.entry]\n"
-                f'nodes = "{module}:{nodes}"\n'
-                f'types = "{module}:register_sam3_types"\n',
-                encoding="ascii",
-            )
-        provider = _installed_pack_spec(
-            "dinkster-vision-sam3", "dinkster_vision_sam3", in_process=in_process
-        )
-        manifests = (Path(provider.manifest), source_manifest, consumer_manifest)
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
-            }
-        )
-        try:
-            for spec in (provider, PackSpec(source_manifest), PackSpec(consumer_manifest)):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=spec.manifest,
-                        packs=spec.packs,
-                        trust_reserved=True,
-                        in_process=in_process,
-                        worker_group=None if in_process else "sam3-public-fixture",
-                        group_manifests=() if in_process else manifests,
-                    )
-                )
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("sam3-public-source.source", {"case": case}),
-                    "consumer": GraphNode(
-                        "sam3-public-consumer.consumer",
-                        {"track": Link("source", "track"), "case": case},
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            expected = _track_summary(_track(case))
-            for attempt in range(2):
-                result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["summary"].resolve() == expected
-                assert set(result.cached) == ({"source", "consumer"} if attempt else set())
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

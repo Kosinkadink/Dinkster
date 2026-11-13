@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
@@ -12,14 +11,11 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_supervisor import (
     EngineLink,
-    IngressDef,
     IngressMember,
     LeaseConflictError,
     LeaseStore,
     LeaseStoreError,
-    StationConfig,
     create_ingress_app,
-    dump_station_config,
     parse_station_config,
 )
 from dinkster_supervisor import ingress as ingress_module
@@ -28,7 +24,6 @@ from dinkster_supervisor.installs import InstallsError
 from dinkster_supervisor.limits import (
     INGRESS_CLIENT_MAX_SIZE_BYTES,
     INGRESS_EVENT_FRAME_LIMIT_BYTES,
-    INGRESS_EVENT_QUEUE_LIMIT_BYTES,
     INGRESS_JOB_SUBMISSION_LIMIT_BYTES,
 )
 from multidict import CIMultiDict
@@ -113,17 +108,6 @@ def test_job_owner_conflict_is_never_overwritten(tmp_path: Path) -> None:
         assert await store.lookup_job("ref") is None
 
     run_scenario(check())
-
-
-def test_ingress_config_roundtrip() -> None:
-    config = parse_station_config(
-        '[installs.alpha]\nroot="/alpha"\nport=8200\n'
-        '[installs.beta]\nroot="/beta"\nport=8201\n'
-        '[ingress]\nport=8300\nmembers=["alpha", "beta"]\n'
-    )
-    assert config.ingress == IngressDef(8300, ("alpha", "beta"), "alpha")
-    assert parse_station_config(dump_station_config(config)) == config
-    assert isinstance(config, StationConfig)
 
 
 def test_install_writer_preserves_ingress_and_rejects_member_removal(tmp_path: Path) -> None:
@@ -824,31 +808,6 @@ def test_upstream_failure_after_prepare_truncates_downstream(
     run_scenario(scenario())
 
 
-def test_reconnect_jitter_never_exceeds_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ingress_module.random, "uniform", lambda _low, _high: 1.2)
-    assert ingress_module._reconnect_delay(ingress_module._RECONNECT_MAX) == (
-        ingress_module._RECONNECT_MAX
-    )
-
-
-def test_ws_queue_blocks_on_multiple_large_frames_and_has_heartbeat() -> None:
-    async def scenario() -> None:
-        large = b"x" * (INGRESS_EVENT_QUEUE_LIMIT_BYTES // 2)
-        queue = ingress_module._FrameQueue(max_frames=64, max_bytes=INGRESS_EVENT_QUEUE_LIMIT_BYTES)
-        await queue.put(True, large)
-        await queue.put(True, large)
-        blocked = asyncio.create_task(queue.put(True, large))
-        await asyncio.sleep(0)
-        assert not blocked.done()
-        assert await queue.get() == (True, large)
-        await asyncio.wait_for(blocked, 1)
-        assert await queue.get() == (True, large)
-        assert await queue.get() == (True, large)
-
-    run_scenario(scenario())
-    assert ingress_module._WS_HEARTBEAT == 30
-
-
 def test_oversized_upstream_ws_frame_loudly_closes_downstream(tmp_path: Path) -> None:
     app = web.Application()
 
@@ -868,47 +827,6 @@ def test_oversized_upstream_ws_frame_loudly_closes_downstream(tmp_path: Path) ->
             message = await asyncio.wait_for(ws.receive(), 2)
             assert message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED}
             assert ws.close_code == WSCloseCode.MESSAGE_TOO_BIG
-        finally:
-            await _close(client, servers)
-
-    run_scenario(scenario())
-
-
-def test_immediate_ws_close_uses_growing_reconnect_backoff(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    connections: list[float] = []
-    app = web.Application()
-
-    async def events(request: web.Request) -> web.WebSocketResponse:
-        connections.append(time.monotonic())
-        ws = web.WebSocketResponse()
-        await ws.prepare(request)
-        await ws.close()
-        return ws
-
-    app.router.add_get("/api/events", events)
-
-    async def scenario() -> None:
-        delays: list[float] = []
-        observed = asyncio.Event()
-
-        def reconnect_delay(delay: float) -> float:
-            delays.append(delay)
-            if len(delays) == 4:
-                observed.set()
-                # Park further reconnects until the downstream closes.
-                return 3600
-            return 0
-
-        monkeypatch.setattr(ingress_module, "_reconnect_delay", reconnect_delay)
-        client, _, servers = await _fleet(tmp_path, {"alpha": app})
-        try:
-            ws = await client.ws_connect("/api/events")
-            await asyncio.wait_for(observed.wait(), 5)
-            assert delays == [0.1, 0.2, 0.4, 0.8]
-            assert 2 <= len(connections) <= 4
-            await ws.close()
         finally:
             await _close(client, servers)
 

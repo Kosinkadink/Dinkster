@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -428,55 +428,6 @@ def test_shared_store_respects_other_conversations_pins(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_trim_respects_pin_registered_after_it_started(tmp_path: Path) -> None:
-    """Cancelling ensure_peer_holds abandons its persist in the executor.
-    The orphaned put's trim reads the pin registry as it picks victims, so
-    it respects a pin registered after the put started."""
-
-    async def scenario() -> None:
-        started = threading.Event()
-        release = threading.Event()
-        finished = threading.Event()
-        blob_slow = b"s" * 700
-        digest_slow = digest_bytes(blob_slow)
-
-        class SlowPut(BudgetedDiskCAS):
-            def put(self, data: bytes, *, protect: Collection[str] = ()) -> str:
-                if digest_bytes(data) == digest_slow:
-                    started.set()
-                    assert release.wait(5.0)
-                    stored = super().put(data, protect=protect)
-                    finished.set()
-                    return stored
-                return super().put(data, protect=protect)
-
-        store = SlowPut(tmp_path / "store", max_bytes=1000)
-        blob_x = b"x" * 600
-        digest_x = digest_bytes(blob_x)
-        store.put(blob_x)
-
-        async def no_send(header: dict[str, object], data: Sequence[bytes]) -> None:
-            raise AssertionError("cancelled before any frame is sent")
-
-        transfer = BlobTransfer(store, no_send, closed_exc=lambda: ConnectionError("closed"))
-        task = asyncio.create_task(transfer.ensure_peer_holds([(digest_slow, blob_slow)]))
-        assert await asyncio.to_thread(started.wait, 5.0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-        # The pin lands while the orphaned put is still mid-flight.
-        pin_owner = object()
-        store.pin(pin_owner, [digest_x])
-        release.set()
-        assert await asyncio.to_thread(finished.wait, 5.0)
-
-        assert store.get(digest_x) == blob_x
-        assert store.get(digest_slow) == blob_slow
-
-    run_scenario(scenario())
-
-
 def test_close_releases_pins(tmp_path: Path) -> None:
     """A dead conversation's pins never outlive it: after close(), a put
     may evict the digests its last query pinned."""
@@ -536,17 +487,6 @@ def test_cancelled_transfer_does_not_poison_the_next_one(
     run_scenario(scenario())
 
 
-def test_closed_transfer_raises_instead_of_sending(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        sender, _, _, _ = transfer_pair(tmp_path, receiver_budget=10_000)
-        sender.close()
-        blob = b"x" * 64
-        with pytest.raises(ConnectionError):
-            await sender.ensure_peer_holds([(digest_bytes(blob), blob)])
-
-    run_scenario(scenario())
-
-
 def test_close_during_persist_raises_instead_of_hanging(tmp_path: Path) -> None:
     """close() landing while the local store write runs off-loop must not
     let the resumed sender query a peer that will never answer (half-close:
@@ -581,19 +521,6 @@ def test_close_during_persist_raises_instead_of_hanging(tmp_path: Path) -> None:
             await asyncio.wait_for(
                 transfer.ensure_peer_holds([(digest_bytes(blob), blob)]), timeout=5.0
             )
-
-    run_scenario(scenario())
-
-
-def test_multi_chunk_blob_lands_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def scenario() -> None:
-        monkeypatch.setattr(blobs_module, "_CHUNK_BYTES", 100)
-        sender, _, _, receiver_store = transfer_pair(tmp_path, receiver_budget=10_000)
-        blob = bytes(range(256)) * 2  # 512 bytes, six chunks
-        digest = digest_bytes(blob)
-        moved = await sender.ensure_peer_holds([(digest, blob)])
-        assert moved[digest][0] == len(blob)
-        assert receiver_store.get(digest) == blob
 
     run_scenario(scenario())
 

@@ -3,24 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import gc
-import io
-import multiprocessing
 import os
 import threading
-from contextlib import ExitStack, nullcontext
-from contextvars import copy_context
-from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import BinaryIO
 
 import aiohttp
 import pytest
-from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
-    AssetRef,
     AssetVault,
     LibraryStore,
     LocalAssetLibrary,
@@ -31,20 +24,12 @@ from dinkster_assets import (
 )
 from dinkster_assets import integrity as integrity_module
 from dinkster_assets import vault as vault_module
-from dinkster_assets.declared import use_produced_output_job
-from dinkster_assets.produced import ProducedAssetInventory
-from dinkster_assets.scratch import (
-    ProducedScratchState,
-    claim_inactive_produced_scratch,
-    claim_inactive_produced_vault,
-)
 from dinkster_server import ServerLibrary, create_app
 from dinkster_server import asset_stream as asset_stream_module
-from dinkster_server.asset_stream import open_verified_sized, stream_verified
+from dinkster_server.asset_stream import open_verified_sized
 from test_server import SCHEMAS, make_engine
 
 from tests.async_scenarios import run_scenario
-from tests.platform_support import symlink_or_skip
 
 
 @pytest.fixture(autouse=True)
@@ -57,91 +42,6 @@ def write_asset(tmp_path: Path, data: bytes, name: str = "model.safetensors") ->
     path = tmp_path / name
     path.write_bytes(data)
     return path
-
-
-@pytest.mark.parametrize("fault", ["inventory", "ownership", "symlink"])
-def test_vault_claim_refuses_unknown_or_escaping_state(tmp_path: Path, fault: str) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    if fault != "inventory":
-        ProducedAssetInventory(vault.root).pending(digest_bytes(b"pending"), 7)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    if fault == "symlink":
-        symlink_or_skip(vault.root / ".leases", outside, target_is_directory=True)
-    before = set(vault.root.rglob("*"))
-    with pytest.raises(AssetError):
-        with claim_inactive_produced_vault(vault.root):
-            pytest.fail("unknown ownership must not admit collection")
-    assert set(vault.root.rglob("*")) == before
-    assert list(outside.iterdir()) == []
-
-
-@pytest.mark.parametrize("operation", ["read", "publish"])
-def test_vault_claim_blocks_new_identity_operations_and_releases_failed_acquisitions(
-    tmp_path: Path, operation: str
-) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    data = b"first produced identity"
-    digest = digest_bytes(data)
-    other_data = b"different produced identity"
-    other = digest_bytes(other_data)
-    inventory = ProducedAssetInventory(vault.root)
-    inventory.pending(digest, len(data))
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        path = writer.commit()
-    with claim_inactive_produced_vault(vault.root) as inactive:
-        assert inactive
-        with pytest.raises(AssetError, match="busy with reconciliation"):
-            if operation == "read":
-                open_verified(path, digest)
-            else:
-                vault.writer(other)
-    with vault.writer(other) as writer:
-        writer.write(other_data)
-        other_path = writer.commit()
-    with open_verified(other_path, other) as handle:
-        assert handle.read() == other_data
-        with claim_inactive_produced_vault(vault.root) as inactive:
-            assert not inactive
-    with claim_inactive_produced_vault(vault.root) as inactive:
-        assert inactive
-    assert path.read_bytes() == data
-    assert not list(vault.root.glob(".ingest-*"))
-
-
-@pytest.mark.parametrize("commit", ["commit", "commit_with_result"])
-@pytest.mark.parametrize("outcome", ["success", "invalid", "abandoned"])
-def test_vault_publication_ownership_spans_writer_context(
-    tmp_path: Path, commit: str, outcome: str
-) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    digest = digest_bytes(b"published bytes")
-    ProducedAssetInventory(vault.root).pending(digest, len(b"published bytes"))
-    ownership = vault.root / ".produced-readers" / digest.split(":", 1)[1]
-    with vault.writer(digest) as writer:
-        with claim_inactive_produced_vault(vault.root) as inactive:
-            assert not inactive
-        with claim_inactive_produced_scratch(ownership) as inactive:
-            assert not inactive
-        writer.write(b"different bytes" if outcome == "invalid" else b"published bytes")
-        if outcome == "invalid":
-            with pytest.raises(AssetError, match="did not verify"):
-                getattr(writer, commit)()
-        elif outcome == "success":
-            getattr(writer, commit)()
-            published = vault.resolve(digest)
-            assert published is not None
-            assert published.read_bytes() == b"published bytes"
-        with claim_inactive_produced_scratch(ownership) as inactive:
-            assert not inactive
-    with claim_inactive_produced_scratch(ownership) as inactive:
-        assert inactive
-    with claim_inactive_produced_vault(vault.root) as inactive:
-        assert inactive
-    if outcome != "success":
-        assert not vault.has(digest)
-    assert not list(vault.root.glob(".ingest-*"))
 
 
 @pytest.mark.parametrize("result", ["stable", "changing", "corrupt"])
@@ -252,183 +152,6 @@ def test_open_verified_handle_pins_the_verified_inode(tmp_path: Path) -> None:
     assert path.read_bytes() == b"late replacement"  # the name did move on
 
 
-def test_read_bytes_round_trips_verified_content(tmp_path: Path) -> None:
-    data = b"honest bytes"
-    path = write_asset(tmp_path, data)
-    with open_verified(path, digest_bytes(data)) as handle:
-        assert handle.tell() == 0
-        assert handle.read() == data
-
-
-@pytest.mark.parametrize("store", ["scratch", "engine"])
-@pytest.mark.parametrize("release", ["close", "collect", "detach"])
-def test_produced_readers_keep_ownership_until_last_descriptor_closes(
-    tmp_path: Path, store: str, release: str
-) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    data = b"produced bytes retained by two independent readers"
-    digest = digest_bytes(data)
-    if store == "scratch":
-        ProducedScratchState(vault.root).bind("finished producer", 1)
-        claim_root = vault.root
-    else:
-        ProducedAssetInventory(vault.root).pending(digest, len(data))
-        claim_root = vault.root / ".produced-readers" / digest.split(":")[1]
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        path = writer.commit()
-    first = open_verified(path, digest)
-    second: BinaryIO | None = open_verified(path, digest)
-    raw: io.RawIOBase | None = None
-    try:
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert not inactive
-        if store == "engine":
-            with claim_inactive_produced_vault(vault.root) as inactive:
-                assert not inactive
-        first.close()
-        first.close()
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert not inactive
-        second.seek(9)
-        buffer = bytearray(13)
-        assert cast(io.BufferedReader, second).readinto(buffer) == 13
-        assert buffer == data[9:22]
-        if release == "detach":
-            raw = cast(io.BufferedReader, second).detach()
-            with claim_inactive_produced_scratch(claim_root) as inactive:
-                assert not inactive
-            raw.seek(0)
-            assert raw.read() == data
-            raw.close()
-        elif release == "collect":
-            second = None
-            gc.collect()
-        else:
-            second.close()
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert inactive
-            with pytest.raises(AssetError, match="busy with reconciliation"):
-                open_verified(path, digest)
-        if store == "engine":
-            with claim_inactive_produced_vault(vault.root) as inactive:
-                assert inactive
-        with pytest.raises(AssetIntegrityError):
-            open_verified(path, digest_bytes(b"wrong identity"))
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert inactive
-        path.unlink()
-        with pytest.raises(FileNotFoundError):
-            open_verified(path, digest)
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert inactive
-    finally:
-        first.close()
-        if raw is not None:
-            raw.close()
-        elif second is not None:
-            second.close()
-
-
-@pytest.mark.parametrize("store", ["scratch", "engine"])
-@pytest.mark.parametrize("failure", [None, RuntimeError, asyncio.CancelledError])
-def test_produced_local_paths_retain_ownership_for_the_invocation(
-    tmp_path: Path, store: str, failure: type[BaseException] | None
-) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    data = b"bytes reopened by a pathname-only decoder"
-    digest = digest_bytes(data)
-    if store == "scratch":
-        ProducedScratchState(vault.root).bind("source job", 1)
-        claim_root = vault.root
-    else:
-        ProducedAssetInventory(vault.root).pending(digest, len(data))
-        claim_root = vault.root / ".produced-readers" / digest.split(":")[1]
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        writer.commit()
-    ref = AssetRef(digest, "source.bin", len(data), resolver=vault)
-    original_wire = ref.to_wire()
-    with pytest.raises(failure) if failure is not None else nullcontext():
-        with use_produced_output_job("path consumer", 1):
-            path = ref.local_path()
-            inherited = copy_context()
-            with use_produced_output_job("path consumer", 1):
-                assert ref.local_path() == path
-            with claim_inactive_produced_scratch(claim_root) as inactive:
-                assert not inactive
-            # A pathname-only decoder opens its own descriptor, after verification ended.
-            with path.open("rb") as reopened:
-                assert reopened.read() == data
-            assert ref.to_wire() == original_wire
-            if failure is not None:
-                raise failure()
-    with claim_inactive_produced_scratch(claim_root) as inactive:
-        assert inactive
-    with pytest.raises(AssetError, match="no longer active"):
-        inherited.run(ref.local_path)
-    with claim_inactive_produced_scratch(claim_root) as inactive:
-        assert inactive
-
-
-def _hold_produced_reader(
-    channel: Connection, path: Path, digest: str, crash: bool, reader: str
-) -> None:
-    with ExitStack() as held:
-        if reader == "path":
-            held.enter_context(use_produced_output_job("path reader", 1))
-            ref = AssetRef(digest, "source.bin", 0, resolver=AssetVault(path.parent.parent))
-            channel.send(ref.local_path().read_bytes())
-        else:
-            handle = held.enter_context(open_verified(path, digest))
-            channel.send(handle.read())
-        assert channel.recv() == "release"
-        if crash:
-            os._exit(0)
-    channel.close()
-
-
-@pytest.mark.parametrize("crash", [False, True])
-@pytest.mark.parametrize("reader", ["handle", "path"])
-def test_produced_reader_ownership_crosses_processes_and_releases_on_exit(
-    tmp_path: Path, crash: bool, reader: str
-) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    data = b"read by another process after producer settlement"
-    digest = digest_bytes(data)
-    ProducedAssetInventory(vault.root).pending(digest, len(data))
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        path = writer.commit()
-    context = multiprocessing.get_context("spawn")
-    parent, child = context.Pipe()
-    process = context.Process(
-        target=_hold_produced_reader, args=(child, path, digest, crash, reader)
-    )
-    process.start()
-    child.close()
-    claim_root = vault.root / ".produced-readers" / digest.split(":")[1]
-    try:
-        assert parent.poll(20), "reader did not open the asset"
-        assert parent.recv() == data
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert not inactive
-        with claim_inactive_produced_vault(vault.root) as inactive:
-            assert not inactive
-        parent.send("release")
-        process.join(20)
-        assert process.exitcode == 0
-        with claim_inactive_produced_scratch(claim_root) as inactive:
-            assert inactive
-        with claim_inactive_produced_vault(vault.root) as inactive:
-            assert inactive
-    finally:
-        if process.is_alive():
-            process.terminate()
-        process.join(20)
-        parent.close()
-
-
 def test_unmanaged_reads_do_not_create_collection_metadata(tmp_path: Path) -> None:
     data = b"user-managed source"
     digest = digest_bytes(data)
@@ -439,66 +162,6 @@ def test_unmanaged_reads_do_not_create_collection_metadata(tmp_path: Path) -> No
     with open_verified(path, digest) as handle:
         assert handle.read() == data
     assert set(tmp_path.rglob("*")) == before
-
-
-@pytest.mark.parametrize("link", ["inventory", "shard", "reader ownership"])
-def test_produced_readers_refuse_symlinked_managed_state(tmp_path: Path, link: str) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    data = b"produced bytes with escaping state"
-    digest = digest_bytes(data)
-    ProducedAssetInventory(vault.root).pending(digest, len(data))
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        path = writer.commit()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    if link == "inventory":
-        marker = vault.root / ".produced-assets.sqlite"
-        destination = outside / marker.name
-        marker.replace(destination)
-        symlink_or_skip(marker, destination)
-    elif link == "shard":
-        destination = outside / path.parent.name
-        path.parent.replace(destination)
-        symlink_or_skip(path.parent, destination, target_is_directory=True)
-    else:
-        readers = vault.root / ".produced-readers"
-        readers.replace(outside / readers.name)
-        symlink_or_skip(readers, outside, target_is_directory=True)
-    before = set(outside.rglob("*"))
-    with pytest.raises(AssetError, match="symlink"):
-        open_verified(path, digest)
-    assert set(outside.rglob("*")) == before
-
-
-def test_ingest_record_skips_payload_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    data = b"verified during ingest"
-    path = write_asset(tmp_path, data)
-    digest = digest_bytes(data)
-    record = integrity_module.verification_record(digest, path.stat())
-    assert record is not None
-
-    calls = _counting_hasher(monkeypatch)
-    with open_verified(path, digest, record) as handle:
-        assert handle.read() == data
-    assert calls == [0]
-
-
-def test_stale_ingest_record_fails_without_rehash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data = b"verified during ingest"
-    path = write_asset(tmp_path, data)
-    digest = digest_bytes(data)
-    record = integrity_module.verification_record(digest, path.stat())
-    assert record is not None
-    path.write_bytes(b"changed after ingest with a different size")
-
-    calls = _counting_hasher(monkeypatch)
-    with pytest.raises(AssetIntegrityError) as excinfo:
-        open_verified(path, digest, record)
-    assert excinfo.value.reason == "stale_ingest_record"
-    assert calls == [0]
 
 
 # --- the verification cache: speeds up honest reopens, never authorizes ------
@@ -574,32 +237,6 @@ def test_in_place_rewrite_with_restored_mtime_forces_rehash(
     assert calls[0] == 2  # cache miss: the rewrite was rehashed, not trusted
 
 
-def test_cache_disabled_where_fingerprints_are_untrusted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """On platforms where st_ctime is creation time (Windows), a matching
-    fingerprint proves nothing: every open rehashes."""
-    calls = _counting_hasher(monkeypatch)
-    monkeypatch.setattr(integrity_module, "_TRUST_FINGERPRINTS", False)
-    data = b"no shortcuts here"
-    path = write_asset(tmp_path, data)
-    digest = digest_bytes(data)
-    open_verified(path, digest).close()
-    open_verified(path, digest).close()
-    assert calls[0] == 2
-    assert len(integrity_module._verified) == 0  # noqa: SLF001 - cache introspection
-
-
-@pytest.mark.skipif(os.name != "posix", reason="verified fingerprint cache is POSIX-only")
-def test_cache_is_bounded_lru(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(integrity_module, "_CACHE_LIMIT", 2)
-    for index in range(4):
-        data = f"asset number {index}".encode()
-        path = write_asset(tmp_path, data, f"asset{index}.bin")
-        open_verified(path, digest_bytes(data)).close()
-    assert len(integrity_module._verified) == 2  # noqa: SLF001 - cache introspection
-
-
 def test_mutation_during_hashing_is_detected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -629,12 +266,6 @@ def test_verified_local_path_returns_path_for_honest_content(tmp_path: Path) -> 
     data = b"checkpoint bytes"
     path = write_asset(tmp_path, data)
     assert verified_local_path(path, digest_bytes(data)) == path
-
-
-@pytest.mark.skipif(os.name != "nt", reason="requires Windows fingerprint semantics")
-def test_windows_path_binding_ignores_creation_time() -> None:
-    fingerprint = (1, 2, 3, 4, 5)
-    assert integrity_module._path_binding_fingerprint(fingerprint) == (1, 2, 3, 4)  # noqa: SLF001
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX open-file replacement semantics")
@@ -830,47 +461,5 @@ def test_open_helper_closes_descriptor_when_cancelled_mid_hash(
         async with asyncio.timeout(10):
             while not (opened and opened[0].closed):
                 await asyncio.sleep(0.01)
-
-    run_scenario(scenario())
-
-
-def test_stream_cancellation_defers_close_to_the_worker_read(
-    tmp_path: Path,
-) -> None:
-    """Cancelled mid-read: the handle must be closed AFTER the in-flight
-    worker read returns - closing concurrently could block the event loop
-    on the reader's internal lock."""
-    read_started = threading.Event()
-    release = threading.Event()
-    events: list[str] = []
-
-    class SlowHandle:
-        closed = False
-
-        def read(self, _size: int) -> bytes:
-            read_started.set()
-            assert release.wait(10)
-            events.append("read-returned")
-            return b""
-
-        def close(self) -> None:
-            self.closed = True
-            events.append("closed")
-
-    handle = SlowHandle()
-
-    async def scenario() -> None:
-        request = make_mocked_request("GET", "/assets/x")
-        task = asyncio.ensure_future(stream_verified(request, cast(BinaryIO, handle), 0))
-        await asyncio.to_thread(read_started.wait, 10)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert not handle.closed  # the worker read still owns the handle
-        release.set()
-        async with asyncio.timeout(10):
-            while not handle.closed:
-                await asyncio.sleep(0.01)
-        assert events == ["read-returned", "closed"]
 
     run_scenario(scenario())

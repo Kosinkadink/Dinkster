@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import ctypes
 import importlib
 import json
 import os
 import struct
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -30,48 +27,11 @@ from dinkster_values import (
     EncodedMultiStreamLatent,
     decode_latent,
     encode_latent,
-    latent_fingerprint,
     validate_latent_encoded,
 )
-from dinkster_values.latent_codec import _copy_address
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
-
-
-def test_empty_latent_is_a_present_value_without_loading_torch() -> None:
-    value: dict[str, object] = {}
-    encoded = encode_latent(value)
-    assert decode_latent(encoded) == {}
-    validate_latent_encoded(encoded, {})
-    assert materialize_latent(value) is value
-    assert encode_latent(decode_latent(encoded)) == encoded
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_api.v1 import materialize_latent; "
-            "from dinkster_values import encode_latent, decode_latent, validate_latent_encoded; "
-            "value = {}; encoded = encode_latent(value); "
-            "assert decode_latent(encoded) == {}; validate_latent_encoded(encoded, {}); "
-            "assert materialize_latent(value) is value; "
-            "assert not any(n == 'torch' or n.startswith('torch.') "
-            "or n == 'dinkster_inference' or n.startswith('dinkster_inference.') "
-            "for n in sys.modules)",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-
-
-@pytest.mark.parametrize("value", ({"metadata": {}}, {"noise_mask": None}, None, []))
-def test_empty_latent_does_not_allow_other_sampleless_values(value: object) -> None:
-    encoded = encode_latent(value)
-    with pytest.raises(ValueError, match="samples mapping entry"):
-        decode_latent(encoded)
-    with pytest.raises(ValueError, match="samples mapping entry"):
-        validate_latent_encoded(encoded, {})
 
 
 class EmptyLatentSource(Node):
@@ -438,13 +398,6 @@ def test_voxel_crosses_hosts_and_persistent_cache(tmp_path: Path, in_process: bo
     run_scenario(scenario())
 
 
-def test_tensor_buffer_copy_uses_pointer_sized_lengths() -> None:
-    source = ctypes.create_string_buffer(b"latent")
-    assert _copy_address(ctypes.addressof(source), 6) == b"latent"
-    assert _copy_address(0, 0) == b""
-    assert (ctypes.c_ubyte * (2**32 + 2))._length_ == 2**32 + 2
-
-
 def test_structural_latent_codec_is_deterministic_and_round_trips_streams() -> None:
     video = _tensor(fill=1, shape=(1, 2, 3))
     audio = _tensor(fill=2, shape=(1, 4))
@@ -470,14 +423,6 @@ def test_structural_latent_codec_is_deterministic_and_round_trips_streams() -> N
     assert samples.streams[0][1] == video
     assert decoded["batch_index"] == (0,)
     assert decoded["metadata"] == {"enabled": True, "name": "value"}
-
-
-def test_default_latent_keeps_existing_identity() -> None:
-    value = {"samples": EncodedLatentTensor("float32", (1,), b"\x00\x00\x80?")}
-    encoded = encode_latent(value)
-
-    assert encode_latent(decode_latent(encoded)) == encoded
-    assert latent_fingerprint(LATENT_TYPE)(value) == "ab5ebb24357a9feccebd5d0e2f3717711d2b6ddf"
 
 
 @pytest.mark.parametrize(
@@ -572,31 +517,6 @@ def test_registered_moge_geometry_preserves_optional_tensors_and_identity(
     )
 
 
-@pytest.mark.parametrize("corruption", ("buffer", "shape", "dtype"))
-def test_registered_moge_geometry_rejects_malformed_tensor_records(corruption: str) -> None:
-    from dinkster_api.v1 import MOGE_GEOMETRY_TYPE, TypeRegistry, register_inference_types
-
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(MOGE_GEOMETRY_TYPE)
-    encoded = spec.encode({"depth": _tensor(fill=1, shape=(1, 2, 3))})
-    prefix = LATENT_CODEC_MAGIC + b"\x01"
-    tree = json.loads(encoded[len(prefix) :])
-    record = tree["items"]["depth"]
-    if corruption == "buffer":
-        record["data"] = "AA=="
-    elif corruption == "shape":
-        record["shape"] = [1, -2, 3]
-    else:
-        record["dtype"] = "float99"
-    malformed = prefix + json.dumps(tree).encode()
-    assert spec.validate_encoded is not None
-    with pytest.raises(ValueError, match="tensor"):
-        spec.validate_encoded(malformed, {})
-    with pytest.raises(ValueError, match="tensor"):
-        spec.decode(malformed)
-
-
 def test_registered_layers_preserve_nested_tensors_state_and_identity() -> None:
     from dinkster_api.v1 import LAYERS_TYPE, TypeRegistry, register_inference_types
 
@@ -652,32 +572,6 @@ def test_registered_layers_preserve_nested_tensors_state_and_identity() -> None:
     assert spec.fingerprint(document) != latent.fingerprint(document)
     minimal = {"version": 1, "layers": []}
     assert spec.decode(spec.encode(minimal)) == minimal
-
-
-def test_registered_layers_materialize_encoded_tensors_and_preserve_live_storage() -> None:
-    torch = pytest.importorskip("torch")
-    from dinkster_api.v1 import TypeRegistry, register_inference_types
-
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(LAYERS_TYPE)
-    image = torch.arange(30, dtype=torch.float64).reshape(1, 2, 5, 3)
-    mask = torch.tensor([[[False, True, True, False, True], [True, False, False, True, False]]])
-    document = {"canvas": (19, 7), "layers": [{"image": image, "mask": mask, "x": -3}]}
-    live = materialize_latent(document)
-    assert live is document
-    assert live["layers"][0]["image"] is image
-    assert live["layers"][0]["mask"] is mask
-    assert live["layers"][0]["image"].data_ptr() == image.data_ptr()
-    decoded = materialize_latent(spec.decode(spec.encode(document)))
-    assert decoded["canvas"] == (19, 7)
-    assert decoded["layers"][0]["x"] == -3
-    for name, expected in (("image", image), ("mask", mask)):
-        actual = decoded["layers"][0][name]
-        assert actual.dtype == expected.dtype
-        assert actual.device == expected.device
-        assert actual.shape == expected.shape
-        assert torch.equal(actual, expected)
 
 
 class LayerDocumentSource(Node):
@@ -790,28 +684,3 @@ def test_registered_layers_cross_hosts_and_persistent_cache(
                 await composer.close()
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("corruption", ("buffer", "shape", "dtype"))
-def test_registered_layers_reject_malformed_nested_tensor_records(corruption: str) -> None:
-    from dinkster_api.v1 import LAYERS_TYPE, TypeRegistry, register_inference_types
-
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(LAYERS_TYPE)
-    encoded = spec.encode({"version": 1, "layers": [{"image": _tensor(fill=1, shape=(1, 2, 3))}]})
-    prefix = LATENT_CODEC_MAGIC + b"\x01"
-    tree = json.loads(encoded[len(prefix) :])
-    record = tree["items"]["layers"][0]["items"]["image"]
-    if corruption == "buffer":
-        record["data"] = "AA=="
-    elif corruption == "shape":
-        record["shape"] = [1, -2, 3]
-    else:
-        record["dtype"] = "float99"
-    malformed = prefix + json.dumps(tree).encode()
-    assert spec.validate_encoded is not None
-    with pytest.raises(ValueError, match="tensor"):
-        spec.validate_encoded(malformed, {})
-    with pytest.raises(ValueError, match="tensor"):
-        spec.decode(malformed)

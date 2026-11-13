@@ -55,6 +55,31 @@ def previous_activation(root: Path, current: int) -> Journal | None:
     return None
 
 
+def activation_status(root: Path) -> dict[str, object]:
+    """Describe the last activation without recovering or changing software."""
+    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+        journal = Journal.read(path)
+        if journal.operation not in {"setup", "update", "rollback", "repair", "restore"}:
+            continue
+        if journal.stage == "complete":
+            state, action = "applied", "Inspect the selected generation before starting new work."
+        elif journal.stage == "rolled-back":
+            state = "cancelled" if journal.error == "pack preparation cancelled" else "failed"
+            action = "Current selection was restored; request and approve a new repair plan."
+        else:
+            state, action = "interrupted", "Run an explicit environment repair before retrying."
+        return {
+            "state": state,
+            "operation": journal.operation,
+            "previous": journal.previous,
+            "target": journal.target,
+            "current": read_current(root),
+            "error": journal.error,
+            "action": action,
+        }
+    return {"state": "not-attempted", "action": "Preview a repair before approving any change."}
+
+
 def begin_setup(
     root: Path,
     target: int,

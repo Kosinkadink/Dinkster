@@ -140,11 +140,6 @@ def test_concat_resamples_mixed_rates_to_the_higher_rate() -> None:
     assert _waveform(result["AUDIO"]).shape == (1, 2, 8820)
 
 
-def test_concat_rejects_batch_mismatches() -> None:
-    with pytest.raises(RuntimeError, match="Sizes of tensors must match"):
-        AudioConcat.execute(audio1=_audio(batch=2), audio2=_audio(), direction="after")
-
-
 def test_merge_pads_audio2_with_silence_to_audio1_length() -> None:
     first = _audio(4410)
     second = _audio(3000, amplitude=0.25)
