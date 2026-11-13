@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,8 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(*args: str, cwd: Path = ROOT) -> None:
-    subprocess.run(args, cwd=cwd, check=True)
+def run(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
+    subprocess.run(args, cwd=cwd, env=env, check=True)
 
 
 def output(*args: str, cwd: Path = ROOT) -> str:
@@ -74,6 +75,9 @@ def main() -> int:
         run(*pnpm, "--filter", "@dinkster/app", "build", cwd=frontend)
         stamp.write_text(pin["commit"])
 
+    home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+    environment = dict(os.environ)
+    environment.setdefault("DINKSTER_LIBRARY_ROOT", str(home / "library"))
     develop = str(ROOT / "scripts/develop.py")
     run(
         sys.executable,
@@ -84,12 +88,13 @@ def main() -> int:
         "--frontend-root",
         str(frontend / "packages/app/dist"),
         "--yes",
+        env=environment,
     )
-    run(sys.executable, develop, "stop", "--yes")
+    run(sys.executable, develop, "stop", "--yes", env=environment)
     launch = [sys.executable, develop, "start", "--port", str(args.port), "--yes"]
     url = f"http://127.0.0.1:{args.port}"
     print(f"Development editor: {url}", flush=True)
-    run(*launch)
+    run(*launch, env=environment)
     if not args.no_browser:
         open_browser_when_ready(url)
     return 0

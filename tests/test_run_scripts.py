@@ -83,6 +83,35 @@ def test_source_browser_waits_for_healthy_engine(checkout, monkeypatch):
         serving.join()
 
 
+@pytest.mark.parametrize("explicit_library", [False, True])
+def test_launcher_children_use_existing_library_mounts(checkout, monkeypatch, explicit_library):
+    root, _ = checkout
+    home = root / "existing-home"
+    library = root / "explicit-library" if explicit_library else home / "library"
+    library.mkdir(parents=True)
+    mounts = library / "mounts.toml"
+    mounts.write_text('[mounts.models]\npath="/retained/models"\nmode="read"\n')
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    if explicit_library:
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
+    else:
+        monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    (root / "scripts/develop.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "library=Path(os.environ['DINKSTER_LIBRARY_ROOT'])\n"
+        "assert (library/'mounts.toml').is_file()\n"
+        "(library/'launcher-reached').write_text('selected existing library')\n"
+    )
+    monkeypatch.setattr(
+        launcher,
+        "run",
+        lambda *args, **kwargs: subprocess.run(args, check=True, env=kwargs.get("env")),
+    )
+    assert launcher.main() == 0
+    assert (library / "launcher-reached").read_text() == "selected existing library"
+    assert mounts.read_text() == '[mounts.models]\npath="/retained/models"\nmode="read"\n'
+
+
 def test_changed_pin_fetches_checks_out_and_rebuilds(checkout):
     root, calls = checkout
     (root / "scripts/release_sources.json").write_text(json.dumps({"commit": "2" * 40}))
