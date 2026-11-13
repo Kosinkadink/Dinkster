@@ -279,6 +279,11 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
     selection = local_selection(source, variant, DEFAULT_VARIANTS, Path(sys.executable))
     selection["packages"] = ["fixture-base"]
+    validation = source / ".evidence-source/packages"
+    validation.mkdir(parents=True)
+    (validation / "not-engine-source.py").write_text("raise RuntimeError('validation only')\n")
+    if os.name != "nt":
+        (validation / "dinkster-inference-torch").symlink_to(library, target_is_directory=True)
     selection["development"] = development_selection(
         source,
         () if contributor else (pack,),
@@ -288,6 +293,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         contributor=contributor,
     )
     with captured_development_sources(selection["development"], store) as (engine, _, wheels):
+        assert not (engine / ".evidence-source").exists()
         inputs = prepare_local(engine, selection, store, library_wheels=wheels)
         constraints = inputs["constraints"]
         generation = tmp_path / "generation"

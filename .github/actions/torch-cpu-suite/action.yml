@@ -22,11 +22,12 @@ runs:
     - name: Prepare the CPU contributor generation
       shell: bash
       run: |
-        arguments=()
+        uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+        python scripts/develop.py stop --yes
         if [ -n "${DINKSTER_EVIDENCE_ROOT:-}" ]; then
-          arguments+=(--library-source "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance")
+          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
+            "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
         fi
-        uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes "${arguments[@]}"
     - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
