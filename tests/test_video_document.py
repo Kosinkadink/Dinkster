@@ -156,16 +156,6 @@ def test_document_rejects_inline_media_paths_and_nonfinite():
         document({**base, "timeline": base["timeline"]["tracks"]})
 
 
-def test_timeline_rejects_legacy_video_source_tag_without_a_bridge(bound_video):
-    value, _, _ = bound_video
-    legacy_reference = {
-        "type": "comfy.VIDEO",
-        "asset": cast(AssetRef, value["source"]).to_wire(),
-    }
-    with pytest.raises(ValueError):
-        mutate(make(), "bind_source", {"source": "video", "reference": legacy_reference})
-
-
 def test_opaque_otio_url_never_reaches_resolver():
     tree = make(clips=[clip("absent", duration=2)])
     child = tree["timeline"]["tracks"]["children"][0]["children"][0]

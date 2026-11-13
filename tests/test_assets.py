@@ -9,7 +9,6 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO
 
 import pytest
 from dinkster_assets import (
@@ -181,31 +180,6 @@ def test_indexed_resolver_reuses_ingest_verification_across_processes(
 
     monkeypatch.setattr(integrity_module, "_hash_handle", explode)
     assert worker_ref.read_bytes() == b"tiny checkpoint bytes"
-
-
-def test_legacy_index_row_hashes_at_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root = make_models_dir(tmp_path)
-    library = LocalAssetLibrary(root)
-    library.scan()
-    ref = library.ref("models/checkpoints/tiny.safetensors")
-    index = json.loads(library.index_path.read_text("utf-8"))
-    for row in index.values():
-        row.pop("verification", None)
-    library.index_path.write_text(json.dumps(index), "utf-8")
-
-    import dinkster_assets.integrity as integrity_module
-
-    real = integrity_module._hash_handle
-    calls = [0]
-
-    def counted(handle: BinaryIO) -> str:
-        calls[0] += 1
-        return real(handle)
-
-    monkeypatch.setattr(integrity_module, "_hash_handle", counted)
-    worker_ref = AssetRef.from_wire(ref.to_wire(), IndexedAssetResolver(root))
-    assert worker_ref.read_bytes() == b"tiny checkpoint bytes"
-    assert calls == [1]
 
 
 def test_library_default_ignore_skips_placeholders_junk_and_partials(

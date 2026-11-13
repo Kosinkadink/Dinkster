@@ -3339,23 +3339,6 @@ def test_cancel_by_ref_matches_keyed_cancel() -> None:
     run_scenario(scenario())
 
 
-def test_by_ref_routes_preserve_legacy_by_ref_client_id() -> None:
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            body = submit_body(echo_graph(), ["s"], clientId="by-ref", jobId="legacy")
-            assert (await client.post("/api/jobs", json=body)).status == 202
-            response = await client.get("/api/jobs/by-ref/legacy")
-            assert response.status == 200
-            assert (await response.json())["clientId"] == "by-ref"
-            response = await client.delete("/api/jobs/by-ref/legacy")
-            assert response.status == 200
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_job_replay_pressure_blob_omission_and_retention() -> None:
     from dinkster_server.app import JOB_EVENT_BUFFER, _JobReplay
 

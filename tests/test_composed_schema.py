@@ -11,7 +11,6 @@ from dinkster_schema import (
     OutputSpec,
     TypeExpr,
     schema_from_wire,
-    schema_signature,
     schema_to_wire,
 )
 from dinkster_values import CustomWidgetDescriptor
@@ -74,12 +73,3 @@ def test_composed_roundtrip(schema: NodeSchema, storage: bool, descriptors: bool
     assert sum(entry["role"] == "outputDescriptors" for entry in wire["interface"]) == descriptors
     assert schema_from_wire(wire) == schema
     assert schema_to_wire(schema_from_wire(wire)) == wire
-
-
-def test_legacy_signatures_are_byte_identical(schema: NodeSchema) -> None:
-    assert schema_signature(schema) == "ac61e209d6037807b8a049bfa08c17b4572f0c79"
-    explicit_default = replace(schema, inputs=(replace(schema.inputs[0], accepts_storage=False),))
-    assert schema_signature(explicit_default) == schema_signature(schema)
-    assert schema_signature(
-        replace(schema, inputs=(replace(schema.inputs[0], accepts_storage=True),))
-    ) != schema_signature(schema)

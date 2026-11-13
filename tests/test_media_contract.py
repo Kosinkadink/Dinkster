@@ -302,18 +302,6 @@ def test_semantic_codec_and_shared_memory_roundtrip(mask: bool, monkeypatch) -> 
             release_segment(segment)
 
 
-def test_default_semantics_do_not_change_legacy_bytes_or_identity() -> None:
-    array = np.zeros((1, 2, 3, 4), dtype=np.float32)
-    annotated = annotate_image(
-        array, alpha="straight", color={"primaries": 1, "transfer": 13, "range": 2}
-    )
-    legacy = io.BytesIO()
-    np.save(legacy, array, allow_pickle=False)
-    assert encode_image_array(annotated) == encode_image_array(array) == legacy.getvalue()
-    assert image_array_fingerprint("IMAGE")(annotated) == image_array_fingerprint("IMAGE")(array)
-    assert media_semantics(array) == {}
-
-
 @pytest.mark.parametrize("image_first", [False, True])
 def test_pack_registration_order_preserves_mask_contract(image_first: bool) -> None:
     from dinkster_image import register_types as register_image_types

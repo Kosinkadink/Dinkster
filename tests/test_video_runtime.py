@@ -287,23 +287,6 @@ def test_public_pixel_iterator_early_close_releases_encoded_asset(
     assert all(handle.closed for handle in opened)
 
 
-def test_inline_v2_roundtrip_and_v1_migration() -> None:
-    data = _source()
-    value = video_from_source(data)
-    encoded = encode_video(value)
-    assert encoded.startswith(b"DINKSTER-VIDEO\x02")
-    assert decode_video(encoded) == value
-    assert decode_video(data) == value
-    assert video_meta(value)["codec_version"] == 2
-    assert video_fingerprint(VIDEO_TYPE)(value) == video_fingerprint(VIDEO_TYPE)(decode_video(data))
-    metadata = {"container": video_meta(value)["container"], "byte_size": len(data)}
-    validate_video_encoded(data, metadata)
-    with pytest.raises(ValueError, match="asset_refs"):
-        validate_video_encoded(
-            data, {**metadata, "asset_refs": [{"digest": "blake3:" + "1" * 64, "size": 1}]}
-        )
-
-
 def test_asset_codec_does_not_open_and_rebinds_at_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

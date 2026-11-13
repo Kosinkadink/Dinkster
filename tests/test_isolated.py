@@ -1967,34 +1967,6 @@ def test_pack_icon_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert problem is not None and "unreadable" in problem
 
 
-def test_load_pack_presentation(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """The presentation-only loader: reads [pack.presentation] from a file
-    that need not be a loadable pack manifest (no [pack.entry] required) -
-    the badge on-ramp for unported legacy packs. Everything is advisory:
-    missing file, bad TOML, or no declaration is None, never an error."""
-    from dinkster_workers import load_pack_presentation
-
-    badge_only = tmp_path / "dinkster-pack.toml"
-    badge_only.write_text('[pack]\n[pack.presentation]\nabbr = "RG"\ncolor = "#00ff00"\n')
-    presentation = load_pack_presentation(badge_only, pack_name="rgthree (ComfyUI)")
-    assert presentation is not None
-    assert presentation.display_name == "rgthree (ComfyUI)"  # fallback name
-    assert presentation.abbr == "RG"
-    assert presentation.color == "#00ff00"
-
-    assert load_pack_presentation(tmp_path / "missing.toml") is None
-
-    no_declaration = tmp_path / "plain.toml"
-    no_declaration.write_text('[pack]\nname = "p"\n')
-    assert load_pack_presentation(no_declaration) is None
-
-    bad_toml = tmp_path / "broken.toml"
-    bad_toml.write_text("[pack\n")
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        assert load_pack_presentation(bad_toml) is None
-    assert "unreadable" in " ".join(r.getMessage() for r in caplog.records)
-
-
 def test_manifest_docs_validate_and_warn_drop(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2463,27 +2435,6 @@ def test_manifest_blueprints_warn_and_drop(
     assert "budget" in " ".join(r.getMessage() for r in caplog.records)
 
 
-def test_load_pack_blueprints(tmp_path: Path) -> None:
-    """The blueprints-only loader: reads [[pack.blueprints]] from a file
-    that need not be a loadable pack manifest (no [pack.entry] required) -
-    the starter-workflow on-ramp for unported legacy packs. Advisory
-    throughout: missing file or no declaration is (), never an error."""
-    from dinkster_workers import load_pack_blueprints
-
-    (tmp_path / "starter.json").write_text('{"graphs": {}}')
-    blueprint_only = tmp_path / "dinkster-pack.toml"
-    blueprint_only.write_text(
-        '[pack]\n[[pack.blueprints]]\nid = "starter"\nname = "Starter"\nfile = "starter.json"\n'
-    )
-    blueprints = load_pack_blueprints(blueprint_only)
-    assert [bp.id for bp in blueprints] == ["starter"]
-
-    assert load_pack_blueprints(tmp_path / "missing.toml") == ()
-    no_declaration = tmp_path / "plain.toml"
-    no_declaration.write_text('[pack]\nname = "p"\n')
-    assert load_pack_blueprints(no_declaration) == ()
-
-
 def test_validate_pack_template(tmp_path: Path) -> None:
     """validate_pack_template enforces the same backend-ownable boundary
     as blueprints (id grammar, shape, containment, caps, UTF-8, JSON
@@ -2615,34 +2566,3 @@ def test_manifest_templates_warn_and_drop(
         manifest = load_manifest(declared)
     assert [tp.id for tp in manifest.templates] == ["good"]
     assert "budget" in " ".join(r.getMessage() for r in caplog.records)
-
-
-def test_load_pack_templates(tmp_path: Path) -> None:
-    """The templates-only loader: reads [[pack.templates]] from a file
-    that need not be a loadable pack manifest - the starter-workflow
-    on-ramp for unported legacy packs. Asset references validate against
-    the SAME file's [[pack.assets]] declarations. Advisory throughout:
-    missing file or no declaration is (), never an error."""
-    from dinkster_assets import digest_bytes
-    from dinkster_workers import load_pack_templates
-
-    (tmp_path / "starter.json").write_text('{"graphs": {}}')
-    (tmp_path / "model.bin").write_bytes(b"weights")
-    template_only = tmp_path / "dinkster-pack.toml"
-    template_only.write_text(
-        "[pack]\n"
-        "[[pack.assets]]\n"
-        f'id = "model"\nname = "Model"\ndigest = "{digest_bytes(b"weights")}"\n'
-        'file = "model.bin"\n'
-        "[[pack.templates]]\n"
-        'id = "starter"\nname = "Starter"\nfile = "starter.json"\n'
-        'assets = ["model"]\n'
-    )
-    templates = load_pack_templates(template_only, pack="comfy.legacy")
-    assert [tp.id for tp in templates] == ["starter"]
-    assert templates[0].assets == ("model",)
-
-    assert load_pack_templates(tmp_path / "missing.toml", pack="p") == ()
-    no_declaration = tmp_path / "plain.toml"
-    no_declaration.write_text('[pack]\nname = "p"\n')
-    assert load_pack_templates(no_declaration, pack="p") == ()

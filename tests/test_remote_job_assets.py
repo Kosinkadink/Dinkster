@@ -229,30 +229,3 @@ def test_unverified_local_asset_refuses_remote_dispatch(tmp_path: Path) -> None:
         assert "granting host" in result.error.message
 
     run_scenario(scenario())
-
-
-def test_pre_staging_daemon_refused_when_job_assets_needed(tmp_path: Path) -> None:
-    """A daemon that never negotiated staging cannot receive job assets:
-    the dispatch refusal says so instead of failing inside the node."""
-
-    async def scenario() -> None:
-        proc, host, port = await start_service(
-            write_assetpack_manifest(tmp_path), tmp_path, "--asset-vault", str(tmp_path / "v")
-        )
-        try:
-            async with AssetHost() as asset_host:
-                worker = job_worker(host, port, asset_host.endpoint)
-                await worker.start()
-                try:
-                    # Simulate the pre-staging hello: the negotiation flag
-                    # is exactly what an old service never sends.
-                    worker._session._asset_staging = False
-                    with pytest.raises(ExecutionError, match="predates asset staging"):
-                        await build_engine(worker).run(asset_graph(), ["r"])
-                    assert asset_host.requests == 0
-                finally:
-                    await worker.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())

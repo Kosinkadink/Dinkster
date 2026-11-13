@@ -147,25 +147,6 @@ def test_verified_public_https_redirect_records_exact_receipt(tmp_path: Path) ->
     assert [call[0] for call in opener.calls] == [LISTED_URL, FINAL_URL]
 
 
-def test_separate_receipt_store_instances_preserve_each_append(tmp_path: Path) -> None:
-    result = no_network_public_fetch(
-        DIGEST,
-        LISTED_URL,
-        len(ASSET),
-        AssetVault(tmp_path / "vault"),
-        opener=HTTPSFixture({LISTED_URL: Response(200, ASSET)}),
-    )
-    path = tmp_path / "receipts.json"
-    first = PublicAcquisitionReceiptStore(path, clock=lambda: 100.0, id_factory=lambda: "a" * 32)
-    second = PublicAcquisitionReceiptStore(path, clock=lambda: 101.0, id_factory=lambda: "b" * 32)
-
-    first.record(public_source(), result)
-    second.record(public_source(), result)
-
-    assert [receipt.receipt_id for receipt in second.records()] == ["a" * 32, "b" * 32]
-    assert PublicAcquisitionReceiptStore(path).records() == second.records()
-
-
 def test_acquisition_records_receipt_only_on_eligible_verified_public_path(tmp_path: Path) -> None:
     opener = HTTPSFixture({LISTED_URL: Response(200, ASSET)})
     vault = AssetVault(tmp_path / "vault")

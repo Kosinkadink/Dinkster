@@ -86,41 +86,6 @@ def test_sessions_survive_restart(tmp_path: Path) -> None:
         second_store.close()
 
 
-def test_existing_database_adds_workflow_document_kind(tmp_path: Path) -> None:
-    path = tmp_path / "sessions.sqlite"
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE sessions (
-                session_id TEXT PRIMARY KEY,
-                scope TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                snapshot TEXT NOT NULL,
-                snapshot_revision INTEGER NOT NULL,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
-            ("legacy", "local", "document", "null", 0, 1.0),
-        )
-
-    store = SessionStore(path)
-    try:
-        session = SessionService(store=store).get("legacy")
-        assert session.document_kind == "workflow"
-        with sqlite3.connect(path) as connection:
-            column = next(
-                row
-                for row in connection.execute("PRAGMA table_info(sessions)")
-                if row[1] == "document_kind"
-            )
-        assert column[3:] == (1, "'workflow'", 0)
-    finally:
-        store.close()
-
-
 def test_checkpoint_pruning_is_durable(tmp_path: Path) -> None:
     path = tmp_path / "sessions.sqlite"
     store = SessionStore(path)

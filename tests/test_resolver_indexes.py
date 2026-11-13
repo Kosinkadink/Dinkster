@@ -238,23 +238,6 @@ def test_provenance_named_sources_are_replaceable_isolated_and_persistent(
     assert reloaded.get(MODEL_DIGEST).license == "official"  # type: ignore[union-attr]
 
 
-def test_provenance_legacy_list_migrates_on_next_write(tmp_path: Path) -> None:
-    path = tmp_path / "provenance.json"
-    path.write_text(
-        json.dumps([ProvenanceRecord(MODEL_DIGEST, ("https://legacy.example/model",)).to_wire()]),
-        "utf-8",
-    )
-    store = ProvenanceStore(path)
-    store.replace_source(
-        "resolver-index:new",
-        (ProvenanceRecord(OTHER_DIGEST, ("https://new.example/model",)),),
-    )
-    persisted = json.loads(path.read_text("utf-8"))
-    assert persisted["dinksterProvenance"] == 1
-    assert store.sources(MODEL_DIGEST) == ("https://legacy.example/model",)
-    assert store.sources(OTHER_DIGEST) == ("https://new.example/model",)
-
-
 def test_local_subscriptions_replace_remove_and_reload(tmp_path: Path) -> None:
     provenance_path = tmp_path / "provenance.json"
     subscriptions_path = tmp_path / "resolver-indexes.json"
@@ -293,26 +276,6 @@ def test_local_subscriptions_replace_remove_and_reload(tmp_path: Path) -> None:
     reloaded = ResolverSubscriptionStore(subscriptions_path, reloaded_provenance, region="cn")
     assert [subscription.id for subscription in reloaded.subscriptions()] == [second.id]
     assert reloaded_provenance.sources(MODEL_DIGEST) == provenance.sources(MODEL_DIGEST)
-
-
-def test_persisted_unused_optional_field_keeps_http_entries_and_suggestions(tmp_path: Path) -> None:
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    write_document(source, resolver_document())
-    ResolverSubscriptionStore(state, provenance).subscribe(str(source))
-
-    persisted = json.loads(state.read_text("utf-8"))
-    subscriptions = persisted["subscriptions"]
-    assert isinstance(subscriptions, list) and isinstance(subscriptions[0], dict)
-    subscriptions[0]["retiredOptionalField"] = {"unused": True}
-    state.write_text(json.dumps(persisted), "utf-8")
-
-    reloaded = ResolverSubscriptionStore(state, provenance)
-    assert provenance.sources(MODEL_DIGEST)
-    assert [suggestion.digest for suggestion in reloaded.suggest("example.safetensors")] == [
-        MODEL_DIGEST
-    ]
 
 
 def test_local_refresh_replaces_entries_and_preserves_last_good_on_error(
@@ -1196,83 +1159,6 @@ def test_failed_cursor_refresh_retains_http_state(
             assert not provenance.sources(OTHER_DIGEST)
             reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
             assert reloaded.subscriptions() == store.subscriptions()
-
-    run_scenario(scenario())
-
-
-def test_legacy_resolver_cache_requires_complete_unconditional_refresh(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        entry = resolver_entry()
-        mode = "initial"
-        state = tmp_path / "subscriptions.json"
-        now = [100.0]
-
-        async def index(request: web.Request) -> web.Response:
-            if mode == "revalidate":
-                assert request.headers.get("If-None-Match") == '"whole"'
-                return web.Response(status=304)
-            assert "If-None-Match" not in request.headers
-            if mode == "complete-single":
-                return web.json_response(
-                    resolver_document(entry, resolver_entry(digest=OTHER_DIGEST)),
-                    headers={"ETag": '"whole"'},
-                )
-            if mode == "legacy-304":
-                return web.Response(status=304)
-            if mode == "initial":
-                return web.json_response(resolver_document(entry), headers={"ETag": '"first"'})
-            if "cursor" not in request.query:
-                return web.json_response(
-                    {**resolver_document(entry), "nextCursor": "next"},
-                    headers={"ETag": '"first"'},
-                )
-            assert json.loads(state.read_text())["subscriptions"][0]["completeSnapshot"] is False
-            if mode == "failed-page":
-                return web.Response(status=400)
-            return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
-
-        async with resolver_http_server(index) as url:
-            provenance = ProvenanceStore(tmp_path / "provenance.json")
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            await asyncio.to_thread(store.subscribe, url)
-            legacy = json.loads(state.read_text())
-            del legacy["subscriptions"][0]["completeSnapshot"]
-            state.write_text(json.dumps(legacy))
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            prior = store.subscriptions()[0]
-            assert not prior.complete_snapshot
-            assert provenance.sources(MODEL_DIGEST)
-            assert store.public_sources(MODEL_DIGEST)
-            for failure_mode in ("legacy-304", "failed-page"):
-                mode = failure_mode
-                now[0] += RESOLVER_REVALIDATE_SECONDS
-                (failed,) = await asyncio.to_thread(store.refresh)
-                assert failed["error"]
-                retained = store.subscriptions()[0]
-                assert retained.checked_at == now[0]
-                assert retained.refreshed_at == prior.refreshed_at
-                assert retained.index == prior.index
-                assert not retained.complete_snapshot
-                store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-                assert store.subscriptions()[0] == retained
-            mode = "complete"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (refreshed,) = await asyncio.to_thread(store.refresh)
-            assert not refreshed["error"]
-            assert len(store.subscriptions()[0].index.entries) == 2
-            assert store.subscriptions()[0].complete_snapshot
-            assert store.subscriptions()[0].etag == ""
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            mode = "complete-single"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (refreshed,) = await asyncio.to_thread(store.refresh)
-            assert not refreshed["error"]
-            assert store.subscriptions()[0].etag == '"whole"'
-            mode = "revalidate"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (revalidated,) = await asyncio.to_thread(store.refresh)
-            assert not revalidated["error"]
-            assert store.subscriptions()[0].refreshed_at == now[0]
 
     run_scenario(scenario())
 

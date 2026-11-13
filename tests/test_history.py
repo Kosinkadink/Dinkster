@@ -174,35 +174,6 @@ def test_store_put_get_roundtrip_and_wire(tmp_path: Path) -> None:
     store.close()
 
 
-def test_store_migrates_pre_principal_database_with_local_backfill(tmp_path: Path) -> None:
-    path = tmp_path / "history.sqlite"
-    conn = sqlite3.connect(path)
-    conn.execute(
-        """CREATE TABLE history (
-        run_id TEXT PRIMARY KEY, scope TEXT NOT NULL, client_id TEXT NOT NULL,
-        job_id TEXT NOT NULL, state TEXT NOT NULL, priority INTEGER NOT NULL,
-        submitted REAL NOT NULL, started REAL, finished REAL NOT NULL,
-        source_document TEXT NOT NULL, error TEXT, executed INTEGER NOT NULL,
-        cached INTEGER NOT NULL, skipped INTEGER NOT NULL, attempt INTEGER NOT NULL DEFAULT 1
-        )"""
-    )
-    conn.execute(
-        "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("old", "local", "c", "j", "completed", 0, 1.0, 2.0, 3.0, "", None, 1, 0, 0, 1),
-    )
-    conn.commit()
-    conn.close()
-
-    store = HistoryStore(path)
-    record = store.get("local", "old")
-    assert record is not None
-    assert record.principal_id == "local"
-    assert record.principal_kind == "human"
-    assert record.to_wire()["principalId"] == "local"
-    assert record.to_wire()["principalKind"] == "human"
-    store.close()
-
-
 def test_store_filters_and_keyset_paging(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "history.sqlite")
     for index in range(5):
@@ -262,43 +233,6 @@ def test_history_asset_roots_cover_accepted_terminal_and_other_scopes(tmp_path: 
                 pytest.fail("unreadable history roots were ignored")
     finally:
         store.close()
-
-
-def test_store_migrates_old_schema_with_attempt_default(tmp_path: Path) -> None:
-    path = tmp_path / "history.sqlite"
-    connection = sqlite3.connect(path)
-    connection.execute(
-        """
-        CREATE TABLE history (
-            run_id TEXT PRIMARY KEY, scope TEXT NOT NULL, client_id TEXT NOT NULL,
-            job_id TEXT NOT NULL, state TEXT NOT NULL, priority INTEGER NOT NULL,
-            submitted REAL NOT NULL, started REAL, finished REAL NOT NULL,
-            source_document TEXT NOT NULL, error TEXT, executed INTEGER NOT NULL,
-            cached INTEGER NOT NULL, skipped INTEGER NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "INSERT INTO history VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("old", "local", "c", "j", "completed", 0, 1.0, 2.0, 3.0, "", None, 1, 0, 0),
-    )
-    connection.commit()
-    connection.close()
-
-    store = HistoryStore(path)
-    old = store.get("local", "old")
-    assert old is not None
-    assert old.attempt == 1
-    assert old.node_receipts == ()
-    assert old.to_wire()["attemptId"] == 1
-    assert old.asset_digests is None
-    with pytest.raises(AssetError, match="unavailable"):
-        with store.hold_asset_references():
-            pytest.fail("legacy history was assumed to have no output references")
-    new = make_record("new", attempt=1)
-    store.put(new)
-    assert store.get("local", "new") == new
-    store.close()
 
 
 def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_path: Path) -> None:

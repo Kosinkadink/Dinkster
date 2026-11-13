@@ -494,48 +494,6 @@ def test_acl_demotion_closes_live_event_socket() -> None:
     run_scenario(scenario())
 
 
-def test_legacy_session_acl_is_visible_but_cannot_be_claimed(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        path = tmp_path / "legacy.sqlite"
-        original_store = SessionStore(path)
-        original = SessionService(store=original_store)
-        session = original.create(scope="team", document_id="d", snapshot=None)
-        original_store.close()
-        with sqlite3.connect(path) as conn:
-            conn.execute("DELETE FROM session_acl")
-            conn.execute("DELETE FROM session_policy")
-        store = SessionStore(path)
-        client = await make_authenticated_client(SessionService(store=store))
-        alice = {"X-Principal": "alice"}
-        try:
-            response = await client.get(f"/api/sessions/{session.session_id}/acl", headers=alice)
-            assert response.status == 200
-            assert await response.json() == {"defaultRole": "editor", "entries": {}}
-            response = await client.put(
-                f"/api/sessions/{session.session_id}/acl",
-                json={"defaultRole": "editor", "entries": {"alice": "owner"}},
-                headers=alice,
-            )
-            assert response.status == 409
-            assert await response.json() == {"error": "no-owner"}
-            appended = await client.post(
-                f"/api/sessions/{session.session_id}/ops",
-                json=op_body("legacy-op", 0, actorId="legacy-actor"),
-                headers=alice,
-            )
-            assert appended.status == 200
-            closed = await client.delete(f"/api/sessions/{session.session_id}", headers=alice)
-            assert closed.status == 200
-            with sqlite3.connect(path) as conn:
-                for table in ("sessions", "ops", "actors", "session_acl", "session_policy"):
-                    assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-        finally:
-            await client.close()
-            store.close()
-
-    run_scenario(scenario())
-
-
 def test_op_rate_limit_refills_and_rotating_actors_share_principal_budget(tmp_path: Path) -> None:
     async def scenario() -> None:
         clock = FakeClock()

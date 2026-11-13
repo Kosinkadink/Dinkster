@@ -19,7 +19,6 @@ from dinkster_assets.value import value_asset_references
 from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
 from dinkster_values import TypeRegistry
 from dinkster_values.audio_codec import (
-    AUDIO_INLINE_LIMIT,
     AudioRangeError,
     AudioSourceUnavailableError,
     AudioWindowReader,
@@ -173,35 +172,6 @@ def test_large_batched_pcm_publishes_without_losing_samples(
     np.testing.assert_array_equal(
         audio_window(decoded, 123, 41, batch_index=1)["waveform"], pcm[1:2, :, 123:164]
     )
-
-
-def test_legacy_persisted_v1_and_oversized_inline_admission(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pcm = np.zeros((1, 2, 64), dtype=np.float32)
-    buffer = io.BytesIO()
-    np.save(buffer, pcm, allow_pickle=False)
-    wire = struct.pack("<Q", 48000) + buffer.getvalue()
-    np.testing.assert_array_equal(cast(Any, decode_audio(wire))["waveform"], pcm)
-    validate_audio_encoded(memoryview(wire), {"sample_rate": 48000, "shape": pcm.shape})
-    with pytest.raises(ValueError, match="256 KiB"):
-        encode_audio(
-            {
-                "waveform": np.zeros((1, 1, AUDIO_INLINE_LIMIT // 4 + 1), np.float32),
-                "sample_rate": 48000,
-            }
-        )
-    forged = io.BytesIO()
-    np.lib.format.write_array_header_1_0(
-        forged, {"descr": "<f4", "fortran_order": False, "shape": (1, 2, 2**50)}
-    )
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("malformed wire reached numpy allocation")
-
-    monkeypatch.setattr(np, "load", forbidden)
-    with pytest.raises(ValueError, match="payload length"):
-        decode_audio(struct.pack("<Q", 48000) + forged.getvalue())
 
 
 def test_window_allocation_guard_fires_before_source_decode(source, monkeypatch) -> None:

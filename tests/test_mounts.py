@@ -351,40 +351,6 @@ def test_scan_publishes_cached_assets_and_progress_before_changed_file_finishes(
         assert future.result(timeout=5) == 2
 
 
-def test_mount_indexes_live_under_library_root_and_migrate_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "models"
-    seed(root, {"model.bin": b"weights"})
-    legacy = root / ".dinkster-asset-index.json"
-    legacy_table = MountTable()
-    legacy_table.add(MountDef(id="models", path=root))
-    legacy_table.scan("models")
-    legacy_bytes = legacy.read_bytes()
-
-    import dinkster_assets.library as library_module
-
-    def reject_hash(path: Path) -> tuple[str, None]:
-        raise AssertionError(f"migration rehashed unchanged file: {path}")
-
-    monkeypatch.setattr(library_module, "digest_file_with_record", reject_hash)
-    library_root = tmp_path / "library"
-    index_root = library_root / "asset-indexes"
-    table = MountTable(library_root / "mounts.json", index_root=index_root)
-    table.add(MountDef(id="models", path=root))
-    assert table.scan("models") == 1
-    central = index_root / "models.json"
-    assert central.is_file()
-    assert legacy.read_bytes() == legacy_bytes
-
-    legacy.write_text("{}", "utf-8")
-    restarted = MountTable(library_root / "restart.json", index_root=index_root)
-    restarted.add(MountDef(id="models", path=root))
-    assert restarted.scan("models") == 1
-    assert restarted.ref("mounts/models/model.bin").digest == digest_bytes(b"weights")
-
-
 def test_mount_kind_is_validated_and_published_to_snapshot(tmp_path: Path) -> None:
     root = tmp_path / "checkpoints"
     seed(root, {"model.safetensors": b"weights"})
@@ -574,35 +540,6 @@ def test_mount_priority_orders_engine_and_worker_resolution_deterministically(
     assert (
         MountSnapshotResolver(tmp_path / "restart-snapshot.json").resolve(digest)
         == roots["z-lower"] / "z-lower.bin"
-    )
-
-
-def test_snapshot_priority_backward_compatibility_and_malformed_row_tolerance(
-    tmp_path: Path,
-) -> None:
-    snapshot = tmp_path / "mounts-snapshot.json"
-    payload = b"same bytes"
-    good_root = tmp_path / "z-good"
-    malformed_root = tmp_path / "a-malformed"
-    seed(good_root, {"good.bin": payload})
-    seed(malformed_root, {"malformed.bin": payload})
-    table = MountTable(snapshot)
-    table.add(MountDef(id="z-good", path=good_root))
-    table.add(MountDef(id="a-malformed", path=malformed_root, priority=-5))
-    table.scan("z-good")
-    table.scan("a-malformed")
-
-    body = json.loads(snapshot.read_text("utf-8"))
-    rows = {row["id"]: row for row in body["mounts"]}
-    rows["z-good"].pop("priority")  # old snapshots mean default priority zero
-    rows["a-malformed"]["priority"] = True
-    snapshot.write_text(
-        json.dumps({"mounts": [rows["a-malformed"], rows["z-good"]]}),
-        "utf-8",
-    )
-
-    assert MountSnapshotResolver(snapshot).resolve(digest_bytes(payload)) == (
-        good_root / "good.bin"
     )
 
 

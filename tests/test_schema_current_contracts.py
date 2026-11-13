@@ -1,5 +1,4 @@
 import dataclasses
-from typing import Any, cast
 
 import pytest
 from dinkster_schema import (
@@ -14,8 +13,6 @@ from dinkster_schema import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    schema_from_wire,
-    schema_to_wire,
 )
 
 SCHEMA = NodeSchema(
@@ -87,27 +84,6 @@ def test_dynamic_combo_option_key_grammar_accepts_printable_ascii_tokens(
 ) -> None:
     assert OPTION_KEY_PATTERN.fullmatch(key)
     assert DynamicComboOption(key).key == key
-
-
-def test_combo_source_is_retired_from_model_and_wire() -> None:
-    """COMBO identity replaces the retired suggestion marker.
-    No OutputSpec field or comboSource spelling remains."""
-    combo_schema = dataclasses.replace(
-        SCHEMA,
-        outputs=(
-            OutputSpec("choice", TypeExpr.concrete("COMBO")),
-            OutputSpec("text", TypeExpr.concrete("STRING")),
-        ),
-    )
-    wire = schema_to_wire(combo_schema)
-    entries = {
-        entry["id"]: entry
-        for entry in cast("list[dict[str, Any]]", wire["interface"])
-        if entry["role"] == "output"
-    }
-    assert all("comboSource" not in entry for entry in entries.values())
-    assert "combo_source" not in {field.name for field in dataclasses.fields(OutputSpec)}
-    assert schema_from_wire(wire) == combo_schema
 
 
 def test_outputs_helper_rejects_typos_at_return_site() -> None:

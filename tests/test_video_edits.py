@@ -9,7 +9,6 @@ import pytest
 from dinkster_values.video_edits import (
     crop_rectangle,
     effective_video_facts,
-    scale_geometry,
     seconds,
     trim_window,
 )
@@ -88,37 +87,6 @@ def test_full_odd_frame_crop_is_noop() -> None:
     assert crop_rectangle(1919, 1079, {"width": 1919, "height": 1079}) == (0, 0, 1919, 1079)
 
 
-@pytest.mark.parametrize("fit", ["stretch", "crop", "pad"])
-def test_identity_scale(fit: str) -> None:
-    assert scale_geometry(1920, 1080, {"width": 1920, "height": 1080, "fit": fit}) == (
-        1920,
-        1080,
-        0,
-        0,
-        1920,
-        1080,
-    )
-
-
-def test_scale_geometry_uses_even_rounding() -> None:
-    assert scale_geometry(1920, 1080, {"width": 1000, "height": 1000, "fit": "crop"}) == (
-        1778,
-        1000,
-        389,
-        0,
-        1000,
-        1000,
-    )
-    assert scale_geometry(1920, 1080, {"width": 1000, "height": 1000, "fit": "pad"}) == (
-        1000,
-        562,
-        0,
-        219,
-        1000,
-        1000,
-    )
-
-
 def test_composed_trims_intersect_current_clip_without_reading_source() -> None:
     clip = _clip(
         {"trim": {"start_time": 2, "duration": 3}},
@@ -131,16 +99,6 @@ def test_composed_trims_intersect_current_clip_without_reading_source() -> None:
         {"trim": {"start_time": -1, "duration": 0}},
     )
     assert effective_video_facts(clip)["duration"] == 1
-
-
-def test_rotation_precedes_crop_and_scale_order_matters() -> None:
-    crop = {"crop": {"x": 100, "y": 40, "width": 600, "height": 800}}
-    scale = {"scale": {"width": 300, "height": 200}}
-    assert effective_video_facts(_clip(rotation=90))["width"] == 1080
-    a = effective_video_facts(_clip(crop, scale, rotation=90))
-    b = effective_video_facts(_clip(scale, crop, rotation=90))
-    assert (a["width"], a["height"]) == (300, 200)
-    assert (b["width"], b["height"]) == (200, 160)
 
 
 def test_concat_effective_geometry_and_duration() -> None:

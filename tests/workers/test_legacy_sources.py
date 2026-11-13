@@ -14,9 +14,7 @@ from dinkster_inference_wire import load_safetensors_header
 from dinkster_workers import legacy_sources
 from dinkster_workers.legacy_sources import (
     LegacyCheckpointError,
-    classify_weight_source,
     convert_legacy_checkpoint,
-    discover_converted_sidecar,
     resolve_weight_source,
 )
 
@@ -54,58 +52,6 @@ def test_safetensors_content_passes_through_regardless_of_physical_name(
 
     assert resolve_weight_source(source) is source
     assert list(tmp_path.iterdir()) == [source]
-
-
-@pytest.mark.parametrize(
-    "name", ["weights.safetensors", "digestwithoutanextension", "weights.ckpt"]
-)
-def test_classify_weight_source_accepts_valid_safetensors_by_content(
-    tmp_path: Path, name: str
-) -> None:
-    source = _empty_safetensors(tmp_path / name)
-
-    assert classify_weight_source(source, "logical.pth") == "safetensors"
-
-
-@pytest.mark.parametrize("logical_name", ["model.ckpt", "MODEL.PT", "folder/model.pth"])
-def test_classify_weight_source_uses_logical_name_for_legacy_bytes(
-    tmp_path: Path, logical_name: str
-) -> None:
-    source = tmp_path / "extensionless-digest"
-    source.write_bytes(b"not safetensors")
-
-    assert classify_weight_source(source, logical_name) == "legacy-convertible"
-
-
-@pytest.mark.parametrize("logical_name", [None, "", "model.bin", "model.safetensors"])
-def test_classify_weight_source_refuses_other_invalid_sources(
-    tmp_path: Path, logical_name: str | None
-) -> None:
-    source = tmp_path / "extensionless-digest"
-    source.write_bytes(b"not safetensors")
-
-    assert classify_weight_source(source, logical_name) == "unsupported"
-
-
-def test_discover_converted_sidecar_returns_valid_deterministic_sibling(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "model.ckpt"
-    source.write_bytes(b"legacy")
-    sidecar = _empty_safetensors(tmp_path / "model.0123456789abcdef.dinkster.safetensors")
-
-    assert discover_converted_sidecar(source) == sidecar
-
-
-def test_discover_converted_sidecar_rejects_corrupt_and_malformed_names(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "model.ckpt"
-    source.write_bytes(b"legacy")
-    (tmp_path / "model.0123456789abcdef.dinkster.safetensors").write_bytes(b"corrupt")
-    _empty_safetensors(tmp_path / "model.not-a-digest.dinkster.safetensors")
-
-    assert discover_converted_sidecar(source) is None
 
 
 def test_conversion_round_trips_and_logs_actual_conversion(

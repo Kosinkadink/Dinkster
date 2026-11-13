@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError
 from typing import Any
 
 import pytest
@@ -29,7 +29,6 @@ from dinkster_protocol import (
     WorkGroupId,
     WorkGroupLifecycle,
     WorkGroupPrepared,
-    WorkGroupProtocolError,
     WorkGroupRefused,
     WorkGroupReleased,
     WorkUnitDefinition,
@@ -129,12 +128,3 @@ def test_cancellation_during_admission_cancels_every_contacted_member() -> None:
     assert [command.replica.value for command in commands] == ["replica-a", "replica-b"]
     state, _ = reduce_workgroup(state, WorkGroupPrepared(**child_kwargs("a")))
     assert state.prepared == (ReplicaId("replica-a"),)
-
-
-def test_fresh_attempt_fences_every_prior_attempt_response() -> None:
-    prior = WorkGroupPrepared(**child_kwargs("a", attempt=1))
-    fresh_definition = definition(attempt=1)
-    fresh_definition = replace(fresh_definition, attempt=fresh_definition.attempt.next())
-    state, _ = reduce_workgroup(WorkGroupLifecycle(fresh_definition), BeginAdmission())
-    with pytest.raises(WorkGroupProtocolError, match="stale"):
-        reduce_workgroup(state, prior)

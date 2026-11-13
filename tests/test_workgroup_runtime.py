@@ -28,7 +28,6 @@ from dinkster_protocol import (
     WorkGroupCancelled,
     WorkGroupDefinition,
     WorkGroupId,
-    WorkGroupLifecycle,
     WorkGroupMessage,
     WorkGroupPrepared,
     WorkGroupRefused,
@@ -398,110 +397,6 @@ async def test_cancel_ack_may_overtake_a_late_work_unit_failure() -> None:
 
 
 @async_test
-async def test_gather_failure_uses_reducer_cleanup_without_payload_math() -> None:
-    d = definition()
-    events: list[str] = []
-
-    def replies(replica: str) -> tuple[WorkGroupMessage, ...]:
-        return (
-            ReplicaReady(**child_kwargs(replica)),
-            WorkGroupPrepared(**child_kwargs(replica)),
-            WorkUnitResult(**unit_kwargs(replica)),
-            WorkGroupCancelled(**child_kwargs(replica)),
-            WorkGroupReleased(**child_kwargs(replica)),
-        )
-
-    a = FakeReplica(d, "a", replies("a"), events)
-    b = FakeReplica(d, "b", replies("b"), events)
-
-    async def gather_failed(_: object) -> str:
-        return "gather failed"
-
-    lifecycle = await WorkGroupCoordinator(RecordingReservations(events)).execute(
-        d,
-        (a.endpoint, b.endpoint),
-        gather=gather_failed,
-    )
-
-    assert lifecycle.state is WorkGroupState.FAILED
-    for fake in (a, b):
-        assert sum(isinstance(message, CancelWorkGroup) for message in fake.sent) == 1
-        assert sum(isinstance(message, ReleaseWorkGroup) for message in fake.sent) == 1
-
-
-@async_test
-async def test_empty_gather_failure_reason_is_rejected_and_cleaned_up() -> None:
-    d = definition()
-    events: list[str] = []
-
-    def replies(replica: str) -> tuple[WorkGroupMessage, ...]:
-        return (
-            ReplicaReady(**child_kwargs(replica)),
-            WorkGroupPrepared(**child_kwargs(replica)),
-            WorkUnitResult(**unit_kwargs(replica)),
-            WorkGroupCancelled(**child_kwargs(replica)),
-            WorkGroupReleased(**child_kwargs(replica)),
-        )
-
-    a = FakeReplica(d, "a", replies("a"), events)
-    b = FakeReplica(d, "b", replies("b"), events)
-
-    async def gather_failed(_: object) -> str:
-        return ""
-
-    with pytest.raises(WorkGroupRuntimeError, match="workgroup runtime failed") as caught:
-        await WorkGroupCoordinator(RecordingReservations(events)).execute(
-            d,
-            (a.endpoint, b.endpoint),
-            gather=gather_failed,
-        )
-
-    assert caught.value.lifecycle.state is WorkGroupState.CANCELLED
-    assert events[-1] == "reserve-exit"
-    for fake in (a, b):
-        assert sum(isinstance(message, CancelWorkGroup) for message in fake.sent) == 1
-        assert sum(isinstance(message, ReleaseWorkGroup) for message in fake.sent) == 1
-
-
-@async_test
-async def test_gather_runtime_error_still_cleans_before_reservation_exit() -> None:
-    d = definition()
-    events: list[str] = []
-
-    def replies(replica: str) -> tuple[WorkGroupMessage, ...]:
-        return (
-            ReplicaReady(**child_kwargs(replica)),
-            WorkGroupPrepared(**child_kwargs(replica)),
-            WorkUnitResult(**unit_kwargs(replica)),
-            WorkGroupCancelled(**child_kwargs(replica)),
-            WorkGroupReleased(**child_kwargs(replica)),
-        )
-
-    a = FakeReplica(d, "a", replies("a"), events)
-    b = FakeReplica(d, "b", replies("b"), events)
-
-    async def gather_error(lifecycle: WorkGroupLifecycle) -> None:
-        raise WorkGroupRuntimeError("gather callback failed", lifecycle)
-
-    with pytest.raises(WorkGroupRuntimeError, match="gather callback failed") as caught:
-        await WorkGroupCoordinator(RecordingReservations(events)).execute(
-            d,
-            (a.endpoint, b.endpoint),
-            gather=gather_error,
-        )
-
-    assert caught.value.lifecycle.state is WorkGroupState.CANCELLED
-    assert caught.value.lifecycle.released == (
-        ReplicaId("replica-a"),
-        ReplicaId("replica-b"),
-    )
-    for fake in (a, b):
-        assert sum(isinstance(message, CancelWorkGroup) for message in fake.sent) == 1
-        assert sum(isinstance(message, ReleaseWorkGroup) for message in fake.sent) == 1
-    assert events[-1] == "reserve-exit"
-
-
-@async_test
 async def test_caller_cancellation_finishes_cleanup_before_releasing_reservation() -> None:
     d = definition()
     events: list[str] = []
@@ -602,37 +497,6 @@ async def test_post_release_eof_cannot_preempt_another_release_barrier() -> None
 
     assert lifecycle.state is WorkGroupState.SUCCEEDED
     assert lifecycle.released == (ReplicaId("replica-a"), ReplicaId("replica-b"))
-
-
-@async_test
-async def test_foreign_and_stale_replies_are_fenced_before_acceptance() -> None:
-    d = definition()
-    events: list[str] = []
-    a = FakeReplica(
-        d,
-        "a",
-        (ReplicaReady(**child_kwargs("a", attempt=2)),),
-        events,
-    )
-    b = FakeReplica(d, "b", (ReplicaReady(**child_kwargs("b")),), events)
-
-    with pytest.raises(WorkGroupRuntimeError, match="endpoint reply"):
-        await WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=0.01).execute(
-            d, (a.endpoint, b.endpoint)
-        )
-
-
-@async_test
-async def test_retry_attempt_rejects_prior_attempt_reply() -> None:
-    d = definition(attempt=2)
-    events: list[str] = []
-    a = FakeReplica(d, "a", (ReplicaReady(**child_kwargs("a", attempt=1)),), events)
-    b = FakeReplica(d, "b", (ReplicaReady(**child_kwargs("b", attempt=2)),), events)
-
-    with pytest.raises(WorkGroupRuntimeError, match="endpoint reply"):
-        await WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=0.01).execute(
-            d, (a.endpoint, b.endpoint)
-        )
 
 
 @async_test

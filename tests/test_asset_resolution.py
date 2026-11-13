@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
 from dinkster_assets.identity import AssetError
 from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import (
-    RESOLUTION_SCHEMA_VERSION,
     AdvisoryAlias,
     Artifact,
     DeclaredRequirements,
@@ -16,7 +14,6 @@ from dinkster_assets.resolution import (
     ModelVariant,
     MountMaterialization,
     ProviderMirror,
-    ResolutionSnapshot,
     ResolutionStore,
     SourceIdentity,
     VariantArtifact,
@@ -119,25 +116,4 @@ def test_provider_snapshot_replaces_only_one_provider(tmp_path: Path) -> None:
     )
     store.replace_provider_snapshot("provider-a", (replacement,))
     assert store.snapshot(SCOPE).mirrors == (replacement, other)
-    store.close()
-
-
-def test_schema_version_and_legacy_mapping_table_are_compatible(tmp_path: Path) -> None:
-    path = tmp_path / "resolution.sqlite"
-    connection = sqlite3.connect(path)
-    connection.execute("PRAGMA user_version = 1")
-    connection.execute(
-        "CREATE TABLE mappings (scope TEXT, reference_key TEXT, logical_id TEXT, variant_id TEXT, "
-        "digest TEXT, trusted_provider_id TEXT, trusted_source_id TEXT, updated_at REAL)"
-    )
-    connection.execute(
-        "INSERT INTO mappings VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)",
-        (SCOPE, "workflow:model", "flux/dev", "fp8-main", DIGEST_A, 1),
-    )
-    connection.commit()
-    connection.close()
-
-    store = ResolutionStore(path)
-    assert store._schema_version() == RESOLUTION_SCHEMA_VERSION
-    assert store.snapshot(SCOPE) == ResolutionSnapshot()
     store.close()

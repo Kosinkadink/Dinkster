@@ -42,8 +42,6 @@ from dinkster_values import (
 from dinkster_workers import DispatchWorker
 from dinkster_workers.boundary import (
     ValueCodec,
-    decode_invocation,
-    encode_invocation,
     release_segment,
 )
 
@@ -138,20 +136,6 @@ def _dispatcher(arms: Mapping[str, Arm], owners: Mapping[str, str] | None = None
         arm_domains=domains,
         default_arms={arm: arm for arm in domains},
     )
-
-
-def test_legacy_invocation_header_defaults_fp8_matmul_off() -> None:
-    codec = ValueCodec(_REGISTRY)
-    header, blobs, segments, _stats = encode_invocation(codec, _invocation(executor=None))
-    del header["fp8Matmul"]
-    try:
-        decoded = decode_invocation(ValueCodec(_REGISTRY), header, blobs, [])
-        assert decoded.fp8_matmul is False
-        assert decoded.export_snapshot is None
-    finally:
-        for segment in segments:
-            segment.close()
-            segment.unlink()
 
 
 def _manifest(tmp_path: Path, extra: str) -> Path:

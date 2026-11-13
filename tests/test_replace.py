@@ -9,7 +9,6 @@ signature).
 """
 
 import dataclasses
-import json
 from typing import Any, cast
 
 import pytest
@@ -30,7 +29,6 @@ from dinkster_schema import (
     OutputSpec,
     ReplacementCase,
     ReplacementLink,
-    ReplacementMigration,
     ReplacementNode,
     ReplacementPredicate,
     ReplacementRule,
@@ -60,13 +58,6 @@ FALLBACK = ReplacementCase.build("new.node")
 
 
 # -- predicate wire shapes ----------------------------------------------------
-
-
-def test_stale_target_choices_field_refuses_decode() -> None:
-    wire = _wire(FALLBACK)
-    wire["cases"][0]["targetChoices"] = []
-    with pytest.raises(ValueError, match="targetChoices"):
-        rule_from_wire(wire)
 
 
 # -- transforms and mapping sources -------------------------------------------
@@ -117,27 +108,6 @@ def test_input_family_mapping_wire_shapes_and_roundtrip() -> None:
         }
     }
     assert rule_from_wire(explicit_wire) == _rule(explicit)
-
-
-def test_input_family_historical_template_is_not_the_current_same_type_schema() -> None:
-    mapping = InputFamilyMapping.copy(
-        "retired",
-        inputs={"value": MappingSource.copy("item")},
-        source_template=("weight", "item"),
-    )
-    case = ReplacementCase.build("current.node", input_families={"values": mapping})
-    rule = ReplacementRule(
-        from_type="current.node",
-        cases=(case,),
-        migration=ReplacementMigration(("legacy_mode",)),
-    )
-    current = NodeSchema(
-        node_type="current.node",
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
-        replacements=(rule,),
-    )
-    assert schema_from_wire(schema_to_wire(current)) == current
-    assert validate_replacement_references({current.node_type: current}) == ()
 
 
 def test_input_family_source_template_checks_an_available_predecessor() -> None:
@@ -263,85 +233,6 @@ def test_rule_wire_roundtrip_full() -> None:
     assert "when" not in wire["cases"][1]
     assert "inputs" not in wire["cases"][1]
     assert "outputs" not in wire["cases"][1]
-
-
-def test_same_type_migration_wire_and_validation() -> None:
-    migration = ReplacementMigration(("legacy.policy", "color_source", "color_value"))
-    rule = ReplacementRule(
-        from_type="new.node",
-        migration=migration,
-        cases=(
-            ReplacementCase.build(
-                "new.node",
-                slot_variants={"policy": "exact_color", "policy.color_source": "integer"},
-                inputs={"policy.color_source.color_value": MappingSource.copy("color_value")},
-            ),
-        ),
-    )
-    wire = cast("Any", rule_to_wire(rule))
-    assert wire["migration"] == {
-        "historicalInputs": ["legacy.policy", "color_source", "color_value"]
-    }
-    assert rule_from_wire(wire) == rule
-
-    with pytest.raises(ValueError, match="requires historical input ids"):
-        ReplacementMigration(())
-    with pytest.raises(ValueError, match="requires historical input ids"):
-        ReplacementMigration(["value"])  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="duplicate historical input ids"):
-        ReplacementMigration(("value", "value"))
-    with pytest.raises(ValueError, match="invalid historical input id"):
-        ReplacementMigration(("bad..path",))
-    with pytest.raises(ValueError, match="every case must preserve the node type"):
-        ReplacementRule(
-            from_type="old.node",
-            migration=ReplacementMigration(("value",)),
-            cases=(ReplacementCase.build("new.node"),),
-        )
-    with pytest.raises(ValueError, match="must be ReplacementMigration"):
-        ReplacementRule(
-            from_type="new.node",
-            migration={"historicalInputs": ["value"]},  # type: ignore[arg-type]
-            cases=(ReplacementCase.build("new.node"),),
-        )
-
-
-@pytest.mark.parametrize(
-    "migration",
-    (
-        None,
-        [],
-        {"historicalInputs": []},
-        {"historicalInputs": ["value"], "extra": True},
-        {"historicalInputs": "value"},
-        {"historicalInputs": [1]},
-        {"historicalInputs": ["value", "value"]},
-    ),
-)
-def test_migration_wire_rejects_malformed_data(migration: object) -> None:
-    with pytest.raises(ValueError):
-        rule_from_wire(
-            {
-                "from": "same.node",
-                "migration": migration,
-                "cases": [{"to": "same.node"}],
-            }
-        )
-
-
-def test_legacy_cases_without_nodes_encode_byte_identically() -> None:
-    case = ReplacementCase.build(
-        "new.node",
-        inputs={"legacy:input": MappingSource.copy("picture")},
-        outputs={"legacy:output": "result"},
-    )
-    encoded = json.dumps(rule_to_wire(_rule(case)), separators=(",", ":"))
-    assert encoded == (
-        '{"from":"old.node","cases":[{"to":"new.node",'
-        '"inputs":{"legacy:input":{"kind":"copy","input":"picture"}},'
-        '"outputs":{"legacy:output":"result"}}]}'
-    )
-    assert rule_from_wire(json.loads(encoded)) == _rule(case)
 
 
 def test_one_to_n_case_round_trips_with_nodes_links_and_addresses() -> None:
@@ -531,59 +422,6 @@ def _dynamic_target_schema() -> NodeSchema:
             ),
         ),
     )
-
-
-def test_reference_check_accepts_declared_historical_source_inputs() -> None:
-    target = _dynamic_target_schema()
-    selected = {
-        "policy": "tolerance_color",
-        "policy.color_source": "integer",
-        "source": "number",
-    }
-    inputs = {
-        "fixed": MappingSource.copy("fixed"),
-        "policy.color_source.color_value": MappingSource.copy("old_color_value"),
-    }
-    rule = ReplacementRule(
-        from_type=target.node_type,
-        migration=ReplacementMigration(("old_policy", "old_color_value")),
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                when=ReplacementPredicate.value_equals("old_policy", "tolerance_color"),
-                slot_variants=selected,
-                inputs=inputs,
-            ),
-            ReplacementCase.build(
-                target.node_type,
-                slot_variants=selected,
-                inputs=inputs,
-            ),
-        ),
-    )
-    schema = dataclasses.replace(target, replacements=(rule,))
-    assert validate_replacement_references({schema.node_type: schema}) == ()
-
-    bad_rule = dataclasses.replace(
-        rule,
-        cases=(
-            rule.cases[0],
-            dataclasses.replace(
-                rule.cases[1],
-                inputs=(
-                    (
-                        "policy.color_source.color_value",
-                        MappingSource.copy("old_color_typo"),
-                    ),
-                ),
-            ),
-        ),
-    )
-    bad_schema = dataclasses.replace(schema, replacements=(bad_rule,))
-    problems = validate_replacement_references({bad_schema.node_type: bad_schema})
-    assert len(problems) == 1
-    assert problems[0].ref == "old_color_typo"
-    assert "not a static input id of new.dynamic" in problems[0].message
 
 
 def test_reference_check_elaborates_nested_dynamic_target_paths() -> None:

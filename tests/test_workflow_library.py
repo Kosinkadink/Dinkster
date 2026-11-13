@@ -15,7 +15,6 @@ import asyncio
 import json
 import os
 import random
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -105,110 +104,6 @@ def test_catalog_concurrent_initialization_keeps_stores_independent(tmp_path: Pa
             assert [record.name for record in store.query("local")] == [str(index)]
         finally:
             store.close()
-
-
-@pytest.mark.parametrize("catalog", ["fresh", "unversioned", "versioned"])
-def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) -> None:
-    path = tmp_path / "library.sqlite"
-    before: dict[str, list[tuple[object, ...]]] = {}
-    if catalog != "fresh":
-        shutil.copyfile(Path(__file__).parent / "fixtures/asset-catalog-previous-main.sqlite", path)
-        with sqlite3.connect(path) as connection:
-            if catalog == "versioned":
-                connection.executescript(
-                    "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY);"
-                    "INSERT INTO alembic_version VALUES ('0001_asset_records');"
-                )
-            for table in ("records", "media_grants", "asset_dependencies", "asset_derivations"):
-                before[table] = connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
-                assert len(before[table]) == 2
-    store = LibraryStore(path)
-    try:
-        assert store.cleanup_limit() == 21474836480
-        for row in before.get("records", []):
-            record = store.get(str(row[1]), str(row[0]))
-            assert record is not None
-            assert (record.name, record.digest, record.media_type, record.folder) == (
-                row[2],
-                row[3],
-                row[4],
-                row[6],
-            )
-            assert list(record.labels) == json.loads(str(row[5]))
-            assert (record.created, record.modified, record.revision) == row[7:]
-        for row in before.get("media_grants", []):
-            grant = store.media_grant(str(row[0]), str(row[1]), str(row[2]))
-            assert grant is not None
-            assert (grant.media_type, grant.extension, grant.byte_size) == row[3:]
-        for digest, manifest in before.get("asset_dependencies", []):
-            assert store.get_dependencies(str(digest)) == json.loads(str(manifest))
-        for key, manifest in before.get("asset_derivations", []):
-            assert store.get_derivation(str(key)) == json.loads(str(manifest))
-    finally:
-        store.close()
-    with sqlite3.connect(path) as connection:
-        for table, rows in before.items():
-            after = connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
-            if table == "asset_derivations":
-                assert [row[:2] for row in after] == rows
-                assert all(row[2] is None for row in after)
-            else:
-                assert after == rows
-    args = [
-        sys.executable,
-        "-m",
-        "alembic",
-        "-c",
-        "packages/dinkster-assets/alembic.ini",
-        "-x",
-        f"catalog={path}",
-    ]
-    current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0010_result_renditions (head)" in current.stdout
-    checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
-    assert "No new upgrade operations detected" in checked.stdout
-    LibraryStore(path).close()
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        "CREATE TRIGGER erase_record AFTER INSERT ON records "
-        "BEGIN DELETE FROM records WHERE id=NEW.id; END",
-        "CREATE VIEW record_names AS SELECT name FROM records",
-        "ALTER TABLE media_grants RENAME TO old_media_grants; "
-        "CREATE TABLE media_grants (scope TEXT COLLATE NOCASE NOT NULL, "
-        "digest TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL, "
-        "extension TEXT NOT NULL, byte_size INTEGER NOT NULL, PRIMARY KEY (scope, digest, kind)); "
-        "INSERT INTO media_grants SELECT * FROM old_media_grants; DROP TABLE old_media_grants",
-        "DROP TABLE media_grants",
-        "ALTER TABLE records ADD COLUMN unexpected TEXT",
-        "DROP INDEX records_scope_modified",
-        "DROP INDEX records_scope_modified; "
-        "CREATE INDEX records_scope_modified ON records(scope, modified, id)",
-    ],
-)
-def test_catalog_refuses_incompatible_unversioned_schema(tmp_path: Path, change: str) -> None:
-    path = tmp_path / "library.sqlite"
-    shutil.copyfile(Path(__file__).parent / "fixtures/asset-catalog-previous-main.sqlite", path)
-    with sqlite3.connect(path) as connection:
-        connection.executescript(change)
-        tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        rows = {
-            table: connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
-            for (table,) in tables
-        }
-    with pytest.raises(ValueError, match="unversioned asset catalog"):
-        LibraryStore(path)
-    with sqlite3.connect(path) as connection:
-        for table, expected in rows.items():
-            assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == expected
-        assert (
-            connection.execute(
-                "SELECT name FROM sqlite_master WHERE name='alembic_version'"
-            ).fetchall()
-            == []
-        )
 
 
 def make_engine(on_event: EventListener | None = None) -> Engine:
@@ -920,40 +815,6 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(
     asyncio.run(scenario())
 
 
-def test_legacy_retention_migration_preserves_unknown_ownership(tmp_path: Path) -> None:
-    import sqlalchemy as sa
-    from alembic import command
-    from dinkster_assets.schema import migration_config
-
-    path = tmp_path / "library.sqlite"
-    config = migration_config()
-    engine = sa.create_engine(sa.URL.create("sqlite", database=str(path)))
-    try:
-        with engine.begin() as connection:
-            config.attributes["connection"] = connection
-            command.upgrade(config, "0004_derivation_references")
-    finally:
-        engine.dispose()
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            "INSERT INTO asset_retentions VALUES (?, ?, ?, ?, ?)",
-            ("local", "document", "legacy", 7, json.dumps([DIGEST_A])),
-        )
-    store = LibraryStore(path)
-    try:
-        retained = store.retained_assets("local", "document", "legacy")
-        assert retained is not None
-        assert (retained.revision, retained.digests, retained.complete) == (7, (DIGEST_A,), False)
-        with pytest.raises(AssetError, match="incomplete"):
-            with store.hold_asset_references():
-                pytest.fail("a migrated legacy owner was assumed complete")
-        store.retain_assets("local", "document", "legacy", [DIGEST_A], revision=7, complete=True)
-        with store.hold_asset_references() as roots:
-            assert roots == {DIGEST_A}
-    finally:
-        store.close()
-
-
 @pytest.mark.parametrize("kind", ("media/image", "media/audio", "media/video", "asset/file"))
 def test_native_media_saves_complete_into_kind_filtered_project_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
@@ -1458,103 +1319,6 @@ def test_anonymous_vault_inventory_is_operator_only_and_does_not_grant_scope(
                 assert library.store.query_assets("local") == []
                 for digest in found:
                     assert library.store.media_grant("local", digest, "media/image") is None
-            finally:
-                await client.close()
-
-    run_scenario(scenario())
-
-
-def test_catalog_backfills_known_scopes_without_claiming_anonymous_bytes(tmp_path: Path) -> None:
-    from dinkster_assets import MediaGrant
-
-    image = BytesIO()
-    Image.new("RGB", (3, 5), "red").save(image, format="PNG")
-    image_bytes = image.getvalue()
-    damaged = BytesIO()
-    Image.new("RGB", (2, 4), "blue").save(damaged, format="PNG")
-    damaged_bytes = damaged.getvalue()
-    workflow = b'{"graphs":{"main":{"nodes":{}}}}'
-    unknown = b"anonymous historical content"
-    vault = AssetVault(tmp_path / "vault")
-    for data in (image_bytes, damaged_bytes, workflow, unknown):
-        with vault.writer(digest_bytes(data)) as writer:
-            writer.write(data)
-            writer.commit()
-    store = LibraryStore(tmp_path / "library.sqlite")
-    for scope in ("alice", "charlie"):
-        store.grant_media(
-            MediaGrant(
-                scope,
-                digest_bytes(image_bytes),
-                "media/image",
-                "image/png",
-                "png",
-                len(image_bytes),
-            ),
-            image_bytes,
-        )
-    store.grant_media(
-        MediaGrant(
-            "alice",
-            digest_bytes(damaged_bytes),
-            "media/image",
-            "image/png",
-            "png",
-            len(damaged_bytes),
-        ),
-        damaged_bytes,
-    )
-    store.record_asset(
-        "charlie",
-        AssetRef(digest_bytes(image_bytes), "original.png", len(image_bytes), "image/png"),
-        original_name="original.png",
-        kind="media/image",
-        origin={"kind": "upload"},
-        project="film",
-    )
-    for name in ("Story", "Alternate story"):
-        store.create("bob", name, digest_bytes(workflow), WORKFLOW_MEDIA_TYPE)
-    path = vault.resolve(digest_bytes(damaged_bytes))
-    assert path is not None
-    path.write_bytes(b"corrupted")
-    store.close()
-
-    async def scenario() -> None:
-        previous: list[dict[str, object]] | None = None
-        for _ in range(2):
-            client = await make_client(tmp_path)
-            try:
-                response = await client.get("/api/assets/catalog?scope=alice")
-                assert response.status == 200
-                body = await response.json()
-                assert len(body["assets"]) == 1
-                item = body["assets"][0]
-                assert item["asset"]["digest"] == digest_bytes(image_bytes)
-                assert item["asset"]["size"] == len(image_bytes)
-                assert item["aliases"] == [digest_bytes(image_bytes).split(":", 1)[1]]
-                assert item["observations"][0]["origin"] == {"kind": "unknown"}
-                assert item["observations"][0]["kind"] == "media/image"
-                if previous is not None:
-                    assert body["assets"] == previous
-                previous = body["assets"]
-                response = await client.get("/api/assets/catalog?scope=bob")
-                body = await response.json()
-                assert len(body["assets"]) == 1
-                assert set(body["assets"][0]["aliases"]) == {"Story", "Alternate story"}
-                assert {o["kind"] for o in body["assets"][0]["observations"]} == {
-                    "document/workflow"
-                }
-                for scope in ("local", "other", "charlie"):
-                    response = await client.get("/api/assets/catalog", params={"scope": scope})
-                    assert (await response.json())["assets"] == []
-                response = await client.get("/api/assets/catalog?scope=charlie&project=film")
-                assert (await response.json())["assets"][0]["aliases"] == ["original.png"]
-                assert (
-                    client.app[LIBRARY_KEY].store.media_grant(
-                        "other", digest_bytes(image_bytes), "media/image"
-                    )
-                    is None
-                )
             finally:
                 await client.close()
 

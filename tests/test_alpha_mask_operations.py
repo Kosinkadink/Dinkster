@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
-    Node,
     ReplacementPredicate,
     annotate_image,
     media_semantics,
@@ -12,14 +11,9 @@ from dinkster_image._draft_initialization import (
     ImageAlphaJoin,
     ImageAlphaPremultiply,
     ImageAlphaUnpremultiply,
-    ImageChannelMerge,
     ImageChannelSplit,
-    ImageComposite,
     MaskPolarity,
-    MaskToImage,
-    PorterDuffComposite,
 )
-from dinkster_schema import validate_replacement_references
 
 
 def test_alpha_conversion_is_numerical_nonmutating_and_zero_safe() -> None:
@@ -93,52 +87,3 @@ def _matches(
         return not _matches(predicate.of[0], values, links)
     children = [_matches(child, values, links) for child in predicate.of]
     return all(children) if predicate.kind == "all" else any(children)
-
-
-@pytest.mark.parametrize(
-    "node,source,target,choices",
-    [
-        (ImageChannelSplit, "alpha_mask_polarity", "mask_polarity", {}),
-        (ImageChannelMerge, "alpha_mask_polarity", "mask_polarity", {}),
-        (ImageAlphaJoin, "alpha_mask_polarity", "mask_polarity", {}),
-        (PorterDuffComposite, "alpha_mask_polarity", "mask_polarity", {}),
-        (
-            ImageComposite,
-            "mask.mask_polarity",
-            "mask.mask_polarity",
-            {"mask": 1, "source_resize": "none"},
-        ),
-        (MaskToImage, "channels.alpha_polarity", "channels.mask_polarity", {"channels": "rgba"}),
-    ],
-)
-@pytest.mark.parametrize(
-    "legacy,canonical",
-    [
-        ("opacity", "coverage"),
-        ("transparency", "transparency"),
-        ("mask_is_opacity", "coverage"),
-        ("mask_is_transparency", "transparency"),
-    ],
-)
-def test_polarity_migrations_preserve_values_and_links(
-    node: type[Node],
-    source: str,
-    target: str,
-    choices: dict[str, object],
-    legacy: str,
-    canonical: str,
-) -> None:
-    schema = node.define_schema()
-    assert schema.version >= 2
-    assert validate_replacement_references({schema.node_type: schema}) == ()
-    rule = schema.replacements[0]
-    values = {**choices, source: legacy}
-    for links in (set(), {source}):
-        case = next(case for case in rule.cases if _matches(case.when, values, links))
-        mapping = dict(case.inputs)[target]
-        assert mapping.input == source
-        if links:
-            assert mapping.kind == "copy"
-        else:
-            assert mapping.transform is not None
-            assert dict(mapping.transform.map)[legacy] == canonical

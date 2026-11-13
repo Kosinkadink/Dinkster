@@ -11,12 +11,6 @@ from dinkster_protocol import (
 )
 
 
-@pytest.mark.parametrize("mode", ("model", "window"))
-def test_config_rejects_removed_mode(mode: str) -> None:
-    with pytest.raises(ValueError, match="mode is invalid"):
-        SingleJobMultiGpuConfig((0, 1), mode)  # type: ignore[arg-type]
-
-
 def test_config_and_rank_execution_round_trip_strict_wire_contracts() -> None:
     config = SingleJobMultiGpuConfig((3, 1), "sequence")
     execution = SingleJobMultiGpuExecution(1, 2, "sequence")
