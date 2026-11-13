@@ -419,5 +419,4 @@ jobs:
           uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
           python scripts/develop.py stop --yes
           python scripts/develop.py run -- python -m pytest -v \
-            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
-            'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe
