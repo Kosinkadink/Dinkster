@@ -46,12 +46,66 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
         if: steps.paths.outputs.docs != 'true'
       - run: bash scripts/ci-fast.sh checks
         if: steps.paths.outputs.docs != 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+
+  contributor-setup:
+    needs: checks
+    if: ${{ needs.checks.outputs.engine == 'true' && inputs.simulate-fork != true && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: main contributor setup (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "/usr/bin/python3.12"]
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-validation-inputs
+        with:
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
+          coverage: "false"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/prepare-contributor-generation
+        with:
+          python: ${{ matrix.python }}
+      - name: Verify the evidence fixture and generation tools
+        env:
+          REQUIRE_MANAGED_MARKER: ${{ matrix.python == '/usr/bin/python3.12' }}
+        run: |
+          python scripts/develop.py run -- python - <<'PY'
+          import os
+          import pathlib
+          import sys
+          import sysconfig
+          import dinkster_acceptance
+          import torch
+          assert sys.version_info[:2] == (3, 12)
+          assert pathlib.Path(dinkster_acceptance.__file__).is_relative_to(sys.prefix)
+          assert pathlib.Path(dinkster_acceptance.manifest_path()).is_file()
+          assert torch.__version__.endswith('+cpu') and torch.version.cuda is None
+          print('Generation fixture import and CPU torch passed')
+          marker = pathlib.Path(sysconfig.get_path('stdlib')) / 'EXTERNALLY-MANAGED'
+          if os.environ['REQUIRE_MANAGED_MARKER'] == 'true':
+              assert marker.is_file()
+          print('Externally managed:', marker.exists())
+          PY
+          python scripts/develop.py run -- ruff --version
+          python scripts/develop.py run -- python -m pytest -q -n0 tests/test_environment_runtime.py::test_run_uses_active_interpreter_and_preserves_command_io_and_exit
 
   torch-cpu:
     needs: checks
@@ -114,7 +168,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
         if: needs.checks.outputs.docs != 'true'
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
@@ -125,11 +181,12 @@ jobs:
           for package in dinkster dinkster-api dinkster-engine; do
             uv build --package "$package" --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
           done
-          uv venv --python .venv/bin/python "$RUNNER_TEMP/fast-wheel-host"
+          execution_python=$(python scripts/develop.py run -- python -c 'import sys; print(sys.executable)')
+          uv venv --python "$execution_python" "$RUNNER_TEMP/fast-wheel-host"
           uv pip install --python "$RUNNER_TEMP/fast-wheel-host/bin/python" --no-sources "$RUNNER_TEMP/fast-build-setup/"*.whl
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python tools/verify_pinned_inference.py
+        run: python scripts/develop.py run -- python tools/verify_pinned_inference.py
       - name: Create a disposable XFS clone-test volume
         if: needs.checks.outputs.engine == 'true'
         run: |
@@ -146,14 +203,11 @@ jobs:
           echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
       - name: Require real Linux clone allocation coverage
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
+        run: python scripts/develop.py run -- python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:
           DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
-      - name: Install the CPU base for selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
       - name: Install the CPU software shader renderer
         if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
         uses: ./.github/actions/torch-cpu-suite/renderer-setup
@@ -162,17 +216,17 @@ jobs:
         env:
           PACKS: ${{ needs.checks.outputs.packs }}
           DINKSTER_ACCELERATOR: cpu
-        run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
+        run: python scripts/develop.py run -- python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
         env:
           CUDA_VISIBLE_DEVICES: ""
       - name: Read the pinned frontend revision
         if: needs.checks.outputs.engine == 'true'
         id: frontend
         run: |
-          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          python scripts/develop.py run -- python - <<'PY' >> "$GITHUB_OUTPUT"
           from pathlib import Path
           import yaml
 
