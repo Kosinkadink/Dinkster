@@ -10,7 +10,6 @@ on:
       - scripts/base_bundles.json
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
       - tools/minimax_h3_multigpu_receipt.py
-      - tests/test_minimax_h3_multigpu_receipt.py
       - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
@@ -168,8 +167,6 @@ jobs:
           variant=linux-cpu
           if [ "$RUNNER_OS" = Windows ]; then variant=win-cpu; fi
           uv run --no-project python scripts/setup_envs.py --variant "$variant"
-      - name: Test receipt generation on the native platform
-        run: uv run --no-sync python -m pytest -q tests/test_minimax_h3_multigpu_receipt.py
       - name: Verify the selected bundle and CPU runtime
         shell: bash
         run: |

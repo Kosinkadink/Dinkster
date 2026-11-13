@@ -797,12 +797,16 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         review_temp.cleanup()
 
 
-@pytest.mark.parametrize("notice_state", ["vulnerable", "malicious"])
+@pytest.mark.parametrize(
+    ("notice_state", "repair_action"),
+    [("vulnerable", "fix-one"), ("vulnerable", "fix-all"), ("malicious", "fix-one")],
+)
 def test_managed_pack_install_requires_exact_security_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     notice_state: str,
+    repair_action: str,
 ):
     import tomllib
     from uuid import UUID
@@ -811,7 +815,7 @@ def test_managed_pack_install_requires_exact_security_approval(
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_security.store import SecurityStore
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_security_notices import NOTICE, _feed, _signed, _trust
 
     from dinkster.pack_archive import build_pack_archive
@@ -943,6 +947,172 @@ def test_managed_pack_install_requires_exact_security_approval(
                 (root / "generations/4/dinkster.lock").read_text()
             ).packs
         } == {"healthy", "sibling"}
+        repair_pack = tmp_path / "repair-pack"
+        shutil.copytree(tmp_path / "pack", repair_pack)
+        for name in ("dinkster-pack.toml", "pyproject.toml"):
+            path = repair_pack / name
+            path.write_text(path.read_text().replace("1.0.0", "1.1.0"))
+        repair_archive = tmp_path / "healthy-1.1.0-py3-none-any.whl"
+        build_pack_archive(repair_pack, repair_archive)
+        repair_payload = repair_archive.read_bytes()
+        repaired = replace(
+            entry,
+            pack="healthy",
+            version="1.1.0",
+            artifact_digest=artifact_digest(repair_payload),
+            claims=("healthy",),
+        )
+        repair_lock = PackLock("healthy", "fixture-cpu", ">=3.12", (), (), ()).to_json().encode()
+        repair_url = "locks/" + artifact_digest(repair_lock).replace(":", "/") + ".json"
+        repair_release = {
+            **test_installer._static_release(repaired, repair_payload),
+            "engine": ">=1,<3",
+            "installLocks": {
+                "fixture-cpu": {
+                    **release["installLocks"]["fixture-cpu"],
+                    "artifactDigest": repaired.artifact_digest,
+                    "digest": artifact_digest(repair_lock),
+                    "size": len(repair_lock),
+                    "url": repair_url,
+                }
+            },
+        }
+        registry_files.update(
+            test_installer._static_indexes([*index["items"], release, repair_release])
+        )
+        registry_files["/static/" + repair_url] = repair_lock
+        registry_files["/static/" + repair_release["wheels"][0]["url"]] = repair_payload
+        registry_files["/v1/packs/healthy/versions/1.1.0"] = json.dumps(
+            {
+                "packName": "healthy",
+                "version": "1.1.0",
+                "state": "active",
+                "artifact": {"digest": repaired.artifact_digest},
+                "manifest": {
+                    "dinkster": ">=1,<3",
+                    "pythonRequirements": [],
+                    "pythonExtraRequirements": {},
+                    "dependencies": [],
+                },
+            }
+        ).encode()
+
+        def repair(*arguments: str):
+            if repair_action == "fix-all" and "--pack" in arguments:
+                assert arguments[:2] == ("--pack", "healthy")
+                arguments = arguments[2:]
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(root),
+                    "security",
+                    "--json",
+                    repair_action,
+                    *arguments,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            return completed.returncode, json.loads(completed.stdout)
+
+        current = root / "generations/4"
+        original_sources = (current / "dinkster.lock").read_bytes()
+        original_lock = (current / "packs/healthy/pack-lock.json").read_bytes()
+        code, preview = repair("--pack", "healthy")
+        assert code == 0 and preview["status"] == "planned", preview
+        expected_lock = (
+            PackLock(
+                "healthy",
+                "fixture-cpu",
+                ">=3.12",
+                (),
+                (registry + "/static/fixture-cpu/simple/",),
+                (
+                    LockedDistribution(
+                        "healthy",
+                        "1.1.0",
+                        (
+                            LockedWheel(
+                                repair_archive.name,
+                                len(repair_payload),
+                                hashlib.sha256(repair_payload).hexdigest(),
+                                registry + "/static/" + repair_release["wheels"][0]["url"],
+                                registry,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            .to_json()
+            .encode()
+        )
+        assert preview["metadata"]["dependencyLocks"]["healthy"] == json.loads(expected_lock)
+        repaired_review = tmp_path / "security-review"
+        code, planned = repair("--pack", "healthy", "--output", str(repaired_review))
+        assert code == 0 and planned["status"] == "planned", planned
+        assert (repaired_review / "locks/healthy.json").read_bytes() == expected_lock
+        assert (root / "current").read_text() == "4\n"
+        code, refused = repair("--input", str(repaired_review), "--approval", "sha256:" + "0" * 64)
+        assert code != 0 and "approval" in refused["error"], refused
+        assert not (repaired_review / "consumed").exists()
+        reviewed_lock = repaired_review / "locks/healthy.json"
+        reviewed_lock.write_bytes(expected_lock + b"\n")
+        try:
+            code, refused = repair(
+                "--input", str(repaired_review), "--approval", planned["approval"]
+            )
+            assert code != 0 and "inputs changed" in refused["error"], refused
+        finally:
+            reviewed_lock.write_bytes(expected_lock)
+        registry_path = root / "registries.toml"
+        registry_bytes = registry_path.read_bytes()
+        registry_path.write_bytes(registry_bytes + b"\n# changed registry inputs\n")
+        try:
+            code, refused = repair(
+                "--input", str(repaired_review), "--approval", planned["approval"]
+            )
+            assert code != 0 and "project changed" in refused["error"], refused
+        finally:
+            registry_path.write_bytes(registry_bytes)
+        assert not (repaired_review / "consumed").exists()
+        assert (root / "current").read_text() == "4\n"
+        progress = tmp_path / "repair-progress.json"
+        cancellation = progress.with_name(progress.name + ".cancel")
+        cancellation.write_text("cancel")
+        code, cancelled = repair(
+            "--input",
+            str(repaired_review),
+            "--approval",
+            planned["approval"],
+            "--progress",
+            str(progress),
+        )
+        assert code != 0 and "cancelled" in cancelled["error"], cancelled
+        assert (root / "current").read_text() == "4\n"
+        assert not (root / "generations/5").exists()
+        assert not (repaired_review / "consumed").exists()
+        cancellation.unlink()
+        code, applied = repair(
+            "--input",
+            str(repaired_review),
+            "--approval",
+            planned["approval"],
+            "--progress",
+            str(progress),
+        )
+        assert code == 0 and applied["current"] == 5, applied
+        selected = Lockfile.from_record_json((root / "generations/5/dinkster.lock").read_text())
+        selected_pack = selected.get("healthy")
+        assert selected_pack is not None
+        assert selected_pack.artifact_digest == repaired.artifact_digest
+        assert (root / "generations/5/packs/healthy/pack-lock.json").read_bytes() == expected_lock
+        assert (current / "dinkster.lock").read_bytes() == original_sources
+        assert (current / "packs/healthy/pack-lock.json").read_bytes() == original_lock
+        assert security.decision(registry, UUID(NOTICE), 2) == "pending"
         raise Observed
 
     monkeypatch.setattr(test_installer, "_serve_artifacts", serve)

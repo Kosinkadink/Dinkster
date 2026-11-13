@@ -99,7 +99,7 @@ from dinkster_schema import (
     schema_signature,
 )
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.reporting import EncodedPreviewArtifact
+from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
@@ -293,6 +293,12 @@ class ExecutionRuntime:
         Callable[[str, Sequence[EncodedPreviewArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
         | None
     ) = None
+    publish_image_documents: (
+        Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
+        | None
+    ) = None
+    require_image_document_publication: bool = False
+    """Reject document-bearing results unless the host persists their originals."""
     asset_folders: AssetFolderContext | None = None
     validate_saved_artifacts: (
         Callable[[str, Sequence[Mapping[str, object]], int], Awaitable[tuple[SavedArtifact, ...]]]
@@ -1024,7 +1030,13 @@ class Engine:
         connected_undemanded_inputs: tuple[str, ...] | None = None,
         cache_scope: str | None = None,
     ) -> str:
+        runtime = self._runtime()
+        # Unpublished direct results must not satisfy a server's publication contract.
         parts: list[bytes] = [signature.encode("utf-8")]
+        if runtime.require_image_document_publication:
+            parts.append(b"required-image-documents")
+        if runtime.publish_image_documents is not None:
+            parts.append(b"published-image-documents")
         if cache_scope is not None:
             parts.extend((b"region-occurrence", cache_scope.encode("utf-8")))
         behavior_hash = self._runtime().extension_behavior_hash
@@ -2020,6 +2032,26 @@ class Engine:
                     )
                     raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
                 self._run_artifacts[run_id].extend(artifacts)
+            document_artifacts: tuple[SavedArtifact, ...] = ()
+            document_publisher = self._runtime().publish_image_documents
+            if result.image_documents and (
+                document_publisher is not None or self._runtime().require_image_document_publication
+            ):
+                try:
+                    if document_publisher is None:
+                        raise RuntimeError("original document publication has no host publisher")
+                    document_artifacts = await document_publisher(label, result.image_documents)
+                except Exception as exc:
+                    self._emit(
+                        EngineEvent(
+                            "node_failed",
+                            run_id,
+                            label,
+                            self._execution_detail(label, selection, message=str(exc)),
+                        )
+                    )
+                    raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
+                self._run_artifacts[run_id].extend(document_artifacts)
             saved_artifacts: tuple[SavedArtifact, ...] = ()
             if result.saved_artifact_claims:
                 validate = self._runtime().validate_saved_artifacts
@@ -2065,7 +2097,9 @@ class Engine:
                         )
                 self._run_artifacts[run_id].extend(saved_artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
-            entry = CachedResult(result.outputs, result.expansion, saved_artifacts)
+            entry = CachedResult(
+                result.outputs, result.expansion, (*document_artifacts, *saved_artifacts)
+            )
             if entry.expansion is not None:
                 if not self._cache_hit_valid(schema, entry):
                     raise ExecutionError(

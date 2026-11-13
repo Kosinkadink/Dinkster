@@ -1310,6 +1310,12 @@ def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
 
 
+def _cmd_security_status(args: argparse.Namespace) -> None:
+    from .security_repair import generation_security_status
+
+    print(json.dumps(generation_security_status(args.generation, args.pack), sort_keys=True))
+
+
 def _cmd_plan_security_repair(args: argparse.Namespace) -> None:
     from dinkster_security.host import SecurityHost
 
@@ -1760,12 +1766,23 @@ def main() -> None:
     archive.add_argument("--output", required=True, metavar="WHEEL_OR_DIR", help="wheel output")
     archive.set_defaults(handler=_cmd_archive)
 
+    security_status = commands.add_parser(
+        "security-status", help="inspect cached security evidence for a sealed generation"
+    )
+    security_status.add_argument("--generation", type=Path, required=True)
+    security_status.add_argument("--pack", help="show details for one installed pack")
+    security_status.set_defaults(handler=_cmd_security_status)
+
     repair = commands.add_parser(
         "plan-security-repair",
         help="compute an approval-required repair without acquiring payloads",
     )
     repair.add_argument("--generation", type=Path, required=True)
-    repair.add_argument("--pack", required=True)
+    repair_target = repair.add_mutually_exclusive_group(required=True)
+    repair_target.add_argument("--pack")
+    repair_target.add_argument(
+        "--all", action="store_true", help="plan one joint repair for all flagged packs"
+    )
     repair.set_defaults(handler=_cmd_plan_security_repair)
 
     source_plan = commands.add_parser(

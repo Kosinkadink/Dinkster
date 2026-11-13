@@ -4519,14 +4519,14 @@ def test_cli_prepares_compatible_registry_sources_without_generation_mutation(
     source = write_pack(tmp_path / "source", "demo", "raise RuntimeError('must not import')\n")
     (source / "dinkster-pack.toml").write_text(
         f'[pack]\nname = "{pack_name}"\npublisher = "dinkster"\n'
-        'version = "0.0.3"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["dinkster.text"]\n'
+        'version = "0.0.4"\nengine = ">=0.0.2.dev0,<0.1"\nnamespaces = ["dinkster.text"]\n'
         '[pack.entry]\nnodes = "demo_nodes:NODES"\n'
     )
     archive = tmp_path / "published.zip"
     digest = build_artifact(source, archive)
-    release = LockedPack(pack_name, "0.0.3", digest, "audit-actor", ())
+    release = LockedPack(pack_name, "0.0.4", digest, "audit-actor", ())
     record = {**_static_release(release, archive.read_bytes()), "engine": ">=0.0.2.dev0,<0.1"}
-    newer = {**_static_release(replace(release, version="0.0.4"), b"newer"), "engine": ">=0.2"}
+    newer = {**_static_release(replace(release, version="0.0.5"), b"newer"), "engine": ">=0.2"}
     wheel = cast("list[dict[str, object]]", record["wheels"])[0]
     artifact_path = f"/static/{wheel['url']}"
     files = {

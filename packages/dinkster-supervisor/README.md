@@ -50,7 +50,8 @@ and decisions; downloads are limited to 32 MiB and do not send registry bearer
 credentials. Default policy has no feed-age refusal. An explicit maximum age
 uses signed `issuedAt`, not the time of the latest successful download. Explicit
 vulnerability refusal applies to retained releases too. Local policy reloads
-on refresh; malformed policy refuses rather than silently reverting to defaults.
+at host creation and on refresh; malformed policy refuses rather than silently
+reverting to defaults.
 Installer acquisition, install, rollback and serving selection refresh before
 their policy check. Managed generation pack selection also refreshes its project
 root. Serving uses the selected generation's project root, otherwise the install
@@ -60,9 +61,39 @@ cleanup. It checks release identities before catalog preparation, worker import,
 lazy activation and dispatch, including previously pinned routes. A new block
 revokes execution before closing isolated workers or shared process owners;
 affected in-process execution requests whole-engine shutdown. A lift never
-resumes a revoked session. `GET /api/security` reports current findings, decisions,
-configured stale issuers and refresh failures. Flagged releases are logged once
-per notice revision and answer during a host lifetime.
+resumes a revoked session. `GET /api/security` uses `SecurityHost.status` to
+report affected release digests, issuing registries, full exact-notice details,
+decisions, last verification times, configured age refusals and refresh failures.
+Feed observations distinguish cached, expired, not-received and not-provisioned
+issuers. Recovery reports policy allowance, not whether a worker is running, and
+marks repairs as not reviewed until a compatible plan is requested. Status does
+not refresh, acquire payloads or change software. Flagged releases are logged
+once per notice revision and answer during a host lifetime. Runtime work inventory
+names registered or revoked pack workers, not whether an invocation is running;
+job inventory is explicitly unavailable on this surface.
+
+The public environment CLI provides `security --json list` and
+`security --json details --pack PACK`, using the current generation or an explicit
+retained `--generation N`. The selected engine's `dinkster.manager security-status
+--generation PATH [--pack PACK]` reads sealed source/dependency provenance without
+importing packs or refreshing feeds. It returns full shared-host findings with
+generation/software identity, including blocked releases. The tools revalidate
+that identity and the current selection before returning. Unknown packs, drift
+and linked sealed inputs refuse. Offline job/worker inventory is unavailable,
+not an assertion that no work exists. No payload or generation changes occur.
+
+The public environment CLI accepts `security --json approve` or `disapprove`
+with `--registry`, `--notice` and `--revision`. The exact answer persists and may
+be changed; stale revisions and malicious notices cannot be approved. These
+commands do not start or resume execution. `security --json import --registry
+ISSUER --file PATH` verifies a signed feed through the same trusted store before
+replacing its checkpoint; rejected files leave accepted evidence and answers intact.
+`security --json policy` reads the current local policy without a network request
+or creating a configuration file. Explicit `--refuse-vulnerable` or
+`--no-refuse-vulnerable` and `--maximum-feed-age-seconds N` or
+`--no-maximum-feed-age` persist those choices while preserving mirrors and refresh
+timing. Invalid settings leave the previous file intact. These changes do not
+install software or resume work; serving hosts reload policy on refresh.
 
 ## Ingress
 

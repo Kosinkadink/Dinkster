@@ -25,7 +25,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from dinkster_registry import InstallError, LockedPack, Lockfile, artifact_digest, build_artifact
 from dinkster_security.documents import Release, SecurityError
-from dinkster_security.host import SecurityHost
+from dinkster_security.host import HostSettings, SecurityHost
 from dinkster_security.policy import Artifact, Dependency, assess
 from dinkster_security.store import SecurityStore
 
@@ -235,10 +235,10 @@ def test_host_default_outage_continues_and_local_policy_is_explicit(
 )
 def test_host_refuses_invalid_local_policy_before_transport(tmp_path: Path, config: str):
     (tmp_path / "security.toml").write_text(config)
-    host = SecurityHost(tmp_path)
     with pytest.raises(ValueError):
+        host = SecurityHost(tmp_path)
         host.refresh()
-    assert host.store.registries() == ()
+    assert SecurityStore(tmp_path / "security.sqlite3").registries() == ()
 
 
 @pytest.mark.parametrize("stop_reason", ["malicious", "denied"])
@@ -383,6 +383,11 @@ def test_composer_blocks_import_and_stops_pinned_execution_with_unaffected_contr
             findings = composer.security_status()["findings"]
             assert isinstance(findings, list)
             assert findings[0]["decision"] == "pending"
+            status = composer.security_status()
+            assert status["workInventory"] == {"workers": "registered", "jobs": "unavailable"}
+            work = status["work"]
+            assert isinstance(work, list)
+            assert {"pack": "test-pack", "kind": "worker", "state": "registered"} in work
             control = await invoke("control-pack")
             assert control.error is None and control.outputs is not None
             assert control.outputs["value"].resolve() == "control-pack"
@@ -1235,6 +1240,156 @@ def test_signed_ownership_change_requires_explicit_previous_publisher(
     assert verified == VERIFIED_AT
 
 
+@pytest.mark.parametrize("state", ["vulnerable", "malicious"])
+@pytest.mark.parametrize("dependency", [False, True])
+def test_public_status_names_local_evidence_without_repair_or_refresh(
+    tmp_path: Path, state: str, dependency: bool, caplog: pytest.LogCaptureFixture
+):
+    key = Ed25519PrivateKey.generate()
+    host = SecurityHost(tmp_path)
+    host.store.provision_trust(json.dumps(_trust(key)).encode())
+    host.store.import_feed(REGISTRY, _signed(_feed(state), key), now=VERIFIED_AT)
+    release = Release.model_validate(_feed()["notices"][0]["release"])
+    artifact = (
+        Artifact(
+            "https://consumer.example.test",
+            Release.model_validate(
+                {
+                    "pack": "consumer-pack",
+                    "version": "2.0.0",
+                    "artifactDigest": "sha256:" + "b" * 64,
+                }
+            ),
+            (Dependency(REGISTRY, release.pack, release.version, release.artifact_digest),),
+        )
+        if dependency
+        else Artifact(REGISTRY, release)
+    )
+    control = Artifact(
+        REGISTRY,
+        release.model_copy(update={"version": "1.2.4", "artifact_digest": "sha256:" + "c" * 64}),
+    )
+    before = host.store.path.read_bytes()
+    host.refresh_errors[REGISTRY] = "TimeoutError"
+    result = host.status((artifact, control))
+    (finding,) = cast("list[dict[str, Any]]", result["findings"])
+    assert finding["pack"] == ("consumer-pack" if dependency else "test-pack")
+    assert finding["artifactDigest"] == (
+        "sha256:" + "b" * 64 if dependency else release.artifact_digest
+    )
+    assert finding["noticeRegistry"] == REGISTRY
+    assert finding["notice"] == NOTICE and finding["revision"] == 1
+    assert finding["state"] == ("affected" if dependency and state == "malicious" else state)
+    assert finding["decision"] == ("pending" if state == "vulnerable" else "blocked")
+    assert finding["allowed"] is (state == "vulnerable")
+    assert finding["lastVerifiedAt"] == VERIFIED_AT.isoformat()
+    assert finding["details"]["incident"] == "test-incident"
+    assert finding["details"]["release"]["artifactDigest"] == release.artifact_digest
+    assert finding["recovery"]["repair"] == "not-reviewed"
+    assert finding["recovery"]["automaticResume"] is False
+    feeds = {row["registry"]: row for row in cast("list[dict[str, Any]]", result["feeds"])}
+    assert feeds[REGISTRY]["status"] == "expired"
+    assert feeds[REGISTRY]["refreshError"] == "TimeoutError"
+    assert feeds[REGISTRY]["lastVerifiedAt"] == VERIFIED_AT.isoformat()
+    assert feeds[REGISTRY]["ageRefused"] is False
+    if dependency:
+        assert feeds[artifact.registry]["status"] == "not-provisioned"
+        assert feeds[artifact.registry]["lastVerifiedAt"] is None
+    assert result["policy"] == {"refuseVulnerable": False, "maximumFeedAgeSeconds": None}
+    logged = len(caplog.records)
+    assert host.status((artifact, control)) == result
+    assert len(caplog.records) == logged
+    assert host.store.path.read_bytes() == before
+    assert set(path.name for path in tmp_path.iterdir()) == {"security.sqlite3"}
+    host.settings = HostSettings(maximum_feed_age_seconds=1)
+    aged = host.status((artifact, control))
+    assert aged["allowed"] is False
+    assert REGISTRY in cast("list[str]", aged["staleRegistries"])
+    assert cast("list[dict[str, Any]]", aged["findings"])[0]["recovery"]["status"] == "refused"
+    if state == "vulnerable":
+        host.settings = HostSettings(refuse_vulnerable=True)
+        refused = cast("list[dict[str, Any]]", host.status((artifact, control))["findings"])[0]
+        assert refused["allowed"] is False
+        assert "answers do not override" in refused["recovery"]["action"]
+
+
+def test_public_cli_import_and_changed_exact_answers(tmp_path: Path):
+    key = Ed25519PrivateKey.generate()
+    root = tmp_path / "install"
+    host = SecurityHost(root)
+    host.store.provision_trust(json.dumps(_trust(key)).encode())
+    feed_file = tmp_path / "feed.json"
+    feed_file.write_bytes(_signed(_feed(), key))
+
+    def command(*arguments: str) -> dict[str, Any]:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(root),
+                "security",
+                "--json",
+                *arguments,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        result = json.loads(completed.stdout)
+        assert completed.returncode == (1 if result["status"] == "error" else 0)
+        return result
+
+    assert (
+        command("import", "--registry", REGISTRY, "--file", str(feed_file))["status"] == "applied"
+    )
+    identity = ("--registry", REGISTRY, "--notice", NOTICE, "--revision", "1")
+    assert command("disapprove", *identity)["decision"] == "denied"
+    assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "denied"
+    approved = command("approve", *identity)
+    assert approved["decision"] == "approved"
+    assert approved["automaticResume"] is False
+    assert command("disapprove", *identity[:-1], "2")["status"] == "error"
+    assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
+    cached = host.store.cached(REGISTRY)
+    defaults = {"refuseVulnerable": False, "maximumFeedAgeSeconds": None}
+    assert command("policy")["policy"] == defaults
+    assert not (root / "security.toml").exists()
+    (root / "security.toml").write_text(
+        "refresh_interval_seconds = 17.5\nrequest_timeout_seconds = 2.5\n"
+        f'[feed_urls]\n"{REGISTRY}" = "http://127.0.0.1:1/offline"\n'
+    )
+    selected = command("policy", "--refuse-vulnerable", "--maximum-feed-age-seconds", "7200")
+    assert selected["policy"] == {"refuseVulnerable": True, "maximumFeedAgeSeconds": 7200}
+    restarted = SecurityHost(root)
+    assert restarted.settings.refresh_interval_seconds == 17.5
+    assert restarted.settings.request_timeout_seconds == 2.5
+    assert str(restarted.settings.feed_urls[REGISTRY]) == "http://127.0.0.1:1/offline"
+    assert restarted.settings.refuse_vulnerable is True
+    artifact = Artifact(REGISTRY, Release.model_validate(_feed()["notices"][0]["release"]))
+    assert not restarted.assess((artifact,)).allowed
+    before = (root / "security.toml").read_bytes()
+    assert command("policy", "--maximum-feed-age-seconds", "0")["status"] == "error"
+    assert (root / "security.toml").read_bytes() == before
+    assert command("policy", "--no-refuse-vulnerable")["policy"] == {
+        "refuseVulnerable": False,
+        "maximumFeedAgeSeconds": 7200,
+    }
+    reset = command("policy", "--no-refuse-vulnerable", "--no-maximum-feed-age")
+    assert reset["policy"] == defaults
+    assert SecurityHost(root).settings.maximum_feed_age_seconds is None
+    assert SecurityHost(root).assess((artifact,)).allowed
+    assert host.store.cached(REGISTRY) == cached
+    untrusted = Ed25519PrivateKey.generate()
+    feed_file.write_bytes(_signed(_feed("malicious", revision=2), untrusted))
+    assert command("import", "--registry", REGISTRY, "--file", str(feed_file))["status"] == "error"
+    assert host.store.cached(REGISTRY) == cached
+    assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
+    assert not (root / "generations").exists()
+    assert feed_file.is_file()
+
+
 def test_cached_notice_and_changeable_exact_decision_survive_restart_and_lift(tmp_path: Path):
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
@@ -1689,6 +1844,11 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(
         "other-accelerator",
         "pending-retained",
         "unnormalized-retained",
+        "pending-fix",
+        "joint",
+        "joint-conflict",
+        "new-dependency",
+        "search-incomplete",
     ],
 )
 def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
@@ -1696,7 +1856,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
 ):
     from dinkster_supervisor.environment_state import Generation, content_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-    from test_environment_generations import _standalone_tree
+    from test_environment_generations import _standalone_tree, _workspace_tree
     from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.registries import RegistryConfig, StaticPackIndex
@@ -1704,7 +1864,10 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
 
     generation = tmp_path / "generations/1"
     generation.mkdir(parents=True)
-    _standalone_tree(generation / "python")
+    if case == "release":
+        _workspace_tree(generation / "python")
+    else:
+        _standalone_tree(generation / "python")
     (tmp_path / "current").write_text("1\n")
     (tmp_path / "history").mkdir()
     (tmp_path / "history/unchanged").write_bytes(b"retained history")
@@ -1734,7 +1897,8 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         LockedPack(name, "1.0.0", "blake3:" + digest * 64, "publisher", (), "registry:" + endpoint)
         for name, digest in (
             (("consumer", "c"), ("provider", "d"), ("unrelated", "9"))
-            if case in {"other-blocked", "pending-retained"}
+            if case
+            in {"other-blocked", "pending-retained", "joint", "joint-conflict", "new-dependency"}
             else (("consumer", "c"), ("provider", "d"))
         )
     ]
@@ -1863,9 +2027,13 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     record.write(generation / "generation.json")
     rows = []
     for version, sha in (
-        ("1.0.0", good_sha if case == "lock" else bad_sha),
-        ("1.1.0", bad_sha if case == "rehost" else good_sha),
-        ("1.2.0", bad_sha),
+        [(f"1.{number}.0", bad_sha) for number in range(600)]
+        if case == "search-incomplete"
+        else [
+            ("1.0.0", good_sha if case == "lock" else bad_sha),
+            ("1.1.0", bad_sha if case == "rehost" else good_sha),
+            ("1.2.0", bad_sha),
+        ]
     ):
         if case == "lock" and version != "1.0.0":
             continue
@@ -1927,16 +2095,55 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     ),
                     "dependencies": [{"packName": "absent", "versionRange": ">=1"}]
                     if case == "outgoing"
+                    else [{"packName": "unrelated", "versionRange": ">=1.1"}]
+                    if case == "new-dependency" and version == "1.1.0"
                     else [],
+                },
+            }
+        ).encode()
+    if case in {"joint", "joint-conflict", "new-dependency"}:
+        repaired = replace(entries[2], version="1.1.0", artifact_digest="blake3:" + "3" * 64)
+        row = _static_release(repaired, b"unrelated fixed")
+        row["engine"] = ">=1,<2"
+        payload = PackLock("unrelated", "fixture-cpu", ">=3.12", (), (), ()).to_json().encode()
+        digest = artifact_digest(payload)
+        url = "locks/" + digest.replace(":", "/") + ".json"
+        row["installLocks"] = {
+            "fixture-cpu": {
+                "baseId": record.base,
+                "artifactDigest": repaired.artifact_digest,
+                "digest": digest,
+                "size": len(payload),
+                "url": url,
+            }
+        }
+        rows.append(row)
+        documents["/static/" + url] = payload
+        documents["/v1/packs/unrelated/versions/1.1.0"] = json.dumps(
+            {
+                "packName": "unrelated",
+                "version": "1.1.0",
+                "state": "active",
+                "artifact": {"digest": repaired.artifact_digest},
+                "manifest": {
+                    "dinkster": ">=1,<2",
+                    "pythonRequirements": [],
+                    "pythonExtraRequirements": {},
+                    "dependencies": [
+                        {
+                            "packName": "provider",
+                            "versionRange": "<1.1" if case == "joint-conflict" else ">=1.1",
+                        }
+                    ],
                 },
             }
         ).encode()
     documents.update(_static_indexes(rows))
     key = Ed25519PrivateKey.generate()
     store = _store(tmp_path, key)
-    feed = _feed("malicious")
+    feed = _feed("vulnerable" if case == "pending-fix" else "malicious")
     feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
-    if case in {"other-blocked", "pending-retained"}:
+    if case in {"other-blocked", "pending-retained", "joint", "joint-conflict"}:
         other = copy.deepcopy(feed["notices"][0])
         other["id"] = "636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"
         other["release"]["pack"] = "other-library"
@@ -1945,6 +2152,10 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             other["state"] = "vulnerable"
         feed["notices"].append(other)
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    if case == "release":
+        (tmp_path / "security.toml").write_text(
+            f'[feed_urls]\n"{REGISTRY}" = "{endpoint}/must-not-fetch"\n'
+        )
     host = SecurityHost(tmp_path)
     before = {
         path: content_digest(path)
@@ -1952,9 +2163,115 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         if path.is_file() and "security.sqlite3" not in path.name
     }
     try:
+        if case == "release":
+
+            def inspect(*arguments: str) -> dict[str, Any]:
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(tmp_path),
+                        "security",
+                        "--json",
+                        *arguments,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                report = json.loads(completed.stdout)
+                assert completed.returncode == (1 if report["status"] == "error" else 0)
+                return report
+
+            cached = host.store.cached(REGISTRY)
+            listed = inspect("list")
+            report = listed["security"]
+            assert listed["current"] == report["generation"] == 1
+            assert report["software"] == content_digest(generation / "generation.json")
+            assert {item["pack"] for item in report["packs"]} == {"consumer", "provider"}
+            assert {item["pack"] for item in report["findings"]} == {"consumer", "provider"}
+            assert report["allowed"] is False
+            assert report["workInventory"]["status"] == "unavailable"
+            assert report["automaticResume"] is False
+            (tmp_path / "current").write_text("2\n")
+            try:
+                retained = inspect("details", "--pack", "consumer", "--generation", "1")
+            finally:
+                (tmp_path / "current").write_text("1\n")
+            assert retained["current"] == 2
+            details = retained["security"]
+            assert details["generation"] == 1
+            assert details["packs"] == [
+                {
+                    "registry": endpoint,
+                    "pack": "consumer",
+                    "version": "1.0.0",
+                    "artifactDigest": entries[0].artifact_digest,
+                }
+            ]
+            assert len(details["findings"]) == 1
+            finding = details["findings"][0]
+            assert finding["state"] == "affected"
+            assert finding["noticeRegistry"] == REGISTRY
+            assert finding["details"]["release"]["pack"] == "bad-library"
+            assert finding["lastVerifiedAt"] == VERIFIED_AT.isoformat()
+            assert finding["recovery"]["status"] == "refused"
+            assert inspect("details", "--pack", "absent")["status"] == "error"
+            manifest = generation / "pack-sources/consumer/dinkster-pack.toml"
+            intact = manifest.read_bytes()
+            try:
+                manifest.write_bytes(intact + b"\n# changed\n")
+                assert inspect("list")["status"] == "error"
+            finally:
+                manifest.write_bytes(intact)
+            assert host.store.cached(REGISTRY) == cached
+            assert requests == []
+            pointer = tmp_path / "store"
+            pointer.write_text(str(tmp_path / "cache"))
+            try:
+                preview = inspect("fix-one", "--pack", "consumer")
+                assert preview["status"] == "planned", preview
+                proposal = preview["metadata"]
+                assert proposal["generation"] == 1
+                assert proposal["software"] == content_digest(generation / "generation.json")
+                assert (
+                    proposal["dependencyLocks"]["provider"]["packages"][0]["wheels"][0]["sha256"]
+                    == good_sha
+                )
+                assert (
+                    proposal["sources"]["packs"][0]
+                    == json.loads(Lockfile.of(entries).record_json())["packs"][0]
+                )
+                assert set(proposal["retainedDependencyLocks"]) == {"consumer"}
+                assert preview["next"] == 2
+                provider_index = "/static/packs/provider/index.json"
+                intact_index = documents[provider_index]
+                unavailable = json.loads(intact_index)
+                for item in unavailable["items"]:
+                    item["engine"] = ">=99"
+                try:
+                    documents[provider_index] = json.dumps(unavailable).encode()
+                    output = tmp_path.parent / "unavailable-security-review"
+                    no_fix = inspect("fix-one", "--pack", "consumer", "--output", str(output))
+                    assert no_fix["status"] == "no-compatible-fix", no_fix
+                    assert no_fix["securityRepair"]["pack"] == "consumer"
+                    assert no_fix["securityRepair"]["reasons"]
+                    assert not output.exists()
+                finally:
+                    documents[provider_index] = intact_index
+                assert inspect("fix-one", "--pack", "absent")["status"] == "error"
+                assert (
+                    inspect("fix-one", "--input", str(tmp_path / "not-a-plan"))["status"] == "error"
+                )
+                assert not (tmp_path / "generations/2").exists()
+            finally:
+                pointer.unlink()
         result = plan_security_repair(
             generation,
-            "consumer",
+            None if case in {"joint", "joint-conflict"} else "consumer",
             RegistryConfig(),
             index=StaticPackIndex(read_only=True),
             security=host,
@@ -1970,14 +2287,31 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 "other-accelerator",
                 "pending-retained",
                 "unnormalized-retained",
+                "pending-fix",
+                "joint",
+                "new-dependency",
             }
+            else "search-incomplete"
+            if case == "search-incomplete"
             else "no-compatible-fix"
         ), result
         if result["status"] == "approval-required":
             offer = cast("dict[str, Any]", result["offer"])
             assert offer["approvalRequired"] is True
             assert offer["accelerator"] == "cpu"
-            assert offer["changedPack"] == "provider"
+            if case in {"joint", "new-dependency"}:
+                assert set(offer["changedPacks"]) == {"provider", "unrelated"}
+                assert set(offer["dependencyLocks"]) == {"provider", "unrelated"}
+                assert [
+                    (item["name"], item["version"])
+                    for item in offer["dependencyLocks"]["unrelated"]["packages"]
+                ] == [("unrelated", "1.1.0")]
+                assert (
+                    offer["dependencyLocks"]["unrelated"]["packages"][0]["wheels"][0]["sha256"]
+                    == hashlib.sha256(b"unrelated fixed").hexdigest()
+                )
+            else:
+                assert offer["changedPack"] == "provider"
             proposed = Lockfile.from_record_json(json.dumps(offer["sources"]))
             provider = proposed.get("provider")
             assert provider is not None

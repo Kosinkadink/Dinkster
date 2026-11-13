@@ -23,7 +23,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
 from dinkster_schema import NodeSchema, RunExecutionContext
-from dinkster_schema.reporting import EncodedPreviewArtifact
+from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import Value
 from dinkster_values.asset_folders import AssetFolderContext
 
@@ -598,6 +598,7 @@ class InvocationResult:
     artifact_candidates: tuple[SavedArtifactCandidate, ...] = ()
     expansion: ExpandedReturn | None = None
     preview_artifacts: tuple[EncodedPreviewArtifact, ...] = ()
+    image_documents: tuple[ImageDocumentArtifact, ...] = ()
     saved_artifact_claims: tuple[Mapping[str, object], ...] = ()
     saved_file_previews: tuple[Mapping[str, object], ...] = ()
 

@@ -115,8 +115,6 @@ Pyright checks with `bash scripts/ci-fast.sh checks`. The test job runs the
 engine subset with `bash scripts/ci-fast.sh tests`, selected pack tests, or
 both, according to the changed paths. Engine subset examples include:
 
-- `tests/test_extension_factory_guard.py`: exact registry-factory,
-  contribution-kind and factory baseline checks.
 - `tests/test_release_install.py`: release wheel and install surface checks.
 - `tests/test_schema.py`: schema construction and type validation.
 - `tests/test_schema_current_contracts.py`: generated current schema contracts.

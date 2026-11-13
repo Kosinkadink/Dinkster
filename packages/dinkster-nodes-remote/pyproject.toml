@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-nodes-remote"
-version = "0.0.5"
+version = "0.0.6"
 description = "Dinkster catalog-driven remote node client pack"
 requires-python = ">=3.12"
 dependencies = [

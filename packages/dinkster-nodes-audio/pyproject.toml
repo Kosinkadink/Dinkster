@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-audio"
-version = "0.0.5"
+version = "0.0.6"
 description = "Dinkster audio input, editing and output nodes"
 requires-python = ">=3.12"
 dependencies = [

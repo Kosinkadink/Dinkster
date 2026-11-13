@@ -890,37 +890,127 @@ def test_compositor_boundary_preserves_existing_legacy_and_deferred_command_form
             replay_compositor(value, received.resolve(), value)
 
 
+@pytest.mark.parametrize("producer", ["native", "tensor"])
 @pytest.mark.parametrize("color_space", ["perceptual", "linear"])
-def test_compositor_preview_digest_binds_repeated_apply_to_input(monkeypatch, color_space) -> None:
+def test_compositor_preview_digest_binds_repeated_apply_to_input(
+    monkeypatch, color_space, producer
+) -> None:
     from dinkster_assets import digest_bytes
     from dinkster_image import compositor as module
+    from dinkster_image import image_compositor
+    from dinkster_schema.reporting import capture_image_documents
 
     value = document()
     original = value.data
     identifier = value.to_record()["rootLayerIds"][0]
     events = []
-    monkeypatch.setattr(module, "report_event", lambda name, data: events.append((name, data)))
+    target = module if producer == "native" else image_compositor
+    monkeypatch.setattr(target, "report_event", lambda name, data: events.append((name, data)))
+
+    def execute(layers, delta):
+        if producer == "native":
+            CreateLayeredImage.execute(layers=layers, compositor=delta, color_space=color_space)
+        else:
+            image_compositor.ImageCompositor.execute(layers=layers, compositor=delta)
+
     delta = {"version": 2, "documentDigest": None, "commands": []}
     for opacity in (65535, 32768, 16384):
         delta["commands"] = [{"op": "layer", "id": identifier, "changes": {"opacity": opacity}}]
-        CreateLayeredImage.execute(layers=value, compositor=delta, color_space=color_space)
+        with capture_image_documents() as attached:
+            execute(value, delta)
+        assert [item.data for item in attached] == [original]
         name, state = events[-1]
         assert name == "dinkster.compositor.state"
         assert state["stale"] is False
         assert state["documentDigest"] == digest_bytes(original)
         assert state["document"]["layers"][identifier]["opacity"] == opacity
+        if opacity != 65535:
+            assert ImageDocument.from_record(state["document"]).data != original
         assert state["document"]["canvas"]["compositing"] == (
-            "linear-premultiplied-alpha" if color_space == "linear" else "premultiplied-alpha"
+            "linear-premultiplied-alpha"
+            if producer == "native" and color_space == "linear"
+            else "premultiplied-alpha"
         )
         delta["documentDigest"] = state["documentDigest"]
     assert value.data == original
 
     changed = apply_commands(value, [{"op": "layer", "id": identifier, "changes": {"name": "New"}}])
-    CreateLayeredImage.execute(layers=changed, compositor=delta, color_space=color_space)
+    with capture_image_documents() as attached:
+        execute(changed, delta)
+    assert [item.data for item in attached] == [changed.data]
     state = events[-1][1]
     assert state["stale"] is True
     assert state["documentDigest"] == digest_bytes(changed.data)
     assert state["document"]["layers"][identifier]["opacity"] == 65535
+
+
+def test_native_compositor_retains_original_document_before_edited_output(tmp_path: Path) -> None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import AssetVault, LibraryStore, digest_bytes
+    from dinkster_server import ServerLibrary, create_app
+
+    original = document()
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_image_types(registry)
+    nodes: list[type[Node]] = [CreateLayeredImage]
+    worker = InProcessWorker(build_node_types(nodes), registry)
+    library = ServerLibrary(
+        vault=AssetVault(tmp_path / "vault"), store=LibraryStore(tmp_path / "library.sqlite")
+    )
+    runtime = ExecutionRuntime(
+        worker=worker, publish_image_documents=library.publish_image_documents
+    )
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=worker,
+        pin_execution=lambda: runtime,
+        cache=MemoryLRUCache(),
+    )
+    graph = Graph(
+        nodes={
+            "create": GraphNode(
+                CreateLayeredImage.schema().node_type,
+                {
+                    "layers": TypedLiteral("dinkster.layers", original.to_record()),
+                    "compositor": {
+                        "version": 2,
+                        "documentDigest": digest_bytes(original.data),
+                        "commands": [{"op": "canvas", "changes": {"width": 5}}],
+                    },
+                },
+            )
+        }
+    )
+
+    async def run() -> None:
+        client = TestClient(
+            TestServer(
+                create_app(
+                    lambda _on_event: engine,
+                    build_schemas(nodes),
+                    asset_export=library.vault,
+                    library=library,
+                )
+            )
+        )
+        await client.start_server()
+        try:
+            result = await engine.run(graph, ["create"])
+            assert [item.digest for item in result.artifacts] == [digest_bytes(original.data)]
+            rendered = result.outputs["create"]["image"].resolve()
+            assert isinstance(rendered, np.ndarray)
+            assert rendered.shape[2] == 5
+            response = await client.get(f"/assets/{digest_bytes(original.data)}")
+            assert response.status == 200
+            assert await response.read() == original.data
+            assert ImageDocument(original.data).to_record()["canvas"]["width"] == 2
+        finally:
+            await client.close()
+            library.store.close()
+
+    run_scenario(run())
 
 
 def test_clipping_and_grouping_use_z_order_not_object_key_order() -> None:

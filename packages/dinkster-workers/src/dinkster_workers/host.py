@@ -155,7 +155,12 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
-from .produced_assets import offer_source_assets, rendition_values, source_asset_files
+from .produced_assets import (
+    image_document_values,
+    offer_source_assets,
+    rendition_values,
+    source_asset_files,
+)
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
 from .run_control import BoundaryRunContext
@@ -1552,17 +1557,27 @@ async def serve_connection(
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
                     preview_artifacts=result.preview_artifacts,
+                    image_documents=result.image_documents,
                     saved_artifact_claims=result.saved_artifact_claims,
                     saved_file_previews=result.saved_file_previews,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()
                 result_send_locked = True
-            if result.outputs:
-                offer_source_assets(result.outputs)
+            document_sources: dict[str, Value] = (
+                await run_sync_resource(image_document_values, result.image_documents)
+                if result.image_documents
+                else {}
+            )
+            source_values = {
+                **{f"output/{key}": value for key, value in (result.outputs or {}).items()},
+                **{f"document/{key}": value for key, value in document_sources.items()},
+            }
+            if source_values:
+                offer_source_assets(source_values)
             source_files = (
-                source_asset_files(result.outputs, resolver_from_env())
-                if blob_transfer is not None and result.outputs
+                source_asset_files(source_values, resolver_from_env())
+                if blob_transfer is not None and source_values
                 else []
             )
             conversation_checkpoint = codec.conversation_checkpoint()
@@ -1571,6 +1586,7 @@ async def serve_connection(
                 result,
                 invocation_id,
                 execute_ms,
+                document_sources=document_sources,
             )
             pending_blobs: list[tuple[str, bytes | Path]] = list(codec.take_pending_store_blobs())
             pending_blobs.extend(source_files)
