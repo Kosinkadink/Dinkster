@@ -5,16 +5,16 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from dinkster_registry import InstallError, LockedPack, Lockfile
 from dinkster_security.documents import Release
 from dinkster_security.host import SecurityHost
 from dinkster_security.inventory import generation_dependencies
 from dinkster_security.policy import Artifact, Dependency
-from dinkster_workers import load_manifest
+from dinkster_workers import PackManifest, load_manifest
 from dinkster_workers.accelerator import resolve_accelerator
 from dinkster_workers.manifest import PackDependency
 from dinkster_workers.pack_lock import (
@@ -33,6 +33,149 @@ from packaging.version import Version
 from .registries import RegistryConfig, StaticPackIndex, plan_registry_changes
 
 
+@dataclass(frozen=True)
+class _GenerationSecurityInventory:
+    """Sealed software inputs shared by offline inspection and repair planning."""
+
+    record: Any
+    software: str
+    installed: Lockfile
+    libraries: dict[str, tuple[Dependency, ...]]
+    manifests: dict[str, PackManifest]
+    locks: dict[str, PackLock]
+
+    @classmethod
+    def read(cls, generation: Path) -> _GenerationSecurityInventory:
+        state = importlib.import_module("dinkster_supervisor.environment_state")
+        software = (
+            "sha256:" + hashlib.sha256((generation / "generation.json").read_bytes()).hexdigest()
+        )
+        record = state.Generation.read(generation / "generation.json")
+        files = dict(record.files)
+        if record.drift(generation):
+            raise InstallError("security inventory requires intact sealed generation inputs")
+        for name in (*files, "generation.json"):
+            path = generation / name
+            if not path.resolve().is_relative_to(generation.resolve()) or any(
+                parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)
+            ):
+                raise InstallError("security inventory requires intact sealed generation inputs")
+        installed = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
+        entries = {entry.pack: entry for entry in installed.packs}
+        libraries = generation_dependencies(
+            generation, files, tuple(entries), record.in_process_packs
+        )
+        manifests = {
+            name: load_manifest(pack_manifest_path(generation / "pack-sources" / name))
+            for name in entries
+        }
+        locks = {
+            name: PackLock.read(generation / "packs" / name / "pack-lock.json") for name in entries
+        }
+        required = {"dinkster.lock", "installed-wheels.json"} | {
+            path.relative_to(generation).as_posix()
+            for name, manifest in manifests.items()
+            for path in (manifest.path, generation / "packs" / name / "pack-lock.json")
+        }
+        if required - files.keys():
+            raise InstallError(
+                "security inventory requires sealed source and dependency constraints"
+            )
+        return cls(record, software, installed, libraries, manifests, locks)
+
+    def artifacts(self) -> tuple[Artifact, ...]:
+        return _artifacts(
+            self.installed,
+            self.libraries,
+            {name: manifest.dependencies for name, manifest in self.manifests.items()},
+        )
+
+
+def _artifacts(
+    sources: Lockfile,
+    dependencies: dict[str, tuple[Dependency, ...]],
+    requirements: dict[str, tuple[PackDependency, ...]],
+) -> tuple[Artifact, ...]:
+    def issuer(entry: LockedPack) -> str:
+        if entry.source.startswith(("registry:http://", "registry:https://")):
+            return entry.source.removeprefix("registry:")
+        if entry.source == "registry" or entry.source.startswith("registry:"):
+            raise InstallError("security inventory requires immutable registry origins")
+        return entry.source
+
+    selected = {entry.pack: entry for entry in sources.packs}
+    result = []
+    for name, entry in selected.items():
+        reachable = [name]
+        for consumer in reachable:
+            for dependency in requirements[consumer]:
+                provider = selected.get(dependency.pack)
+                if provider is None or not dependency.accepts(provider.version):
+                    raise InstallError("security inventory violates a retained pack dependency")
+                if provider.pack not in reachable:
+                    reachable.append(provider.pack)
+        result.append(
+            Artifact(
+                issuer(entry),
+                Release.model_validate(
+                    {
+                        "pack": name,
+                        "version": entry.version,
+                        "artifactDigest": entry.artifact_digest,
+                    }
+                ),
+                tuple(dependency for item in reachable for dependency in dependencies[item])
+                + tuple(
+                    Dependency(
+                        issuer(selected[item]),
+                        item,
+                        selected[item].version,
+                        selected[item].artifact_digest,
+                    )
+                    for item in reachable
+                    if item != name
+                ),
+            )
+        )
+    return tuple(result)
+
+
+def generation_security_status(generation: Path, pack: str | None = None) -> dict[str, object]:
+    """Inspect accepted evidence for sealed software, without transport or execution."""
+    if not generation.is_absolute() or generation.parent.name != "generations":
+        raise InstallError("security status requires an absolute managed generation")
+    root = generation.parent.parent
+    if not (root / "security.sqlite3").is_file():
+        raise InstallError("security status requires independently provisioned trust")
+    inventory = _GenerationSecurityInventory.read(generation)
+    if generation.name != str(inventory.record.number):
+        raise InstallError("security generation directory and recorded number disagree")
+    artifacts = inventory.artifacts()
+    if pack is not None:
+        artifacts = tuple(item for item in artifacts if item.release.pack == pack)
+        if not artifacts:
+            raise InstallError("security details require an installed pack")
+    result = SecurityHost(root).status(artifacts)
+    if inventory.record.drift(generation) or inventory.software != (
+        "sha256:" + hashlib.sha256((generation / "generation.json").read_bytes()).hexdigest()
+    ):
+        raise InstallError("generation changed during security inspection")
+    return {
+        **result,
+        "generation": inventory.record.number,
+        "software": inventory.software,
+        "packs": [
+            {"registry": item.registry, **item.release.model_dump(mode="json", by_alias=True)}
+            for item in artifacts
+        ],
+        "workInventory": {
+            "status": "unavailable",
+            "reason": "Offline generation inspection does not observe running jobs or workers.",
+        },
+        "automaticResume": False,
+    }
+
+
 def plan_security_repair(
     generation: Path,
     pack: str,
@@ -48,42 +191,18 @@ def plan_security_repair(
     Root interpreter dependencies cannot be repaired by changing a pack lock.
     """
     accelerator = resolve_accelerator(accelerator)
-    state = importlib.import_module("dinkster_supervisor.environment_state")
-    wheel_compatibility = importlib.import_module(
-        "dinkster_supervisor.environment_constraints"
-    ).wheel_compatibility
-    record = state.Generation.read(generation / "generation.json")
-    software = "sha256:" + hashlib.sha256((generation / "generation.json").read_bytes()).hexdigest()
-    files = dict(record.files)
-    if record.drift(generation):
-        raise InstallError("security repair requires intact sealed generation inputs")
-    for name in files:
-        path = generation / name
-        if not path.resolve().is_relative_to(generation.resolve()) or any(
-            parent.is_symlink() or parent.is_junction() for parent in (path, *path.parents)
-        ):
-            raise InstallError("security repair requires intact sealed generation inputs")
-    installed = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
+    inventory = _GenerationSecurityInventory.read(generation)
+    record, software, installed = inventory.record, inventory.software, inventory.installed
+    libraries, manifests, locks = inventory.libraries, inventory.manifests, inventory.locks
     entries = {entry.pack: entry for entry in installed.packs}
     if pack not in entries:
         raise InstallError("security repair requires an installed pack")
     hosting = record.in_process_packs
-    libraries = generation_dependencies(generation, files, tuple(entries), hosting)
-    manifests = {
-        name: load_manifest(pack_manifest_path(generation / "pack-sources" / name))
-        for name in entries
-    }
     constraints = {name: manifest.dependencies for name, manifest in manifests.items()}
-    locks = {
-        name: PackLock.read(generation / "packs" / name / "pack-lock.json") for name in entries
-    }
-    required = {"dinkster.lock", "installed-wheels.json"} | {
-        path.relative_to(generation).as_posix()
-        for name, manifest in manifests.items()
-        for path in (manifest.path, generation / "packs" / name / "pack-lock.json")
-    }
-    if required - files.keys():
-        raise InstallError("security repair requires sealed source and dependency constraints")
+    state = importlib.import_module("dinkster_supervisor.environment_state")
+    wheel_compatibility = importlib.import_module(
+        "dinkster_supervisor.environment_constraints"
+    ).wheel_compatibility
     root_rows = json.loads((generation / "installed-wheels.json").read_bytes())["wheels"]
     root_dependencies = tuple(
         Dependency(
@@ -102,56 +221,7 @@ def plan_security_repair(
         frozenset(Tag(*tag.split("-")) for tag in cast("list[str]", compatibility["tags"])),
         markers,
     )
-
-    def issuer(entry: LockedPack) -> str:
-        if entry.source.startswith(("registry:http://", "registry:https://")):
-            return entry.source.removeprefix("registry:")
-        if entry.source == "registry" or entry.source.startswith("registry:"):
-            raise InstallError("security repair requires immutable registry origins")
-        return entry.source
-
-    def artifacts(
-        sources: Lockfile,
-        dependencies: dict[str, tuple[Dependency, ...]],
-        requirements: dict[str, tuple[PackDependency, ...]],
-    ) -> tuple[Artifact, ...]:
-        selected = {entry.pack: entry for entry in sources.packs}
-        result = []
-        for name, entry in selected.items():
-            reachable = [name]
-            for consumer in reachable:
-                for dependency in requirements[consumer]:
-                    provider = selected.get(dependency.pack)
-                    if provider is None or not dependency.accepts(provider.version):
-                        raise InstallError("security repair violates a retained pack dependency")
-                    if provider.pack not in reachable:
-                        reachable.append(provider.pack)
-            result.append(
-                Artifact(
-                    issuer(entry),
-                    Release.model_validate(
-                        {
-                            "pack": name,
-                            "version": entry.version,
-                            "artifactDigest": entry.artifact_digest,
-                        }
-                    ),
-                    tuple(dependency for item in reachable for dependency in dependencies[item])
-                    + tuple(
-                        Dependency(
-                            issuer(selected[item]),
-                            item,
-                            selected[item].version,
-                            selected[item].artifact_digest,
-                        )
-                        for item in reachable
-                        if item != name
-                    ),
-                )
-            )
-        return tuple(result)
-
-    before = security.assess(artifacts(installed, libraries, constraints))
+    before = security.assess(_artifacts(installed, libraries, constraints))
     affected = {item.artifact.release.pack for item in before.findings if not item.allowed}
     if pack not in affected:
         return {"status": "not-required", "pack": pack, "offer": None}
@@ -300,7 +370,7 @@ def plan_security_repair(
                     key: tuple(set(shared) | set(items))
                     for key, items in selected_libraries.items()
                 }
-                proposed_artifacts = artifacts(sources, dependencies, requirements)
+                proposed_artifacts = _artifacts(sources, dependencies, requirements)
                 result = security.assess(proposed_artifacts)
                 changed = tuple(item for item in proposed_artifacts if item.release.pack == name)
                 if not result.allowed or not security.assess(changed, installing=True).allowed:

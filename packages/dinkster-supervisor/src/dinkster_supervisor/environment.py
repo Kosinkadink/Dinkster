@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 from contextlib import ExitStack
@@ -79,6 +80,7 @@ from .environment_state import (
     atomic_write,
     content_digest,
     generation_number,
+    interpreter,
     read_current,
     read_document,
     write_document,
@@ -1391,6 +1393,55 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not (args.root / "security.sqlite3").is_file():
         raise EnvironmentError("security operation requires an independently provisioned install")
     host = SecurityHost(args.root)
+    if args.security_action in {"list", "details"}:
+        number = args.generation if args.generation is not None else read_current(args.root)
+        if number is None:
+            raise EnvironmentError("security inspection requires a selected generation")
+        generation = args.root / "generations" / str(generation_number(number))
+        software = content_digest(generation / "generation.json")
+        record = Generation.read(generation / "generation.json")
+        if (
+            record.number != number
+            or record.drift(generation)
+            or any(
+                path.is_symlink() or path.is_junction()
+                for path in (generation / "generation.json", generation, *generation.parents)
+            )
+        ):
+            raise EnvironmentError("security inspection requires intact sealed software")
+        command = [
+            str(interpreter(generation)),
+            "-I",
+            "-B",
+            "-m",
+            "dinkster.manager",
+            "--root",
+            str(args.root),
+            "security-status",
+            "--generation",
+            str(generation),
+        ]
+        if args.security_action == "details":
+            command.extend(["--pack", args.pack])
+        completed = subprocess.run(command, capture_output=True, text=True)
+        if completed.returncode:
+            raise EnvironmentError(
+                "security inspection refused: " + (completed.stderr.strip() or "engine failed")
+            )
+        raw: object = json.loads(completed.stdout)
+        if not isinstance(raw, dict):
+            raise EnvironmentError("security inspection requires an engine report object")
+        report = cast("dict[str, object]", raw)
+        if (
+            report.get("software") != software
+            or report.get("generation") != number
+            or content_digest(generation / "generation.json") != software
+            or record.drift(generation)
+            or (args.generation is None and read_current(args.root) != number)
+        ):
+            raise EnvironmentError("selected software changed during security inspection")
+        result.update(current=read_current(args.root), security=report)
+        return 0
     if args.security_action == "policy":
         changed = (
             args.refuse_vulnerable is not None
@@ -1459,10 +1510,15 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="operation", required=True)
     security = commands.add_parser(
-        "security", help="answer exact notices or import signed evidence"
+        "security", help="inspect notices, change answers/policy or import signed evidence"
     )
     security.add_argument("--json", action="store_true", help="emit exactly one result object")
     security_actions = security.add_subparsers(dest="security_action", required=True)
+    security_list = security_actions.add_parser("list", help="inspect selected generation notices")
+    security_details = security_actions.add_parser("details", help="inspect one installed pack")
+    security_details.add_argument("--pack", required=True)
+    for inspection in (security_list, security_details):
+        inspection.add_argument("--generation", type=int, help="inspect a retained generation")
     policy = security_actions.add_parser("policy", help="read or explicitly change local policy")
     policy.add_argument("--refuse-vulnerable", action=argparse.BooleanOptionalAction, default=None)
     age = policy.add_mutually_exclusive_group()
@@ -1832,6 +1888,9 @@ def run(args: argparse.Namespace) -> int:
             ):
                 for warning in cast("list[str]", report[key]):
                     print(f"Warning: {warning}")
+        if args.operation == "security" and code == 0:
+            if "security" in result or "policy" in result:
+                print(json.dumps(result.get("security", result.get("policy")), indent=2))
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     return code

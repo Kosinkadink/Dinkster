@@ -1851,7 +1851,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
 ):
     from dinkster_supervisor.environment_state import Generation, content_digest
     from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-    from test_environment_generations import _standalone_tree
+    from test_environment_generations import _standalone_tree, _workspace_tree
     from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.registries import RegistryConfig, StaticPackIndex
@@ -1859,7 +1859,10 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
 
     generation = tmp_path / "generations/1"
     generation.mkdir(parents=True)
-    _standalone_tree(generation / "python")
+    if case == "release":
+        _workspace_tree(generation / "python")
+    else:
+        _standalone_tree(generation / "python")
     (tmp_path / "current").write_text("1\n")
     (tmp_path / "history").mkdir()
     (tmp_path / "history/unchanged").write_bytes(b"retained history")
@@ -2100,6 +2103,10 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             other["state"] = "vulnerable"
         feed["notices"].append(other)
     store.import_feed(REGISTRY, _signed(feed, key), now=VERIFIED_AT)
+    if case == "release":
+        (tmp_path / "security.toml").write_text(
+            f'[feed_urls]\n"{REGISTRY}" = "{endpoint}/must-not-fetch"\n'
+        )
     host = SecurityHost(tmp_path)
     before = {
         path: content_digest(path)
@@ -2107,6 +2114,72 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         if path.is_file() and "security.sqlite3" not in path.name
     }
     try:
+        if case == "release":
+
+            def inspect(*arguments: str) -> dict[str, Any]:
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(tmp_path),
+                        "security",
+                        "--json",
+                        *arguments,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                report = json.loads(completed.stdout)
+                assert completed.returncode == (1 if report["status"] == "error" else 0)
+                return report
+
+            cached = host.store.cached(REGISTRY)
+            listed = inspect("list")
+            report = listed["security"]
+            assert listed["current"] == report["generation"] == 1
+            assert report["software"] == content_digest(generation / "generation.json")
+            assert {item["pack"] for item in report["packs"]} == {"consumer", "provider"}
+            assert {item["pack"] for item in report["findings"]} == {"consumer", "provider"}
+            assert report["allowed"] is False
+            assert report["workInventory"]["status"] == "unavailable"
+            assert report["automaticResume"] is False
+            (tmp_path / "current").write_text("2\n")
+            try:
+                retained = inspect("details", "--pack", "consumer", "--generation", "1")
+            finally:
+                (tmp_path / "current").write_text("1\n")
+            assert retained["current"] == 2
+            details = retained["security"]
+            assert details["generation"] == 1
+            assert details["packs"] == [
+                {
+                    "registry": endpoint,
+                    "pack": "consumer",
+                    "version": "1.0.0",
+                    "artifactDigest": entries[0].artifact_digest,
+                }
+            ]
+            assert len(details["findings"]) == 1
+            finding = details["findings"][0]
+            assert finding["state"] == "affected"
+            assert finding["noticeRegistry"] == REGISTRY
+            assert finding["details"]["release"]["pack"] == "bad-library"
+            assert finding["lastVerifiedAt"] == VERIFIED_AT.isoformat()
+            assert finding["recovery"]["status"] == "refused"
+            assert inspect("details", "--pack", "absent")["status"] == "error"
+            manifest = generation / "pack-sources/consumer/dinkster-pack.toml"
+            intact = manifest.read_bytes()
+            try:
+                manifest.write_bytes(intact + b"\n# changed\n")
+                assert inspect("list")["status"] == "error"
+            finally:
+                manifest.write_bytes(intact)
+            assert host.store.cached(REGISTRY) == cached
+            assert requests == []
         result = plan_security_repair(
             generation,
             "consumer",

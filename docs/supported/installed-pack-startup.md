@@ -28,6 +28,13 @@
   configuration. Changes preserve mirror/timing settings and accepted evidence;
   invalid values leave the previous policy intact. A new host reads configured
   policy before assessment, and a running host reloads it on refresh.
+  `security --json list` inspects the current sealed generation, and
+  `security --json details --pack PACK` selects one installed pack. Either can
+  inspect a retained `--generation N`. Results include transitive dependency
+  findings, exact generation/software identity and cached verification details,
+  even when security policy refuses execution. Inspection does not refresh feeds,
+  import pack code, acquire payloads, alter evidence or resume work. Unknown packs
+  and changed sealed inputs refuse; offline work inventory is explicitly unavailable.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.

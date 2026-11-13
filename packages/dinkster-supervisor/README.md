@@ -72,6 +72,16 @@ once per notice revision and answer during a host lifetime. Runtime work invento
 names registered or revoked pack workers, not whether an invocation is running;
 job inventory is explicitly unavailable on this surface.
 
+The public environment CLI provides `security --json list` and
+`security --json details --pack PACK`, using the current generation or an explicit
+retained `--generation N`. The selected engine's `dinkster.manager security-status
+--generation PATH [--pack PACK]` reads sealed source/dependency provenance without
+importing packs or refreshing feeds. It returns full shared-host findings with
+generation/software identity, including blocked releases. The tools revalidate
+that identity and the current selection before returning. Unknown packs, drift
+and linked sealed inputs refuse. Offline job/worker inventory is unavailable,
+not an assertion that no work exists. No payload or generation changes occur.
+
 The public environment CLI accepts `security --json approve` or `disapprove`
 with `--registry`, `--notice` and `--revision`. The exact answer persists and may
 be changed; stale revisions and malicious notices cannot be approved. These
