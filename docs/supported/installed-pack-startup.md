@@ -165,8 +165,8 @@
   code. New node-pack directories are discovered without a family allowlist.
   Development scaffolding stays unpublished.
 - First-party source resolution reads runtime IDs and node entry modules from
-  manifests and distribution names from project metadata or installed wheel
-  records. Runtime, distribution and import names need not match. Discovery
+  installed wheel manifests and distribution names from wheel records.
+  Runtime, distribution and import names need not match. Discovery
   does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.

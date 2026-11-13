@@ -91,74 +91,15 @@ for incompatible packs.
 
 ## Official pack publication
 
-Official pack manifests declare their own public `pack.version` and PEP 440
-`pack.engine` range using the shared schema and archive admission contract.
-The engine version is not the pack version. Build selected source archives:
+The [dinkster-nodes repository](https://github.com/Kosinkadink/dinkster-nodes)
+owns official pack sources, native dependency locks and publication. Its packs
+build against published engine packages, use their own manifest versions and
+engine ranges, and submit only from trusted main. This engine repository has
+no official pack submission workflow.
 
-```sh
-python -m scripts.build_official_packs --pack dinkster-nodes-foundation --output /scratch/packs
-```
-
-Repeat `--pack` for multiple ids or omit it to build the official set. Each
-archive and source-lock entry uses that manifest's own `pack.version`, retaining
-its engine compatibility declaration. Unknown ids and missing declarations
-refuse. Existing engine-release callers can supply the explicit `--version`
-override; it is not needed for independently versioned publication. Native
-`--variant`, interpreter and constraints inputs produce dependency locks for
-the same selected sources. Building does not publish an archive or alter a
-generation.
-
-`python -m scripts.select_official_packs --before FULL_COMMIT` selects official
-ids changed between that committed push base and the checked-out commit.
-An engine-only range returns an empty list. A zero base (the first push) selects
-all official packs. Nested vision source changes select their owning pack;
-shared vision files select all vision packs. Selection reads Git objects rather
-than mutable working-tree manifests. `--tag pack/PACK_ID/vVERSION` selects one
-official id only when VERSION exactly equals its declared public version.
-
-The native `scripts.build_release_pack_locks` command accepts `--sources
-/scratch/packs` to lock just that independent source catalog using each pack's
-own version. `--release` still supplies verified engine artifacts and effective
-constraints, not pack identities or versions in this mode. Regenerated source
-archives and catalog must match the supplied bytes. Without `--sources`, the
-legacy engine-release caller is unchanged. Both modes use the same native base
-extraction, resolver and portable wheel-origin mapping.
-
-`python -m scripts.publish_official_packs --sources /scratch/packs
---base-manifest /scratch/linux-cpu.json --base-manifest ...
---pack-lock /scratch/PACK-VERSION-VARIANT.pack-lock.json --pack-lock ...
---output /scratch/publication` prepares publication maps. Repeat the manifest
-and lock options for every base in `scripts/base_bundles.json` and every selected
-pack/base pair. The command verifies canonical base identities, archive digests,
-manifest publication declarations, lock identities, Python compatibility and
-credential-free HTTP(S) wheel/index origins before exposing any map. It does not
-produce native locks or resolve dependencies. Invalid input leaves no output maps
-and makes no publication request.
-
-Add `--publish --registry URL` to submit each unchanged archive and its complete
-map through the existing registry client, using `DINKSTER_REGISTRY_TOKEN` when
-set. All local validation completes before the first request; separate release
-submissions are not a registry transaction. A queued receipt is not scanner
-acceptance or proof that the default set is served.
-
-`.github/workflows/official-packs.yml` publishes after the same commit's
-successful `Versioned wheel release` run on trusted `Kosinkadink/Dinkster`
-main. It fetches `main-COMMIT` and verifies the engine manifest's repository,
-tag and commit, never selecting by publication time. Failed engine releases
-publish nothing. Pack changes select their owners; engine dependency or
-publication-workflow changes select all current packs. Unrelated engine-only
-changes select none. All six supported bases resolve locks on native hosts.
-
-PRs resolve native locks using their candidate-head locked engine dependencies,
-not an older published engine. This preflight does not claim a released engine.
-It compares archive digest/size and every supported-base install lock with any
-existing published pack version. Changed bytes fail naming the pack and requiring
-a pack version bump. Publication repeats this check before the first submission;
-identical submissions remain idempotent, and a conflicting submission fails
-without retry. Exact pack tags do not submit. PR, fork and tag refs never receive the
-submission credential. A missing credential refuses submission. Registry
-versions and lock bindings are immutable, so changed bytes need new manifest
-versions. Publication does not imply that scanner admission has completed.
+The registry client and archive admission contracts remain engine libraries.
+Publication is not scanner acceptance: the source archive, supported-base locks
+and engine compatibility must pass admission before a version becomes active.
 
 `python -m scripts.check_default_pack_admission --engine-version VERSION`
 resolves the complete committed default set and runs these public archive stages
