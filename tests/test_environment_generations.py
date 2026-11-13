@@ -269,6 +269,95 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         server.shutdown()
 
 
+def test_development_inference_override_runs_selected_library_but_ordinary_install_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """Developers can run their local inference version without loosening ordinary installs."""
+    from dinkster_supervisor.environment_development import (
+        captured_development_sources,
+        development_selection,
+    )
+    from dinkster_supervisor.environment_local import (
+        DEFAULT_VARIANTS,
+        local_selection,
+        prepare_local,
+    )
+    from dinkster_supervisor.environment_state import content_digest
+
+    index, source, library, pack, store = (
+        tmp_path / name for name in ("index", "engine", "inference", "pack", "store")
+    )
+    for path in (index, source, library, pack, store):
+        path.mkdir()
+    _wheel(index, "fixture_base", "1.0", 37)
+    _wheel(index, "dinkster_inference", "0.1.1", 11)
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    monkeypatch.setenv("UV_FIND_LINKS", str(index))
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    build_system = '\n[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+
+    def project(path: Path, name: str, version: str, extra: str = "") -> None:
+        module = name.replace("-", "_")
+        (path / module).mkdir(parents=True)
+        (path / module / "__init__.py").write_text("VALUE = 83\n")
+        (path / "pyproject.toml").write_text(
+            f'[project]\nname="{name}"\nversion="{version}"\nrequires-python=">=3.12"\n'
+            + extra
+            + build_system
+        )
+
+    project(
+        source,
+        "dinkster",
+        "1.0",
+        'dependencies=["dinkster-inference==0.1.1"]\n'
+        '[dependency-groups]\nengine-base=["fixture-base==1.0"]\n'
+        '[tool.uv.workspace]\nmembers=["packages/*"]\n',
+    )
+    for name in ("dinkster-api", "dinkster-engine", "dinkster-supervisor", "dinkster-workers"):
+        project(source / "packages" / name, name, "1.0")
+    boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+    boundary.parent.mkdir(parents=True)
+    boundary.write_text("PROTOCOL_VERSION = 1\n")
+    subprocess.run(["uv", "lock", "--offline"], cwd=source, check=True, capture_output=True)
+    lock = source / "uv.lock"
+    locked = lock.read_text()
+    for wheel in index.glob("*.whl"):
+        locked = locked.replace(
+            f'path = "{wheel.as_posix()}"',
+            f'path = "{wheel.as_posix()}", hash = "{content_digest(wheel)}"',
+        )
+    lock.write_text(locked)
+    project(library, "dinkster-inference", "0.1.2.dev3")
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="example"\n')
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    selection = local_selection(source, variant, DEFAULT_VARIANTS, Path(sys.executable))
+    selection["packages"] = ["fixture-base"]
+    selection["development"] = development_selection(source, (pack,), (library,))
+    with captured_development_sources(selection["development"], store) as (engine, _, wheels):
+        inputs = prepare_local(engine, selection, store, library_wheels=wheels)
+        constraints = inputs["constraints"]
+        generation = tmp_path / "generation"
+        python = prepare_engine_interpreter(
+            generation,
+            store=store,
+            base=inputs["base"],
+            constraints=constraints,
+        )
+        output = subprocess.check_output(
+            [str(python), "-I", "-c", "import dinkster_inference; print(dinkster_inference.VALUE)"],
+            text=True,
+        )
+        assert output.strip() == "83"
+        assert "dinkster-inference==0.1.2.dev3" in constraints.read_text()
+        notice = capsys.readouterr().err
+        assert "overrides dinkster-inference pin 0.1.1 with local version 0.1.2.dev3" in notice
+        ordinary = {key: value for key, value in selection.items() if key != "development"}
+        with pytest.raises(EnvironmentError, match="No solution found"):
+            prepare_local(engine, ordinary, store, library_wheels=wheels)
+    assert content_digest(source / "uv.lock") == selection["lockDigest"]
+
+
 def _standalone_tree(root: Path) -> None:
     source = Path(sys.base_prefix)
     if os.name == "nt":
