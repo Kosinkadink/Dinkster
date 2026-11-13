@@ -19,11 +19,9 @@ from typing import cast
 import pytest
 from dinkster_store import object_path, pack_archive_path
 from dinkster_supervisor.environment_history import (
-    activation_entries,
     capture_software,
     generation_history_coverage,
     history,
-    import_generation,
     prepare_entry,
     publish_entry,
 )
@@ -35,7 +33,6 @@ from dinkster_supervisor.environment_state import (
     content_digest,
     interpreter,
     set_current,
-    writer_lock,
 )
 from test_environment_cli import _run
 from test_environment_runtime import free_port
@@ -800,12 +797,16 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         review_temp.cleanup()
 
 
-@pytest.mark.parametrize("notice_state", ["vulnerable", "malicious"])
+@pytest.mark.parametrize(
+    ("notice_state", "repair_action"),
+    [("vulnerable", "fix-one"), ("vulnerable", "fix-all"), ("malicious", "fix-one")],
+)
 def test_managed_pack_install_requires_exact_security_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     notice_state: str,
+    repair_action: str,
 ):
     import tomllib
     from uuid import UUID
@@ -814,7 +815,7 @@ def test_managed_pack_install_requires_exact_security_approval(
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_security.store import SecurityStore
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_security_notices import NOTICE, _feed, _signed, _trust
 
     from dinkster.pack_archive import build_pack_archive
@@ -946,6 +947,172 @@ def test_managed_pack_install_requires_exact_security_approval(
                 (root / "generations/4/dinkster.lock").read_text()
             ).packs
         } == {"healthy", "sibling"}
+        repair_pack = tmp_path / "repair-pack"
+        shutil.copytree(tmp_path / "pack", repair_pack)
+        for name in ("dinkster-pack.toml", "pyproject.toml"):
+            path = repair_pack / name
+            path.write_text(path.read_text().replace("1.0.0", "1.1.0"))
+        repair_archive = tmp_path / "healthy-1.1.0-py3-none-any.whl"
+        build_pack_archive(repair_pack, repair_archive)
+        repair_payload = repair_archive.read_bytes()
+        repaired = replace(
+            entry,
+            pack="healthy",
+            version="1.1.0",
+            artifact_digest=artifact_digest(repair_payload),
+            claims=("healthy",),
+        )
+        repair_lock = PackLock("healthy", "fixture-cpu", ">=3.12", (), (), ()).to_json().encode()
+        repair_url = "locks/" + artifact_digest(repair_lock).replace(":", "/") + ".json"
+        repair_release = {
+            **test_installer._static_release(repaired, repair_payload),
+            "engine": ">=1,<3",
+            "installLocks": {
+                "fixture-cpu": {
+                    **release["installLocks"]["fixture-cpu"],
+                    "artifactDigest": repaired.artifact_digest,
+                    "digest": artifact_digest(repair_lock),
+                    "size": len(repair_lock),
+                    "url": repair_url,
+                }
+            },
+        }
+        registry_files.update(
+            test_installer._static_indexes([*index["items"], release, repair_release])
+        )
+        registry_files["/static/" + repair_url] = repair_lock
+        registry_files["/static/" + repair_release["wheels"][0]["url"]] = repair_payload
+        registry_files["/v1/packs/healthy/versions/1.1.0"] = json.dumps(
+            {
+                "packName": "healthy",
+                "version": "1.1.0",
+                "state": "active",
+                "artifact": {"digest": repaired.artifact_digest},
+                "manifest": {
+                    "dinkster": ">=1,<3",
+                    "pythonRequirements": [],
+                    "pythonExtraRequirements": {},
+                    "dependencies": [],
+                },
+            }
+        ).encode()
+
+        def repair(*arguments: str):
+            if repair_action == "fix-all" and "--pack" in arguments:
+                assert arguments[:2] == ("--pack", "healthy")
+                arguments = arguments[2:]
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(root),
+                    "security",
+                    "--json",
+                    repair_action,
+                    *arguments,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            return completed.returncode, json.loads(completed.stdout)
+
+        current = root / "generations/4"
+        original_sources = (current / "dinkster.lock").read_bytes()
+        original_lock = (current / "packs/healthy/pack-lock.json").read_bytes()
+        code, preview = repair("--pack", "healthy")
+        assert code == 0 and preview["status"] == "planned", preview
+        expected_lock = (
+            PackLock(
+                "healthy",
+                "fixture-cpu",
+                ">=3.12",
+                (),
+                (registry + "/static/fixture-cpu/simple/",),
+                (
+                    LockedDistribution(
+                        "healthy",
+                        "1.1.0",
+                        (
+                            LockedWheel(
+                                repair_archive.name,
+                                len(repair_payload),
+                                hashlib.sha256(repair_payload).hexdigest(),
+                                registry + "/static/" + repair_release["wheels"][0]["url"],
+                                registry,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            .to_json()
+            .encode()
+        )
+        assert preview["metadata"]["dependencyLocks"]["healthy"] == json.loads(expected_lock)
+        repaired_review = tmp_path / "security-review"
+        code, planned = repair("--pack", "healthy", "--output", str(repaired_review))
+        assert code == 0 and planned["status"] == "planned", planned
+        assert (repaired_review / "locks/healthy.json").read_bytes() == expected_lock
+        assert (root / "current").read_text() == "4\n"
+        code, refused = repair("--input", str(repaired_review), "--approval", "sha256:" + "0" * 64)
+        assert code != 0 and "approval" in refused["error"], refused
+        assert not (repaired_review / "consumed").exists()
+        reviewed_lock = repaired_review / "locks/healthy.json"
+        reviewed_lock.write_bytes(expected_lock + b"\n")
+        try:
+            code, refused = repair(
+                "--input", str(repaired_review), "--approval", planned["approval"]
+            )
+            assert code != 0 and "inputs changed" in refused["error"], refused
+        finally:
+            reviewed_lock.write_bytes(expected_lock)
+        registry_path = root / "registries.toml"
+        registry_bytes = registry_path.read_bytes()
+        registry_path.write_bytes(registry_bytes + b"\n# changed registry inputs\n")
+        try:
+            code, refused = repair(
+                "--input", str(repaired_review), "--approval", planned["approval"]
+            )
+            assert code != 0 and "project changed" in refused["error"], refused
+        finally:
+            registry_path.write_bytes(registry_bytes)
+        assert not (repaired_review / "consumed").exists()
+        assert (root / "current").read_text() == "4\n"
+        progress = tmp_path / "repair-progress.json"
+        cancellation = progress.with_name(progress.name + ".cancel")
+        cancellation.write_text("cancel")
+        code, cancelled = repair(
+            "--input",
+            str(repaired_review),
+            "--approval",
+            planned["approval"],
+            "--progress",
+            str(progress),
+        )
+        assert code != 0 and "cancelled" in cancelled["error"], cancelled
+        assert (root / "current").read_text() == "4\n"
+        assert not (root / "generations/5").exists()
+        assert not (repaired_review / "consumed").exists()
+        cancellation.unlink()
+        code, applied = repair(
+            "--input",
+            str(repaired_review),
+            "--approval",
+            planned["approval"],
+            "--progress",
+            str(progress),
+        )
+        assert code == 0 and applied["current"] == 5, applied
+        selected = Lockfile.from_record_json((root / "generations/5/dinkster.lock").read_text())
+        selected_pack = selected.get("healthy")
+        assert selected_pack is not None
+        assert selected_pack.artifact_digest == repaired.artifact_digest
+        assert (root / "generations/5/packs/healthy/pack-lock.json").read_bytes() == expected_lock
+        assert (current / "dinkster.lock").read_bytes() == original_sources
+        assert (current / "packs/healthy/pack-lock.json").read_bytes() == original_lock
+        assert security.decision(registry, UUID(NOTICE), 2) == "pending"
         raise Observed
 
     monkeypatch.setattr(test_installer, "_serve_artifacts", serve)
@@ -1332,1135 +1499,6 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     finally:
         _run(root, "stop", "--yes")
         server.shutdown()
-
-
-@pytest.mark.parametrize("existing_history", [False, True])
-def test_legacy_import_preserves_activation_selection_and_refuses_conflicting_capture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_history: bool
-):
-    (tmp_path / "journal").mkdir()
-    for operation, previous, number in ((10, None, 7), (20, 7, 2), (30, 2, 9)):
-        tree = _generation(tmp_path, number).parent
-        python = interpreter(tree)
-        python.parent.mkdir(exist_ok=True)
-        python.write_bytes(b"sealed interpreter fixture")
-        record = Generation.read(tree / "generation.json")
-        files = (*record.files, (python.relative_to(tree).as_posix(), content_digest(python)))
-        if number == 7:
-            lock = tree / "packs/example/pack-lock.json"
-            lock.parent.mkdir(parents=True)
-            lock.write_bytes(b"{}\n")
-            files = (*files, (lock.relative_to(tree).as_posix(), content_digest(lock)))
-        replace(
-            record,
-            engine_version=f"0.3.{number}",
-            files=files,
-        ).write(tree / "generation.json")
-        entry = None
-        if existing_history and number != 7:
-            entry = prepare_entry(tmp_path, tree, operation=str(operation), reason="update")
-            publish_entry(tmp_path, entry)
-        Journal(
-            "setup" if previous is None else "update",
-            previous,
-            number,
-            "complete",
-            history_entry=entry,
-        ).write(tmp_path / "journal" / f"{operation}.json")
-    set_current(tmp_path, 9)
-    old_entries = {path: path.read_bytes() for path in (tmp_path / "history").glob("*.json")}
-    with writer_lock(tmp_path), monkeypatch.context() as patch:
-
-        def forbidden_probe(*args, **kwargs):
-            raise AssertionError("legacy import must not execute the retained interpreter")
-
-        patch.setattr("dinkster_supervisor.environment_history.subprocess.run", forbidden_probe)
-        imported = import_generation(tmp_path, 7)
-        assert import_generation(tmp_path, 7) == imported
-    assert imported["kind"] == "import" and imported["reason"] == "legacy-import"
-    assert imported["generation"] == 7 and imported["operation"] == "10"
-    assert cast("dict", imported["snapshot"])["tools"] == {"version": "unknown"}
-    assert cast("dict", imported["snapshot"])["host"] == {
-        "system": "unknown",
-        "machine": "unknown",
-        "python": "unknown",
-    }
-    assert imported["provenance"] == {
-        "journal": "10",
-        "digest": content_digest(tmp_path / "journal/10.json"),
-        "operation": "setup",
-        "previous": None,
-        "target": 7,
-        "stage": "complete",
-    }
-    assert [entry["generation"] for entry in activation_entries(tmp_path)] == (
-        [2, 9] if existing_history else []
-    )
-    assert (tmp_path / "current").read_bytes() == b"9\n"
-    assert all(path.read_bytes() == payload for path, payload in old_entries.items())
-    if existing_history:
-        assert (
-            prepare_entry(tmp_path, tmp_path / "generations/9", operation="40", reason="update")[
-                "diff"
-            ]
-            == []
-        )
-    preserved = {path: path.read_bytes() for path in (tmp_path / "history").glob("*.json")}
-    seal = tmp_path / "generations/7/generation.json"
-    original = seal.read_bytes()
-    replace(Generation.read(seal), engine_version="9.9").write(seal)
-    with (
-        writer_lock(tmp_path),
-        pytest.raises(EnvironmentError, match="conflicts with recorded software"),
-    ):
-        import_generation(tmp_path, 7)
-    seal.write_bytes(original)
-    Journal("update", 7, 2, "planned").write(tmp_path / "journal/40.json")
-    with (
-        writer_lock(tmp_path),
-        pytest.raises(EnvironmentError, match="completed operation recovery"),
-    ):
-        import_generation(tmp_path, 7)
-    (tmp_path / "journal/40.json").unlink()
-    Journal("update", 9, 7, "complete").write(tmp_path / "journal/40.json")
-    with (
-        writer_lock(tmp_path),
-        pytest.raises(EnvironmentError, match="unambiguous completed ancestry"),
-    ):
-        import_generation(tmp_path, 7)
-    (tmp_path / "journal/40.json").unlink()
-    entry = prepare_entry(tmp_path, tmp_path / "generations/9", operation="40", reason="update")
-    Journal("update", 2, 9, "complete", history_entry=entry).write(tmp_path / "journal/40.json")
-    with (
-        writer_lock(tmp_path),
-        pytest.raises(EnvironmentError, match="completed history publication"),
-    ):
-        import_generation(tmp_path, 7)
-    (tmp_path / "journal/40.json").unlink()
-    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="disconnected"):
-        import_generation(tmp_path, 5)
-    python = interpreter(tmp_path / "generations/7")
-    payload = python.read_bytes()
-    python.unlink()
-    with (
-        writer_lock(tmp_path),
-        pytest.raises(EnvironmentError, match="sealed generation interpreter"),
-    ):
-        import_generation(tmp_path, 7)
-    python.write_bytes(payload)
-    setup = tmp_path / "journal/10.json"
-    original_journal = setup.read_bytes()
-    setup.write_bytes(original_journal + b"\n")
-    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="import provenance"):
-        import_generation(tmp_path, 7)
-    setup.write_bytes(original_journal)
-    unexpected = tmp_path / "generations/7/unsealed.py"
-    unexpected.write_bytes(b"unsealed software")
-    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="intact generation seal"):
-        import_generation(tmp_path, 7)
-    unexpected.unlink()
-    (tmp_path / "generations/7/constraints.txt").write_bytes(b"changed")
-    with writer_lock(tmp_path), pytest.raises(EnvironmentError, match="intact generation seal"):
-        import_generation(tmp_path, 7)
-    assert all(path.read_bytes() == payload for path, payload in preserved.items())
-
-
-def test_imported_software_restores_after_pruning_without_becoming_rollback_predecessor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    from tests.fixtures.environments.build import build
-
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
-    root, mirror = Path(fixture["root"]), Path(fixture["mirror"])
-    setup = fixture["commands"]["setup"]
-    code, result = _run(root, *setup[setup.index("setup") : -1])
-    assert code == 0, result
-    try:
-        legacy_snapshot = history(root)[0]["snapshot"]
-        assert _run(root, "stop", "--yes")[0] == 0
-        assert _run(root, "cleanup", "--automatic", "off", "--yes")[0] == 0
-        setup_journal = next((root / "journal").glob("*.json"))
-        replace(Journal.read(setup_journal), history_entry=None).write(setup_journal)
-        (root / "history/00000000000000000001.json").unlink()
-        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
-        code, result = _run(root, "update", "--yes")
-        assert code == 0 and result["current"] == 2, result
-        assert _run(root, "stop", "--yes")[0] == 0
-        executable_release(
-            mirror, json.loads(Path(fixture["baseManifest"]).read_bytes()), "3.0", 73
-        )
-        code, result = _run(root, "update", "--yes")
-        assert code == 0 and result["current"] == 3, result
-        assert _run(root, "stop", "--yes")[0] == 0
-        preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
-        for flags in (("--plan",), ()):
-            code, result = _run(root, "import", "1", *flags)
-            assert code == 0 and result["status"] == "planned", result
-            assert len(history(root)) == 2
-        with writer_lock(root):
-            code, result = _run(root, "import", "1", "--yes")
-            assert code == 1 and "another environment writer" in result["error"], result
-        # A confirmed import recovers an unpublished completed activation first.
-        (root / "history/00000000000000000002.json").unlink()
-        code, result = _run(root, "import", "1", "--yes")
-        assert code == 0 and result["status"] == "applied", result
-        imported = result["entry"]
-        code, result = _run(root, "import", "1", "--yes")
-        assert code == 0 and result["entry"] == imported, result
-        assert imported["id"] == 3 and imported["kind"] == "import"
-        assert (root / "current").read_text() == "3\n"
-        assert all(path.read_bytes() == payload for path, payload in preserved.items())
-        assert _run(root, "cleanup", "--automatic", "on", "--yes")[0] == 0
-        code, result = _run(root, "rollback", "--yes")
-        assert code == 0 and result["current"] == 4, result
-        assert history(root)[-1]["restoredFrom"] == 1
-        assert Generation.read(root / "generations/4/generation.json").engine_version == "2.0"
-        assert _run(root, "stop", "--yes")[0] == 0
-        missing_snapshot = cast("dict", history(root)[1]["snapshot"])
-        manifest = json.loads(missing_snapshot["metadata"]["engine-manifest.json"])
-        shutil.rmtree(mirror / "engine" / missing_snapshot["engine"]["release"][7:])
-        for artifact in manifest["artifacts"]:
-            if artifact["name"].endswith(".whl"):
-                cached = object_path(
-                    Path(fixture["store"]) / "wheels", "sha256:" + artifact["sha256"]
-                )
-                if cached.exists():
-                    shutil.rmtree(cached)
-        code, proposal = _run(root, "restore", "2", "--plan")
-        assert code == 0 and proposal["status"] == "approval-required", proposal
-        assert any(
-            candidate["snapshot"] == imported["snapshot"]
-            for candidate in proposal["restorePlan"]["alternatives"]
-        )
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["3", "4"]
-        code, shown = _run(root, "history", "show", "3")
-        assert code == 0 and shown["entry"] == imported
-        journal_bytes = setup_journal.read_bytes()
-        preserved_imports = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
-        for mutation in (journal_bytes + b"\n", None):
-            if mutation is None:
-                setup_journal.unlink()
-            else:
-                setup_journal.write_bytes(mutation)
-            code, refused = _run(root, "restore", "3", "--yes")
-            assert code == 1 and "provenance" in refused["error"], refused
-            assert (root / "current").read_text() == "4\n"
-            assert all(path.read_bytes() == payload for path, payload in preserved_imports.items())
-            code, proposal = _run(root, "restore", "2", "--plan")
-            assert code == 0 and proposal["status"] == "approval-required", proposal
-            assert all(
-                candidate["snapshot"] != imported["snapshot"]
-                for candidate in proposal["restorePlan"]["alternatives"]
-            )
-            setup_journal.write_bytes(journal_bytes)
-        code, result = _run(root, "restore", "3", "--yes")
-        assert code == 0 and result["current"] == 5 and result["exact"] is True, result
-        restored = history(root)[-1]
-        assert restored["restoredFrom"] == 3
-        assert restored["recordedTools"] == {"version": "unknown"}
-        assert {
-            key: value
-            for key, value in cast("dict", restored["snapshot"]).items()
-            if key not in {"tools", "host"}
-        } == {
-            key: value
-            for key, value in cast("dict", legacy_snapshot).items()
-            if key not in {"tools", "host"}
-        }
-        assert all(path.read_bytes() == payload for path, payload in preserved.items())
-        assert [entry["generation"] for entry in activation_entries(root)] == [2, 3, 4, 5]
-    finally:
-        _run(root, "stop", "--yes")
-
-
-def test_standalone_adoption_builds_separate_history_without_touching_old_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    from dinkster_registry import Lockfile
-
-    from tests.fixtures.environments.build import build
-
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
-    source = tmp_path / "standalone"
-    (source / "generations").mkdir(parents=True)
-    (source / "current").write_text("7\n")
-    (source / "generations/7.json").write_text(Lockfile().record_json())
-    for folder in ("workflows", "models", "outputs", "mounts"):
-        (source / folder).mkdir()
-        (source / folder / "keep.bin").write_bytes(b"never adopt or modify user data")
-    before = {
-        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
-    }
-    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
-    channel = json.loads(Path(fixture["initialChannel"]).read_bytes())
-    release, base = channel["engine"]["release"], channel["base"]["fixture-cpu"]["id"]
-    arguments = (
-        "setup",
-        "--adopt-from",
-        str(source),
-        "--variant",
-        "fixture-cpu",
-        "--mirror",
-        str(mirror),
-        "--channel",
-        "main",
-        "--data",
-        str(store),
-        "--engine-release",
-        release,
-        "--base-id",
-        base,
-        "--port",
-        str(fixture["port"]),
-    )
-    for flags in ((), ("--plan",)):
-        code, planned = _run(root, *arguments, *flags)
-        assert code == 0 and planned["status"] == "planned", planned
-        assert planned["adoption"]["generation"] == 7
-        assert planned["adoption"]["previousEngine"] == "not recorded by standalone installer"
-        assert not root.exists() and not store.exists()
-        assert not (tmp_path / "user-data").exists()
-    code, mismatch = _run(root, *arguments, "--base-id", "sha256:" + "f" * 64, "--yes")
-    assert code == 1 and "does not match" in mismatch["error"], mismatch
-    assert not root.exists() and not store.exists()
-    code, diagnostic = _run(source, "history")
-    assert code == 1 and "--adopt-from" in diagnostic["error"]
-    code, applied = _run(root, *arguments, "--yes")
-    assert code == 0 and applied["status"] == "applied", applied
-    try:
-        entries = history(root)
-        assert len(entries) == 1
-        snapshot = cast("dict", entries[0]["snapshot"])
-        assert snapshot["engine"]["release"] == release
-        assert snapshot["base"]["id"] == base
-        assert json.loads(snapshot["metadata"]["dinkster.lock"])["packs"] == []
-        assert {
-            path.relative_to(source): path.read_bytes()
-            for path in source.rglob("*")
-            if path.is_file()
-        } == before
-        assert all(
-            not (root / name).exists() for name in ("workflows", "models", "outputs", "mounts")
-        )
-    finally:
-        assert _run(root, "stop", "--yes")[0] == 0
-
-
-@pytest.mark.parametrize(
-    ("replace_base", "replace_engine", "reacquire", "mutation"),
-    [
-        (False, False, False, "update"),
-        (True, False, False, "update"),
-        (False, True, False, "update"),
-        (True, True, False, "update"),
-        (False, False, True, "update"),
-        (False, False, False, "pack-install"),
-    ],
-    ids=[
-        "exact",
-        "missing-base",
-        "missing-engine",
-        "missing-engine-and-base",
-        "reacquired-source",
-        "pack-install",
-    ],
-)
-def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    replace_base: bool,
-    replace_engine: bool,
-    reacquire: bool,
-    mutation: str,
-):
-    from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
-    from dinkster_supervisor.environment_state import interpreter
-    from dinkster_workers.boundary import PROTOCOL_VERSION
-    from dinkster_workers.pack_environment import venv_python
-    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
-    from test_environment_generations import _wheel, _workspace_tree
-    from test_installer import _serve_artifacts, _static_indexes, _static_release
-
-    from dinkster.pack_archive import build_pack_archive
-    from tests.fixtures.environments import build as publisher
-
-    original_wheel, encode = publisher.wheel, publisher.canonical_json
-
-    def published_wheel(*args, **kwargs):
-        return original_wheel(*args, **kwargs, pack_tools=True)
-
-    def canonical_json(document: dict) -> bytes:
-        if "workerProtocol" in document:
-            document["workerProtocol"] = PROTOCOL_VERSION
-        return encode(document)
-
-    monkeypatch.setattr(publisher, "wheel", published_wheel)
-    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
-    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
-    source = tmp_path / "standalone"
-    archives = source / "artifacts"
-    archives.mkdir(parents=True)
-    (source / "generations").mkdir()
-    dependencies = tmp_path / "dependencies"
-    dependencies.mkdir()
-    updated_artifacts = tmp_path / "updated-artifacts"
-    updated_artifacts.mkdir()
-    payload, digest = _wheel(dependencies, "fixture_adopt", "1.0", 87)
-    entries, locks = [], []
-    for name in ("healthy", "other", "extra"):
-        pack = tmp_path / name
-        pack.mkdir()
-        (pack / "dinkster-pack.toml").write_text(
-            HEALTHY_MANIFEST.replace("healthy-nodes", "healthy")
-            .replace('publisher = "dinkster"\n', "")
-            .replace("healthy", name)
-            .replace(f"{name}_nodes:", f"{name}:")
-            .replace("numpy>=1.26", "fixture-adopt==1.0")
-            .replace(
-                "[pack]\n",
-                '[pack]\nversion = "1.0.0"\nengine = ">=0.0.1,<3.0"\n'
-                + ('publisher="dinkster"\n' if name == "extra" else ""),
-            )
-        )
-        (pack / name).mkdir()
-        (pack / name / "__init__.py").write_text(HEALTHY_NODES.replace("healthy", name))
-        staging = updated_artifacts / "staging.zip"
-        if name == "extra":
-            (pack / "pyproject.toml").write_text('[project]\nname="extra"\nversion="1.0.0"\n')
-            staging = updated_artifacts / "extra-1.0.0-py3-none-any.whl"
-            build_pack_archive(pack, staging)
-            identity = artifact_digest(staging.read_bytes())
-        else:
-            identity = build_artifact(pack, staging)
-        retained = updated_artifacts / f"{identity[7:]}.zip"
-        staging.rename(retained)
-        if name != "extra":
-            shutil.copyfile(retained, archives / retained.name)
-        entries.append(
-            LockedPack(
-                name,
-                "1.0.0",
-                identity,
-                "dinkster" if name == "extra" else "local",
-                (name,),
-                f"local:{pack}",
-            )
-        )
-        path = dependencies / f"{name}.pack-lock.json"
-        PackLock(
-            name,
-            "fixture-cpu",
-            ">=3.12",
-            ("fixture-adopt==1.0",),
-            (),
-            (
-                LockedDistribution(
-                    "fixture-adopt",
-                    "1.0",
-                    (LockedWheel(payload.name, payload.stat().st_size, digest, payload.as_uri()),),
-                ),
-            ),
-        ).write(path)
-        locks.extend(("--pack-lock", str(path)))
-    (source / "current").write_text("3\n")
-    source_lock = Lockfile.of(entries[:2]).record_json()
-    (source / "generations/3.json").write_text(source_lock)
-    updated_lock = tmp_path / "updated.lock"
-    updated_lock.write_text(Lockfile.of(entries).record_json())
-    (source / "generations/3.hosting.json").write_text(
-        json.dumps({"format": "dinkster.hosting/1", "inProcess": ["healthy"]})
-    )
-    for name in ("workflows", "models", "outputs", "mounts"):
-        (source / name).mkdir()
-        (source / name / "keep.bin").write_bytes(b"standalone user data")
-    before = {
-        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
-    }
-    root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
-    channel = json.loads(Path(fixture["initialChannel"]).read_bytes())
-    extra = replace(entries[-1], publisher="dinkster", source="registry")
-    extra_lock = (dependencies / "extra.pack-lock.json").read_bytes()
-    extra_archive = (updated_artifacts / f"{extra.artifact_digest[7:]}.zip").read_bytes()
-    lock_url = "locks/" + artifact_digest(extra_lock).replace(":", "/") + ".json"
-    release = {
-        **_static_release(extra, extra_archive),
-        "engine": ">=0.0.1,<3.0",
-        "installLocks": {
-            "fixture-cpu": {
-                "baseId": channel["base"]["fixture-cpu"]["id"],
-                "artifactDigest": extra.artifact_digest,
-                "digest": artifact_digest(extra_lock),
-                "size": len(extra_lock),
-                "url": lock_url,
-            }
-        },
-    }
-    outer_wheel = release["wheels"][0]
-    registry = _serve_artifacts(
-        {
-            **_static_indexes([release]),
-            "/static/" + lock_url: extra_lock,
-            "/static/" + outer_wheel["url"]: extra_archive,
-        },
-        [],
-    )
-    code, result = _run(
-        root,
-        "setup",
-        "--adopt-from",
-        str(source),
-        "--engine-release",
-        channel["engine"]["release"],
-        "--base-id",
-        channel["base"]["fixture-cpu"]["id"],
-        "--variant",
-        "fixture-cpu",
-        "--mirror",
-        str(mirror),
-        "--data",
-        str(store),
-        "--channel",
-        "main",
-        "--port",
-        str(fixture["port"]),
-        *locks[:4],
-        "--yes",
-        timeout=120,
-    )
-    try:
-        assert code == 0 and result["current"] == 1, result.get("error", result)
-        first = history(root)[0]
-        snapshot = cast("dict", first["snapshot"])
-        replacement_id = None
-        chosen = None
-        expected_engine = snapshot["engine"]
-        assert (
-            "pack-sources/healthy/dinkster-pack.toml" in cast("dict", first["snapshot"])["metadata"]
-        )
-        assert (
-            "pack-sources/healthy/healthy/__init__.py"
-            not in cast("dict", first["snapshot"])["metadata"]
-        )
-        for number in (1, 3):
-            generation = root / "generations" / str(number)
-            assert json.loads((generation / "dinkster.lock").read_text()) == json.loads(source_lock)
-            assert Generation.read(generation / "generation.json").in_process_packs == ("healthy",)
-            assert not (generation / "packs/extra").exists()
-            for python in (interpreter(generation), venv_python(generation / "packs/other")):
-                assert (
-                    subprocess.check_output(
-                        [
-                            str(python),
-                            "-I",
-                            "-B",
-                            "-c",
-                            "import fixture_adopt; print(fixture_adopt.VALUE)",
-                        ],
-                        text=True,
-                    ).strip()
-                    == "87"
-                )
-            if number == 1:
-                assert _run(root, "stop", "--yes")[0] == 0
-                (mirror / "channels/main.json").write_bytes(
-                    Path(fixture["updatedChannel"]).read_bytes()
-                )
-                if mutation == "pack-install":
-                    (root / "registries.toml").write_text(
-                        "[registries.official]\n"
-                        f'endpoint="http://127.0.0.1:{registry.server_port}"\ndefault=true\n'
-                    )
-                    review = tmp_path / "review"
-                    journals = sorted((root / "journal").glob("*"))
-                    code, planned = _run(root, "packs-plan", "extra@1.0.0", "--output", str(review))
-                    assert code == 0, planned.get("error", planned)
-                    assert sorted((root / "journal").glob("*")) == journals
-                    pack_approval = planned["approval"]
-                    for folder in ("workflows", "models", "outputs", "user"):
-                        (root / folder).mkdir(exist_ok=True)
-                        (root / folder / "sentinel.bin").write_bytes(
-                            folder.encode() + b"\x00unchanged"
-                        )
-                    data_before = {
-                        folder: (root / folder / "sentinel.bin").read_bytes()
-                        for folder in ("workflows", "models", "outputs", "user")
-                    }
-                    retained_locks = {
-                        path.parent.name: path.read_bytes()
-                        for path in (root / "generations/1/packs").glob("*/pack-lock.json")
-                    }
-                    settings = root / "project.json"
-                    saved = settings.read_bytes()
-                    settings.write_bytes(saved + b"\n")
-                    code, stale = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
-                    )
-                    assert code != 0 and "changed after planning" in stale["error"]
-                    assert sorted((root / "journal").glob("*")) == journals
-                    assert not (root / "generations/2").exists()
-                    settings.write_bytes(saved)
-                    unreviewed = review / "locks/unreviewed.json"
-                    unreviewed.write_bytes(extra_lock)
-                    code, tampered = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
-                    )
-                    assert code != 0 and "reviewed pack inputs changed" in tampered["error"]
-                    assert sorted((root / "journal").glob("*")) == journals
-                    unreviewed.unlink()
-                    code, updated = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
-                    )
-                    assert code == 0, updated.get("error", updated)
-                    assert {
-                        folder: (root / folder / "sentinel.bin").read_bytes()
-                        for folder in data_before
-                    } == data_before
-                    for name, payload in retained_locks.items():
-                        assert (
-                            root / "generations/2/packs" / name / "pack-lock.json"
-                        ).read_bytes() == payload
-                    endpoint = f"http://127.0.0.1:{registry.server_port}"
-                    assert PackLock.read(
-                        root / "generations/2/packs/extra/pack-lock.json"
-                    ) == replace(
-                        PackLock.read(dependencies / "extra.pack-lock.json"),
-                        indexes=(endpoint + "/static/fixture-cpu/simple/",),
-                        packages=(
-                            *PackLock.read(dependencies / "extra.pack-lock.json").packages,
-                            LockedDistribution(
-                                "extra",
-                                "1.0.0",
-                                (
-                                    LockedWheel(
-                                        outer_wheel["filename"],
-                                        len(extra_archive),
-                                        hashlib.sha256(extra_archive).hexdigest(),
-                                        endpoint + "/static/" + outer_wheel["url"],
-                                        endpoint,
-                                    ),
-                                ),
-                            ),
-                        ),
-                    )
-                    code_replay, _replayed = _run(
-                        root, "packs-apply", "--input", str(review), "--approval", pack_approval
-                    )
-                    assert code_replay != 0 and not (root / "generations/3").exists()
-                else:
-                    code, updated = _run(
-                        root,
-                        "update",
-                        "--catalog-lock",
-                        str(updated_lock),
-                        "--artifacts",
-                        str(updated_artifacts),
-                        *locks,
-                        "--yes",
-                        timeout=120,
-                    )
-                assert code == 0 and updated["current"] == 2, updated.get("error", updated)
-                assert (root / "generations/2/packs/extra/pack-lock.json").is_file()
-                assert _run(root, "stop", "--yes")[0] == 0
-                shutil.rmtree(root / "generations/1")
-                original_release = cast("dict", first["snapshot"])["engine"]["release"]
-                current_release = Generation.read(
-                    root / "generations/2/generation.json"
-                ).engine_release
-                assert (current_release == original_release) == (mutation == "pack-install")
-                for entry in entries[:2]:
-                    filename = f"{entry.artifact_digest[7:]}.zip"
-                    assert (
-                        pack_archive_path(
-                            object_path(store / "engines", current_release) / "artifacts",
-                            entry.artifact_digest,
-                        ).read_bytes()
-                        == (archives / filename).read_bytes()
-                    )
-                original_archives = object_path(store / "engines", original_release) / "artifacts"
-                if mutation != "pack-install":
-                    shutil.rmtree(original_archives)
-                corrupt_cache = store / "engines" / ("0" * 64) / "artifacts"
-                corrupt_cache.mkdir(parents=True)
-                for entry in entries[:2]:
-                    (corrupt_cache / f"{entry.artifact_digest[7:]}.zip").write_bytes(
-                        b"not the digest-pinned pack archive"
-                    )
-                if reacquire:
-                    for entry in entries[:2]:
-                        pack_archive_path(
-                            object_path(store / "engines", current_release) / "artifacts",
-                            entry.artifact_digest,
-                        ).unlink()
-                    preserved_sources = {
-                        path: path.read_bytes()
-                        for parent in (root, store)
-                        for path in parent.rglob("*")
-                        if path.is_file() and path.name != ".lock"
-                    }
-                    code, available = _run(root, "restore", "1", "--plan")
-                    assert code == 0 and available["restorePlan"]["exact"], available
-                    changed = tmp_path / "healthy/healthy/__init__.py"
-                    original_nodes = changed.read_bytes()
-                    for content in (original_nodes + b"\n# changed source bytes\n", None):
-                        if content is None:
-                            changed.unlink()
-                        else:
-                            changed.write_bytes(content)
-                        code, unavailable = _run(root, "restore", "1", "--yes")
-                        assert code == 0 and unavailable["status"] == "approval-required", (
-                            unavailable
-                        )
-                        assert unavailable["restorePlan"]["missing"] == [
-                            {
-                                "kind": "pack-source",
-                                "identity": entries[0].artifact_digest,
-                                "artifact": f"{entries[0].artifact_digest[7:]}.zip",
-                                "pack": "healthy",
-                                "source": f"local:{tmp_path / 'healthy'}",
-                            }
-                        ]
-                        assert not unavailable["restorePlan"]["exact"]
-                    changed.write_bytes(original_nodes)
-                    assert {
-                        path: path.read_bytes()
-                        for parent in (root, store)
-                        for path in parent.rglob("*")
-                        if path.is_file() and path.name != ".lock"
-                    } == preserved_sources
-                approval: tuple[str, ...] = ("--yes",)
-                if replace_base:
-                    snapshot = cast("dict", first["snapshot"])
-                    original = json.loads(snapshot["metadata"]["base-manifest.json"])
-                    base_id = snapshot["base"]["id"]
-                    published = mirror / "base/fixture-cpu" / base_id[7:]
-                    index = []
-                    for compatible in (False, True):
-                        base = json.loads(json.dumps(original))
-                        base["interpreter"]["release"] = (
-                            "compatible-replacement" if compatible else "conflicting-replacement"
-                        )
-                        if not compatible:
-                            conflicting, sha = _wheel(dependencies, "fixture_adopt", "2.0", 99)
-                            base["wheels"].append(
-                                {
-                                    "name": "fixture-adopt",
-                                    "version": "2.0",
-                                    "filename": conflicting.name,
-                                    "sha256": sha,
-                                    "size": conflicting.stat().st_size,
-                                }
-                            )
-                            base["replaces"] = sorted([*base["replaces"], "fixture-adopt"])
-                        identity_fields = {
-                            key: value
-                            for key, value in base.items()
-                            if key not in {"id", "signature"}
-                        }
-                        identity_fields["archive"] = {"format": "tar+zstd"}
-                        identity = hashlib.sha256(canonical_json(identity_fields)).hexdigest()
-                        base["id"] = "sha256:" + identity
-                        destination = published.parent / identity
-                        shutil.copytree(published, destination)
-                        (destination / "manifest.json").write_bytes(canonical_json(base))
-                        index.append({"id": base["id"], "path": f"base/fixture-cpu/{identity}"})
-                        if compatible:
-                            replacement_id = base["id"]
-                    (published.parent / "index.json").write_text(json.dumps(index))
-                    shutil.rmtree(published)
-                    shutil.rmtree(object_path(store / "bases", base_id))
-                    shutil.rmtree(object_path(store / "downloads", base_id))
-                if replace_engine:
-                    snapshot = cast("dict", first["snapshot"])
-                    base = json.loads(snapshot["metadata"]["base-manifest.json"])
-                    channel_path = mirror / "channels/main.json"
-                    index = []
-                    for version in ("2.5", "3.0"):
-                        publisher.executable_release(mirror, base, version, 73)
-                        selected = json.loads(channel_path.read_bytes())["engine"]
-                        index.append(
-                            {
-                                "sha256": selected["release"][7:],
-                                "path": f"engine/{selected['release'][7:]}",
-                            }
-                        )
-                        if version == "2.5":
-                            expected_engine = {key: selected[key] for key in ("version", "release")}
-                    (mirror / "engine/index.json").write_text(json.dumps(index))
-                    original = snapshot["engine"]["release"]
-                    shutil.rmtree(mirror / "engine" / original[7:])
-                    for row in json.loads(snapshot["metadata"]["engine-manifest.json"])[
-                        "artifacts"
-                    ]:
-                        if row["name"].endswith(".whl"):
-                            shutil.rmtree(object_path(store / "wheels", "sha256:" + row["sha256"]))
-                if replace_base or replace_engine:
-                    preserved = {
-                        path.relative_to(root): path.read_bytes()
-                        for path in root.rglob("*")
-                        if path.is_file() and path.name != ".lock"
-                    }
-                    code, proposal = _run(root, "restore", "1", "--yes")
-                    assert code == 0 and proposal["status"] == "approval-required", proposal
-                    alternatives = proposal["restorePlan"]["alternatives"]
-                    assert len(alternatives) == 1, alternatives
-                    chosen = alternatives[0]
-                    substitutions = chosen["substitutions"]
-                    expected_fields = {"engine", "constraints"} if replace_engine else set()
-                    if replace_base:
-                        expected_fields.add("base")
-                        assert next(row for row in substitutions if row["field"] == "base") == {
-                            "field": "base",
-                            "before": snapshot["base"],
-                            "after": {"id": replacement_id, "variant": "fixture-cpu"},
-                        }
-                    assert {row["field"] for row in substitutions} == expected_fields
-                    assert chosen["snapshot"]["engine"] == expected_engine
-                    assert chosen["snapshot"]["base"] == (
-                        {"id": replacement_id, "variant": "fixture-cpu"}
-                        if replace_base
-                        else snapshot["base"]
-                    )
-                    assert chosen["snapshot"]["inProcessPacks"] == ["healthy"]
-                    assert {
-                        path.relative_to(root): path.read_bytes()
-                        for path in root.rglob("*")
-                        if path.is_file() and path.name != ".lock"
-                    } == preserved
-                    approval = ("--approve", chosen["approval"])
-                code, restored = _run(root, "restore", "1", *approval, timeout=120)
-                assert code == 0 and restored["current"] == 3, restored.get("error", restored)
-        records = history(root)
-        assert len(records) == 3 and records[0] == first
-        assert records[1]["reason"] == "update"
-        assert records[2]["restoredFrom"] == 1
-        assert [entry["exact"] for entry in records] == [
-            True,
-            True,
-            not (replace_base or replace_engine),
-        ]
-        if replace_base:
-            assert replacement_id is not None and chosen is not None
-            assert cast("dict", records[2]["snapshot"])["base"]["id"] == replacement_id
-        if replace_base or replace_engine:
-            assert chosen is not None
-            assert records[2]["substitutions"] == chosen["substitutions"]
-        assert cast("dict", records[2]["snapshot"])["engine"] == expected_engine
-        assert {
-            path.relative_to(source): path.read_bytes()
-            for path in source.rglob("*")
-            if path.is_file()
-        } == before
-    finally:
-        _run(root, "stop", "--yes")
-        registry.shutdown()
-
-
-@pytest.mark.parametrize("shared_store", [False, True], ids=["private-store", "shared-store"])
-@pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "in-process"])
-def test_adoption_plans_exact_pack_sources_and_refuses_unsafe_inputs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    shared_store: bool,
-    in_process: bool,
-):
-    from dinkster_registry import LockedPack, Lockfile, build_artifact
-    from dinkster_supervisor import environment
-    from dinkster_workers.pack_lock import LockedDistribution, PackLock
-    from test_environment_artifacts import _mirror
-
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    mirror, source, target, store = (tmp_path / name for name in ("mirror", "old", "new", "store"))
-    base, _, channel = _mirror(mirror)
-    (source / "generations").mkdir(parents=True)
-    (source / "artifacts").mkdir()
-    pack = tmp_path / "pack"
-    pack.mkdir()
-    (pack / "dinkster-pack.toml").write_text('[pack]\nname="example"\nnamespaces=[]\n')
-    archive = tmp_path / "pack.zip"
-    identity = build_artifact(pack, archive)
-    retained = source / "artifacts" / f"{identity[7:]}.zip"
-    shutil.copyfile(archive, retained)
-    content = source
-    if shared_store:
-        shared = tmp_path / "standalone-content"
-        shared.mkdir()
-        (source / "artifacts").rename(shared / "artifacts")
-        (source / "shared-store").write_text(str(shared) + "\n")
-        retained = shared / "artifacts" / retained.name
-        content = shared
-        retained.unlink()
-        readable = pack_archive_path(content / "artifacts", identity, label="example/1.2.3")
-        readable.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(archive, readable)
-        retained = readable
-    locked = LockedPack("example", "1.2.3", identity, "local", (), "local:/unused")
-    (source / "current").write_text("3\n")
-    (source / "generations/3.json").write_text(Lockfile.of([locked]).record_json())
-    hosting = source / "generations/3.hosting.json"
-    hosting.write_text(
-        json.dumps(
-            {
-                "format": "dinkster.hosting/1",
-                "inProcess": ["example"] if in_process else [],
-                "runtimePins": {"torch": "2.0"},
-            }
-        )
-    )
-    sites = [content / "venvs" / identity[7:] / "example/lib/python3.12/site-packages"]
-    if shared_store:
-        sites = [
-            object_path(content / "venvs" / scope, identity, label="example/1.2.3")
-            / "example/Lib/site-packages"
-            for scope in ("cpu", "cuda")
-        ]
-    for index, site in enumerate(sites):
-        site.mkdir(parents=True)
-        for name, version in (
-            ("Retained_Package", "2.0"),
-            ("changed-package", f"1.{index}"),
-            ("removed", "9.0"),
-        ):
-            info = site / f"{name}-{version}.dist-info"
-            info.mkdir()
-            (info / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n\n")
-        (site / "do-not-execute.pth").write_text(
-            f"import pathlib; pathlib.Path({str(tmp_path / 'executed')!r}).touch()\n"
-        )
-    dependency = tmp_path / "example.pack-lock.json"
-    PackLock(
-        "example",
-        "fixture-cpu",
-        ">=3.12",
-        (),
-        (),
-        tuple(
-            LockedDistribution(name, version, ())
-            for name, version in (
-                ("retained-package", "2.0"),
-                ("changed-package", "2.4"),
-                ("added", "4.1"),
-            )
-        ),
-    ).write(dependency)
-    args = (
-        "setup",
-        "--adopt-from",
-        str(source),
-        "--variant",
-        "fixture-cpu",
-        "--channel",
-        "main",
-        "--mirror",
-        str(mirror),
-        "--data",
-        str(store),
-        "--pack-lock",
-        str(dependency),
-        "--engine-release",
-        channel["engine"]["release"],
-        "--base-id",
-        base["id"],
-    )
-    before = {
-        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
-    }
-    code, plan = _run(target, *args, "--plan")
-    assert code == 0, plan
-    assert plan["adoption"]["packs"][0]["artifactDigest"] == identity
-    assert plan["adoption"]["inProcessPacks"] == (["example"] if in_process else [])
-    assert plan["dependencyLocks"][str(dependency)]["pack"] == "example"
-    observed = plan["adoption"]["installedDependencies"]["example"]
-    if in_process:
-        assert observed == {
-            "status": "ambient-not-recorded",
-            "scopes": {},
-            "runtimePins": {"torch": "2.0"},
-        }
-        assert plan["dependencyComparison"][0]["sourceStatus"] == "ambient-not-recorded"
-    else:
-        scopes = ["cpu", "cuda"] if shared_store else ["private"]
-        assert set(observed["scopes"]) == set(scopes)
-        for index, scope in enumerate(scopes):
-            assert observed["scopes"][scope]["pins"] == [
-                f"changed-package==1.{index}",
-                "removed==9.0",
-                "retained-package==2.0",
-            ]
-            comparison = next(row for row in plan["dependencyComparison"] if row["scope"] == scope)
-            assert comparison["changes"] == [
-                {"name": "added", "source": None, "targetLock": "4.1"},
-                {"name": "changed-package", "source": f"1.{index}", "targetLock": "2.4"},
-                {"name": "removed", "source": "9.0", "targetLock": None},
-            ]
-    assert not (tmp_path / "executed").exists()
-    assert {
-        path.relative_to(source): path.read_bytes() for path in source.rglob("*") if path.is_file()
-    } == before
-    assert not target.exists() and not store.exists()
-    for boundary in dict.fromkeys((source, content, content / "artifacts")):
-        saved_boundary = boundary.with_name(boundary.name + "-unlinked")
-        boundary.rename(saved_boundary)
-        try:
-            if sys.platform == "win32":
-                subprocess.run(
-                    ["cmd", "/c", "mklink", "/J", str(boundary), str(saved_boundary)],
-                    capture_output=True,
-                    check=True,
-                )
-            else:
-                boundary.symlink_to(saved_boundary, target_is_directory=True)
-            code, refused = _run(target, *args, "--plan")
-            assert code == 1 and "link" in refused["error"], refused
-            assert not target.exists() and not store.exists()
-        finally:
-            if sys.platform == "win32":
-                boundary.rmdir()
-            else:
-                boundary.unlink()
-            saved_boundary.rename(boundary)
-    linked_parent = tmp_path / "linked-parent"
-    if sys.platform == "win32":
-        subprocess.run(
-            ["cmd", "/c", "mklink", "/J", str(linked_parent), str(tmp_path)],
-            capture_output=True,
-            check=True,
-        )
-    else:
-        linked_parent.symlink_to(tmp_path, target_is_directory=True)
-    try:
-        code, refused = _run(
-            target, *args, "--adopt-from", str(linked_parent / source.name), "--plan"
-        )
-        assert code == 1 and "link" in refused["error"], refused
-        if shared_store:
-            pointer = source / "shared-store"
-            original_pointer = pointer.read_bytes()
-            pointer.write_text(str(linked_parent / content.name) + "\n")
-            try:
-                code, refused = _run(target, *args, "--plan")
-                assert code == 1 and "link" in refused["error"], refused
-            finally:
-                pointer.write_bytes(original_pointer)
-        assert not target.exists() and not store.exists()
-    finally:
-        if sys.platform == "win32":
-            linked_parent.rmdir()
-        else:
-            linked_parent.unlink()
-    if not in_process:
-        distribution = sites[0] / "removed-9.0.dist-info"
-        saved = tmp_path / "saved-distribution"
-        distribution.rename(saved)
-        if sys.platform == "win32":
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(distribution), str(saved)],
-                capture_output=True,
-                check=True,
-            )
-        else:
-            distribution.symlink_to(saved, target_is_directory=True)
-        code, refused = _run(target, *args, "--plan")
-        assert code == 1 and "linked dependency metadata" in refused["error"], refused
-        if sys.platform == "win32":
-            distribution.rmdir()
-        else:
-            distribution.unlink()
-        saved.rename(distribution)
-        assert not target.exists() and not store.exists()
-    for destination in (source, source / "child", tmp_path):
-        code, refused = _run(destination, *args, "--yes")
-        assert code == 1, refused
-    code, refused = _run(target, *args, "--in-process-pack", "different", "--yes")
-    assert code == 1 and "preserve" in refused["error"], refused
-    code, refused = _run(target, *args, "--data", str(source / "new-store"), "--yes")
-    assert code == 1 and "disjoint" in refused["error"], refused
-    retained.write_bytes(b"changed archive")
-    code, corrupt = _run(target, *args, "--yes")
-    assert code == 1 and "digest differs" in corrupt["error"], corrupt
-    assert not target.exists() and not store.exists()
-    if not in_process:
-        shutil.copyfile(archive, retained)
-
-        def confirmed(*_args):
-            metadata = sites[0] / "removed-9.0.dist-info/METADATA"
-            metadata.write_text("Name: removed\nVersion: 8.0\n\n")
-            return True
-
-        monkeypatch.setattr(environment, "_confirmed", confirmed)
-        monkeypatch.setattr(sys, "argv", ["dinkster-env", "--root", str(target), *args, "--json"])
-        with pytest.raises(SystemExit) as stopped:
-            environment.main()
-        assert stopped.value.code == 1
-        refused = json.loads(capsys.readouterr().out)
-        assert "standalone inputs changed" in refused["error"]
-        assert not (target / "current").exists() and history(target) == []
-        assert not (store / "bases").exists()
-
-
-def test_adoption_refuses_source_changed_after_confirmation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    from dinkster_registry import Lockfile
-    from dinkster_supervisor import environment
-    from test_environment_artifacts import _mirror
-
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    source, target, store, mirror = (tmp_path / name for name in ("old", "new", "store", "mirror"))
-    (source / "generations").mkdir(parents=True)
-    (source / "generations/1.json").write_text(Lockfile().record_json())
-    (source / "generations/2.json").write_text(Lockfile().record_json())
-    (source / "current").write_text("1\n")
-    base, _, channel = _mirror(mirror)
-
-    def confirmed(*_args):
-        (source / "current").write_text("2\n")
-        return True
-
-    monkeypatch.setattr(environment, "_confirmed", confirmed)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-env",
-            "--root",
-            str(target),
-            "setup",
-            "--adopt-from",
-            str(source),
-            "--variant",
-            "fixture-cpu",
-            "--channel",
-            "main",
-            "--mirror",
-            str(mirror),
-            "--data",
-            str(store),
-            "--engine-release",
-            channel["engine"]["release"],
-            "--base-id",
-            base["id"],
-            "--json",
-        ],
-    )
-    with pytest.raises(SystemExit) as stopped:
-        environment.main()
-    assert stopped.value.code == 1
-    result = json.loads(capsys.readouterr().out)
-    assert "standalone inputs changed" in result["error"]
-    assert not (target / "current").exists()
-    assert history(target) == []
-    assert not (store / "bases").exists()
 
 
 @pytest.mark.parametrize("in_process", [False, True], ids=["isolated", "shared-in-process"])

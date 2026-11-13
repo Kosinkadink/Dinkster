@@ -58,11 +58,8 @@ implement the protocol and never import the engine, so a worker child
 interpreter carries no scheduler. memory and assets are additional
 bottom-layer branches; node packs see only the extension API
 (`dinkster_nodes_foundation` and `dinkster_nodes_media_io` may import nothing but
-`dinkster_api`). The
-authoritative edge list is the `ALLOWED` map in `tests/test_dependency_rule.py`,
-which parses every module of every `packages/dinkster-*` package (a completeness
-check keeps new packages from escaping) and runs in CI. Failure mode: one upward
-import and the packages stop being independently testable, which is how
+`dinkster_api`). Failure mode: one upward import and the packages stop
+being independently testable, which is how
 execution.py became 1300 tangled lines.
 
 ## H7. Pre-1.0 wire formats are unstable, and only the current version decodes

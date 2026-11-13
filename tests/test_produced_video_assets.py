@@ -1023,6 +1023,7 @@ def test_source_pins_include_list_children_and_parent_metadata(
 ) -> None:
     child = AssetRef(digest_bytes(b"child"), "child", 5)
     parent = AssetRef(digest_bytes(b"parent"), "parent", 6)
+    original = AssetRef(digest_bytes(b"original"), "original", 8, "image/png")
     blobs = [
         default_encode({"asset_refs": [child.to_wire()]}),
         default_encode({"asset_refs": [parent.to_wire()]}),
@@ -1038,7 +1039,10 @@ def test_source_pins_include_list_children_and_parent_metadata(
     }
     if expanded:
         header = {"resultAlgebra": {"values": list(header["outputs"].values())}}
-    assert result_asset_digests(header, blobs) == {child.digest, parent.digest}
+    header["imageDocumentSources"] = {
+        "0": [{key: value for key, value in original.to_wire().items() if key != "virtualPath"}]
+    }
+    assert result_asset_digests(header, blobs) == {child.digest, parent.digest, original.digest}
 
 
 @pytest.fixture

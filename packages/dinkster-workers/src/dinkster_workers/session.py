@@ -112,6 +112,7 @@ from .manifest import (
 from .produced_assets import (
     DOCUMENT_RENDITION_MIME,
     ProducedAssetAuthority,
+    image_document_sources,
     result_asset_digests,
     source_asset_files,
 )
@@ -1622,7 +1623,12 @@ class BoundarySession:
                 with use_produced_output_job(
                     invocation.job_ref or invocation.invocation_id, invocation.attempt_id
                 ):
+                    documents = image_document_sources(reply_header, decoded.image_documents)
                     self._produced_assets.capture(outputs, self._blob_store, invocation.inputs)
+                    if documents:
+                        self._produced_assets.capture(
+                            documents, self._blob_store, invocation.inputs
+                        )
                     if any(
                         claim.get("mediaType") == DOCUMENT_RENDITION_MIME
                         for claim in decoded.saved_artifact_claims
@@ -1692,6 +1698,7 @@ class BoundarySession:
             artifacts=artifacts,
             expansion=decoded.expansion,
             preview_artifacts=decoded.preview_artifacts,
+            image_documents=decoded.image_documents,
             saved_artifact_claims=decoded.saved_artifact_claims,
             saved_file_previews=saved_file_previews,
         )

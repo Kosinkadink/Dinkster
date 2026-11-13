@@ -210,6 +210,15 @@ claims, independently of the encoded-preview and legacy-candidate limits.
 The nonnegative integer `size` describes the mounted file, not an encoded payload
 carried by the claim. Host validation streams the file without materializing it.
 
+Compositor nodes call `publish_image_document(document.data)` with canonical
+original input bytes before replaying edits. Successful invocations carry these
+attachments independently of preview events; a server validates and stores
+these documents and their raster resources before exposing the node outputs.
+This is vault retention, not a selected-output-folder export. Direct engine
+runs without a publisher compute without storing these attachments. Direct
+calls without an active invocation have no host attachment; failed invocations
+publish none.
+
 - [Pack authoring](../../docs/pack-authoring.md) describes manifests, nodes,
   custom value types, and the compatibility contract.
 - [The pack template](https://github.com/Kosinkadink/dinkster-pack-template)

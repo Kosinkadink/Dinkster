@@ -296,6 +296,7 @@ from dinkster_schema import (
     validate_remote_choice_authority,
     validate_replacement_references,
 )
+from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import (
     ENGINE_EVENT_FRAME_LIMIT_BYTES,
     ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
@@ -1135,6 +1136,10 @@ class ServerState:
         settle_job: Callable[[Job, JobState], Awaitable[None]] | None = None,
         job_context: Callable[[Job], contextlib.AbstractContextManager[object]] | None = None,
         publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None,
+        publish_image_documents: (
+            Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
+            | None
+        ) = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1259,6 +1264,7 @@ class ServerState:
             settle_job=settle_job,
             job_context=job_context,
             publish_outputs=publish_outputs,
+            publish_image_documents=publish_image_documents,
         )
         default_budgets = {
             device: budget
@@ -4645,6 +4651,7 @@ def create_app(
         settle_job=settle_job if library is not None else None,
         job_context=job_context if library is not None else None,
         publish_outputs=publish_outputs if library is not None else None,
+        publish_image_documents=library.publish_image_documents if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

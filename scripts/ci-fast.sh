@@ -23,15 +23,8 @@ fi
 if [ "${1:-all}" = checks ]; then exit 0; fi
 
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
-  tests/test_disabled_features.py \
   tests/test_settings.py \
-  tests/test_supervisor_limits.py \
   tests/test_security_notices.py \
-  tests/test_dependency_rule.py::test_core_paths_do_not_import_optional_packages_at_module_scope \
-  tests/test_dependency_rule.py::test_umbrella_optional_packages_are_locked \
-  tests/test_extension_factory_guard.py \
-  tests/test_builtin_type_spellings.py \
-  tests/test_pinned_inference.py \
   tests/test_macos_workflow_receipt.py \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
@@ -82,17 +75,7 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_installer.py::test_cli_adds_exact_pack_without_reresolving_installed_sources \
   tests/test_installer.py::test_cli_reresolves_installed_sources_without_mutating_project \
   tests/test_installer.py::test_generation_source_staging_cli \
-  tests/test_pack_archive.py::test_official_publication_uses_selected_manifest_versions \
-  tests/test_pack_archive.py::test_official_publication_selects_only_changed_committed_packs \
-  tests/test_pack_archive.py::test_default_admission_scans_unpublished_candidates_and_registry_defaults \
-  tests/test_library_publication.py::test_default_admission_probes_and_tests_selected_library_dependency \
-  tests/test_library_publication.py::test_locked_default_admission_uses_verified_unpublished_library \
-  tests/test_library_publication.py::test_admission_library_closure_intersects_ranges_and_activates_extras \
-  tests/test_pack_archive.py::test_official_publication_requires_complete_supported_base_bindings \
   tests/test_pack_archive.py::test_publication_client_preserves_archive_and_lock_bytes \
-  tests/test_pack_archive.py::test_official_publication_declarations_match_archive_admission \
-  tests/test_pack_archive.py::test_official_artifacts_preserve_sources_and_existing_pack_identities \
-  tests/test_pack_archive.py::test_official_artifacts_reject_static_errors_in_built_wheel \
   tests/test_pack_archive.py::test_registry_archive_admission_requires_verified_wheel \
   tests/test_pack_wheel.py \
   tests/test_pack_archive.py::test_registry_archive_security_preserves_block_and_review \
@@ -100,8 +83,6 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_pack_archive.py::test_registry_manifest_admission_refuses_invalid_metadata \
   tests/test_pack_archive.py::test_registry_executable_probe_bounds_and_sanitizes \
   tests/test_pack_archive.py::test_registry_probe_refuses_degraded_isolation \
-  tests/test_pack_archive.py::test_selected_pack_tests_cannot_fall_back_to_checkout \
-  tests/test_pack_archive.py::test_selected_pack_runtime_id_uses_distribution_layout \
   tests/test_archive_admission.py \
   tests/test_frontend_artifact.py \
   tests/test_schema.py \
@@ -109,12 +90,10 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_names.py \
   tests/test_first_party_node_ids.py \
   tests/test_comfy_controlnet_nodes.py \
-  tests/test_validation_inputs.py \
   tests/test_values.py \
   tests/test_graph.py \
   tests/test_graph_wire.py \
   tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
-  tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
   tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \

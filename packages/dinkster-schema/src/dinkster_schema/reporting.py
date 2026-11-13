@@ -49,7 +49,71 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT, SAVED_ARTIFACT_LIMIT_BYTES
+from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_CLAIM_LIMIT, SAVED_ARTIFACT_LIMIT_BYTES
+
+IMAGE_DOCUMENT_ARTIFACT_LIMIT_BYTES = 16 * MEBIBYTE
+
+
+@dataclass(frozen=True)
+class ImageDocumentArtifact:
+    """Canonical document bytes requiring host validation, not a file export."""
+
+    data: bytes
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.data) is not bytes
+            or not self.data
+            or len(self.data) > IMAGE_DOCUMENT_ARTIFACT_LIMIT_BYTES
+        ):
+            raise ValueError("image document attachment requires nonempty bounded bytes")
+
+
+_image_document_sink: ContextVar[Callable[[ImageDocumentArtifact], None] | None] = ContextVar(
+    "dinkster_image_document_sink", default=None
+)
+
+
+def publish_image_document(data: bytes) -> None:
+    """Attach original document bytes to successful execution for host publication.
+
+    Like value diagnostics, direct node calls outside execution have no host
+    attachment. Worker invocations capture these independently of events.
+    """
+    artifact = ImageDocumentArtifact(data)
+    sink = _image_document_sink.get()
+    if sink is not None:
+        sink(artifact)
+
+
+@contextmanager
+def capture_image_documents() -> Generator[list[ImageDocumentArtifact]]:
+    artifacts: list[ImageDocumentArtifact] = []
+    lock = threading.Lock()
+    active = True
+    size = 0
+
+    def capture(artifact: ImageDocumentArtifact) -> None:
+        nonlocal size
+        with lock:
+            if not active:
+                raise RuntimeError("image document invocation is closed")
+            if (
+                len(artifacts) >= SAVED_ARTIFACT_CLAIM_LIMIT
+                or size + len(artifact.data) > SAVED_ARTIFACT_LIMIT_BYTES
+            ):
+                raise ValueError("image document attachment batch exceeds invocation limits")
+            artifacts.append(artifact)
+            size += len(artifact.data)
+
+    token = _image_document_sink.set(capture)
+    try:
+        yield artifacts
+    finally:
+        with lock:
+            active = False
+        _image_document_sink.reset(token)
+
 
 _saved_artifact_sink: ContextVar[Callable[[Mapping[str, object]], None] | None] = ContextVar(
     "dinkster_saved_artifact_sink", default=None
