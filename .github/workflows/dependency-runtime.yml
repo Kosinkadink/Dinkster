@@ -9,7 +9,6 @@ on:
       - scripts/develop.py
       - scripts/base_bundles.json
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
-      - tools/minimax_h3_multigpu_receipt.py
       - pyproject.toml
       - uv.lock
       - packages/dinkster-video-runtime/pyproject.toml
