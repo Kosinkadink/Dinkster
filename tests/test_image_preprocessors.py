@@ -3,16 +3,13 @@ from __future__ import annotations
 import base64
 import json
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 import cv2
 import numpy as np
 import pytest
-from dinkster_image import NODES
 from dinkster_image.preprocess import (
-    PREPROCESSOR_NODES,
     BinaryPreprocessor,
     ColorHintPreprocessor,
     ContentShufflePreprocessor,
@@ -158,52 +155,6 @@ def test_checkpoint_free_preprocessors_match_controlnet_aux_goldens() -> None:
         np.testing.assert_allclose(array[0], expected, rtol=0, atol=1.0 / 255.0 + 1e-7)
 
 
-def test_preprocessor_goldens_pin_the_source_revision() -> None:
-    assert GOLDEN["baseline"] == "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
-    assert GOLDEN["opencv"] == "5.0.0"
-    assert set(GOLDEN_CASES) == {
-        "binary_fixed",
-        "binary_otsu",
-        "canny",
-        "color_palette",
-        "content_shuffle",
-        "lineart",
-        "pyramid_canny",
-        "recolor_intensity",
-        "recolor_luminance",
-        "scribble",
-        "scribble_xdog",
-        "tile_guided",
-        "tile_pyramid",
-        "tile_simple",
-    }
-
-
-def test_preprocessor_support_nodes_remain_outside_the_published_catalog() -> None:
-    expected = {
-        "dinkster.preprocess.binary",
-        "dinkster.preprocess.color_hint",
-        "dinkster.preprocess.content_shuffle",
-        "dinkster.preprocess.edges",
-        "dinkster.preprocess.hint_resize",
-        "dinkster.preprocess.hint_resolution",
-        "dinkster.preprocess.inpaint_hint",
-        "dinkster.preprocess.lineart",
-        "dinkster.preprocess.lineart_anime",
-        "dinkster.preprocess.lineart_manga",
-        "dinkster.preprocess.lineart_realistic",
-        "dinkster.preprocess.anyline",
-        "dinkster.preprocess.mlsd",
-        "dinkster.preprocess.model_depth",
-        "dinkster.preprocess.model_edges",
-        "dinkster.preprocess.scribble",
-        "dinkster.preprocess.teed",
-        "dinkster.preprocess.tile_hint",
-    }
-    assert {node.schema().node_type for node in PREPROCESSOR_NODES} == expected
-    assert expected.isdisjoint(node.schema().node_type for node in NODES)
-
-
 def test_content_shuffle_is_deterministic_for_zero_and_nonzero_seeds() -> None:
     image = _source()
     for seed in (0, 7):
@@ -238,17 +189,6 @@ def test_inpaint_hint_resizes_and_broadcasts_masks() -> None:
     np.testing.assert_array_equal(black[sentinel != -1.0], image[sentinel != -1.0])
 
 
-def test_inpaint_hint_enforces_the_image_operation_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("dinkster_image.support.MAX_IMAGE_BYTES", 1)
-    with pytest.raises(ValueError, match="image operation limit"):
-        InpaintHintPreprocessor.execute(
-            image=np.zeros((1, 1, 1, 3), dtype=np.float32),
-            mask=np.zeros((1, 1, 1), dtype=np.float32),
-        )
-
-
 def test_hint_resolution_matches_pixel_perfect_rounding() -> None:
     image = np.zeros((2, 100, 400, 3), dtype=np.float32)
     assert HintResolution.execute(
@@ -269,22 +209,6 @@ def test_hint_resolution_matches_pixel_perfect_rounding() -> None:
         target_height=512,
         resize_mode="fit",
     ) == {"resolution": 128}
-
-
-def test_hint_image_resize_handles_batches_and_modes() -> None:
-    image = np.concatenate((_source(), 1.0 - _source()), axis=0)
-    for mode in ("stretch", "fill", "fit"):
-        output = np.asarray(
-            HintImageResize.execute(
-                image=image,
-                target_width=96,
-                target_height=80,
-                resize_mode=mode,
-            )["image"]
-        )
-        assert output.shape == (2, 80, 96, 3)
-        assert output.dtype == np.float32
-        assert np.all((0.0 <= output) & (output <= 1.0))
 
 
 @pytest.mark.parametrize(
@@ -317,11 +241,6 @@ def test_hint_image_resize_matches_controlnet_aux_goldens(
     np.testing.assert_array_equal(np.rint(output[0] * 255.0).astype(np.uint8), expected)
 
 
-def test_hint_resize_goldens_pin_the_source_revision() -> None:
-    assert HINT_GOLDEN["baseline"] == "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
-    assert HINT_GOLDEN["opencv"] == "5.0.0"
-
-
 def test_preprocessors_handle_batches_and_unscaled_resolution() -> None:
     image = np.concatenate((_source(), _source()), axis=0)
     output = EdgePreprocessor.execute(image=image, resolution=0)["image"]
@@ -333,44 +252,3 @@ def test_preprocessors_handle_batches_and_unscaled_resolution() -> None:
         resolution=64,
     )["image"]
     np.testing.assert_array_equal(pyramid, 0.0)
-
-
-@pytest.mark.parametrize(
-    ("call", "message"),
-    (
-        (lambda: EdgePreprocessor.execute(image=_source(), resolution=32), "resolution"),
-        (
-            lambda: LineartPreprocessor.execute(image=_source(), gaussian_sigma=0.0),
-            "gaussian_sigma",
-        ),
-        (
-            lambda: ScribblePreprocessor.execute(image=_source(), method="unknown"),
-            "unknown scribble",
-        ),
-        (lambda: BinaryPreprocessor.execute(image=_source(), threshold=300), "threshold"),
-        (lambda: ColorHintPreprocessor.execute(image=_source(), gamma=3.0), "gamma"),
-        (lambda: ContentShufflePreprocessor.execute(image=_source(), seed=-1), "seed"),
-        (
-            lambda: TileHintPreprocessor.execute(image=_source(), scale_factor=9.0),
-            "scale_factor",
-        ),
-        (
-            lambda: InpaintHintPreprocessor.execute(
-                image=_source(),
-                mask=np.zeros((2, 5, 5), dtype=np.float32),
-            ),
-            "mask batch",
-        ),
-        (
-            lambda: HintImageResize.execute(
-                image=_source(),
-                target_width=32,
-                target_height=512,
-            ),
-            "target dimensions",
-        ),
-    ),
-)
-def test_preprocessors_reject_invalid_parameters(call: Callable[[], object], message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        call()

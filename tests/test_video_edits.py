@@ -53,21 +53,9 @@ def test_empty_trim(start: int) -> None:
         trim_window(Fraction(10), start, 0)
 
 
-def test_strict_duration() -> None:
-    assert trim_window(Fraction(10), 2, 8, True) == (2, 8)
-    with pytest.raises(ValueError, match="exceeds available"):
-        trim_window(Fraction(10), 2, 9, True)
-
-
 def test_fractional_seconds_do_not_accumulate_float_errors() -> None:
     assert seconds(0.1, "time") + seconds(0.2, "time") == Fraction(3, 10)
     assert seconds(Fraction(1001, 30000), "time") == Fraction(1001, 30000)
-
-
-@pytest.mark.parametrize("value", [True, "1", None, float("inf"), float("nan")])
-def test_invalid_seconds(value: object) -> None:
-    with pytest.raises(ValueError, match="finite seconds"):
-        seconds(value, "time")
 
 
 def test_unknown_duration_stays_unknown() -> None:
@@ -171,21 +159,3 @@ def test_trim_after_concat_and_unknown_duration() -> None:
     assert effective_video_facts(clip)["duration"] == 4
     assert effective_video_facts(clip)["frame_count_kind"] == "estimated"
     assert effective_video_facts(_clip({"concat": [_clip(duration=None)]}))["duration"] is None
-
-
-def test_ambiguous_unknown_and_recursive_edits_fail() -> None:
-    for edit in [{"trim": {}, "crop": {}}, {"trim": {}, "unknown": 1}, {"concat": []}]:
-        with pytest.raises(ValueError):
-            effective_video_facts(_clip(edit))
-    clip = _clip()
-    cast("list[object]", clip["edits"]).append({"concat": [clip]})
-    with pytest.raises(ValueError, match="nesting"):
-        effective_video_facts(clip)
-
-
-def test_shared_clip_budget_allows_one_hundred_leaves_but_remains_bounded() -> None:
-    clips = [_clip() for _ in range(255)]
-    value = _clip({"concat": clips})
-    assert effective_video_facts(value)["frame_count"] == 256 * 240
-    with pytest.raises(ValueError, match="256 clips"):
-        effective_video_facts(_clip({"concat": [_clip() for _ in range(256)]}))

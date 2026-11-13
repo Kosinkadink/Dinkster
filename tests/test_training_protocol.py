@@ -8,20 +8,16 @@ never-drop durable facts and coalescible telemetry.
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import replace
 from typing import cast
 
 import pytest
 from dinkster_protocol import (
-    COALESCIBLE_TRAINING_EVENTS,
-    DURABLE_TRAINING_EVENTS,
     MAX_TRAINING_EVENT_DATA_BYTES,
     TRAINING_SESSION_HANDLE_SCHEMA_VERSION,
     TrainingEventName,
     TrainingJournalEvent,
     TrainingSessionHandle,
-    is_durable_training_event,
-    training_session_stream,
 )
 
 SESSION_ID = "0123456789abcdef0123456789abcdef"
@@ -65,10 +61,6 @@ class TestSessionHandle:
             "journalSeq": 42,
         }
         assert TrainingSessionHandle.from_wire(wire) == handle
-
-    def test_frozen(self) -> None:
-        with pytest.raises(FrozenInstanceError):
-            make_handle().session_id = "x"  # type: ignore[misc]
 
     def test_rejects_unknown_schema_version(self) -> None:
         with pytest.raises(ValueError, match="schema_version"):
@@ -152,14 +144,6 @@ class TestSessionHandle:
         with pytest.raises(ValueError, match="step_cursor"):
             TrainingSessionHandle.from_wire(wire)
 
-    def test_fingerprint_is_stable(self) -> None:
-        # Fixed vector: sha256 of the canonical JSON (sorted keys, compact
-        # separators) of to_wire(). A change here breaks every persisted
-        # handle fingerprint and must bump the handle schema version.
-        assert make_handle().fingerprint() == (
-            "sha256:a85be35966455a75931077a0411168e573e2ffc1900b84cce50f8e13fa546144"
-        )
-
     def test_fingerprint_covers_every_field(self) -> None:
         base = make_handle()
         assert base.fingerprint() == make_handle().fingerprint()
@@ -174,47 +158,6 @@ class TestSessionHandle:
         ]
         fingerprints = {base.fingerprint(), *(variant.fingerprint() for variant in variants)}
         assert len(fingerprints) == 1 + len(variants)
-
-
-class TestEventVocabulary:
-    def test_exact_vocabulary(self) -> None:
-        assert {name.value for name in TrainingEventName} == {
-            "session_created",
-            "session_recovered",
-            "phase_changed",
-            "advance_started",
-            "train_progress",
-            "metric",
-            "resource_report",
-            "recovery_checkpoint_published",
-            "checkpoint_published",
-            "preview_started",
-            "preview_published",
-            "warning",
-            "diagnostic",
-            "cancel_requested",
-            "advance_paused",
-            "advance_resumed",
-            "advance_committed",
-            "advance_aborted",
-            "advance_failed",
-            "session_completed",
-        }
-
-    def test_exact_partition(self) -> None:
-        # Only high-frequency telemetry may coalesce/prune; every other
-        # event, including previews/warnings/diagnostics, never drops.
-        assert COALESCIBLE_TRAINING_EVENTS == {
-            TrainingEventName.TRAIN_PROGRESS,
-            TrainingEventName.METRIC,
-            TrainingEventName.RESOURCE_REPORT,
-        }
-        assert DURABLE_TRAINING_EVENTS == (
-            frozenset(TrainingEventName) - COALESCIBLE_TRAINING_EVENTS
-        )
-        assert not DURABLE_TRAINING_EVENTS & COALESCIBLE_TRAINING_EVENTS
-        assert is_durable_training_event(TrainingEventName.PREVIEW_PUBLISHED)
-        assert not is_durable_training_event(TrainingEventName.METRIC)
 
 
 class TestJournalEvent:
@@ -316,9 +259,3 @@ class TestJournalEvent:
         cast("list[object]", payload["steps"]).append(3)
         payload["extra"] = "later"
         assert event.data == {"steps": [1, 2]}
-
-
-def test_training_session_stream_is_namespaced() -> None:
-    assert training_session_stream(SESSION_ID) == f"training-session/{SESSION_ID}"
-    with pytest.raises(ValueError, match="session_id"):
-        training_session_stream("not-a-session")

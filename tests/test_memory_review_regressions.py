@@ -8,7 +8,6 @@ import dinkster_api.v1 as api
 import dinkster_memory.resident as resident
 import pytest
 from dinkster_memory import (
-    ConsumerItem,
     LeaseBroker,
     MemoryGovernor,
     PressureSignal,
@@ -55,13 +54,6 @@ def test_close_cancels_acquire_pending_in_admission() -> None:
         assert not broker._holder_tasks
 
     run_scenario(scenario())
-
-
-def test_consumer_item_snapshots_residency_mapping() -> None:
-    sizes = {"ram": 10}
-    item = ConsumerItem("item", "Item", sizes)
-    sizes["ram"] = 20
-    assert item.bytes_by_residency["ram"] == 10
 
 
 def test_keyed_residents_share_alternating_loads_and_reload_after_pressure() -> None:

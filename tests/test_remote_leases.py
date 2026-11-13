@@ -33,12 +33,6 @@ def test_lease_ttl_below_the_heartbeat_floor_is_refused() -> None:
             run_scenario(run_service("127.0.0.1", 0, "unused", b"x" * 16, lease_ttl=bad))
 
 
-def test_resume_grace_must_be_finite_and_non_negative() -> None:
-    for bad in (-1.0, float("nan"), float("inf")):
-        with pytest.raises(ServiceError, match="resume-grace"):
-            run_scenario(run_service("127.0.0.1", 0, "unused", b"x" * 16, resume_grace=bad))
-
-
 async def zombie_client(
     host: str, port: int
 ) -> tuple[

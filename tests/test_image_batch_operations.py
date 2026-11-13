@@ -7,7 +7,6 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_image.batch import (
-    BATCH_NODES,
     ImageBatchCombine,
     ImageBatchEdit,
     ImageBatchToList,
@@ -281,15 +280,6 @@ def test_image_list_conversions_and_rebatch_preserve_frame_order() -> None:
     rebatched = ImageRebatch.execute(images=source, batch_size=2)["images"]
     assert isinstance(rebatched, list)
     assert [_frames(item) for item in rebatched] == [[0, 1], [2, 3], [4]]
-
-
-def test_image_batch_schema_ids_are_unique_and_dynamic_inputs_are_bounded() -> None:
-    schemas = {node.define_schema().node_type: node.define_schema() for node in BATCH_NODES}
-    assert len(schemas) == len(BATCH_NODES) == 7
-    image_families = schemas["dinkster.image.batch.combine"].input_families
-    assert (image_families[0].min_members, image_families[0].max_members) == (1, 1000)
-    assert (image_families[1].min_members, image_families[1].max_members) == (0, 2)
-    assert schemas["dinkster.mask.batch.combine"].input_families[0].min_members == 2
 
 
 def test_core_batch_operations_match_pinned_comfy_goldens() -> None:

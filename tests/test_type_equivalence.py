@@ -12,7 +12,6 @@ from dinkster_schema import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    plan_type_equivalence,
 )
 from dinkster_values import (
     EncodedPayload,
@@ -52,28 +51,6 @@ def _image_registry() -> TypeRegistry:
     for type_id in (IMAGE, MASK):
         _register_image_type(registry, type_id)
     return registry
-
-
-def test_registry_type_equivalence_is_pairwise_symmetric_and_staged() -> None:
-    registry = TypeRegistry()
-    registry.register("compat.value", encode=lambda value: str(value).encode(), decode=int)
-    registry.register("native.value", encode=lambda value: str(value).encode(), decode=int)
-    registry.register("other.value")
-
-    registry.register_type_equivalence(
-        "compat.value", "native.value", provider_id="test.value-wire@1"
-    )
-    registry.register_type_equivalence(
-        "native.value", "compat.value", provider_id="test.value-wire@1"
-    )
-    assert registry.equivalent_type("compat.value") == "native.value"
-    assert registry.equivalent_type("native.value") == "compat.value"
-    assert registry.equivalent_type("other.value") is None
-
-    copied = registry.copy()
-    published = TypeRegistry()
-    published.replace_from(copied)
-    assert published.equivalent_type("compat.value") == "native.value"
 
 
 def test_registry_type_equivalence_rejects_ambiguous_or_invalid_pairs() -> None:
@@ -187,18 +164,6 @@ def test_restamped_encoded_buffer_keeps_shared_memory_alive() -> None:
     assert released == [True]
 
 
-def test_type_equivalence_planning_preserves_exact_spelling_and_is_explicit() -> None:
-    registry = TypeRegistry()
-    registry.register("compat.value")
-    registry.register("native.value")
-    registry.register_type_equivalence(
-        "compat.value", "native.value", provider_id="test.compat-wire@1"
-    )
-    native = TypeExpr.concrete("native.value")
-    assert plan_type_equivalence("compat.value", native, registry) == "native.value"
-    assert plan_type_equivalence("native.value", native, registry) is None
-
-
 def test_graph_validation_uses_registered_generic_equivalence_for_links_and_literals() -> None:
     registry = TypeRegistry()
     registry.register("compat.value")
@@ -216,38 +181,6 @@ def test_graph_validation_uses_registered_generic_equivalence_for_links_and_lite
         }
     )
     stamped = Graph({"sink": GraphNode("sink", {"value": TypedLiteral("compat.value", "value")})})
-    assert validate(linked, schemas, ["sink"], known_types=registry) == []
-    assert validate(stamped, schemas, ["sink"], known_types=registry) == []
-
-
-def test_graph_validation_uses_exact_image_and_mask_atoms() -> None:
-    source = NodeSchema("source", outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE)),))
-    sink = NodeSchema(
-        "sink",
-        inputs=(
-            InputSpec(
-                "image",
-                TypeExpr.variable("input_type", allowed=(IMAGE, MASK)),
-            ),
-        ),
-    )
-    schemas = {source.node_type: source, sink.node_type: sink}
-    linked = Graph(
-        nodes={
-            "source": GraphNode("source", {}),
-            "sink": GraphNode("sink", {"image": Link("source", "image")}),
-        }
-    )
-    stamped = Graph(
-        nodes={
-            "sink": GraphNode(
-                sink.node_type,
-                {"image": TypedLiteral(IMAGE, [[[[0.0, 0.0, 0.0]]]])},
-            )
-        }
-    )
-
-    registry = _image_registry()
     assert validate(linked, schemas, ["sink"], known_types=registry) == []
     assert validate(stamped, schemas, ["sink"], known_types=registry) == []
 

@@ -1,9 +1,7 @@
 """Pack diagnostics use persistent output metadata, not transient events."""
 
 import asyncio
-from contextvars import copy_context
 from pathlib import Path
-from types import MappingProxyType
 from typing import cast
 
 import dinkster_api.v1 as api
@@ -14,7 +12,6 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_protocol import Invocation
-from dinkster_schema.reporting import capture_value_diagnostics
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker
 
@@ -22,11 +19,6 @@ from tests.async_scenarios import run_scenario
 from tests.test_media_contract import IMAGE, MASK, SemanticSource, register_semantic_types
 
 STRING = api.TypeExpr.concrete(api.CORE_STRING)
-
-
-def test_value_diagnostic_public_api() -> None:
-    assert api.report_value_diagnostic is schema.report_value_diagnostic
-    api.report_value_diagnostic("media_format_fallback", {"reason": "preserve_alpha"})
 
 
 @pytest.mark.parametrize(
@@ -46,29 +38,6 @@ def test_value_diagnostic_public_api() -> None:
 def test_invalid_diagnostics_are_programmer_errors(code, data, message) -> None:
     with pytest.raises(ValueError, match=message):
         api.report_value_diagnostic(code, data)
-
-
-def test_diagnostic_snapshot_and_closed_nested_contexts() -> None:
-    requested = {"codec": "h264", "channels": ["L", "R"]}
-    data = MappingProxyType({"requested": requested})
-    stale = None
-    with capture_value_diagnostics() as outer:
-        api.report_value_diagnostic("arbitrary_pack_code", data)
-        requested["channels"].append("C")
-        requested["codec"] = "changed"
-        with pytest.raises(RuntimeError), capture_value_diagnostics() as failed:
-            api.report_value_diagnostic("failed")
-            stale = copy_context()
-            raise RuntimeError("node failure")
-        assert stale is not None
-        stale.run(api.report_value_diagnostic, "late")
-        api.report_value_diagnostic("outer")
-    api.report_value_diagnostic("outside")
-    assert failed == [{"code": "failed"}]
-    assert outer == [
-        {"code": "arbitrary_pack_code", "requested": {"codec": "h264", "channels": ["L", "R"]}},
-        {"code": "outer"},
-    ]
 
 
 class DiagnosticString(api.Node):

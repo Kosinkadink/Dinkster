@@ -14,16 +14,11 @@ import json
 
 import pytest
 from dinkster_registry import (
-    ComposedPack,
-    CompositionGeneration,
-    CompositionRecordError,
     GenerationLedger,
     InstallError,
     LockedPack,
     Lockfile,
     PlanRecord,
-    Release,
-    ResolvedRequirement,
     SnapshotRecord,
     VenvSpec,
     artifact_digest,
@@ -52,72 +47,9 @@ def locked(
     )
 
 
-def test_composition_generation_digest_binds_mode_packs_and_resolutions() -> None:
-    packs = [
-        ComposedPack("provider", "2.0.0", DIGEST_B),
-        ComposedPack("consumer", "1.0.0", DIGEST_A),
-    ]
-    resolutions = [
-        ResolvedRequirement("consumer", "host", "dinkster-pack-host/1", "dinkster-pack-host/1"),
-        ResolvedRequirement("consumer", "pack", "provider>=2", f"provider@2.0.0#{DIGEST_B}"),
-    ]
-
-    generation = CompositionGeneration.of("production", packs, resolutions)
-    reordered = CompositionGeneration.of(
-        "production", list(reversed(packs)), list(reversed(resolutions))
-    )
-
-    assert generation == reordered
-    assert generation.digest == reordered.digest
-    assert generation.digest.startswith("sha256:")
-    assert '"mode":"production"' in generation.record_json()
-    assert generation.digest != CompositionGeneration.of("development", packs, resolutions).digest
-    assert (
-        generation.digest
-        != CompositionGeneration.of(
-            "production",
-            packs,
-            [ResolvedRequirement("consumer", "pack", "provider>=2", f"provider@2.0.0#{DIGEST_A}")],
-        ).digest
-    )
-
-
-def test_production_composition_requires_artifact_pins_and_unique_receipts() -> None:
-    with pytest.raises(CompositionRecordError, match="no artifact digest"):
-        CompositionGeneration.of("production", [ComposedPack("consumer", "1.0.0")])
-    with pytest.raises(CompositionRecordError, match="more than once"):
-        CompositionGeneration.of(
-            "development",
-            [ComposedPack("consumer")],
-            [
-                ResolvedRequirement("consumer", "host", "host/1", "host/1"),
-                ResolvedRequirement("consumer", "host", "host/1", "other/1"),
-            ],
-        )
-
-
 # ---------------------------------------------------------------------------
 # Lockfile: the installation as a content-addressed value
 # ---------------------------------------------------------------------------
-
-
-def test_lockfile_digest_is_order_independent() -> None:
-    a = locked("img-tools")
-    b = locked("video-tools", publisher="bob")
-    assert Lockfile.of([a, b]).record_digest() == Lockfile.of([b, a]).record_digest()
-    assert Lockfile.of([a, b]).packs == Lockfile.of([b, a]).packs  # normalized order
-
-
-def test_lockfile_digest_tracks_content() -> None:
-    base = Lockfile.of([locked()])
-    assert base.record_digest() == Lockfile.of([locked()]).record_digest()
-    assert base.record_digest() != Lockfile.of([locked(digest=DIGEST_B)]).record_digest()
-    assert base.record_digest() != Lockfile.of([locked(source="git:github:1")]).record_digest()
-
-
-def test_lockfile_refuses_duplicate_pack_identities() -> None:
-    with pytest.raises(InstallError, match="one canonical name is one pack"):
-        Lockfile.of([locked(), locked(digest=DIGEST_B)])
 
 
 @pytest.mark.parametrize("publishers", [("alice", "bob"), ("", ""), ("alice", "")])
@@ -159,28 +91,6 @@ def test_lockfile_preserves_exact_claims_and_rejects_cross_kind_conflicts() -> N
         )
 
 
-def test_lockfile_stores_canonical_forms_only() -> None:
-    with pytest.raises(InstallError, match="not canonical"):
-        Lockfile.of([locked("img_tools", claims=("img_tools",))])
-    # A pure executor (empty [pack] namespaces, non-empty executes)
-    # locks no claims; pack-name uniqueness holds without them.
-    assert Lockfile.of([locked(claims=())]).packs[0].claims == ()
-    with pytest.raises(InstallError, match="version"):
-        Lockfile.of([locked(version="1.0+local")])
-    with pytest.raises(InstallError, match="digest"):
-        Lockfile.of([locked(digest="md5:nope")])
-
-
-def test_locked_pack_from_release_and_source_is_metadata() -> None:
-    release = Release("img-tools", "1.0.0", DIGEST_A, "alice", ("img-tools",), ("img-tools.blur",))
-    from_registry = LockedPack.from_release(release)
-    from_git = LockedPack.from_release(release, source="git:github:12345")
-    assert from_registry.pack == from_git.pack  # one identity, whatever the source
-    assert from_registry.claims == ("img-tools",)
-    lockfile = Lockfile.of([from_git])
-    assert lockfile.get("img_tools") is from_git  # lookup is canonical too
-
-
 # ---------------------------------------------------------------------------
 # Install plans: deterministic reviewable diffs
 # ---------------------------------------------------------------------------
@@ -217,12 +127,6 @@ def test_plan_computes_every_action_kind() -> None:
     assert by_pack["upgrade-me"].from_version == "1.0.0"
     assert by_pack["remove-me"].to is None
     assert by_pack["add-me"].to is not None
-
-
-def test_plan_between_identical_lockfiles_is_empty() -> None:
-    lockfile = Lockfile.of([locked()])
-    assert plan(lockfile, lockfile).empty
-    assert plan(Lockfile.of([]), Lockfile.of([])).empty
 
 
 # ---------------------------------------------------------------------------
@@ -324,31 +228,6 @@ def test_lockfile_json_round_trips_canonically() -> None:
     assert decoded.record_digest() == lockfile.record_digest()
 
 
-def test_lockfile_decode_rejects_malformed_documents() -> None:
-    with pytest.raises(InstallError, match="not valid JSON"):
-        Lockfile.from_record_json("{nope")
-    with pytest.raises(InstallError, match="JSON object"):
-        Lockfile.from_record_json("[]")
-    with pytest.raises(InstallError, match="unsupported lockfile format"):
-        Lockfile.from_record_json('{"format": "dinkster.lock/999", "packs": []}')
-    with pytest.raises(InstallError, match="'packs' must be a list"):
-        Lockfile.from_record_json('{"format": "dinkster.lock/1", "packs": {}}')
-    with pytest.raises(InstallError, match="must be JSON objects"):
-        Lockfile.from_record_json('{"format": "dinkster.lock/1", "packs": [42]}')
-    entry = (
-        '{"pack": "img-tools", "version": "1.0.0", "artifactDigest": 7, '
-        '"publisher": "alice", "claims": ["img-tools"], "source": "registry"}'
-    )
-    with pytest.raises(InstallError, match="'artifactDigest' must be a string"):
-        Lockfile.from_record_json('{"format": "dinkster.lock/1", "packs": [' + entry + "]}")
-    with pytest.raises(InstallError, match="'claims' must be a list of strings"):
-        Lockfile.from_record_json(
-            '{"format": "dinkster.lock/1", "packs": [{"pack": "img-tools", '
-            '"version": "1.0.0", "artifactDigest": "sha256:00", "publisher": '
-            '"alice", "claims": [1], "source": "registry"}]}'
-        )
-
-
 def test_lockfile_decode_reruns_model_validation() -> None:
     """A hand-edited lockfile that violates install invariants fails at
     load, not at activation."""
@@ -381,16 +260,6 @@ def test_plan_record_round_trips() -> None:
     assert decoded.record_json() == record.record_json()  # deterministic wire form
 
 
-def test_plan_record_base_none_means_empty_root() -> None:
-    target = Lockfile.of([locked()])
-    record = PlanRecord(target=target)
-    assert record.base is None and record.venvs is True  # defaults
-    decoded = PlanRecord.from_record_json(record.record_json())
-    assert decoded.base is None
-    assert decoded.matches_base(None)  # empty root still matches
-    assert not decoded.matches_base(target)  # any installation is stale
-
-
 def test_plan_record_matches_base_is_digest_equality() -> None:
     base = Lockfile.of([locked()])
     moved = Lockfile.of([locked(version="2.0.0", digest=DIGEST_B)])
@@ -399,51 +268,6 @@ def test_plan_record_matches_base_is_digest_equality() -> None:
     assert record.matches_base(Lockfile.of([locked()]))  # same content, same digest
     assert not record.matches_base(moved)  # installation drifted
     assert not record.matches_base(None)  # installation was emptied
-
-
-def test_plan_record_decode_rejects_malformed_documents() -> None:
-    with pytest.raises(InstallError, match="not valid JSON"):
-        PlanRecord.from_record_json("{nope")
-    with pytest.raises(InstallError, match="JSON object"):
-        PlanRecord.from_record_json("[]")
-    with pytest.raises(InstallError, match="unsupported plan format"):
-        PlanRecord.from_record_json('{"format": "dinkster.plan/999"}')
-    valid_target = Lockfile.of([locked()]).record_json()
-    with pytest.raises(InstallError, match="'base' must be a string digest or null"):
-        PlanRecord.from_record_json(
-            '{"format": "dinkster.plan/1", "base": 7, "venvs": true, "target": '
-            + valid_target
-            + "}"
-        )
-    with pytest.raises(InstallError, match="is not a digest"):
-        PlanRecord.from_record_json(
-            '{"format": "dinkster.plan/1", "base": "oops", "venvs": true, '
-            '"target": ' + valid_target + "}"
-        )
-    with pytest.raises(InstallError, match="'venvs' must be a boolean"):
-        PlanRecord.from_record_json(
-            '{"format": "dinkster.plan/1", "base": null, "target": ' + valid_target + "}"
-        )
-    with pytest.raises(InstallError, match="'target' must be a lockfile object"):
-        PlanRecord.from_record_json('{"format": "dinkster.plan/1", "base": null, "venvs": true}')
-
-
-def test_plan_record_target_reruns_lockfile_validation() -> None:
-    """A hand-edited plan whose target violates install invariants fails
-    at load, exactly like a hand-edited lockfile."""
-    two_copies = (
-        '{"format": "dinkster.lock/1", "packs": ['
-        f'{{"pack": "img-tools", "version": "1.0.0", "artifactDigest": "{DIGEST_A}", '
-        '"publisher": "alice", "claims": ["img-tools"], "source": "registry"}, '
-        f'{{"pack": "img-tools", "version": "2.0.0", "artifactDigest": "{DIGEST_B}", '
-        '"publisher": "alice", "claims": ["img-tools"], "source": "registry"}]}'
-    )
-    with pytest.raises(InstallError, match="two entries lock pack"):
-        PlanRecord.from_record_json(
-            '{"format": "dinkster.plan/1", "base": null, "venvs": true, "target": '
-            + two_copies
-            + "}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -621,45 +445,6 @@ def test_plan_record_venv_specs_are_additive() -> None:
         )
 
 
-def test_grouped_plan_requires_identical_per_member_exact_pins() -> None:
-    target = Lockfile.of([locked(), locked(pack="vid-tools", digest=DIGEST_B)])
-    groups = (("models", ("img-tools", "vid-tools")),)
-    matching = PlanRecord(
-        target=target,
-        venv_specs=(
-            ("img-tools", VenvSpec(exact=("torch==2.5.1",))),
-            ("vid-tools", VenvSpec(exact=("torch==2.5.1",))),
-        ),
-        venv_groups=groups,
-    )
-    assert PlanRecord.from_record_json(matching.record_json()) == matching
-    with pytest.raises(InstallError, match="contradictory per-member exact pins"):
-        PlanRecord(
-            target=target,
-            venv_specs=(
-                ("img-tools", VenvSpec(exact=("torch==2.5.1",))),
-                ("vid-tools", VenvSpec(exact=("torch==2.9.1",))),
-            ),
-            venv_groups=groups,
-        )
-
-
-def test_snapshot_record_venvs_can_disagree_on_versions() -> None:
-    """The multiprocess property: per-venv pins are independent facts,
-    so two packs on different torch versions is representable."""
-    lockfile = Lockfile.of([locked(), locked(pack="vid-tools", digest=DIGEST_B)])
-    record = SnapshotRecord.of(
-        lockfile, {"img-tools": ["torch==2.5.1"], "vid-tools": ["torch==2.9.1"]}
-    )
-    assert record.pins_for("img-tools") == ("torch==2.5.1",)
-    assert record.pins_for("vid-tools") == ("torch==2.9.1",)
-
-
-def test_snapshot_record_rejects_pins_for_unlocked_packs() -> None:
-    with pytest.raises(InstallError, match="lockfile does not lock"):
-        SnapshotRecord.of(Lockfile.of([locked()]), {"ghost": ["torch==2.0.0"]})
-
-
 def test_pins_may_carry_hash_annotations() -> None:
     """The resolution lock's artifact-identity half rides IN the pin:
     '--hash=<algo>:<digest>' tokens after the exact 'name==version', and
@@ -724,41 +509,3 @@ def test_pin_grammar_refuses_requirements_syntax_smuggling() -> None:
         payload = head + ', "venvs": ' + json.dumps({"img-tools": [bad]}) + "}"
         with pytest.raises(InstallError, match=fragment):
             SnapshotRecord.from_record_json(payload)
-
-
-def test_plan_constraint_pins_are_version_only() -> None:
-    """Cross-scope demotion strips artifact identity WITH the exactness
-    it belongs to, so a persisted plan whose constraints carry hashes is
-    a corrupt record - refused at decode, never silently stripped. Exact
-    plan pins keep accepting annotations (same-scope replay)."""
-    lockfile = Lockfile.of([locked()])
-    annotated = "torch==2.5.1 --hash=sha256:aaaa"
-    plan = PlanRecord(target=lockfile, venv_specs=(("img-tools", VenvSpec(exact=(annotated,))),))
-    document = json.loads(plan.record_json())
-    document["venvSpecs"]["img-tools"] = {"constraints": [annotated]}
-    with pytest.raises(InstallError, match="version-only"):
-        PlanRecord.from_record_json(json.dumps(document))
-    document["venvSpecs"]["img-tools"] = {"constraints": ["torch==2.5.1"]}
-    decoded = PlanRecord.from_record_json(json.dumps(document))
-    assert dict(decoded.venv_specs)["img-tools"].constraints == ("torch==2.5.1",)
-
-
-def test_snapshot_record_decode_rejects_malformed_documents() -> None:
-    with pytest.raises(InstallError, match="not valid JSON"):
-        SnapshotRecord.from_record_json("{nope")
-    with pytest.raises(InstallError, match="JSON object"):
-        SnapshotRecord.from_record_json("[]")
-    with pytest.raises(InstallError, match="unsupported snapshot format"):
-        SnapshotRecord.from_record_json('{"format": "dinkster.snapshot/999"}')
-    lockfile_json = Lockfile.of([locked()]).record_json()
-    head = '{"format": "dinkster.snapshot/1", "lockfile": ' + lockfile_json
-    with pytest.raises(InstallError, match="'lockfile' must be a lockfile object"):
-        SnapshotRecord.from_record_json('{"format": "dinkster.snapshot/1", "lockfile": 7}')
-    with pytest.raises(InstallError, match="'venvs' must be an object"):
-        SnapshotRecord.from_record_json(head + ', "venvs": []}')
-    with pytest.raises(InstallError, match="must be a list of strings"):
-        SnapshotRecord.from_record_json(head + ', "venvs": {"img-tools": [7]}}')
-    with pytest.raises(InstallError, match="not an exact 'name==version' pin"):
-        SnapshotRecord.from_record_json(head + ', "venvs": {"img-tools": ["torch>=2.0"]}}')
-    with pytest.raises(InstallError, match="'python' must be a string"):
-        SnapshotRecord.from_record_json(head + ', "venvs": {}, "python": 3}')

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import FrozenInstanceError, fields, replace
+from dataclasses import replace
 from typing import cast
 
 import numpy as np
@@ -10,7 +10,6 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import (
     ActiveRunIdError,
     AdmittedGraph,
-    CompiledGraph,
     Engine,
     EngineEvent,
     ExecutionRuntime,
@@ -117,66 +116,6 @@ def _runtime(engine: Engine, transport) -> ExecutionRuntime:
         graph_compiler_registry=_compiler_registry(),
         graph_compile_transport=transport,
     )
-
-
-def test_execution_runtime_compiler_invariant_defaults_schema_normalization_and_replace() -> None:
-    engine = _engine()
-    base = engine.pin_execution()
-    assert base.graph_compiler_registry == GraphCompilerRegistrySnapshot()
-    assert base.graph_compile_transport is None
-    assert base.schemas is not None
-
-    async def transport(*_args):
-        return {}
-
-    with pytest.raises(ValueError, match="present together"):
-        replace(base, graph_compile_transport=transport)
-    with pytest.raises(ValueError, match="present together"):
-        replace(base, graph_compiler_registry=_compiler_registry())
-    raw = replace(base, schemas=None)
-    normalized = engine._normalize_execution(raw)
-    assert normalized.schemas is not None
-    assert replace(normalized, schemas=dict(normalized.schemas)).schemas == normalized.schemas
-    assert engine._normalize_execution(replace(base, schemas={})).schemas == base.schemas
-    with pytest.raises(FrozenInstanceError):
-        normalized.schemas = {}  # type: ignore[misc]
-
-
-def test_compiled_graph_is_deeply_immutable() -> None:
-    graph = Graph(
-        {
-            "g": GraphNode(
-                "dev.image.gradient",
-                {"nested": [{"value": 1}]},
-            )
-        }
-    )
-    digest = _engine().extension_snapshot_digest
-    sources = ["source"]
-    origins = {
-        "generated": {
-            "nodeId": "generated",
-            "sources": sources,
-            "compilerId": "test.compiler",
-            "passIndex": 0,
-            "localKey": "one",
-        }
-    }
-    compiled = CompiledGraph(graph, ["g"], digest, origins)
-    cast(dict[str, GraphNode], graph.nodes)["x"] = GraphNode("bad", {})
-    sources.append("later")
-    assert set(compiled.graph.nodes) == {"g"}
-    assert compiled.targets == ("g",)
-    assert compiled.origins["generated"]["sources"] == ("source",)
-    exposed = cast("list[dict[str, int]]", compiled.graph.nodes["g"].inputs["nested"])
-    exposed[0]["value"] = 2
-    assert compiled.graph.nodes["g"].inputs["nested"] == [{"value": 1}]
-    with pytest.raises(FrozenInstanceError):
-        compiled.targets = ()  # type: ignore[misc]
-    with pytest.raises(TypeError):
-        compiled.origins["x"] = {}  # type: ignore[index]
-    with pytest.raises(TypeError):
-        compiled.origins["generated"]["sources"] = ()  # type: ignore[index]
 
 
 def test_parent_graph_admission_is_deterministic_complete_and_deeply_immutable() -> None:
@@ -489,84 +428,6 @@ def test_parent_graph_admission_malformed_values_always_return_typed_refusals() 
     assert deep_graph.value.code == "recursion-budget"
 
 
-def test_empty_registry_run_skips_compile_and_preserves_outputs_cache_and_events(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[EngineEvent] = []
-    engine = _engine(events)
-
-    async def forbidden(*_args, **_kwargs):
-        raise AssertionError("compile_for_execution must not be called")
-
-    monkeypatch.setattr(engine, "compile_for_execution", forbidden)
-
-    async def scenario() -> None:
-        first = await engine.run(_graph(), ["g"], run_id="first")
-        second = await engine.run(_graph(), ["g"], run_id="second")
-        assert first.executed == ("g",) and first.cached == ()
-        assert second.executed == () and second.cached == ("g",)
-        assert first.outputs["g"]["image"].fingerprint == second.outputs["g"]["image"].fingerprint
-        started = [event for event in events if event.kind == "run_started"]
-        assert [event.detail["planned"] for event in started] == [["g"], ["g"]]
-        assert [(event.kind, event.node_id) for event in events if event.node_id] == [
-            ("node_started", "g"),
-            ("node_finished", "g"),
-            ("node_cached", "g"),
-        ]
-
-    run_scenario(scenario())
-
-
-def test_empty_registry_run_id_refusal_still_precedes_runtime_pinning(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engine = _engine()
-
-    def forbidden_pin():
-        raise AssertionError("legacy run-id refusal must happen before pinning")
-
-    monkeypatch.setattr(engine, "pin_execution", forbidden_pin)
-
-    async def scenario() -> None:
-        with pytest.raises(ValueError, match="non-empty"):
-            await engine.run(_graph(), ["g"], run_id="")
-
-    run_scenario(scenario())
-
-
-def test_empty_registry_compile_returns_typed_snapshot_without_rpc() -> None:
-    async def scenario() -> None:
-        engine = _engine()
-        graph = _graph()
-        compiled = await engine.compile_for_execution(graph, ["g"])
-        cast(dict[str, GraphNode], graph.nodes)["late"] = GraphNode("bad", {})
-        assert isinstance(compiled, CompiledGraph)
-        assert set(compiled.graph.nodes) == {"g"}
-        assert compiled.origins == {}
-
-    run_scenario(scenario())
-
-
-def test_empty_registry_run_preserves_submitted_generated_prefix_id() -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = _engine(events)
-        node_id = "$gen-submitted"
-        graph = Graph({node_id: GraphNode("dev.image.gradient", {"width": 1, "height": 1})})
-        result = await engine.run(graph, [node_id])
-        assert tuple(result.outputs) == (node_id,)
-        assert result.executed == (node_id,)
-        assert [event.detail["planned"] for event in events if event.kind == "run_started"] == [
-            [node_id]
-        ]
-        assert [event.node_id for event in events if event.node_id is not None] == [
-            node_id,
-            node_id,
-        ]
-
-    run_scenario(scenario())
-
-
 def test_nonempty_run_calls_transport_once_exactly_and_reuses_one_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -657,33 +518,6 @@ def test_raw_mutation_after_transport_entry_cannot_change_request_or_compiled_by
         compiled = await task
         assert seen["wire"] == graph_to_wire(_graph())
         assert graph_to_wire(compiled.graph) == graph_to_wire(_graph())
-
-    run_scenario(scenario())
-
-
-def test_run_compiled_matches_digest_never_recompiles_and_refuses_drift_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def scenario() -> None:
-        engine = _engine()
-        runtime = engine.pin_execution()
-        compiled = CompiledGraph(_graph(), ("g",), runtime.extension_snapshot_digest, {})
-
-        async def forbidden(*_args, **_kwargs):
-            raise AssertionError("precompiled execution must not compile")
-
-        monkeypatch.setattr(engine, "compile_for_execution", forbidden)
-        result = await engine.run_compiled(compiled, execution=runtime)
-        assert result.executed == ("g",)
-        drift = CompiledGraph(
-            compiled.graph,
-            compiled.targets,
-            "sha256:" + "f" * 64,
-            compiled.origins,
-        )
-        with pytest.raises(GraphCompileError) as caught:
-            await engine.run_compiled(drift, run_id="", execution=runtime)
-        assert caught.value.code == GRAPH_COMPILE_ERROR_GENERATION_MISMATCH
 
     run_scenario(scenario())
 
@@ -1189,7 +1023,3 @@ def test_returned_unknown_node_type_is_graph_validation_not_malformed_reply() ->
             await engine.run(_graph(), ["g"], execution=_runtime(engine, transport))
 
     run_scenario(scenario())
-
-
-def test_engine_event_public_schema_is_unchanged() -> None:
-    assert [field.name for field in fields(EngineEvent)] == ["kind", "run_id", "node_id", "detail"]

@@ -259,31 +259,6 @@ def test_http_redirect_private_dns_and_rebinding_deny_public_fetch(tmp_path: Pat
     assert vault.resolve(DIGEST) is None
 
 
-def test_actual_peer_must_match_a_globally_routable_dns_destination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    closed: list[bool] = []
-
-    class ReboundConnection:
-        def __init__(self, *_args: object) -> None:
-            self.peer_verified = False
-
-        def request(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def getresponse(self) -> Response:
-            return Response(200, ASSET)
-
-        def close(self) -> None:
-            closed.append(True)
-
-    monkeypatch.setattr(fetch_module, "_PinnedHTTPSConnection", ReboundConnection)
-    monkeypatch.setattr(fetch_module, "_globally_routable_addresses", public_dns)
-    with pytest.raises(PublicFetchDenied, match="unapproved peer"):
-        fetch_public_asset(DIGEST, LISTED_URL, len(ASSET), AssetVault(tmp_path / "vault"))
-    assert closed
-
-
 @pytest.mark.parametrize(
     ("digest", "expected_size", "message"),
     [

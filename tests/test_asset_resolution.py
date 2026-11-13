@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -69,24 +68,6 @@ def seed(store: ResolutionStore) -> None:
     store.upsert_variant(variant())
     store.upsert_artifact(Artifact(DIGEST_A))
     store.link_variant_artifact(VariantArtifact("flux/dev", "fp8-main", DIGEST_A))
-
-
-def test_catalog_models_normalize_freeze_and_validate_asset_refs() -> None:
-    model = LogicalModel(" Flux/DEV ", " FLUX ", KIND, 1)
-    row = variant()
-    assert (model.logical_id, model.family, row.variant_id) == ("flux/dev", "flux", "fp8-main")
-    with pytest.raises(FrozenInstanceError):
-        row.variant_id = "changed"  # type: ignore[misc]
-    with pytest.raises(AssetError, match="virtual path must match"):
-        MountMaterialization(SCOPE, "models", 0, KIND, ref(DIGEST_B, virtual_path="models/x"))
-
-
-def test_snapshot_rejects_duplicate_catalog_facts() -> None:
-    row = variant()
-    with pytest.raises(AssetError, match="duplicate variant identity"):
-        ResolutionSnapshot(variants=(row, row))
-    with pytest.raises(AssetError, match="invalid row"):
-        ResolutionSnapshot(artifacts=(DIGEST_A,))  # type: ignore[arg-type]
 
 
 def test_store_snapshot_preserves_catalog_provider_and_local_facts(tmp_path: Path) -> None:

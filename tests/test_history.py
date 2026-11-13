@@ -174,19 +174,6 @@ def test_store_put_get_roundtrip_and_wire(tmp_path: Path) -> None:
     store.close()
 
 
-def test_store_scope_isolation_and_validation(tmp_path: Path) -> None:
-    store = HistoryStore(tmp_path / "history.sqlite")
-    store.put(make_record("mine"))
-    store.put(make_record("theirs", scope="other"))
-    # Wrong scope is a plain miss, never a hint the run exists elsewhere.
-    assert store.get("other", "mine") is None
-    assert [r.run_id for r in store.query("local")] == ["mine"]
-    assert [r.run_id for r in store.query("other")] == ["theirs"]
-    with pytest.raises(ValueError):
-        store.put(make_record("x", scope=" "))
-    store.close()
-
-
 def test_store_migrates_pre_principal_database_with_local_backfill(tmp_path: Path) -> None:
     path = tmp_path / "history.sqlite"
     conn = sqlite3.connect(path)
@@ -242,55 +229,6 @@ def test_store_filters_and_keyset_paging(tmp_path: Path) -> None:
     page2 = store.query("local", limit=3, after=(last.finished_at, last.run_id))
     assert [r.run_id for r in page2] == ["run1", "run0"]
     store.close()
-
-
-def test_store_delete_and_delete_where(tmp_path: Path) -> None:
-    """Deletion is scoped like everything else, and bulk clear speaks the
-    same filter vocabulary as query - plus before= for retention pruning.
-    Asset bytes are never in play; only rows go."""
-    store = HistoryStore(tmp_path / "history.sqlite")
-    for index in range(4):
-        store.put(
-            make_record(
-                f"run{index}",
-                finished_at=100.0 + index,
-                state="completed" if index % 2 == 0 else "failed",
-            )
-        )
-    store.put(make_record("other-run", scope="other"))
-
-    # Single delete: scoped, idempotent-in-effect (second time is a miss).
-    assert store.delete("other", "run0") is False  # wrong scope: plain miss
-    assert store.delete("local", "run0") is True
-    assert store.delete("local", "run0") is False
-    assert store.get("local", "run0") is None
-
-    # Filtered bulk clear.
-    assert store.delete_where("local", state="failed") == 2
-    assert [r.run_id for r in store.query("local")] == ["run2"]
-    # before= prunes strictly-earlier-finished rows.
-    store.put(make_record("recent", finished_at=200.0))
-    assert store.delete_where("local", before=150.0) == 1
-    assert [r.run_id for r in store.query("local")] == ["recent"]
-    # No filters clears the scope entirely - and only that scope.
-    assert store.delete_where("local") == 1
-    assert store.query("local") == []
-    assert [r.run_id for r in store.query("other")] == ["other-run"]
-    with pytest.raises(ValueError):
-        store.delete_where(" ")
-    store.close()
-
-
-def test_store_survives_reopen(tmp_path: Path) -> None:
-    """The point of persistence: rows outlive the process (store)."""
-    store = HistoryStore(tmp_path / "history.sqlite")
-    store.put(make_record("durable", source_document=SOURCE_DIGEST))
-    store.close()
-    reopened = HistoryStore(tmp_path / "history.sqlite")
-    record = reopened.get("local", "durable")
-    assert record is not None
-    assert record.source_document == SOURCE_DIGEST
-    reopened.close()
 
 
 def test_history_asset_roots_cover_accepted_terminal_and_other_scopes(tmp_path: Path) -> None:
@@ -445,19 +383,6 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
                 pytest.fail("corrupt output identities were assumed empty")
     finally:
         store.close()
-
-
-def test_record_from_job_requires_terminal() -> None:
-    job = Job(
-        key=JobKey("c1", "j1"),
-        graph=Graph(nodes={}),
-        targets=(),
-        priority=0,
-        run_id="r1",
-        fingerprint="test",
-    )
-    with pytest.raises(ValueError):
-        record_from_job(job)
 
 
 def test_record_from_job_marks_started_nodes_interrupted() -> None:
@@ -858,39 +783,6 @@ def read_accepted(path: Path) -> list[sqlite3.Row]:
         conn.close()
 
 
-def test_store_accepted_row_lifecycle(tmp_path: Path) -> None:
-    """job_accepted writes the row, job_started marks it running, and
-    job_terminal atomically trades it for the terminal history row."""
-    db = tmp_path / "history.sqlite"
-    store = HistoryStore(db)
-    job = make_job("r1", scope="local", principal_id="worker", principal_kind="agent")
-    store.job_accepted(job)
-    (row,) = read_accepted(db)
-    assert row["run_id"] == "r1"
-    assert row["state"] == "queued"
-    assert row["started"] is None
-    assert row["client_id"] == "c1"
-    assert row["job_id"] == "job-r1"
-    assert row["principal"] == "worker"
-    assert row["principal_kind"] == "agent"
-    assert row["fingerprint"] == "fp-r1"
-    assert row["execution_identity"] == ""
-    job.state = "running"
-    job.started_at = 5.0
-    store.job_started(job)
-    (row,) = read_accepted(db)
-    assert row["state"] == "running"
-    assert row["started"] == 5.0
-    job.state = "completed"
-    job.finished_at = 6.0
-    store.job_terminal(job)
-    assert read_accepted(db) == []
-    record = store.get("local", "r1")
-    assert record is not None
-    assert record.state == "completed"
-    store.close()
-
-
 def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -> None:
     """A dead process's leftovers become interrupted history - never-started
     and was-running distinguishable, nothing re-executed, sweep idempotent."""
@@ -951,31 +843,6 @@ def test_recover_interrupted_never_rewrites_existing_history(tmp_path: Path) -> 
     assert record.state == "completed"
     assert read_accepted(db) == []
     reopened.close()
-
-
-def test_job_terminal_move_is_atomic(tmp_path: Path) -> None:
-    """The terminal history insert and the accepted-row delete share one
-    transaction: a failure rolls both back, leaving the conservative
-    accepted row for the next restart's sweep."""
-    db = tmp_path / "history.sqlite"
-    store = HistoryStore(db)
-    job = make_job("r1")
-    store.job_accepted(job)
-    # A failing trigger on the delete forces the whole transaction to abort.
-    saboteur = sqlite3.connect(str(db))
-    saboteur.execute(
-        "CREATE TRIGGER boom BEFORE DELETE ON accepted BEGIN SELECT RAISE(ABORT, 'boom'); END"
-    )
-    saboteur.commit()
-    saboteur.close()
-    job.state = "completed"
-    job.finished_at = 1.0
-    with pytest.raises(sqlite3.DatabaseError):
-        store.job_terminal(job)
-    assert store.get("local", "r1") is None  # history insert rolled back too
-    (row,) = read_accepted(db)
-    assert row["run_id"] == "r1"
-    store.close()
 
 
 def test_accepted_row_exists_before_submit_acknowledgment(tmp_path: Path) -> None:

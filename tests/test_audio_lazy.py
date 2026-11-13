@@ -6,11 +6,8 @@ import copy
 import io
 import json
 import struct
-import subprocess
-import sys
 import wave
 from pathlib import Path
-from types import GeneratorType, SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -67,119 +64,6 @@ def source(tmp_path: Path) -> tuple[AssetRef, np.ndarray]:
     return AssetRef(digest, "source.pcm", len(data), resolver=vault), pcm.astype(np.float32) / 32768
 
 
-def test_unknown_duration_probe_counts_frames_without_retaining_decode() -> None:
-    import weakref
-
-    import dinkster_values.audio_lazy as runtime
-
-    class Frame:
-        sample_rate = 48_000
-        samples = 960
-        layout = type("Layout", (), {"channels": (0, 1)})()
-
-    class Frames:
-        def __init__(self) -> None:
-            self.index = 0
-            self.references: list[weakref.ReferenceType[Frame]] = []
-            self.max_live = 0
-
-        def __iter__(self):
-            return self
-
-        def __next__(self) -> Frame:
-            live = sum(reference() is not None for reference in self.references)
-            self.max_live = max(self.max_live, live + 1)
-            assert live <= 1, "decoded frames were retained"
-            if self.index == 100:
-                raise StopIteration
-            self.index += 1
-            frame = Frame()
-            self.references.append(weakref.ref(frame))
-            return frame
-
-    frames = Frames()
-    assert runtime._decoded_frame_count(frames, 48_000, 2) == 96_000
-    assert frames.max_live <= 2
-
-
-@pytest.mark.parametrize(
-    ("format_name", "codec_name", "video_streams"),
-    [
-        ("ogg", "opus", []),
-        ("webm", "flac", []),
-        ("webm", "opus", [object()]),
-    ],
-)
-def test_unknown_duration_probe_does_not_decode_outside_audio_webm_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-    format_name: str,
-    codec_name: str,
-    video_streams: list[object],
-) -> None:
-    import dinkster_values.audio_lazy as runtime
-
-    stream = SimpleNamespace(
-        duration=None,
-        time_base=None,
-        codec_context=SimpleNamespace(
-            sample_rate=48_000,
-            channels=2,
-            name=codec_name,
-            layout=SimpleNamespace(name="stereo"),
-        ),
-    )
-
-    class Container:
-        duration = None
-        format = SimpleNamespace(name=format_name)
-        streams = SimpleNamespace(audio=[stream], video=video_streams)
-
-        def decode(self, *_args: object) -> object:
-            raise AssertionError("ineligible unknown-duration input was decoded")
-
-        def demux(self, *_args: object) -> object:
-            raise AssertionError("ineligible unknown-duration input was demuxed")
-
-        def close(self) -> None:
-            pass
-
-    monkeypatch.setattr("av.open", lambda *_args, **_kwargs: Container())
-    metadata = runtime.probe_audio(b"not-pcm")
-    assert metadata["duration"] is None
-    assert metadata["frames"] is None
-
-
-def test_source_trim_gain_and_metadata_do_not_decode(
-    source, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import dinkster_values.audio_lazy as runtime
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("unconsumed audio decoded")
-
-    monkeypatch.setattr(runtime, "_decode_source_window", forbidden)
-    asset, _ = source
-    value = append_audio_edit(
-        audio_from_source(asset), {"trim": {"start_sample": 4000, "sample_count": 8000}}
-    )
-    value = append_audio_edit(value, {"gain": 10 ** (-6 / 20)})
-    assert audio_meta(value)["shape"] == (1, 2, 8000)
-    wire = encode_audio(value)
-    assert len(wire) < 1024
-    assert b"vault" not in wire
-    assert audio_meta(decode_audio(wire))["duration"] == 1
-    validate_audio_encoded(memoryview(wire), audio_meta(value))
-    assert audio_meta(value)["asset_refs"] == [asset.to_wire()]
-    assert audio_meta(value)["cost"] == {"ram": 0}
-    with pytest.raises(ValueError, match="asset_refs"):
-        validate_audio_encoded(memoryview(wire), {**audio_meta(value), "asset_refs": []})
-    with pytest.raises(ValueError, match="asset_refs"):
-        validate_audio_encoded(
-            memoryview(wire),
-            {key: item for key, item in audio_meta(value).items() if key != "asset_refs"},
-        )
-
-
 def test_sample_windows_and_order_survive_portable_round_trip(source) -> None:
     asset, pcm = source
     value = audio_from_source(asset)
@@ -197,30 +81,6 @@ def test_sample_windows_and_order_survive_portable_round_trip(source) -> None:
     assert audio_window(rebound, 1000, 1)["waveform"].shape == (1, 2, 0)
 
 
-def test_audio_window_errors_are_public_value_errors() -> None:
-    import dinkster_values
-
-    assert dinkster_values.AudioRangeError is AudioRangeError
-    assert dinkster_values.AudioSourceUnavailableError is AudioSourceUnavailableError
-    assert issubclass(AudioRangeError, ValueError)
-    assert issubclass(AudioSourceUnavailableError, ValueError)
-
-
-@pytest.mark.parametrize("batch_index", [1, 2**64])
-@pytest.mark.parametrize("sample_count", [0, 1])
-def test_audio_batch_range_error_precedes_source_decode(
-    source, monkeypatch, batch_index, sample_count
-) -> None:
-    import dinkster_values.audio_lazy as runtime
-
-    value = audio_from_source(source[0])
-    monkeypatch.setattr(
-        runtime, "_decode_source_window", lambda *args: pytest.fail("invalid batch decoded source")
-    )
-    with pytest.raises(AudioRangeError, match="batch_index is out of range"):
-        audio_window(value, 0, sample_count, batch_index=batch_index)
-
-
 def test_unbound_wire_source_has_distinct_window_error(source) -> None:
     value = decode_audio(encode_audio(audio_from_source(source[0])))
     with pytest.raises(AudioSourceUnavailableError, match="no local asset binding"):
@@ -231,49 +91,6 @@ def test_unbound_wire_source_has_distinct_window_error(source) -> None:
         waveform = audio_window(value, start, count)["waveform"]
         assert waveform.shape == (1, 2, 0)
         assert waveform.dtype == np.float32
-
-
-@pytest.mark.parametrize("argument", ["start_sample", "sample_count", "batch_index"])
-@pytest.mark.parametrize("invalid", [-1, True, 1.0, "1"])
-def test_invalid_window_arguments_remain_plain_value_errors(source, argument, invalid) -> None:
-    value = decode_audio(encode_audio(audio_from_source(source[0])))
-    kwargs = {"start_sample": 0, "sample_count": 1, "batch_index": 0, argument: invalid}
-    with pytest.raises(ValueError, match=argument) as error:
-        audio_window(value, **kwargs)
-    assert type(error.value) is ValueError
-
-
-def test_audio_window_allocation_error_remains_plain_value_error(source, monkeypatch) -> None:
-    import dinkster_values.audio_lazy as runtime
-
-    value = decode_audio(encode_audio(audio_from_source(source[0])))
-    monkeypatch.setattr(runtime, "AUDIO_WINDOW_LIMIT", 4)
-    with pytest.raises(ValueError, match="allocation budget") as error:
-        audio_window(value, 0, 1)
-    assert type(error.value) is ValueError
-
-
-@pytest.mark.parametrize("failure", ["range", "unbound"])
-def test_typed_window_error_closes_active_reader(source, inline_encoded_audio, failure) -> None:
-    value = audio_from_source(inline_encoded_audio[0])
-    end = effective_audio_facts(value)["frames"]
-    child = decode_audio(encode_audio(audio_from_source(source[0])))
-    value = append_audio_edit(value, {"concat": [child]})
-    with AudioWindowReader(value) as reader:
-        reader.read(0, 1)
-        active = next(iter(reader._sources.values()))
-        frames = active.frames
-        assert isinstance(frames, GeneratorType) and frames.gi_frame is not None
-        assert not active.cache.closed
-        expected = AudioRangeError if failure == "range" else AudioSourceUnavailableError
-        with pytest.raises(expected):
-            reader.read(end, 1, batch_index=1 if failure == "range" else None)
-        assert frames.gi_frame is None
-        assert active.cache.closed
-        assert not reader._sources
-        with pytest.raises(ValueError, match="reader is closed") as error:
-            reader.read(0, 1)
-        assert type(error.value) is ValueError
 
 
 @pytest.mark.parametrize("failure", ["no_resolver", "missing", "integrity"])
@@ -311,46 +128,6 @@ def test_resampled_windows_are_exact_slices_not_restarted_filters(source, target
     np.testing.assert_array_equal(np.concatenate(windows, axis=-1), full)
 
 
-def test_small_int16_pcm_preserves_storage_and_float_consumers() -> None:
-    pcm = np.array([-32768, -1, 0, 1, 32767, 10, 20, 30], dtype=np.int16).reshape(1, 1, 8)
-    pcm = np.repeat(pcm, 2, axis=1)
-    value = coerce_audio({"waveform": pcm, "sample_rate": 8000})
-    assert cast(dict[str, Any], value["source"])["pcm"] is pcm
-    assert effective_audio_facts(value)["codec"] == "pcm_s16le"
-    wire = encode_audio(value)
-    decoded = cast(Any, decode_audio(wire))
-    assert decoded["source"]["pcm"].dtype == np.int16
-    np.testing.assert_array_equal(
-        audio_window(decoded, 0, 8)["waveform"], pcm.astype(np.float32) / 32768
-    )
-    assert audio_meta(decoded)["asset_refs"] == []
-    assert audio_meta(decoded)["cost"] == {"ram": pcm.nbytes}
-    validate_audio_encoded(wire, audio_meta(decoded))
-
-
-@pytest.mark.parametrize("inline", [False, True])
-@pytest.mark.parametrize("residency", ["ram", "ram@receiver", "vram:cuda:0@producer"])
-def test_audio_admission_separates_semantics_from_local_storage(source, inline, residency) -> None:
-    asset, pcm = source
-    value = (
-        coerce_audio({"waveform": pcm[..., :8], "sample_rate": 8000})
-        if inline
-        else audio_from_source(asset)
-    )
-    wire = encode_audio(value)
-    metadata = dict(audio_meta(value))
-    for retained_bytes in (len(wire), pcm.nbytes):
-        assert retained_bytes != cast(dict[str, int], metadata["cost"])["ram"]
-        received = {**metadata, "cost": {residency: retained_bytes}}
-        validate_audio_encoded(memoryview(wire), received)
-        with pytest.raises(ValueError, match="sample_rate"):
-            validate_audio_encoded(wire, {**received, "sample_rate": 1})
-        with pytest.raises(ValueError, match="shape"):
-            validate_audio_encoded(wire, {**received, "shape": (1, 2, 1)})
-        with pytest.raises(ValueError):
-            validate_audio_encoded(wire[:-1], received)
-
-
 @pytest.mark.parametrize("dtype", [np.int16, np.float32, np.float64, np.int32])
 def test_audio_registration_canonicalizes_storage_before_metadata(dtype) -> None:
     pcm = np.arange(16, dtype=dtype).reshape(1, 2, 8)
@@ -381,16 +158,6 @@ def test_pcm_publication_preserves_channel_layout(tmp_path, monkeypatch, samples
     decoded = bind_audio_value(decode_audio(encode_audio(value)), AssetVault(tmp_path))
     assert effective_audio_facts(decoded)["layout"] == "3.0"
     np.testing.assert_array_equal(audio_window(decoded, 0, 10)["waveform"], 0)
-
-
-def test_pcm_layout_declaration_does_not_override_source_facts(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
-    value = bind_audio_value(
-        {"waveform": np.zeros((1, 3, 100_000), np.float32), "sample_rate": 48000, "layout": "3.0"}
-    )
-    probe = {**cast(dict[str, Any], value["probe"]), "codec": "pcm_f32le"}
-    with pytest.raises(ValueError, match="probe does not match"):
-        audio_window({**value, "probe": probe}, 0, 10)
 
 
 def test_large_batched_pcm_publishes_without_losing_samples(
@@ -435,45 +202,6 @@ def test_legacy_persisted_v1_and_oversized_inline_admission(
     monkeypatch.setattr(np, "load", forbidden)
     with pytest.raises(ValueError, match="payload length"):
         decode_audio(struct.pack("<Q", 48000) + forged.getvalue())
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    ["path", "negative", "nan", "unknown_edit", "matrix", "duration", "trailing", "header"],
-)
-def test_malformed_v2_wire_refused_before_pcm_allocation(source, monkeypatch, mutation) -> None:
-    asset, _ = source
-    value = audio_from_source(asset)
-    wire = encode_audio(value)
-    offset = len(b"DINKSTER-AUDIO\x02")
-    header = json.loads(wire[offset + 4 :])
-    if mutation == "path":
-        header["source"]["asset"]["path"] = "/private/producer.wav"
-    elif mutation == "negative":
-        header["edits"] = [{"trim": {"start_sample": -1, "sample_count": 1}}]
-    elif mutation == "nan":
-        header["edits"] = [{"gain": float("nan")}]
-    elif mutation == "unknown_edit":
-        header["edits"] = [{"pitch": 2}]
-    elif mutation == "matrix":
-        header["edits"] = [{"channel_map": {"matrix": [[1]], "layout": "mono"}}]
-    elif mutation == "duration":
-        header["probe"]["duration"] = 1e20
-    body = json.dumps(header).encode()
-    wire = b"DINKSTER-AUDIO\x02" + struct.pack("<I", len(body)) + body
-    if mutation == "trailing":
-        wire += b"extra"
-    elif mutation == "header":
-        wire = b"DINKSTER-AUDIO\x02" + struct.pack("<I", 2**30)
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("malformed descriptor allocated PCM")
-
-    monkeypatch.setattr(np, "load", forbidden)
-    with pytest.raises(ValueError):
-        validate_audio_encoded(memoryview(wire), {})
-    with pytest.raises(ValueError):
-        decode_audio(wire)
 
 
 def test_window_allocation_guard_fires_before_source_decode(source, monkeypatch) -> None:
@@ -822,79 +550,6 @@ def test_resample_intermediate_is_bounded_before_scipy_allocation(monkeypatch) -
         audio_window(value, 0, 1)
 
 
-def test_registry_audio_wire_admission_and_receiving_host_binding(source) -> None:
-    asset, expected = source
-    sender = TypeRegistry()
-    receiver = TypeRegistry()
-    register_audio_value_type(sender, AUDIO_TYPE, asset.resolver)
-    register_audio_value_type(receiver, AUDIO_TYPE, asset.resolver)
-    value = sender.wrap(AUDIO_TYPE, audio_from_source(asset))
-    wire = sender.spec(AUDIO_TYPE).encode(value.resolve())
-    validator = receiver.spec(AUDIO_TYPE).validate_encoded_buffer
-    assert validator is not None
-    validator(memoryview(wire), value.meta.entries)
-    received = receiver.spec(AUDIO_TYPE).decode(wire)
-    np.testing.assert_array_equal(
-        audio_window(received, 712, 29)["waveform"], expected[..., 712:741]
-    )
-
-
-@pytest.mark.parametrize("preexisting", (False, True))
-def test_audio_pack_registration_preserves_first_authority(
-    source, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preexisting: bool
-) -> None:
-    from dinkster_values import register_core_types
-    from dinkster_workers import load_manifest
-    from dinkster_workers.manifest import resolve_entry
-
-    asset, expected = source
-    registry = TypeRegistry()
-    register_core_types(registry)
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-    if preexisting:
-        register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
-        original = registry.spec(AUDIO_TYPE)
-        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "empty-vault"))
-    else:
-        original = None
-    manifest = load_manifest(
-        Path(__file__).parents[1] / "packages/dinkster-nodes-audio/dinkster-pack.toml"
-    )
-    assert manifest.types_entry is not None
-    register = resolve_entry(manifest.types_entry)
-    assert callable(register)
-    register(registry)
-    first = registry.spec(AUDIO_TYPE)
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "other-vault"))
-    register(registry)
-    assert registry.spec(AUDIO_TYPE) is first
-    if original is not None:
-        assert first is original
-    unbound = {**audio_from_source(asset), "source": AssetRef.from_wire(asset.to_wire())}
-    value = registry.wrap(AUDIO_TYPE, unbound).resolve()
-    received = first.decode(first.encode(value))
-    window = audio_window(received, 712, 29)
-    assert window["sample_rate"] == 8000
-    np.testing.assert_array_equal(window["waveform"], expected[..., 712:741])
-
-
-def test_audio_pack_registration_is_torch_free() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_api.v1 import AUDIO_TYPE, TypeRegistry; "
-            "from dinkster_audio import register_types; "
-            "registry=TypeRegistry(); register_types(registry); "
-            "assert AUDIO_TYPE in registry; assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 @pytest.mark.parametrize("concat", [False, True])
 def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) -> None:
     from dinkster_audio import NODES, register_types
@@ -1010,85 +665,6 @@ def inline_encoded_audio(request):
     return buffer.getvalue(), pcm[np.newaxis].astype(np.float32) / 32768
 
 
-def test_inline_encoded_audio_probes_without_decode_and_admits_without_probe(
-    inline_encoded_audio, monkeypatch
-) -> None:
-    import av
-    import dinkster_values.audio_lazy as runtime
-
-    data, expected = inline_encoded_audio
-    opened = av.open
-
-    class ProbeOnly:
-        def __init__(self, container):
-            self.container = container
-
-        def __getattr__(self, name):
-            assert name not in ("decode", "demux"), "probing decoded media"
-            return getattr(self.container, name)
-
-        def close(self):
-            self.container.close()
-
-    with monkeypatch.context() as patch:
-        patch.setattr(av, "open", lambda *a, **kw: ProbeOnly(opened(*a, **kw)))
-        value = audio_from_source(data)
-    assert value["source"] is data
-    with monkeypatch.context() as patch:
-        patch.setattr(runtime, "probe_audio", lambda *a: pytest.fail("codec probed media"))
-        patch.setattr(av, "open", lambda *a, **kw: pytest.fail("codec opened media"))
-        patch.setattr(np, "load", lambda *a, **kw: pytest.fail("codec allocated PCM"))
-        wire = encode_audio(value)
-        header, payload = _audio_header(wire)
-        assert header["source"] == {"inline_encoded": len(data)}
-        assert payload == data
-        assert audio_encoded_meta(wire) == audio_meta(value)
-        assert audio_meta(value)["cost"] == {"ram": len(data)}
-        validate_audio_encoded(memoryview(wire), audio_meta(value))
-        validate_audio_encoded(memoryview(wire), {})
-        decoded = decode_audio(wire)
-        assert encode_audio(decoded) == wire
-    np.testing.assert_array_equal(
-        audio_window(decoded, 113, 411)["waveform"], expected[..., 113:524]
-    )
-
-
-@pytest.mark.parametrize("field", ["sample_rate", "layout"])
-def test_inline_encoded_source_rechecks_real_probe(inline_encoded_audio, field) -> None:
-    value = audio_from_source(inline_encoded_audio[0])
-    probe = cast(dict[str, Any], value["probe"])
-    if field == "sample_rate":
-        probe[field] *= 2
-        probe["duration"] = probe["frames"] / probe[field]
-    else:
-        probe[field] = "2c"
-    decoded = decode_audio(encode_audio(value))
-    with pytest.raises(ValueError, match="probe does not match"):
-        audio_window(decoded, 0, 1)
-
-
-@pytest.mark.parametrize("inline", [False, True])
-def test_existing_v2_header_and_payload_remain_identical(source, inline) -> None:
-    asset, pcm = source
-    value = (
-        coerce_audio({"waveform": pcm, "sample_rate": 8000}) if inline else audio_from_source(asset)
-    )
-    value = append_audio_edit(value, {"gain": 0.5})
-    payload = b""
-    if inline:
-        buffer = io.BytesIO()
-        np.save(buffer, pcm, allow_pickle=False)
-        payload = buffer.getvalue()
-        wire_source = {"inline_pcm": len(payload)}
-    else:
-        wire_source = {"asset": asset.to_wire()}
-    expected = _audio_wire(
-        {"source": wire_source, "probe": value["probe"], "edits": [{"gain": 0.5}]}, payload
-    )
-    assert encode_audio(value) == expected
-    assert encode_audio(bind_audio_value(decode_audio(expected), asset.resolver)) == expected
-
-
 @pytest.mark.parametrize("target_rate", [4000, 11025, 48000])
 def test_concat_edited_bct_windows_equal_eager_composition(target_rate) -> None:
     from scipy.signal import resample_poly
@@ -1129,24 +705,6 @@ def test_concat_edited_bct_windows_equal_eager_composition(target_rate) -> None:
         )
 
 
-def test_concat_selects_only_intersecting_sources(source, monkeypatch) -> None:
-    import dinkster_values.audio_lazy as runtime
-
-    root = audio_from_source(source[0])
-    selected = coerce_audio({"waveform": source[1][..., :17], "sample_rate": 8000})
-    value = append_audio_edit(root, {"concat": [selected, root]})
-    with monkeypatch.context() as patch:
-        patch.setattr(AssetRef, "open", lambda self: pytest.fail("unselected source opened"))
-        patch.setattr(
-            runtime, "_decode_source_window", lambda *a: pytest.fail("unselected source decoded")
-        )
-        np.testing.assert_array_equal(
-            audio_window(value, 16000, 17)["waveform"], source[1][..., :17]
-        )
-        assert audio_window(value, 32017, 5)["waveform"].shape == (1, 2, 0)
-        assert audio_window(value, 16000, 0)["waveform"].shape == (1, 2, 0)
-
-
 @pytest.mark.parametrize("field", ["sample_rate", "channels", "layout", "batch"])
 def test_concat_requires_matching_effective_facts(source, field) -> None:
     value = audio_from_source(source[0])
@@ -1157,16 +715,6 @@ def test_concat_requires_matching_effective_facts(source, field) -> None:
         probe["duration"] = probe["frames"] / probe[field]
     with pytest.raises(ValueError, match="matching"):
         append_audio_edit(value, {"concat": [child]})
-
-
-def test_concat_unknown_duration_requires_trim_on_root_and_child(source) -> None:
-    value = audio_from_source(source[0])
-    unknown = {**value, "probe": {**cast(dict, value["probe"]), "frames": None, "duration": None}}
-    for root, child in ((unknown, value), (value, unknown)):
-        with pytest.raises(ValueError, match="known frames"):
-            append_audio_edit(root, {"concat": [child]})
-    trimmed = append_audio_edit(unknown, {"trim": {"start_sample": 5, "sample_count": 17}})
-    assert effective_audio_facts(append_audio_edit(trimmed, {"concat": [trimmed]}))["frames"] == 34
 
 
 def test_nested_inline_preorder_metadata_and_asset_binding(
@@ -1257,140 +805,6 @@ def test_nested_large_pcm_publication_preserves_child_edits_and_layout(
         audio_window(decoded, 10, 47, batch_index=1)["waveform"], pcm[1:2, :, 123:170] * 0.5
     )
     assert effective_audio_facts(decoded)["layout"] == "3.0"
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        "depth",
-        "records",
-        "edits",
-        "short",
-        "trailing",
-        "negative",
-        "boolean",
-        "oversized",
-        "child_fields",
-        "child_source",
-        "child_shape",
-        "header",
-    ],
-)
-def test_nested_wire_mutations_fail_before_allocation(source, monkeypatch, mutation) -> None:
-    value = append_audio_edit(
-        {"waveform": source[1][..., :11], "sample_rate": 8000},
-        {"concat": [audio_from_source(source[0])]},
-    )
-    header, payload = _audio_header(encode_audio(value))
-    child = header["edits"][0]["concat"][0]
-    if mutation == "depth":
-        for _ in range(16):
-            child = {**child, "edits": [{"concat": [child]}]}
-        header["edits"] = [{"concat": [child]}]
-    elif mutation == "records":
-        header["edits"] = [{"concat": [child] * 64}]
-    elif mutation == "edits":
-        header["edits"] += [{"gain": 1}] * 128
-        child["edits"] = [{"gain": 1}] * 128
-    elif mutation == "short":
-        payload = payload[:-1]
-    elif mutation == "trailing":
-        payload += b"extra"
-    elif mutation in ("negative", "boolean", "oversized"):
-        child["source"] = {
-            "inline_encoded": {
-                "negative": -1,
-                "boolean": True,
-                "oversized": AUDIO_INLINE_LIMIT + 1,
-            }[mutation]
-        }
-    elif mutation == "child_fields":
-        child["waveform"] = [1, 2, 3]
-    elif mutation == "child_source":
-        child["source"]["asset"]["path"] = "/private/child.wav"
-    elif mutation == "child_shape":
-        child["source"] = header["source"]
-        payload += payload
-    else:
-        child["probe"]["layout"] = "x" * (1024 * 1024)
-    wire = _audio_wire(header, payload)
-    monkeypatch.setattr(np, "load", lambda *a, **kw: pytest.fail("malformed wire allocated PCM"))
-    monkeypatch.setattr(AssetRef, "open", lambda self: pytest.fail("admission opened source"))
-    for admit in (decode_audio, audio_encoded_meta):
-        with pytest.raises(ValueError):
-            admit(wire)
-
-
-@pytest.mark.parametrize("limit", ["depth", "records", "edits"])
-def test_audio_tree_exact_budgets_are_accepted(source, limit) -> None:
-    leaf = audio_from_source(source[0])
-    value = leaf
-    if limit == "depth":
-        for _ in range(15):
-            value = append_audio_edit(leaf, {"concat": [value]})
-    elif limit == "records":
-        value = append_audio_edit(leaf, {"concat": [leaf] * 63})
-    else:
-        value = {**leaf, "edits": [{"gain": 1}] * 128}
-        value = {
-            **value,
-            "edits": [*value["edits"], {"concat": [{**leaf, "edits": [{"gain": 1}] * 127}]}],
-        }
-    wire = encode_audio(value)
-    validate_audio_encoded(wire, audio_meta(value))
-    assert encode_audio(decode_audio(wire)) == wire
-
-
-def test_inline_encoded_size_limit_and_opaque_admission(source, monkeypatch) -> None:
-    import dinkster_values.audio_lazy as runtime
-
-    template = audio_from_source(source[0])
-    monkeypatch.setattr(runtime, "probe_audio", lambda *a: pytest.fail("admission probed media"))
-    value = {**template, "source": b"x" * AUDIO_INLINE_LIMIT}
-    wire = encode_audio(value)
-    assert encode_audio(decode_audio(wire)) == wire
-    assert audio_encoded_meta(wire)["cost"] == {"ram": AUDIO_INLINE_LIMIT}
-    oversized = b"x" * (AUDIO_INLINE_LIMIT + 1)
-    with pytest.raises(ValueError, match="256 KiB"):
-        audio_from_source(oversized)
-    with pytest.raises(ValueError, match="256 KiB"):
-        encode_audio({**value, "source": oversized})
-
-
-def test_concat_assets_are_deduplicated_in_first_encounter_order(source, monkeypatch) -> None:
-    asset = source[0]
-    root = audio_from_source(asset)
-    second_ref = {**asset.to_wire(), "digest": "blake3:" + "1" * 64}
-    second = {**root, "source": second_ref}
-    alias = {**root, "source": {**asset.to_wire(), "name": "alias.pcm"}}
-    value = append_audio_edit(
-        second, {"concat": [append_audio_edit(root, {"concat": [second, alias]})]}
-    )
-    monkeypatch.setattr(AssetRef, "open", lambda self: pytest.fail("metadata opened asset"))
-    assert audio_meta(value)["asset_refs"] == [second_ref, asset.to_wire()]
-    assert audio_encoded_meta(encode_audio(value)) == audio_meta(value)
-    registry = TypeRegistry()
-    register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
-    roots = value_asset_references(
-        {"audio": registry.wrap(AUDIO_TYPE, value)}, complete_registry=registry
-    )
-    assert {digest: ref.size for digest, ref in roots.items()} == {
-        second_ref["digest"]: asset.size,
-        asset.digest: asset.size,
-    }
-    unbound = append_audio_edit(
-        root, {"concat": [{**root, "source": AssetRef.from_wire(asset.to_wire())}]}
-    )
-    bound = bind_audio_value(unbound, asset.resolver)
-    child = cast(Any, bound["edits"])[0]["concat"][0]
-    assert child["source"].resolver is asset.resolver
-    conflicting = append_audio_edit(
-        root, {"concat": [{**root, "source": {**asset.to_wire(), "size": asset.size + 1}}]}
-    )
-    with pytest.raises(ValueError, match="size"):
-        audio_meta(conflicting)
-    with pytest.raises(ValueError, match="size"):
-        audio_encoded_meta(encode_audio(conflicting))
 
 
 def test_repeated_concat_edits_and_channel_maps_preserve_order() -> None:

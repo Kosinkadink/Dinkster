@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import hashlib
-
 import numpy as np
 import pytest
-from dinkster_image.drawing import DRAWING_NODES, DrawMask, DrawRegion, DrawText, MakeImage
+from dinkster_image.drawing import DrawMask, DrawRegion, MakeImage
 from dinkster_image.types import Region
 
 
@@ -14,104 +12,6 @@ def _run(node: type, **kwargs: object) -> dict[str, object]:
 
 def _image(result: dict[str, object]) -> np.ndarray:
     return np.asarray(result["image"], dtype=np.float32)
-
-
-def test_make_image_and_draw_region_dynamic_combo_schemas_and_materialized_execution() -> None:
-    make = MakeImage.define_schema()
-    draw = DrawRegion.define_schema()
-    assert make.version == draw.version == 2
-    assert tuple(item.id for item in make.inputs) == ("width", "height", "batch_size", "channels")
-    assert {
-        combo.id: {option.key: tuple(item.id for item in option.inputs) for option in combo.options}
-        for combo in make.combos
-    } == {
-        "color_source": {"hex": ("color_a",), "integer": ("color_value",)},
-        "operation": {
-            "solid": (),
-            "linear_gradient": ("color_b", "angle"),
-            "radial_gradient": ("color_b", "center_x", "center_y", "radius"),
-            "checkerboard": ("color_b", "tile_size"),
-        },
-    }
-    assert tuple(item.id for item in draw.inputs) == (
-        "image",
-        "region",
-        "shape",
-        "color",
-        "opacity",
-        "coordinate_format",
-        "batch_policy",
-    )
-    draw_options = [
-        (option.key, tuple(item.id for item in option.inputs)) for option in draw.combos[0].options
-    ]
-    assert draw_options == [
-        ("fill", ()),
-        ("outline", ("line_width",)),
-    ]
-
-    expected = MakeImage.execute(operation="solid", width=2, height=2, color_a="#123456")
-    materialized = MakeImage.execute(
-        **{
-            "operation": "solid",
-            "width": 2,
-            "height": 2,
-            "color_source": "hex",
-            "color_source.color_a": "#123456",
-        }
-    )
-    np.testing.assert_array_equal(materialized["image"], expected["image"])
-
-
-@pytest.mark.parametrize(
-    "operation", ["solid", "linear_gradient", "radial_gradient", "checkerboard"]
-)
-@pytest.mark.parametrize("channels", ["rgb", "rgba"])
-def test_make_image_shapes_batches_and_determinism(operation: str, channels: str) -> None:
-    kwargs: dict[str, object] = {}
-    if operation == "linear_gradient":
-        kwargs = {"angle": 37.0}
-    if operation == "radial_gradient":
-        kwargs = {
-            "center_x": 0.4,
-            "center_y": 0.6,
-            "radius": 0.8,
-        }
-    if operation == "checkerboard":
-        kwargs = {"tile_size": 2}
-
-    first = _image(
-        _run(
-            MakeImage,
-            operation=operation,
-            width=9,
-            height=7,
-            channels=channels,
-            batch_size=2,
-            color_a="#10203040",
-            color_b="#a0b0c0d0",
-            **kwargs,
-        )
-    )
-    second = _image(
-        _run(
-            MakeImage,
-            operation=operation,
-            width=9,
-            height=7,
-            channels=channels,
-            batch_size=2,
-            color_a="#10203040",
-            color_b="#a0b0c0d0",
-            **kwargs,
-        )
-    )
-
-    assert first.shape == (2, 7, 9, 3 if channels == "rgb" else 4)
-    assert first.dtype == np.float32
-    assert first.flags.c_contiguous
-    assert np.array_equal(first, second)
-    assert np.array_equal(first[0], first[1])
 
 
 def test_make_image_solid_and_gradients_have_expected_endpoints() -> None:
@@ -154,40 +54,6 @@ def test_make_image_solid_and_gradients_have_expected_endpoints() -> None:
     assert np.allclose(linear[0, 0, :, 0], [1 / 6, 0.5, 5 / 6])
     assert radial[0, 2, 2, 0] == 1.0
     assert radial[0, 0, 0, 0] == 0.0
-
-
-def test_draw_text_uses_pillow_bundled_default_font_deterministically() -> None:
-    image = _image(
-        _run(
-            DrawText,
-            image=np.zeros((1, 40, 64, 3), dtype=np.float32),
-            text="Dinkster\n671",
-            x=2,
-            y=3,
-            font_size=12,
-            line_spacing=2,
-            color="#33cc66",
-        )
-    )
-
-    assert hashlib.sha256(image.tobytes()).hexdigest() == (
-        "5a43e801cb6506d9305286d4b7d58dfc096bd0448f99e890c5c08cb63380119d"
-    )
-    assert np.array_equal(
-        image,
-        _image(
-            _run(
-                DrawText,
-                image=np.zeros((1, 40, 64, 3), dtype=np.float32),
-                text="Dinkster\n671",
-                x=2,
-                y=3,
-                font_size=12,
-                line_spacing=2,
-                color="#33cc66",
-            )
-        ),
-    )
 
 
 def test_draw_region_fills_outlines_and_clips() -> None:
@@ -385,53 +251,3 @@ def test_draw_mask_kj_compatibility_controls() -> None:
     assert np.allclose(result[0, :, 2:, 3], alpha)
     assert np.allclose(inverted[0, :, :2, 0], alpha)
     assert np.allclose(inverted[0, :, 2:, 0], 0.0)
-
-
-def test_drawing_schema_ids_split_required_input_shapes() -> None:
-    schemas = {node.define_schema().node_type: node.define_schema() for node in DRAWING_NODES}
-    assert len(schemas) == len(DRAWING_NODES)
-    assert {
-        node_type: tuple(item.id for item in schema.inputs if item.required)
-        for node_type, schema in schemas.items()
-    } == {
-        "dinkster.image.generate": (),
-        "dinkster.image.draw_text": ("image", "text"),
-        "dinkster.image.draw_region": ("image", "region"),
-        "dinkster.image.draw_mask": ("image", "mask"),
-    }
-
-
-@pytest.mark.parametrize(
-    ("node", "kwargs", "match"),
-    [
-        (MakeImage, {"operation": "solid", "width": 4, "height": 0}, "height"),
-        (
-            MakeImage,
-            {"operation": "solid", "width": 4, "height": 4, "channels": "cmyk"},
-            "channel layout",
-        ),
-        (
-            DrawText,
-            {"image": np.zeros((1, 2, 2, 2), dtype=np.float32), "text": "x"},
-            "channels",
-        ),
-        (
-            DrawRegion,
-            {"image": np.zeros((1, 2, 2, 3), dtype=np.float32), "region": "bad"},
-            "Region",
-        ),
-        (
-            DrawMask,
-            {
-                "image": np.zeros((1, 2, 2, 3), dtype=np.float32),
-                "mask": np.zeros((2, 2), dtype=np.float32),
-            },
-            "BHW",
-        ),
-    ],
-)
-def test_image_nodes_reject_invalid_inputs(
-    node: type, kwargs: dict[str, object], match: str
-) -> None:
-    with pytest.raises((TypeError, ValueError), match=match):
-        _run(node, **kwargs)

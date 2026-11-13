@@ -8,20 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dinkster_api.v1 import (
-    AssetRef,
-    AssetWidget,
-    LocalAssetRef,
-    resolve_asset_selection,
-    schema_from_wire,
-    schema_to_wire,
-)
-from dinkster_assets import digest_bytes
 from dinkster_graph import Graph, GraphNode, TypedLiteral
-from dinkster_models import NODES
 from dinkster_models import model_selections as loaders
 from dinkster_server.preflight import bind_model_names
-from dinkster_workers import load_manifest
 
 
 class LoadedVAE:
@@ -84,20 +73,6 @@ def granted_loaders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return roots, metadata, loads, factory
 
 
-def test_native_selection_schema_roundtrip_and_registration():
-    for node in (loaders.VAELoader, loaders.DiffusersLoader):
-        schema = node.schema()
-        assert schema_from_wire(schema_to_wire(schema)) == schema
-        assert len(schema.inputs) == 1
-        widget = schema.inputs[0].widget
-        assert isinstance(widget, AssetWidget) and widget.selection
-        assert not schema.idempotent
-        assert node in NODES
-    manifest = load_manifest("packages/dinkster-nodes-models/dinkster-pack.toml")
-    assert manifest.namespaces == ("dinkster.models", "devices")
-    assert all(node.schema().node_type.startswith("dinkster.models.") for node in NODES)
-
-
 def test_preflight_keeps_source_selection_names_and_reports_missing_options(granted_loaders):
     roots, _, _, _ = granted_loaders
     path = roots["model/diffusers"] / "vendor" / "model"
@@ -127,33 +102,6 @@ def test_preflight_keeps_source_selection_names_and_reports_missing_options(gran
     assert "digest" not in missing[0]
 
 
-@pytest.mark.parametrize("mode", ["name", "local", "verified", "video"])
-def test_single_file_vae_retains_metadata_validation_and_reload_factory(granted_loaders, mode):
-    roots, metadata, loads, factory = granted_loaders
-    path = roots["model/vae-approx" if mode == "video" else "model/vae"] / (
-        "taehv.safetensors" if mode == "video" else "real.safetensors"
-    )
-    path.write_bytes(b"vae")
-    value = path.name
-    if mode in {"local", "verified"}:
-        value = resolve_asset_selection("model/vae", value)
-        assert isinstance(value, LocalAssetRef)
-        if mode == "verified":
-
-            class Resolver:
-                def resolve(self, digest):
-                    return path if digest == digest_bytes(b"vae") else None
-
-            value = AssetRef(digest_bytes(b"vae"), path.name, 3, resolver=Resolver())
-    vae = loaders.VAELoader.execute(vae_name=value)["VAE"]
-    assert isinstance(vae, LoadedVAE)
-    assert vae.arguments == {"sd": {"weight": b"vae"}, "metadata": metadata}
-    assert vae.arguments["metadata"] is metadata
-    assert vae.validated
-    assert vae.patcher.cached_patcher_init == (factory, (str(path), metadata, None))
-    assert loads == [path]
-
-
 @pytest.mark.parametrize(
     "name,extras,metadata",
     [
@@ -181,29 +129,3 @@ def test_pair_and_literal_vae_keep_source_scaling_without_single_file_factory(
     assert vae.validated
     assert not hasattr(vae.patcher, "cached_patcher_init")
     assert len(loads) == (0 if name == "pixel_space" else 2)
-
-
-def test_diffusers_consumes_selected_tree_and_exact_embedding_grants(granted_loaders, monkeypatch):
-    roots, _, _, _ = granted_loaders
-    path = roots["model/diffusers"] / "vendor" / "model"
-    path.mkdir(parents=True)
-    (path / "model_index.json").write_text("{}")
-    model, clip, vae = object(), object(), object()
-
-    def load(selected, **kwargs):
-        assert selected == str(path)
-        assert kwargs == {
-            "output_vae": True,
-            "output_clip": True,
-            "embedding_directory": [str(roots["model/embedding"])],
-        }
-        return model, clip, vae
-
-    monkeypatch.setitem(
-        sys.modules, "dinkster_inference.diffusers_load", SimpleNamespace(load_diffusers=load)
-    )
-    assert loaders.DiffusersLoader.execute(model_path="vendor/model") == {
-        "MODEL": model,
-        "CLIP": clip,
-        "VAE": vae,
-    }

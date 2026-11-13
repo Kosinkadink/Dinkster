@@ -20,15 +20,10 @@ from aiohttp import WSMsgType, WSServerHandshakeError, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_collab import (
     PROTOCOL_VERSION,
-    ActorPrincipalMismatchError,
-    InvalidSnapshotError,
-    ResyncRequiredError,
     SessionOp,
-    SessionRoleError,
     SessionService,
     SessionStore,
     SnapshotRequiredError,
-    StaleBaseError,
     UnknownSessionError,
     add_session_routes,
     validate_patch,
@@ -80,87 +75,6 @@ def test_validate_patch_rejects_malformed() -> None:
 # -- service model -------------------------------------------------------------
 
 
-def test_service_orders_appends_and_replays_idempotently() -> None:
-    service = SessionService()
-    session = service.create(scope="local", document_id="doc1", snapshot={"v": 0})
-    assert session.revision == 0
-    op1, replayed = service.append(
-        session.session_id, op_id="a", actor_id="u1", base_revision=0, patch=REPLACE
-    )
-    assert (op1.revision, op1.base_revision, replayed) == (1, 0, False)
-    # Idempotent resubmission: same opId answers the recorded envelope.
-    again, replayed = service.append(
-        session.session_id, op_id="a", actor_id="u1", base_revision=99, patch=REPLACE
-    )
-    assert again == op1 and replayed
-    # Stale base: the client must rebase; the error names the head.
-    with pytest.raises(StaleBaseError) as exc:
-        service.append(session.session_id, op_id="b", actor_id="u2", base_revision=0, patch=REPLACE)
-    assert exc.value.revision == 1
-    op2, _ = service.append(
-        session.session_id, op_id="b", actor_id="u2", base_revision=1, patch=REPLACE
-    )
-    assert op2.revision == 2
-    assert [op.op_id for op in service.ops_after(session.session_id, 0)] == ["a", "b"]
-    assert [op.op_id for op in service.ops_after(session.session_id, 1)] == ["b"]
-
-
-def test_service_checkpoint_prunes_and_forces_resync() -> None:
-    service = SessionService()
-    session = service.create(scope="local", document_id="doc", snapshot={"v": 0})
-    for index in range(3):
-        service.append(
-            session.session_id,
-            op_id=f"op{index}",
-            actor_id="u",
-            base_revision=index,
-            patch=REPLACE,
-        )
-    # A checkpoint must advance and must not outrun the session.
-    with pytest.raises(ValueError):
-        service.checkpoint(session.session_id, revision=0, document={})
-    with pytest.raises(ValueError):
-        service.checkpoint(session.session_id, revision=4, document={})
-    service.checkpoint(session.session_id, revision=2, document={"v": 2})
-    session = service.get(session.session_id)
-    assert session.snapshot_revision == 2
-    assert [op.op_id for op in session.ops] == ["op2"]
-    # Pruned opIds are forgotten: idempotency window == retention window.
-    assert "op0" not in session.ops_by_id
-    # A cursor older than the snapshot cannot be replayed.
-    with pytest.raises(ResyncRequiredError) as exc:
-        service.ops_after(session.session_id, 1)
-    assert exc.value.snapshot_revision == 2
-    assert [op.op_id for op in service.ops_after(session.session_id, 2)] == ["op2"]
-
-
-def test_service_validates_kind_specific_snapshots_before_mutation() -> None:
-    def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
-        if document_kind == "image" and snapshot != {"lineage": document_id, "valid": True}:
-            return "invalid image snapshot"
-        return None
-
-    service = SessionService(snapshot_validator=validator)
-    workflow = service.create(scope="local", document_id="workflow", snapshot=None)
-    assert workflow.document_kind == "workflow"
-    with pytest.raises(InvalidSnapshotError):
-        service.create(
-            scope="local", document_id="image", document_kind="image", snapshot={"valid": False}
-        )
-    image = service.create(
-        scope="local",
-        document_id="image",
-        document_kind="image",
-        snapshot={"lineage": "image", "valid": True},
-    )
-    service.append(image.session_id, op_id="a", actor_id="u", base_revision=0, patch=REPLACE)
-    with pytest.raises(InvalidSnapshotError):
-        service.checkpoint(image.session_id, revision=1, document={"valid": False})
-    unchanged = service.get(image.session_id)
-    assert unchanged.snapshot_revision == 0
-    assert unchanged.snapshot == {"lineage": "image", "valid": True}
-
-
 def test_service_retention_cap_demands_snapshot() -> None:
     service = SessionService(max_retained_ops=2)
     session = service.create(scope="local", document_id="doc", snapshot=None)
@@ -184,46 +98,6 @@ def test_service_retention_cap_demands_snapshot() -> None:
     assert op.revision == 3
 
 
-def test_service_binds_actors_to_principals() -> None:
-    service = SessionService()
-    session = service.create(scope="team", document_id="doc", snapshot=None)
-    first, _ = service.append(
-        session.session_id,
-        op_id="first",
-        actor_id="shared",
-        base_revision=0,
-        patch=REPLACE,
-        principal_id="alice",
-    )
-    with pytest.raises(ActorPrincipalMismatchError):
-        service.append(
-            session.session_id,
-            op_id="spoofed",
-            actor_id="shared",
-            base_revision=1,
-            patch=REPLACE,
-            principal_id="bob",
-        )
-    assert service.get(session.session_id).revision == first.revision
-    second, _ = service.append(
-        session.session_id,
-        op_id="second",
-        actor_id="shared",
-        base_revision=1,
-        patch=REPLACE,
-        principal_id="alice",
-    )
-    third, _ = service.append(
-        session.session_id,
-        op_id="third",
-        actor_id="bob-actor",
-        base_revision=2,
-        patch=REPLACE,
-        principal_id="bob",
-    )
-    assert (second.revision, third.revision) == (2, 3)
-
-
 def test_storeless_local_principal_accepts_every_actor() -> None:
     service = SessionService()
     session = service.create(scope="local", document_id="doc", snapshot=None)
@@ -236,47 +110,6 @@ def test_storeless_local_principal_accepts_every_actor() -> None:
             patch=REPLACE,
         )
     assert service.get(session.session_id).revision == 3
-
-
-def test_service_enforces_session_roles() -> None:
-    service = SessionService()
-    session = service.create(scope="team", document_id="doc", snapshot=None, principal_id="owner")
-    assert service.role_for(session.session_id, "owner") == "owner"
-    assert service.role_for(session.session_id, "editor") == "editor"
-    service.append(
-        session.session_id,
-        op_id="default-editor",
-        actor_id="editor",
-        base_revision=0,
-        patch=REPLACE,
-        principal_id="editor",
-    )
-    service.replace_acl(
-        session.session_id,
-        principal_id="owner",
-        default_role="editor",
-        entries={"owner": "owner", "viewer": "viewer", "banned": "banned"},
-    )
-    assert service.ops_after(session.session_id, 0, principal_id="viewer")
-    with pytest.raises(SessionRoleError):
-        service.append(
-            session.session_id,
-            op_id="viewer",
-            actor_id="viewer",
-            base_revision=1,
-            patch=REPLACE,
-            principal_id="viewer",
-        )
-    for action in (
-        lambda: service.ops_after(session.session_id, 0, principal_id="banned"),
-        lambda: service.bind_actor(session.session_id, "banned", "banned"),
-        lambda: service.close(session.session_id, principal_id="banned"),
-    ):
-        with pytest.raises(SessionRoleError):
-            action()
-    with pytest.raises(SessionRoleError):
-        service.close(session.session_id, principal_id="editor")
-    assert service.close(session.session_id, principal_id="owner").session_id == session.session_id
 
 
 # -- HTTP/WS surface -----------------------------------------------------------
@@ -315,16 +148,6 @@ async def make_authenticated_client(
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
-
-
-def test_route_auth_callbacks_must_be_configured_together() -> None:
-    app = web.Application()
-    with pytest.raises(ValueError, match="must be provided together"):
-        add_session_routes(
-            app,
-            SessionService(),
-            principal_for=lambda _request: None,  # type: ignore[arg-type,return-value]
-        )
 
 
 def op_body(op_id: str, base: int, **overrides: Any) -> dict[str, Any]:

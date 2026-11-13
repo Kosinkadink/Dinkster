@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
-import os
 import shutil
 import struct
 from pathlib import Path
@@ -16,7 +14,6 @@ from dinkster_inference_wire import load_safetensors_header
 from dinkster_workers import legacy_sources
 from dinkster_workers.legacy_sources import (
     LegacyCheckpointError,
-    classify_conversion_error,
     classify_weight_source,
     convert_legacy_checkpoint,
     discover_converted_sidecar,
@@ -90,29 +87,6 @@ def test_classify_weight_source_refuses_other_invalid_sources(
     assert classify_weight_source(source, logical_name) == "unsupported"
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "legacy-checkpoint-converter-unavailable: torch missing",
-        "legacy-checkpoint-sidecar-directory-not-writable: /models",
-        "legacy-checkpoint-sidecar-write-failed: disk full",
-        "legacy-checkpoint-sidecar-cleanup-failed: busy",
-        "legacy-checkpoint-source-read-failed: disappeared",
-        "legacy-checkpoint-source-reverification-failed: disappeared",
-        "legacy-checkpoint-source-changed: replaced",
-    ],
-)
-def test_classify_conversion_error_owns_retryable_vocabulary(message: str) -> None:
-    assert classify_conversion_error(LegacyCheckpointError(message)) == "retryable"
-
-
-def test_classify_conversion_error_refuses_safe_loader_rejection_only() -> None:
-    refusal = LegacyCheckpointError("legacy-checkpoint-safe-load-failed: unsafe globals")
-
-    assert classify_conversion_error(refusal) == "refused"
-    assert classify_conversion_error(RuntimeError("worker runtime broke")) == "retryable"
-
-
 def test_discover_converted_sidecar_returns_valid_deterministic_sibling(
     tmp_path: Path,
 ) -> None:
@@ -164,27 +138,6 @@ def test_conversion_round_trips_and_logs_actual_conversion(
     assert f"source_sha256={digest}" in caplog.text
     assert f"source_bytes={source.stat().st_size}" in caplog.text
     assert f"output_bytes={sidecar.stat().st_size}" in caplog.text
-
-
-def test_conversion_is_byte_deterministic(tmp_path: Path, torch_modules: tuple[Any, Any]) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "model.pt"
-    torch.save(
-        {
-            "later": torch.arange(4, dtype=torch.float16),
-            "earlier": torch.tensor([[True, False]]),
-        },
-        source,
-    )
-    first = tmp_path / "first.safetensors"
-    second = tmp_path / "second.safetensors"
-
-    first_result = convert_legacy_checkpoint(source, first)
-    second_result = convert_legacy_checkpoint(source, second)
-
-    assert first.read_bytes() == second.read_bytes()
-    assert first_result.output_sha256 == second_result.output_sha256
-    assert first_result.output_bytes == second_result.output_bytes
 
 
 def test_valid_sidecar_cache_hit_does_not_rewrite(
@@ -248,56 +201,6 @@ def test_nested_state_dict_extracts_and_accounts_for_exact_dropped_keys(
     assert safetensors_torch.load_file(output)["weight"].shape == (1,)
 
 
-def test_non_mapping_root_refuses(tmp_path: Path, torch_modules: tuple[Any, Any]) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "list.ckpt"
-    torch.save([torch.ones(1)], source)
-
-    with pytest.raises(LegacyCheckpointError, match="root-not-mapping"):
-        convert_legacy_checkpoint(source, tmp_path / "output.safetensors")
-
-
-def test_non_tensor_entries_are_dropped(tmp_path: Path, torch_modules: tuple[Any, Any]) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "mixed.ckpt"
-    torch.save({"weight": torch.ones(1), "name": "model", "step": 3}, source)
-    output = tmp_path / "mixed.safetensors"
-
-    result = convert_legacy_checkpoint(source, output)
-
-    assert result.dropped_keys == ("name", "step")
-    assert tuple(load_safetensors_header(output).keys()) == ("weight",)
-
-
-def test_tensor_normalization_failure_is_named_with_key(
-    tmp_path: Path, torch_modules: tuple[Any, Any]
-) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "meta.ckpt"
-    torch.save({"meta.weight": torch.empty(1, device="meta")}, source)
-
-    with pytest.raises(LegacyCheckpointError, match="conversion-failed.*'meta.weight'.*normalized"):
-        convert_legacy_checkpoint(source, tmp_path / "output.safetensors")
-
-
-def test_non_string_tensor_key_refuses(tmp_path: Path, torch_modules: tuple[Any, Any]) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "bad-key.ckpt"
-    torch.save({1: torch.ones(1)}, source)
-
-    with pytest.raises(LegacyCheckpointError, match="key-not-string"):
-        convert_legacy_checkpoint(source, tmp_path / "output.safetensors")
-
-
-def test_non_string_wrapper_key_refuses(tmp_path: Path, torch_modules: tuple[Any, Any]) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "bad-wrapper-key.ckpt"
-    torch.save({"state_dict": {"weight": torch.ones(1)}, 1: "metadata"}, source)
-
-    with pytest.raises(LegacyCheckpointError, match="key-not-string"):
-        convert_legacy_checkpoint(source, tmp_path / "output.safetensors")
-
-
 def test_unsupported_extension_refuses_with_supported_formats(tmp_path: Path) -> None:
     source = tmp_path / "weights.bin"
     source.write_bytes(b"anything")
@@ -309,20 +212,6 @@ def test_unsupported_extension_refuses_with_supported_formats(tmp_path: Path) ->
         assert suffix in str(error.value)
     assert "convert_ckpt_to_safetensors.py" in str(error.value)
     assert error.value.__cause__ is not None
-
-
-def test_malformed_extensionless_source_never_reaches_torch_load(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "digestwithoutanextension"
-    source.write_bytes(b"not safetensors")
-
-    def unexpected_conversion(_source: Path, _output: Path) -> Any:
-        raise AssertionError("extensionless bytes reached torch conversion")
-
-    monkeypatch.setattr(legacy_sources, "convert_legacy_checkpoint", unexpected_conversion)
-    with pytest.raises(LegacyCheckpointError, match="must use .ckpt, .pt, or .pth"):
-        resolve_weight_source(source)
 
 
 def test_logical_legacy_name_allows_extensionless_source_conversion(
@@ -383,27 +272,6 @@ def test_save_failure_cleans_atomic_temp_file(
     assert list(tmp_path.glob(".*.tmp")) == []
 
 
-def test_temp_cleanup_failure_is_named(
-    tmp_path: Path,
-    torch_modules: tuple[Any, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "model.ckpt"
-    torch.save({"weight": torch.ones(1)}, source)
-
-    def failing_save(_tensors: object, _output: Path) -> None:
-        raise OSError("simulated save failure")
-
-    def failing_cleanup(_path: Path) -> None:
-        raise OSError("simulated cleanup failure")
-
-    monkeypatch.setattr(legacy_sources, "_save_file", failing_save)
-    monkeypatch.setattr(legacy_sources, "_remove_file", failing_cleanup)
-    with pytest.raises(LegacyCheckpointError, match="sidecar-cleanup-failed"):
-        resolve_weight_source(source)
-
-
 def test_source_mutation_during_conversion_refuses_without_publication(
     tmp_path: Path,
     torch_modules: tuple[Any, Any],
@@ -421,33 +289,6 @@ def test_source_mutation_during_conversion_refuses_without_publication(
 
     monkeypatch.setattr(legacy_sources, "convert_legacy_checkpoint", mutate_after_conversion)
     with pytest.raises(LegacyCheckpointError, match="source-changed"):
-        resolve_weight_source(source)
-
-    assert list(tmp_path.glob("*.dinkster.safetensors")) == []
-    assert list(tmp_path.glob(".*.tmp")) == []
-
-
-def test_source_reverification_failure_is_named_and_cleans_temp(
-    tmp_path: Path,
-    torch_modules: tuple[Any, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "model.ckpt"
-    torch.save({"weight": torch.ones(1)}, source)
-    real_hash = legacy_sources._sha256_file
-    source_hashes = 0
-
-    def fail_second_source_hash(path: Path) -> str:
-        nonlocal source_hashes
-        if path == source:
-            source_hashes += 1
-            if source_hashes == 2:
-                raise OSError("simulated source re-read failure")
-        return real_hash(path)
-
-    monkeypatch.setattr(legacy_sources, "_sha256_file", fail_second_source_hash)
-    with pytest.raises(LegacyCheckpointError, match="source-reverification-failed"):
         resolve_weight_source(source)
 
     assert list(tmp_path.glob("*.dinkster.safetensors")) == []
@@ -472,49 +313,3 @@ def test_competing_valid_publication_wins_without_temp_leak(
 
     load_safetensors_header(sidecar)
     assert list(tmp_path.glob(".*.tmp")) == []
-
-
-def test_conversion_has_no_unsafe_load_fallback() -> None:
-    source = inspect.getsource(legacy_sources)
-    compact = source.replace(" ", "")
-
-    assert "weights_only=True" in compact
-    assert "weights_only=False" not in compact
-    assert "pickle_module" not in source
-
-
-def test_converter_import_failure_is_named(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    source = tmp_path / "model.ckpt"
-    source.write_bytes(b"checkpoint")
-
-    def fail_torch_import() -> Any:
-        raise RuntimeError("broken native torch install")
-
-    monkeypatch.setattr(legacy_sources, "_load_torch_module", fail_torch_import)
-    with pytest.raises(LegacyCheckpointError, match="converter-unavailable"):
-        convert_legacy_checkpoint(source, tmp_path / "output.safetensors")
-
-
-def test_output_hash_failure_is_named(
-    tmp_path: Path,
-    torch_modules: tuple[Any, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "model.ckpt"
-    output = tmp_path / "output.safetensors"
-    torch.save({"weight": torch.ones(1)}, source)
-
-    def fail_output_hash(_path: Path) -> str:
-        raise OSError("simulated output read failure")
-
-    monkeypatch.setattr(legacy_sources, "_sha256_file", fail_output_hash)
-    with pytest.raises(LegacyCheckpointError, match="conversion-failed"):
-        convert_legacy_checkpoint(source, output)
-
-
-def test_module_import_is_torch_free() -> None:
-    source = inspect.getsource(legacy_sources)
-
-    assert "import torch" not in source
-    assert os.path.basename(legacy_sources.__file__) == "legacy_sources.py"

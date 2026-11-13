@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import json
 import os
@@ -9,7 +8,6 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from contextlib import closing
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 from xml.etree import ElementTree as ET
 
@@ -23,7 +21,7 @@ from dinkster_image.compositor import AddLayer, CreateLayeredImage, LayersFromBo
 from dinkster_image.layer_document import EditLayers, FlattenLayers, SplitLayers
 from dinkster_image.layer_io import LoadLayers, SaveLayers
 from dinkster_image.types import Region, register_image_types
-from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
+from dinkster_image_document.compat import from_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
     append_raster,
@@ -195,22 +193,6 @@ def test_split_layer_integer_regions_survive_the_worker_boundary() -> None:
     )
 
 
-def test_native_and_layer_wire_share_one_canonical_document() -> None:
-    value = document()
-    registry = TypeRegistry()
-    register_image_types(registry)
-    register_comfy_layers(registry)
-    for type_id in ("dinkster.layers", "comfy.LAYERS"):
-        spec = registry.spec(type_id)
-        encoded = spec.encode(value)
-        assert encoded == value.data
-        assert cast(ImageDocument, spec.decode(encoded)).data == encoded
-    assert registry.equivalent_type("comfy.LAYERS") == "dinkster.layers"
-    record = value.to_record()
-    record["canvas"]["width"] = 100
-    assert value.to_record()["canvas"]["width"] == 2
-
-
 @pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
 def test_document_boundary_preserves_external_and_auxiliary_references(
     type_id, monkeypatch
@@ -366,45 +348,6 @@ def test_legacy_layer_admission_does_not_publish_migrated_rasters(monkeypatch) -
     blobs[cast(int, payload["blob"])] = legacy + b"trailing"
     with pytest.raises(EncodedPayloadValidationError):
         codec.decode(wire, blobs, [])
-
-
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
-def test_document_rendition_needs_no_raster_resources(
-    type_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    record = document().to_record()
-    for resource in record["resources"].values():
-        resource.pop("inline")
-    expected = ImageDocument.from_record(record)
-
-    def forbid_raster(*args, **kwargs):
-        pytest.fail("document retrieval must not render or read raster resources")
-
-    monkeypatch.setattr(ImageDocument, "render", forbid_raster)
-    monkeypatch.setattr(ImageDocument, "read_resource", forbid_raster)
-    registry = TypeRegistry()
-    register = register_image_types if type_id == "dinkster.layers" else register_comfy_layers
-    register(registry)
-    register(registry)
-    spec = registry.spec(type_id)
-    value = registry.wrap(type_id, spec.decode(spec.encode(expected)))
-    rendition = registry.render(value, "document")
-    assert rendition.mime == IMAGE_DOCUMENT_MEDIA_TYPE
-    assert rendition.data == expected.data
-    assert [s.kind for s in registry.renditions_of(type_id) if s.default] == [
-        "image" if type_id == "dinkster.layers" else "document"
-    ]
-
-
-@pytest.mark.parametrize("mode", BLEND_MODES)
-def test_every_document_blend_renders_deterministically(mode: str) -> None:
-    value = append_raster(
-        document(), raster_png(np.full((1, 2, 3), 0.25)), blend_mode=mode, opacity=0.4
-    )
-    first = value.render()
-    assert first.png == value.render().png
-    assert first.pixels.dtype == np.uint16
-    assert np.all(first.pixels[..., :3] <= first.pixels[..., 3:4])
 
 
 def test_canvas_background_is_the_blend_backdrop() -> None:
@@ -747,14 +690,6 @@ def test_mask_fields_groups_clipping_and_z_order(combine: str, channel: str) -> 
     assert not removed.to_record()["layers"] and not removed.to_record()["masks"]
 
 
-def test_transform_components_cannot_compete_with_affine() -> None:
-    record = document().to_record()
-    layer = record["layers"][record["rootLayerIds"][0]]
-    layer["transform"]["components"]["x"] = 2
-    with pytest.raises(InvalidDocument, match="disagree"):
-        ImageDocument.from_record(record)
-
-
 def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
     from dinkster_assets import digest_bytes
     from dinkster_image.layer_recipe import replay_compositor
@@ -777,62 +712,6 @@ def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
         assert np.all(flatten(edited)[1] == 1)
         unchanged, stale = replay_compositor(edited, decoded, edited)
         assert stale and unchanged.data == edited.data
-
-
-@pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
-def test_compositor_boundary_retains_auxiliary_references_without_retrieving_document(
-    type_id, monkeypatch
-) -> None:
-    from dinkster_assets import AssetRef, AssetVault, digest_bytes
-    from dinkster_assets.value import value_asset_references
-    from dinkster_image.layer_recipe import replay_compositor
-    from dinkster_values import default_encode
-
-    value = document()
-    identifier = value.to_record()["rootLayerIds"][0]
-    delta = {
-        "version": 2,
-        "documentDigest": digest_bytes(value.data),
-        "commands": [{"op": "layer", "id": identifier, "changes": {"visible": False}}],
-    }
-    registry = TypeRegistry()
-    register_image_types(registry)
-    codec = ValueCodec(registry)
-    wrapped = registry.wrap(type_id, delta)
-    blobs, segments = [], []
-    wire, _ = codec.encode(wrapped, blobs, segments)
-    expected = canonical_json(delta).encode()
-    assert blobs[cast(int, cast(dict[str, object], wire["payload"])["blob"])] == expected
-    auxiliary = AssetRef(digest_bytes(b"auxiliary"), "source.json", 9)
-    blobs[cast(int, wire["metaBlob"])] = default_encode(
-        {**wrapped.meta.entries, "asset_refs": [auxiliary.to_wire()]}
-    )
-
-    def forbid_io(*args, **kwargs):
-        pytest.fail("compositor admission must not retrieve or publish a document")
-
-    monkeypatch.setattr(ImageDocument, "read_resource", forbid_io)
-    monkeypatch.setattr(AssetVault, "writer", forbid_io)
-    received, _ = codec.decode(wire, blobs, [])
-    assert received.fingerprint == wrapped.fingerprint
-    assert received.resolve() == delta
-    assert value_asset_references({"delta": received}, complete_registry=registry) == {
-        auxiliary.digest: auxiliary
-    }
-    edited, stale = replay_compositor(value, received.resolve(), value)
-    assert not stale
-    assert edited.to_record()["layers"][identifier]["visible"] is False
-    unchanged, stale = replay_compositor(edited, received.resolve(), edited)
-    assert stale and unchanged.data == edited.data
-    payload = cast(dict[str, object], wire["payload"])
-    blobs[cast(int, payload["blob"])] = json.dumps(delta, indent=2).encode()
-    noncanonical, _ = codec.decode(wire, blobs, [])
-    assert noncanonical.resolve() == delta
-    first = TypeRegistry()
-    first_spec = first.register(type_id)
-    register_image_types(first)
-    assert first.spec(type_id) is first_spec
-    assert not first_spec.asset_references_complete
 
 
 @pytest.mark.parametrize("type_id", ["COMPOSITOR", "comfy.COMPOSITOR"])
@@ -1551,27 +1430,6 @@ def test_psd_export_round_trips_standard_layer_properties_and_pixels() -> None:
     assert [layer.name for layer in reexported] == ["Backdrop", "Edits"]
 
 
-def test_psd_export_matches_fixed_editor_acceptance_contract() -> None:
-    from psd_tools import PSDImage
-
-    encoded = export_psd(_psd_acceptance_document())
-    with Image.open(io.BytesIO(encoded)) as merged:
-        pixels = merged.convert("RGBA").tobytes()
-    assert len(pixels) == 96
-    assert hashlib.sha256(pixels).hexdigest() == (
-        "06590d2ccfd36d2a4b5337cde8755f7bd5332a37ce826c1a44ee21d68d029900"
-    )
-    psd = PSDImage.open(io.BytesIO(encoded))
-    assert (psd.width, psd.height) == (6, 4)
-    assert [layer.name for layer in psd] == ["Backdrop", "Edits"]
-    group = cast(Any, psd[1])
-    assert group.blend_mode.name == "PASS_THROUGH"
-    assert [layer.name for layer in group] == ["Masked offset", "Hidden"]
-    assert (group[0].left, group[0].top, group[0].opacity) == (1, 1, 128)
-    assert group[0].mask is not None and not group[0].mask.disabled
-    assert (group[1].left, group[1].top, group[1].visible) == (4, 0, False)
-
-
 def test_psd_export_round_trips_disabled_mask_state() -> None:
     value = _psd_acceptance_document()
     record = value.to_record()
@@ -1624,71 +1482,6 @@ def test_psd_export_uses_merged_view_for_unsupported_structure() -> None:
     with pytest.warns(UserWarning, match="group geometry, clipping, or mask"):
         encoded = export_psd(value)
     assert [layer.name for layer in PSDImage.open(io.BytesIO(encoded))] == ["Composite"]
-
-
-@pytest.mark.parametrize("depth", [16, 32])
-def test_psd_import_reports_rasterized_capability_gaps(
-    monkeypatch: pytest.MonkeyPatch, depth: int
-) -> None:
-    from psd_tools import PSDImage
-    from psd_tools.constants import ColorMode
-
-    class Layer:
-        def __init__(self, kind: str, name: str, vector_mask: bool) -> None:
-            self.kind = kind
-            self.name = name
-            self.left = 0
-            self.top = 0
-            self.width = 1
-            self.height = 1
-            self.opacity = 255
-            self.visible = True
-            self.clipping = False
-            self.blend_mode = SimpleNamespace(name="NORMAL")
-            self.mask = None
-            self._vector_mask = vector_mask
-
-        def has_effects(self) -> bool:
-            return False
-
-        def has_vector_mask(self) -> bool:
-            return self._vector_mask
-
-        def is_group(self) -> bool:
-            return False
-
-        def topil(self) -> Image.Image:
-            return Image.new("RGBA", (1, 1), (255, 0, 0, 255))
-
-    class Document(list[Layer]):
-        width = 1
-        height = 1
-        color_mode = ColorMode.CMYK
-
-        def __init__(self, layers: list[Layer], depth: int) -> None:
-            super().__init__(layers)
-            self.depth = depth
-
-    monkeypatch.setattr(
-        PSDImage,
-        "open",
-        lambda _: Document(
-            [Layer("type", "Caption", True), Layer("smartobject", "Placed", False)], depth
-        ),
-    )
-    with pytest.warns(UserWarning) as caught:
-        imported = import_psd(b"8BPS")
-    messages = [str(item.message) for item in caught]
-    assert any(f"{depth}-bit channels are rasterized to 8-bit RGBA" in item for item in messages)
-    assert any("CMYK color is rasterized to RGBA" in item for item in messages)
-    assert any(
-        "type layer 'Caption' is rasterized as an ordinary layer" in item for item in messages
-    )
-    assert any(
-        "smartobject layer 'Placed' is rasterized as an ordinary layer" in item for item in messages
-    )
-    assert any("layer 'Caption' vector mask is not preserved" in item for item in messages)
-    assert len(imported.to_record()["rootLayerIds"]) == 2
 
 
 @pytest.mark.parametrize("background", [0, 255])

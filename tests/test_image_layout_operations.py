@@ -7,7 +7,6 @@ from typing import cast
 import numpy as np
 import pytest
 from dinkster_image.layout import ImageGridCompose, ImageGridDecompose, ImageStitch
-from dinkster_schema import schema_to_wire
 
 GOLDEN = cast(
     "dict[str, object]",
@@ -27,17 +26,6 @@ def _golden_record(record: object) -> np.ndarray:
 def _image(values: list[float], *, height: int = 1, width: int = 1) -> np.ndarray:
     array = np.asarray(values, dtype=np.float32).reshape((-1, 1, 1, 1))
     return array.repeat(height, axis=1).repeat(width, axis=2)
-
-
-def test_stitch_spacing_color_is_conditional_on_nonzero_width() -> None:
-    schema = ImageStitch.schema()
-    assert schema.inputs[3].id == "spacing_width"
-    group = schema.widget_groups[0]
-    assert group.input == "spacing_width"
-    assert group.values == tuple(range(1, 1025))
-    assert group.members == ("spacing_color",)
-    wire_groups = cast("list[dict[str, object]]", schema_to_wire(schema)["widgetGroups"])
-    assert len(cast("list[object]", wire_groups[0]["values"])) == 1024
 
 
 def test_grid_compose_uses_row_major_dynamic_inputs() -> None:

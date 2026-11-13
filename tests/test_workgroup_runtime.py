@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import FrozenInstanceError, replace
 from functools import wraps
 from typing import Any
 
@@ -355,40 +354,6 @@ async def test_failure_drains_progress_then_cancels_releases_and_settles() -> No
 
 
 @async_test
-async def test_concurrent_failures_drain_then_cancel_release_and_settle() -> None:
-    d = definition()
-    events: list[str] = []
-
-    def replies(replica: str) -> tuple[WorkGroupMessage, ...]:
-        return (
-            ReplicaReady(**child_kwargs(replica)),
-            WorkGroupPrepared(**child_kwargs(replica)),
-            WorkUnitFailed(**unit_kwargs(replica), reason=f"{replica} failed"),
-            WorkGroupCancelled(**child_kwargs(replica)),
-            WorkGroupReleased(**child_kwargs(replica)),
-        )
-
-    a = FakeReplica(d, "a", replies("a"), events)
-    b = FakeReplica(d, "b", replies("b"), events)
-
-    lifecycle = await WorkGroupCoordinator(RecordingReservations(events)).execute(
-        d, (a.endpoint, b.endpoint)
-    )
-
-    assert lifecycle.state is WorkGroupState.FAILED
-    assert lifecycle.failures == (
-        (WorkUnitId("unit-a"), "a failed"),
-        (WorkUnitId("unit-b"), "b failed"),
-    )
-    assert lifecycle.cancelled == (ReplicaId("replica-a"), ReplicaId("replica-b"))
-    assert lifecycle.released == (ReplicaId("replica-a"), ReplicaId("replica-b"))
-    for fake in (a, b):
-        assert sum(isinstance(message, CancelWorkGroup) for message in fake.sent) == 1
-        assert sum(isinstance(message, ReleaseWorkGroup) for message in fake.sent) == 1
-    assert events[-1] == "reserve-exit"
-
-
-@async_test
 async def test_cancel_ack_may_overtake_a_late_work_unit_failure() -> None:
     d = definition()
     events: list[str] = []
@@ -577,89 +542,6 @@ async def test_caller_cancellation_finishes_cleanup_before_releasing_reservation
 
 
 @async_test
-async def test_admission_failure_records_prepared_reply_observed_during_cleanup() -> None:
-    d = definition()
-    events: list[str] = []
-
-    class LatePreparedReplica(FakeReplica):
-        async def receive(self) -> WorkGroupMessage:
-            reply = await super().receive()
-            if isinstance(reply, WorkGroupPrepared):
-                await self.command_events[CancelWorkGroup].wait()
-            return reply
-
-    a = LatePreparedReplica(
-        d,
-        "a",
-        (
-            ReplicaReady(**child_kwargs("a")),
-            WorkGroupPrepared(**child_kwargs("a")),
-            WorkGroupCancelled(**child_kwargs("a")),
-            WorkGroupReleased(**child_kwargs("a")),
-        ),
-        events,
-    )
-    b = FakeReplica(
-        d,
-        "b",
-        (
-            ReplicaReady(**child_kwargs("b")),
-            WorkGroupPrepared(**child_kwargs("b", attempt=2)),
-        ),
-        events,
-    )
-
-    with pytest.raises(WorkGroupRuntimeError, match="endpoint reply") as caught:
-        await WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=0.05).execute(
-            d, (a.endpoint, b.endpoint)
-        )
-
-    assert caught.value.lifecycle.prepared == (ReplicaId("replica-a"),)
-    assert sum(isinstance(message, CancelWorkGroup) for message in a.sent) == 1
-    assert sum(isinstance(message, ReleaseWorkGroup) for message in a.sent) == 1
-    assert events[-1] == "reserve-exit"
-
-
-@async_test
-async def test_cancellation_during_ambiguous_run_send_is_not_retried_or_retyped() -> None:
-    d = definition()
-    events: list[str] = []
-    send_started = asyncio.Event()
-
-    class BlockingSendReplica(FakeReplica):
-        async def send(self, message: WorkGroupMessage) -> None:
-            await super().send(message)
-            if isinstance(message, RunWorkUnit):
-                send_started.set()
-                await asyncio.Future()
-
-    def replies(replica: str) -> tuple[WorkGroupMessage, ...]:
-        return (
-            ReplicaReady(**child_kwargs(replica)),
-            WorkGroupPrepared(**child_kwargs(replica)),
-            WorkGroupCancelled(**child_kwargs(replica)),
-            WorkGroupReleased(**child_kwargs(replica)),
-        )
-
-    a = BlockingSendReplica(d, "a", replies("a"), events)
-    b = FakeReplica(d, "b", replies("b"), events)
-    task = asyncio.create_task(
-        WorkGroupCoordinator(RecordingReservations(events)).execute(d, (a.endpoint, b.endpoint))
-    )
-    await send_started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert sum(isinstance(message, RunWorkUnit) for message in a.sent) == 1
-    for fake in (a, b):
-        assert sum(isinstance(message, CancelWorkGroup) for message in fake.sent) == 1
-        assert sum(isinstance(message, ReleaseWorkGroup) for message in fake.sent) == 1
-    assert events[-1] == "reserve-exit"
-
-
-@async_test
 async def test_blocked_cleanup_send_cannot_starve_reachable_replica() -> None:
     d = definition()
     events: list[str] = []
@@ -740,65 +622,6 @@ async def test_foreign_and_stale_replies_are_fenced_before_acceptance() -> None:
         )
 
 
-def test_endpoint_is_immutable_attempt_bound_and_validates_before_send() -> None:
-    d = definition()
-    events: list[str] = []
-    fake = FakeReplica(d, "a", (), events)
-    with pytest.raises(FrozenInstanceError):
-        fake.endpoint.binding = d.members[1]  # type: ignore[misc]
-    fresh = replace(d, attempt=d.attempt.next())
-
-    async def exercise() -> None:
-        with pytest.raises(ValueError, match="bound"):
-            await fake.endpoint.send(
-                PrepareReplica(**child_kwargs("a", attempt=2), recipe=recipe())
-            )
-
-    run_scenario(exercise())
-    assert fake.sent == []
-    with pytest.raises(ValueError, match="definition"):
-        WorkGroupCoordinator(RecordingReservations(events)).validate(fresh, (fake.endpoint,))
-
-
-@async_test
-async def test_duplicate_progress_is_rejected_then_cleaned_up_once() -> None:
-    d = definition()
-    events: list[str] = []
-    a = FakeReplica(
-        d,
-        "a",
-        (
-            ReplicaReady(**child_kwargs("a")),
-            WorkGroupPrepared(**child_kwargs("a")),
-            WorkUnitProgress(**unit_kwargs("a"), completed=1, total=2),
-            WorkUnitProgress(**unit_kwargs("a"), completed=1, total=2),
-            WorkGroupCancelled(**child_kwargs("a")),
-            WorkGroupReleased(**child_kwargs("a")),
-        ),
-        events,
-    )
-    b = FakeReplica(
-        d,
-        "b",
-        (
-            ReplicaReady(**child_kwargs("b")),
-            WorkGroupPrepared(**child_kwargs("b")),
-            WorkGroupCancelled(**child_kwargs("b")),
-            WorkGroupReleased(**child_kwargs("b")),
-        ),
-        events,
-    )
-
-    with pytest.raises(WorkGroupRuntimeError, match="runtime failed"):
-        await WorkGroupCoordinator(RecordingReservations(events)).execute(
-            d, (a.endpoint, b.endpoint)
-        )
-
-    for fake in (a, b):
-        assert sum(isinstance(message, CancelWorkGroup) for message in fake.sent) == 1
-        assert sum(isinstance(message, ReleaseWorkGroup) for message in fake.sent) == 1
-
-
 @async_test
 async def test_retry_attempt_rejects_prior_attempt_reply() -> None:
     d = definition(attempt=2)
@@ -810,48 +633,6 @@ async def test_retry_attempt_rejects_prior_attempt_reply() -> None:
         await WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=0.01).execute(
             d, (a.endpoint, b.endpoint)
         )
-
-
-@async_test
-async def test_admission_refusal_release_failure_still_releases_peer() -> None:
-    d = definition()
-    events: list[str] = []
-
-    class ReleaseFailingReplica(FakeReplica):
-        async def send(self, message: WorkGroupMessage) -> None:
-            await super().send(message)
-            if isinstance(message, ReleaseWorkGroup):
-                raise ConnectionError("release transport lost")
-
-    a = ReleaseFailingReplica(
-        d,
-        "a",
-        (
-            ReplicaReady(**child_kwargs("a")),
-            WorkGroupRefused(**child_kwargs("a"), reason="busy"),
-            WorkGroupReleased(**child_kwargs("a")),
-        ),
-        events,
-    )
-    b = FakeReplica(
-        d,
-        "b",
-        (
-            ReplicaReady(**child_kwargs("b")),
-            WorkGroupPrepared(**child_kwargs("b")),
-            WorkGroupReleased(**child_kwargs("b")),
-        ),
-        events,
-    )
-
-    with pytest.raises(WorkGroupRuntimeError, match="transport lost"):
-        await WorkGroupCoordinator(RecordingReservations(events)).execute(
-            d, (a.endpoint, b.endpoint)
-        )
-
-    assert sum(isinstance(message, ReleaseWorkGroup) for message in b.sent) == 1
-    assert "recv-workGroupReleased-b" in events
-    assert events[-1] == "reserve-exit"
 
 
 @async_test

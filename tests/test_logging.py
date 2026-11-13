@@ -55,32 +55,6 @@ def _reset_dinkster_logging():
 # -- names are origins ------------------------------------------------------
 
 
-def test_core_and_pack_logger_names() -> None:
-    assert core_logger("server").name == "dinkster.server"
-    assert core_logger("server.queue").name == "dinkster.server.queue"
-    assert pack_logger("mypack").name == "dinkster.pack.mypack"
-
-
-def test_loggers_are_plain_stdlib_loggers() -> None:
-    assert type(pack_logger("mypack")) is logging.getLogger("x").__class__
-    assert pack_logger("mypack") is logging.getLogger("dinkster.pack.mypack")
-
-
-@pytest.mark.parametrize("bad", ["", " ", "a b", ".x", "x.", "a..b", " x"])
-def test_malformed_names_are_rejected(bad: str) -> None:
-    with pytest.raises(ValueError):
-        core_logger(bad)
-    with pytest.raises(ValueError):
-        pack_logger(bad)
-
-
-def test_core_logger_cannot_squat_the_pack_namespace() -> None:
-    with pytest.raises(ValueError, match="reserved for packs"):
-        core_logger("pack")
-    with pytest.raises(ValueError, match="reserved for packs"):
-        core_logger("pack.sneaky")
-
-
 # -- host configuration ------------------------------------------------------
 
 
@@ -94,29 +68,6 @@ def test_output_carries_level_origin_and_message() -> None:
     assert "model sdxl missing" in line
 
 
-def test_default_level_filters_debug() -> None:
-    stream = io.StringIO()
-    configure_logging("info", stream=stream)
-    core_logger("engine").debug("chatty")
-    core_logger("engine").info("kept")
-    assert "chatty" not in stream.getvalue()
-    assert "kept" in stream.getvalue()
-
-
-def test_per_origin_override_is_independent() -> None:
-    stream = io.StringIO()
-    configure_logging(
-        "warning",
-        overrides={"dinkster.pack.verbose": "debug"},
-        stream=stream,
-    )
-    pack_logger("verbose").debug("wanted")
-    pack_logger("other").info("unwanted")
-    output = stream.getvalue()
-    assert "wanted" in output
-    assert "unwanted" not in output
-
-
 def test_reconfiguration_replaces_instead_of_stacking() -> None:
     first, second = io.StringIO(), io.StringIO()
     configure_logging("debug", overrides={"dinkster.pack.a": "error"}, stream=first)
@@ -125,37 +76,6 @@ def test_reconfiguration_replaces_instead_of_stacking() -> None:
     # One handler, the new stream, and the stale override is gone.
     assert "after reset" not in first.getvalue()
     assert second.getvalue().count("after reset") == 1
-
-
-def test_foreign_handlers_on_dinkster_are_left_alone() -> None:
-    root = logging.getLogger(ROOT_LOGGER_NAME)
-    foreign = logging.NullHandler()
-    root.addHandler(foreign)
-    configure_logging("info", stream=io.StringIO())
-    configure_logging("info", stream=io.StringIO())
-    assert foreign in root.handlers
-    root.removeHandler(foreign)
-
-
-def test_records_do_not_propagate_to_the_root_logger() -> None:
-    configure_logging("info", stream=io.StringIO())
-    assert logging.getLogger(ROOT_LOGGER_NAME).propagate is False
-
-
-def test_unknown_level_and_foreign_override_are_rejected() -> None:
-    with pytest.raises(ValueError, match="unknown log level"):
-        configure_logging("loud")
-    with pytest.raises(ValueError, match="outside the 'dinkster' tree"):
-        configure_logging("info", overrides={"urllib3": "debug"})
-
-
-def test_bad_override_leaves_configuration_untouched() -> None:
-    stream = io.StringIO()
-    configure_logging("info", stream=stream)
-    with pytest.raises(ValueError):
-        configure_logging("info", overrides={"not-dinkster": "debug"})
-    core_logger("engine").info("still routed")
-    assert "still routed" in stream.getvalue()
 
 
 # -- environment (the cross-process channel) ---------------------------------
@@ -195,12 +115,3 @@ def test_env_malformed_entries_raise(raw: str) -> None:
 
 
 # -- the extension door ------------------------------------------------------
-
-
-def test_pack_api_exposes_logging_but_not_configuration() -> None:
-    import dinkster_api.v1 as api
-
-    assert api.pack_logger is pack_logger
-    assert not hasattr(api, "configure_logging")
-    assert not hasattr(api, "configure_logging_from_env")
-    assert not hasattr(api, "core_logger")

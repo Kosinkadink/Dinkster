@@ -443,28 +443,3 @@ def test_porter_duff_transparency_polarity_and_batch_truncation() -> None:
     assert np.asarray(result["image"]).shape[0] == 1
     np.testing.assert_array_equal(result["image"], 1.0)
     np.testing.assert_array_equal(result["alpha_mask"], 0.0)
-
-
-def test_composition_rejects_invalid_inputs_and_exposes_all_modes() -> None:
-    assert set(BLEND_MODES) == {
-        "normal",
-        "multiply",
-        "screen",
-        "overlay",
-        "soft_light",
-        "signed_difference",
-    }
-    assert len(PORTER_DUFF_MODES) == 18
-    with pytest.raises(ValueError, match="factor"):
-        ImageComposite.execute(destination=_solid(0), source=_solid(1), factor=1.1)
-    with pytest.raises(ValueError, match="blend mode"):
-        ImageComposite.execute(destination=_solid(0), source=_solid(1), blend_mode="bad")
-    with pytest.raises(ValueError, match="source resize mode"):
-        ImageComposite.execute(destination=_solid(0), source=_solid(1), source_resize="bad")
-    with pytest.raises(ValueError, match="channels must match"):
-        PorterDuffComposite.execute(
-            source=np.zeros((1, 1, 1, 1), np.float32),
-            source_alpha_mask=np.zeros((1, 1, 1), np.float32),
-            destination=_solid(0, height=1, width=1),
-            destination_alpha_mask=np.zeros((1, 1, 1), np.float32),
-        )

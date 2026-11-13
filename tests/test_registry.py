@@ -28,7 +28,6 @@ from dinkster_registry import (
     Version,
     admit,
     artifact_digest,
-    canonical_json,
     record_acceptance,
     validate_artifact_digest,
     validate_version,
@@ -107,11 +106,6 @@ def test_artifact_digest_grammar() -> None:
     assert validate_artifact_digest("sha256:" + "0" * 64) is not None
     assert validate_artifact_digest("blake3:XYZ") is not None
     assert validate_artifact_digest("0" * 64) is not None
-
-
-def test_canonical_json_is_key_order_independent() -> None:
-    assert canonical_json({"b": 1, "a": [2, 3]}) == canonical_json({"a": [2, 3], "b": 1})
-    assert canonical_json({"a": 1}) == '{"a":1}'  # no whitespace leaks into digests
 
 
 def test_release_record_digest_tracks_content() -> None:

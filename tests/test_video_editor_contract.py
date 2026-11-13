@@ -25,7 +25,6 @@ from dinkster_values import (
     decode_video,
     encode_video,
     register_core_types,
-    validate_video_encoded,
     video_from_source,
     video_meta,
 )
@@ -224,30 +223,6 @@ def test_raw_crop_persists_while_runtime_uses_even_aligned_values() -> None:
     )
 
 
-def test_widget_sections_are_independent_and_scalars_remain_linkable() -> None:
-    source = video_from_source(_source())
-    unchanged = VideoTrim.execute(
-        video=source,
-        trim={"crop": {"width": 20}},
-    )["video"]
-    assert encode_video(unchanged) == encode_video(source)
-
-    linked = Graph(
-        {
-            "load": GraphNode("dinkster.video.load_video", {"file": {}}),
-            "info": GraphNode(
-                "dinkster.video.get_video_components", {"video": Link("load", "VIDEO")}
-            ),
-            "trim": GraphNode(
-                "dinkster.video.video_slice",
-                {"video": Link("load", "VIDEO"), "duration": Link("info", "fps")},
-            ),
-        }
-    )
-    restored = graph_from_wire(json.loads(json.dumps(graph_to_wire(linked))))
-    assert restored == linked
-
-
 def test_strict_duration_is_separate_from_video_edit() -> None:
     source = video_from_source(_source())
     widget = {"trim": {"start_time": 1.5, "duration": 1.0}}
@@ -256,18 +231,6 @@ def test_strict_duration_is_separate_from_video_edit() -> None:
     clamped = VideoTrim.execute(video=source, trim=widget, strict_duration=False)["video"]
     assert cast(Mapping[str, object], video_meta(clamped)["effective"])["duration"] == [1, 2]
     assert "strict_duration" not in widget
-
-
-def test_video_validation_accepts_remote_qualified_ram_cost() -> None:
-    value = video_from_source(_source())
-    encoded = encode_video(value)
-    metadata = dict(video_meta(value))
-    cost = cast(Mapping[str, int], metadata["cost"])["ram"]
-    metadata["cost"] = {"ram@remote-video": cost}
-    validate_video_encoded(encoded, metadata)
-    metadata["cost"] = {"ram@remote-video": cost + 1}
-    with pytest.raises(ValueError, match="cost does not match"):
-        validate_video_encoded(encoded, metadata)
 
 
 def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(

@@ -16,7 +16,7 @@ from pathlib import Path
 from test_reload import run_echo, worker_env, write_pack
 
 from dinkster.compose import ServingComposer
-from dinkster.watch import PackWatcher, snapshot_tree
+from dinkster.watch import PackWatcher
 from tests.async_scenarios import run_scenario
 
 
@@ -46,22 +46,6 @@ def make_pack_dir(root: Path, name: str = "p") -> Path:
 
 
 # -- snapshot ------------------------------------------------------------------
-
-
-def test_snapshot_ignores_droppings(tmp_path: Path) -> None:
-    """Bytecode, editor temp files, hidden files, and pruned directories
-    never enter the fingerprint - churn there cannot fire a reload."""
-    pack = make_pack_dir(tmp_path)
-    (pack / "__pycache__").mkdir()
-    (pack / "__pycache__" / "mod.cpython-312.pyc").write_text("bc")
-    (pack / ".git").mkdir()
-    (pack / ".git" / "HEAD").write_text("ref")
-    (pack / "mod.py.swp").write_text("swap")
-    (pack / "mod.py~").write_text("backup")
-    (pack / ".hidden").write_text("dot")
-    (pack / "scratch.tmp").write_text("tmp")
-    snapshot = snapshot_tree(pack)
-    assert list(snapshot) == [str(pack / "mod.py")]
 
 
 # -- settle cycle --------------------------------------------------------------

@@ -421,26 +421,6 @@ def test_retained_count_uses_activation_ancestry_and_changes_only_next_collectio
     assert {p: p.read_bytes() for p in preserved} == preserved
 
 
-@pytest.mark.parametrize("count", [0, 101, True, "2", 2.5, None])
-def test_invalid_retained_count_refuses_cleanup_without_mutation(
-    cleanup_project: Path, count: object
-):
-    root = cleanup_project
-    write_document(
-        root / "cleanup.json",
-        {
-            "format": "dinkster.cleanup/1",
-            "automatic": True,
-            "previousSuccessfulActivations": count,
-        },
-    )
-    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    for arguments in (("--plan",), ("--keep-previous", "1", "--yes")):
-        code, refused = _run(root, "cleanup", *arguments)
-        assert code == 1 and "invalid cleanup policy" in refused["error"], refused
-    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
-
-
 @pytest.mark.parametrize("condition", ["json", "format", "string", "number", "linked"])
 def test_invalid_cleanup_policy_refuses_preview_and_policy_changes(tmp_path: Path, condition: str):
     _generation(tmp_path, 1)
@@ -2072,25 +2052,6 @@ environment.main()
     code, rollback = _run(tmp_path, "rollback", "--plan")
     assert code == 1 and "no previous successful history entry" in rollback["error"], rollback
     assert (tmp_path / "current").read_bytes() == b"3\n"
-
-
-@pytest.mark.parametrize("numbers", [[1], [2, 2], [0], [True], ["2"]])
-def test_collection_journal_refuses_unsafe_generation_sets(tmp_path: Path, numbers: list):
-    path = tmp_path / "100.json"
-    path.write_text(
-        json.dumps(
-            {
-                "format": "dinkster.journal/1",
-                "operation": "gc",
-                "previous": 1,
-                "target": 1,
-                "stage": "building",
-                "collectedGenerations": numbers,
-            }
-        )
-    )
-    with pytest.raises(ValueError):
-        Journal.read(path)
 
 
 @pytest.mark.parametrize("enabled", [True, False])

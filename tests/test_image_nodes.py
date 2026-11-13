@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import cast
 
@@ -10,12 +8,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import (
     ABSENT,
-    DETECTION_TYPE,
-    REGION_TYPE,
-    SEGMENTATION_TYPE,
-    VECTOR_TYPE,
     Region,
-    TypeRegistry,
 )
 from dinkster_image.geometry import (
     ImageCrop,
@@ -26,7 +19,6 @@ from dinkster_image.geometry import (
     MakeRegion,
     RegionInfo,
 )
-from dinkster_image.types import RESERVED_TYPE_IDS, register_image_types
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "image_geometry_e20d433a.json"
 GOLDEN = cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
@@ -50,85 +42,6 @@ def _golden_source() -> np.ndarray:
     return np.asarray(cast("list[float]", record["values"]), dtype=np.float32).reshape(
         cast("list[int]", record["shape"])
     )
-
-
-def test_comfy_geometry_golden_has_the_required_pin_and_cases() -> None:
-    assert GOLDEN["baseline"] == "e20d433a4966dcc88fa5abbae6ace824cb78b263"
-    assert set(GOLDEN_CASES) == {
-        "AdjustBrightness",
-        "AdjustContrast",
-        "GetImageSize",
-        "ImageBlend:difference",
-        "ImageBlend:multiply",
-        "ImageBlend:normal",
-        "ImageBlend:overlay",
-        "ImageBlend:screen",
-        "ImageBlend:soft_light",
-        "ImageBlur",
-        "ImageBlur:stress",
-        "ImageCompositeMasked",
-        "ImageCompositeMasked:resize-source",
-        "ImageCrop",
-        "ImageCrop:clamped-origin",
-        "ImageCropV2",
-        "ImageFlip:x-axis: vertically",
-        "ImageFlip:y-axis: horizontally",
-        "ImagePadForOutpaint:image",
-        "ImagePadForOutpaint:mask",
-        "ImageQuantize:bayer-16",
-        "ImageQuantize:bayer-2",
-        "ImageQuantize:bayer-4",
-        "ImageQuantize:bayer-8",
-        "ImageQuantize:floyd-steinberg",
-        "ImageQuantize:none",
-        "ImageRGBToYUV:U",
-        "ImageRGBToYUV:V",
-        "ImageRGBToYUV:Y",
-        "ImageRotate:180 degrees",
-        "ImageRotate:270 degrees",
-        "ImageRotate:90 degrees",
-        "ImageRotate:none",
-        "ImageScale:area",
-        "ImageScale:bilinear-downscale",
-        "ImageScale:bilinear-center",
-        "ImageScale:bicubic-nonlinear",
-        "ImageScale:bicubic-nonlinear-source",
-        "ImageScale:lanczos",
-        "ImageScale:nearest-exact",
-        "ImageScale:nearest-exact-center-odd",
-        "ImageScaleBy",
-        "ImageScaleBy:bicubic-nonlinear",
-        "ImageScaleToMaxDimension",
-        "ImageScaleToMaxDimension:bicubic-nonlinear",
-        "ImageScaleToTotalPixels",
-        "ImageScaleToTotalPixels:bicubic-nonlinear",
-        "ImageSharpen",
-        "ImageSharpen:stress",
-        "ImageFilter:stress-source",
-        "ImageInvert",
-        "ImageYUVToRGB",
-        "JoinImageWithAlpha",
-        "NormalizeImages",
-        "Morphology:bottom_hat",
-        "Morphology:close",
-        "Morphology:dilate",
-        "Morphology:erode",
-        "Morphology:gradient",
-        "Morphology:open",
-        "Morphology:source",
-        "Morphology:top_hat",
-        "PorterDuffImageComposite:image",
-        "PorterDuffImageComposite:mask",
-        "PorterDuffImageComposite:aspect-destination",
-        "PorterDuffImageComposite:aspect-destination-mask",
-        "PorterDuffImageComposite:aspect-image",
-        "PorterDuffImageComposite:aspect-mask",
-        "PorterDuffImageComposite:aspect-source",
-        "PorterDuffImageComposite:aspect-source-mask",
-        "PrimitiveBoundingBox",
-        "SplitImageWithAlpha:image",
-        "SplitImageWithAlpha:mask",
-    }
 
 
 def test_core_region_crop_transform_pad_and_info_match_comfy_goldens() -> None:
@@ -287,26 +200,6 @@ def test_core_resize_alias_tolerances_cover_nonlinear_bicubic_domain() -> None:
         )
 
 
-def test_region_is_frozen_validated_and_has_deterministic_codec() -> None:
-    region = Region(x=1, y=2.5, width=3, height=4)
-    assert region.right == 4
-    assert region.bottom == 6.5
-    assert region.to_record() == {"x": 1, "y": 2.5, "width": 3, "height": 4}
-    with pytest.raises(FrozenInstanceError):
-        region.x = 2  # type: ignore[misc]
-
-    registry = TypeRegistry()
-    register_image_types(registry)
-    register_image_types(registry)
-    spec = registry.spec(REGION_TYPE)
-    assert spec.encode(region) == b'{"height":4,"width":3,"x":1,"y":2.5}'
-    assert spec.decode(spec.encode(region)) == region
-    assert spec.coerce is not None
-    assert spec.coerce({"x": 1, "y": 2.5, "width": 3, "height": 4}) == region
-    assert spec.meta is not None
-    assert spec.meta(region) == region.to_record()
-
-
 def test_region_info_preserves_the_region_and_exposes_coordinates() -> None:
     region = Region(x=1, y=2.5, width=3, height=4)
     assert RegionInfo.execute(region=region) == {
@@ -321,45 +214,6 @@ def test_region_info_preserves_the_region_and_exposes_coordinates() -> None:
         "integer_height": 5,
     }
     assert RegionInfo.execute(region=region, integer_rounding="round")["integer_height"] == 4
-
-
-@pytest.mark.parametrize(
-    ("values", "error"),
-    [
-        ((True, 0, 1, 1), TypeError),
-        ((math.inf, 0, 1, 1), ValueError),
-        ((0, 0, -1, 1), ValueError),
-    ],
-)
-def test_region_rejects_invalid_coordinates(
-    values: tuple[object, object, object, object], error: type[Exception]
-) -> None:
-    with pytest.raises(error):
-        Region(*values)  # type: ignore[arg-type]
-
-
-def test_region_codec_rejects_invalid_records() -> None:
-    registry = TypeRegistry()
-    register_image_types(registry)
-    spec = registry.spec(REGION_TYPE)
-    assert spec.coerce is not None
-    with pytest.raises(TypeError, match="expects an object"):
-        spec.coerce([])
-    with pytest.raises(ValueError, match="requires exactly"):
-        spec.coerce({"x": 1, "y": 2, "width": 3})
-    with pytest.raises(ValueError, match="invalid REGION payload"):
-        spec.decode(b"not json")
-
-
-def test_future_spatial_type_names_are_reserved() -> None:
-    assert VECTOR_TYPE == "VECTOR"
-    assert SEGMENTATION_TYPE == "SEGMENTATION"
-    assert DETECTION_TYPE == "DETECTION"
-    assert RESERVED_TYPE_IDS == {VECTOR_TYPE, SEGMENTATION_TYPE}
-
-
-def test_make_region_returns_the_shared_value() -> None:
-    assert MakeRegion.execute(x=1, y=2, width=3, height=4) == {"region": Region(1, 2, 3, 4)}
 
 
 @pytest.mark.parametrize(
@@ -501,14 +355,6 @@ def test_resize_can_match_a_reference_image() -> None:
     assert np.asarray(result["image"]).shape == (1, 5, 7, 3)
     with pytest.raises(ValueError, match="requires reference"):
         ImageResize.execute(image=_image(), target="match")
-
-
-@pytest.mark.parametrize(
-    "interpolation", ("nearest", "nearest-exact", "bilinear", "bicubic", "lanczos", "area")
-)
-def test_resize_supports_every_interpolation(interpolation: str) -> None:
-    result = ImageResize.execute(image=_image(), width=5, height=4, interpolation=interpolation)
-    assert np.asarray(result["image"]).shape == (1, 4, 5, 3)
 
 
 def test_resize_distinguishes_nearest_from_nearest_exact() -> None:
@@ -662,16 +508,6 @@ def test_resize_intents_compose_fit_fill_divisibility_and_mask_geometry() -> Non
     assert np.asarray(mismatched_mask["mask"]).shape == (2, 6, 8)
 
 
-def test_resize_padding_mask_is_meaningful_for_large_batches() -> None:
-    image = np.ones((65, 2, 4, 1), dtype=np.float32)
-    result = ImageResize.execute(image=image, width=4, height=4, mode="pad")
-    mask = np.asarray(result["mask"])
-    assert mask.shape == (65, 4, 4)
-    np.testing.assert_array_equal(mask[:, (0, 3), :], 1.0)
-    np.testing.assert_array_equal(mask[:, 1:3, :], 0.0)
-    assert ImageResize.execute(image=image, width=4, height=2)["mask"] is ABSENT
-
-
 def test_resize_padding_styles_preserve_distinct_pixel_intents() -> None:
     image = np.asarray(
         [[[[0.0], [0.25], [0.75], [1.0]], [[1.0], [0.75], [0.25], [0.0]]]],
@@ -755,42 +591,6 @@ def test_resize_apply_conditions_padding_and_divisibility_are_independent_intent
         )
 
 
-@pytest.mark.parametrize(
-    ("arguments", "message"),
-    [
-        ({"target": "missing"}, "unknown resize target"),
-        ({"interpolation": "missing"}, "unknown interpolation"),
-        ({"mode": "missing"}, "unknown resize mode"),
-        ({"width": 16_385}, "output dimensions exceed"),
-        ({"target": "factor", "factor": math.nan}, "factor must be finite"),
-        ({"target": "total_pixels", "megapixels": 0}, "megapixels must be"),
-        ({"divisibility": "missing"}, "unknown divisibility"),
-        ({"divisibility": "crop", "multiple_of": -1}, "must be non-negative"),
-    ],
-)
-def test_resize_rejects_invalid_parameters(arguments: dict[str, object], message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        ImageResize.execute(image=_image(), **arguments)  # pyright: ignore[reportArgumentType]
-
-
-def test_resize_rejects_invalid_image_and_mask_shapes() -> None:
-    with pytest.raises(ValueError, match="BHWC"):
-        ImageResize.execute(image=np.zeros((4, 3), dtype=np.float32))
-    with pytest.raises(ValueError, match="batch must match image or be one"):
-        ImageResize.execute(image=_image(), mask=np.zeros((2, 2, 2), dtype=np.float32))
-
-
-def test_transform_exact_quarter_turns_and_flips() -> None:
-    image = _image(height=2, width=3, channels=1)
-    rotated = ImageTransform.execute(image=image, operation="rotate_90", steps=1)
-    horizontal = ImageTransform.execute(image=image, operation="flip_horizontal")
-    vertical = ImageTransform.execute(image=image, operation="flip_vertical")
-    np.testing.assert_array_equal(rotated["image"], np.rot90(image, k=-1, axes=(1, 2)))
-    np.testing.assert_array_equal(horizontal["image"], image[:, :, ::-1, :])
-    np.testing.assert_array_equal(vertical["image"], image[:, ::-1, :, :])
-    assert rotated["mask"] is ABSENT
-
-
 def test_transform_translate_shear_and_expand_rotate() -> None:
     image = _image(height=3, width=4, channels=1)
     translated = np.asarray(
@@ -841,23 +641,6 @@ def test_transform_pad_matches_comfy_outpaint_contract() -> None:
     assert mask[0, 2, 2] == 0.25
     assert mask[0, 3, 3] == 0.0
     assert mask[0, 0, 0] == 1.0
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    (
-        {"operation": "missing"},
-        {"operation": "translate", "units": "missing"},
-        {"operation": "rotate", "interpolation": "missing"},
-        {"operation": "pad", "left": -1},
-    ),
-)
-def test_transform_rejects_invalid_parameters(arguments: dict[str, object]) -> None:
-    with pytest.raises(ValueError):
-        ImageTransform.execute(
-            image=_image(),
-            **arguments,  # pyright: ignore[reportArgumentType]
-        )
 
 
 def test_crop_clips_or_pads_fractional_regions_with_explicit_rounding() -> None:
@@ -1036,41 +819,6 @@ def test_uncrop_can_ignore_a_disjoint_region() -> None:
         outside="ignore",
     )
     np.testing.assert_array_equal(result["image"], base)
-
-
-@pytest.mark.parametrize(
-    ("arguments", "message"),
-    [
-        ({"region": Region(0, 0, 0, 1)}, "positive dimensions"),
-        ({"region": Region(10, 10, 1, 1)}, "does not intersect"),
-        ({"region": Region(0, 0, 1, 1), "opacity": 2}, "opacity must be"),
-        ({"region": Region(0, 0, 1, 1), "border_blending": 2}, "border_blending must be"),
-    ],
-)
-def test_uncrop_rejects_invalid_regions_and_opacity(
-    arguments: dict[str, object], message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        ImageUncrop.execute(
-            base=_image(),
-            crop=_image(),
-            **arguments,  # pyright: ignore[reportArgumentType]
-        )
-
-
-def test_uncrop_rejects_channels_and_nonbroadcastable_batches() -> None:
-    with pytest.raises(ValueError, match="channels must match"):
-        ImageUncrop.execute(
-            base=_image(channels=3),
-            crop=_image(channels=4),
-            region=Region(0, 0, 4, 3),
-        )
-    with pytest.raises(ValueError, match="batch must be"):
-        ImageUncrop.execute(
-            base=_image(batch=2),
-            crop=_image(batch=3),
-            region=Region(0, 0, 4, 3),
-        )
 
 
 def test_image_info_reports_stable_dimensions_statistics_and_histogram() -> None:

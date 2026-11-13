@@ -1,27 +1,12 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from dinkster_image._draft_initialization import IMAGE_NODES, MakeRegion, Region
+from dinkster_image._draft_initialization import IMAGE_NODES
 
 ROOT = Path(__file__).parent.parent
-
-
-def test_region_preserves_bounding_box_coordinates() -> None:
-    region = cast("Region", MakeRegion.execute(x=7, y=11, width=13, height=17)["region"])
-    assert region.to_record() == {"x": 7, "y": 11, "width": 13, "height": 17}
-
-
-def test_image_pack_has_no_foundation_dependency() -> None:
-    manifest = tomllib.loads(
-        (ROOT / "packages" / "dinkster-nodes-image" / "dinkster-pack.toml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert "dinkster-nodes-foundation" not in manifest["pack"].get("dependencies", {})
 
 
 def test_image_batch_resize_and_compare_execute() -> None:

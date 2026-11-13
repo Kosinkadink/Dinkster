@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,11 +17,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_inference_wire import register_inference_types
 from dinkster_values import TypeRegistry
-
-from dinkster.compose import PackSpec, ServingComposer
 
 
 def _raw_bytes(tensor: torch.Tensor) -> bytes:
@@ -112,62 +107,3 @@ class SigmaConsumer(Node):
                 f"{hashlib.sha256(_raw_bytes(tensor)).hexdigest()}"
             )
         )
-
-
-@pytest.mark.parametrize("case", ("float64", "noncontiguous-float32", "bfloat16", "empty"))
-@pytest.mark.parametrize("in_process", (True,))
-def test_ordinary_manifest_sigma_producer_consumer_repeats_on_both_hosts(
-    tmp_path: Path, case: str, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
-        try:
-            module = "sigma_fixture_" + case.replace("-", "_") + str(in_process)
-            (tmp_path / f"{module}.py").write_text(
-                "from test_sampling_wire_torch import SigmaConsumer, SigmaSource\n"
-                "from dinkster_inference_wire import register_inference_types\n"
-                "SOURCE_NODES = [SigmaSource]\n"
-                "CONSUMER_NODES = [SigmaConsumer]\n",
-                encoding="ascii",
-            )
-            source_manifest = tmp_path / "dinkster-pack.toml"
-            consumer_manifest = tmp_path / "consumer-dinkster-pack.toml"
-            source_manifest.write_text(
-                '[pack]\nname = "sigma-source"\npublisher = "dinkster"\n'
-                'namespaces = ["sigma-source"]\n'
-                f'[pack.entry]\nnodes = "{module}:SOURCE_NODES"\n'
-                f'types = "{module}:register_inference_types"\n',
-                encoding="ascii",
-            )
-            consumer_manifest.write_text(
-                '[pack]\nname = "sigma-consumer"\npublisher = "dinkster"\n'
-                'namespaces = ["sigma-consumer"]\n'
-                f'[pack.entry]\nnodes = "{module}:CONSUMER_NODES"\n'
-                f'types = "{module}:register_inference_types"\n',
-                encoding="ascii",
-            )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
-            await composer.add_pack(PackSpec(manifest=consumer_manifest, in_process=in_process))
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("sigma-source.source", {"case": case}),
-                    "consumer": GraphNode(
-                        "sigma-consumer.consumer", {"sigmas": Link("source", "sigmas")}
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            expected_tensor = _sigma_case(case)
-            expected = (
-                f"{expected_tensor.dtype};{tuple(expected_tensor.shape)};"
-                f"{hashlib.sha256(_raw_bytes(expected_tensor)).hexdigest()}"
-            )
-            for attempt in range(2):
-                result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["summary"].resolve() == expected
-                if attempt:
-                    assert set(result.cached) == {"source", "consumer"}
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

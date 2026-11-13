@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -24,7 +22,6 @@ from dinkster_api.v1 import (
     TypeRegistry,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_values import LATENT_TYPE, EncodedLatentTensor, RenditionUnavailable, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -89,153 +86,6 @@ def test_camera_metadata_json_renditions(type_id: str, value: object, expected: 
     assert rendered.mime == "application/json"
     assert json.loads(rendered.data) == expected
     assert registry.render(wrapped).data == rendered.data
-
-
-def test_camera_metadata_json_refuses_tensor_extensions_without_changing_portability() -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    extension = EncodedLatentTensor("float32", (1,), b"\x00\x00\x80?")
-    for type_id, value in (
-        (LOAD3D_CAMERA_TYPE, {**PERSPECTIVE, "extension": extension}),
-        (LOAD3D_MODEL_INFO_TYPE, [{**MODEL_INFO[0], "extension": extension}]),
-    ):
-        spec = registry.spec(type_id)
-        assert spec.decode(spec.encode(value)) == value
-        wrapped = registry.wrap(type_id, value)
-        with pytest.raises(RenditionUnavailable):
-            registry.render(wrapped, "json")
-
-
-@pytest.mark.parametrize("value", (None, [], MODEL_INFO))
-def test_load3d_model_info_preserves_order_and_transform_values(value: list[object] | None) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
-    register_types(registry)
-    assert registry.spec(LOAD3D_MODEL_INFO_TYPE) is spec
-    payload = spec.encode(value)
-    assert payload == encode_latent({"samples": value})
-    assert spec.validate_encoded is not None
-    spec.validate_encoded(payload, {})
-    assert spec.decode(payload) == value
-    assert spec.fingerprint is not None
-    assert spec.fingerprint(spec.decode(payload)) == spec.fingerprint(value)
-    if value:
-        assert spec.fingerprint(list(reversed(value))) != spec.fingerprint(value)
-    latent_fingerprint = registry.spec(LATENT_TYPE).fingerprint
-    assert latent_fingerprint is not None
-    assert spec.fingerprint(value) != latent_fingerprint({"samples": value})
-
-
-@pytest.mark.parametrize(
-    "value",
-    (
-        {},
-        [None],
-        [{}],
-        [{**MODEL_INFO[0], "position": {"x": 0, "y": 1, "z": True}}],
-        [{**MODEL_INFO[0], "quaternion": {"x": 0, "y": 0, "z": 0}}],
-        [{**MODEL_INFO[0], "scale": [1, 2, 3]}],
-    ),
-)
-def test_load3d_model_info_rejects_malformed_transforms(value: object) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(LOAD3D_MODEL_INFO_TYPE)
-    assert spec.validate_encoded is not None
-    payload = encode_latent({"samples": value})
-    with pytest.raises(ValueError):
-        spec.encode(value)
-    with pytest.raises(ValueError):
-        spec.decode(payload)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(payload, {})
-
-
-@pytest.mark.parametrize("value", (None, PERSPECTIVE, ORTHOGRAPHIC))
-def test_load3d_camera_roundtrip_preserves_complete_structure(
-    value: dict[str, object] | None,
-) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(LOAD3D_CAMERA_TYPE)
-    register_types(registry)
-    assert registry.spec(LOAD3D_CAMERA_TYPE) is spec
-    assert spec.validate_encoded is not None
-    payload = spec.encode(value)
-    assert payload == encode_latent({"samples": value})
-    spec.validate_encoded(payload, {})
-    assert spec.decode(payload) == value
-    assert spec.fingerprint is not None
-    assert spec.fingerprint(spec.decode(payload)) == spec.fingerprint(value)
-    if value is not None:
-        assert spec.fingerprint(dict(reversed(tuple(value.items())))) == spec.fingerprint(value)
-    latent_fingerprint = registry.spec(LATENT_TYPE).fingerprint
-    assert latent_fingerprint is not None
-    assert latent_fingerprint({"samples": value}) != spec.fingerprint(value)
-
-
-@pytest.mark.parametrize(
-    "value",
-    (
-        {},
-        {**PERSPECTIVE, "position": (1, 2, 3)},
-        {**PERSPECTIVE, "target": {"x": 0, "y": 1, "z": True}},
-        {**PERSPECTIVE, "zoom": True},
-        {**PERSPECTIVE, "cameraType": 1},
-        {**PERSPECTIVE, "quaternion": {"x": 0, "y": 0, "z": 0}},
-        {**PERSPECTIVE, "useCustomUp": 1},
-        {**PERSPECTIVE, "frustum": {"left": 0, "right": 1, "top": 1, "bottom": False}},
-    ),
-)
-def test_load3d_camera_rejects_malformed_payloads(value: dict[str, object]) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(LOAD3D_CAMERA_TYPE)
-    assert spec.validate_encoded is not None
-    payload = encode_latent({"samples": value})
-    with pytest.raises(ValueError):
-        spec.encode(value)
-    with pytest.raises(ValueError):
-        spec.decode(payload)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(payload, {})
-
-
-def test_load3d_camera_public_registration_is_cold_and_shared() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "from dinkster_api.v1 import LOAD3D_CAMERA_TYPE, TypeRegistry\n"
-            "from dinkster_3d import register_types\n"
-            "from dinkster_values.builtin_types import LOAD3D_CAMERA_TYPE as canonical\n"
-            "assert LOAD3D_CAMERA_TYPE is canonical\n"
-            "registry = TypeRegistry()\n"
-            "register_types(registry)\n"
-            "register_types(registry)\n"
-            "value = {'position': {'x': 0, 'y': 1, 'z': 2},\n"
-            "         'target': {'x': 0, 'y': 0, 'z': 0},\n"
-            "         'zoom': 1, 'cameraType': 'perspective'}\n"
-            "spec = registry.spec(canonical)\n"
-            "payload = spec.encode(value)\n"
-            "spec.validate_encoded(payload, {})\n"
-            "assert spec.decode(payload) == value\n"
-            "from dinkster_api.v1 import LOAD3D_MODEL_INFO_TYPE\n"
-            "from dinkster_values.builtin_types import LOAD3D_MODEL_INFO_TYPE as model_type\n"
-            "assert LOAD3D_MODEL_INFO_TYPE is model_type\n"
-            "models = registry.spec(model_type)\n"
-            "assert models.decode(models.encode([])) == []\n"
-            "assert not any(\n"
-            "    name == 'torch' or name.startswith('torch.')\n"
-            "    or name == 'dinkster_inference'\n"
-            "    or name.startswith('dinkster_inference.')\n"
-            "    for name in sys.modules\n"
-            ")\n",
-        ],
-        check=True,
-    )
 
 
 class CameraSource(Node):

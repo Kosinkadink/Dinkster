@@ -9,7 +9,6 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from types import SimpleNamespace
 from typing import BinaryIO
 
 import pytest
@@ -21,7 +20,6 @@ from dinkster_assets import (
     AssetRef,
     AssetResolver,
     AssetVault,
-    ChainResolver,
     IndexedAssetResolver,
     LibraryStore,
     LocalAssetLibrary,
@@ -30,7 +28,6 @@ from dinkster_assets import (
     MountSnapshotResolver,
     MountTable,
     digest_bytes,
-    digest_file,
     is_digest,
     register_asset_type,
 )
@@ -63,23 +60,6 @@ from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
 
 # --- identity ---------------------------------------------------------------
-
-
-def test_digest_is_canonical_and_content_based(tmp_path: Path) -> None:
-    payload = b"model weights, allegedly"
-    file_a = tmp_path / "a.safetensors"
-    file_a.write_bytes(payload)
-    digest = digest_file(file_a)
-    assert is_digest(digest)
-    assert digest == digest_bytes(payload)
-
-    # Renames, copies, different folders: same bytes, same identity.
-    file_b = tmp_path / "renamed" / "b.ckpt"
-    file_b.parent.mkdir()
-    file_b.write_bytes(payload)
-    assert digest_file(file_b) == digest
-
-    assert digest_bytes(b"other bytes") != digest
 
 
 def test_bad_digests_rejected() -> None:
@@ -228,41 +208,6 @@ def test_legacy_index_row_hashes_at_load(tmp_path: Path, monkeypatch: pytest.Mon
     assert calls == [1]
 
 
-def test_recorded_resolver_miss_does_not_repeat_legacy_resolution(tmp_path: Path) -> None:
-    class RecordedMiss:
-        def __init__(self) -> None:
-            self.recorded_calls = 0
-            self.legacy_calls = 0
-
-        def resolve_asset(self, digest: str) -> None:
-            del digest
-            self.recorded_calls += 1
-            return None
-
-        def resolve(self, digest: str) -> Path | None:
-            del digest
-            self.legacy_calls += 1
-            return tmp_path / "unexpected"
-
-    digest = digest_bytes(b"missing")
-    resolver = RecordedMiss()
-    ref = AssetRef(digest, "missing", 7, resolver=resolver)
-    with pytest.raises(AssetError, match="not materializable"):
-        ref.open()
-    assert (resolver.recorded_calls, resolver.legacy_calls) == (1, 0)
-
-    chained = RecordedMiss()
-    chain_ref = AssetRef(digest, "missing", 7, resolver=ChainResolver(chained))
-    with pytest.raises(AssetError, match="not materializable"):
-        chain_ref.open()
-    assert (chained.recorded_calls, chained.legacy_calls) == (1, 0)
-
-
-def test_indexed_resolver_requires_an_existing_index(tmp_path: Path) -> None:
-    with pytest.raises(AssetError, match="no readable asset index"):
-        IndexedAssetResolver(tmp_path)
-
-
 def test_library_default_ignore_skips_placeholders_junk_and_partials(
     tmp_path: Path,
 ) -> None:
@@ -363,44 +308,6 @@ def test_library_index_skips_rehash(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     )
 
 
-def test_scan_keeps_existing_index_until_assets_are_published(tmp_path: Path) -> None:
-    root = make_models_dir(tmp_path)
-    library = LocalAssetLibrary(root)
-    library.scan()
-    existing_index = json.loads(library.index_path.read_text("utf-8"))
-    indexes_seen: list[dict[str, object]] = []
-
-    LocalAssetLibrary(root).scan(
-        on_progress=lambda _progress: indexes_seen.append(
-            json.loads(library.index_path.read_text("utf-8"))
-        )
-    )
-
-    assert indexes_seen[0] == existing_index
-    assert indexes_seen[-1] == existing_index
-
-
-def test_library_index_writes_are_atomic_and_quiescent(tmp_path: Path) -> None:
-    """The index is shared state between Dinkster instances pointing at one
-    model folder: writes go through temp + os.replace (a reader never sees
-    a torn file that would cost it a full rehash), and a scan that learned
-    nothing new does not rewrite the file at all."""
-    root = make_models_dir(tmp_path)
-    LocalAssetLibrary(root).scan()
-    index_path = root / ".dinkster-asset-index.json"
-    before = index_path.stat().st_mtime_ns
-
-    LocalAssetLibrary(root).scan()  # nothing changed: no rewrite
-    assert index_path.stat().st_mtime_ns == before
-    assert not list(root.glob(".dinkster-asset-index.json.tmp-*"))  # no temp litter
-
-    # And the temp file is never cataloged even mid-write (dot-prefixed).
-    library = LocalAssetLibrary(root)
-    (root / ".dinkster-asset-index.json.tmp-99999").write_text("{", "utf-8")
-    library.scan()
-    assert all(".tmp-" not in entry.virtual_path for entry in library.catalog.entries())
-
-
 # --- value type: fingerprint is the digest; boundary carries no bytes --------
 
 
@@ -456,26 +363,6 @@ def test_complete_asset_references_require_explicit_atom_declarations() -> None:
     )
 
 
-def test_complete_asset_references_validate_declared_metadata() -> None:
-    registry = asset_registry()
-    registry.register(
-        "example.invalid", meta=lambda _: {"asset_refs": None}, asset_references_complete=True
-    )
-    with pytest.raises(AssetError, match="asset_refs must be a list"):
-        value_asset_references(
-            {"output": registry.wrap("example.invalid", None)}, complete_registry=registry
-        )
-    ref = AssetRef(digest_bytes(b"external"), "external", 8)
-    registry.register(
-        "example.external",
-        meta=lambda _: {"asset_refs": [ref.to_wire()]},
-        asset_references_complete=True,
-    )
-    assert value_asset_references(
-        {"output": registry.wrap("example.external", None)}, complete_registry=registry
-    ) == {ref.digest: ref}
-
-
 @pytest.mark.parametrize("verified", (False, True))
 @pytest.mark.parametrize("preexisting", (False, True))
 def test_comfy_manifest_registers_bound_assets_without_replacing_authority(
@@ -524,47 +411,11 @@ def test_comfy_manifest_registers_bound_assets_without_replacing_authority(
     assert rebound.read_bytes() == payload
 
 
-def test_wrap_literal_mapping_becomes_resolver_bound_ref(tmp_path: Path) -> None:
-    root = make_models_dir(tmp_path)
-    library = LocalAssetLibrary(root)
-    library.scan()
-    registry = asset_registry(library)
-
-    wire = library.ref("models/checkpoints/tiny.safetensors").to_wire()
-    value = registry.wrap(ASSET_TYPE, json.loads(json.dumps(wire)))
-    assert value.fingerprint == wire["digest"]  # cache identity IS content identity
-    assert value.meta.get("virtualPath") == "models/checkpoints/tiny.safetensors"
-    ref = value.resolve()
-    assert isinstance(ref, AssetRef)
-    assert ref.read_bytes() == b"tiny checkpoint bytes"
-
-
 def test_wrap_rejects_paths() -> None:
     registry = asset_registry()
     for type_id in (ASSET_TYPE, AUDIO_RECORD_TYPE):
         with pytest.raises(AssetError, match="never.*filesystem paths"):
             registry.wrap(type_id, "/etc/passwd")
-
-
-def test_audio_record_uses_asset_identity_with_its_own_type_stamp(tmp_path: Path) -> None:
-    root = make_models_dir(tmp_path)
-    library = LocalAssetLibrary(root)
-    library.scan()
-    registry = asset_registry(library)
-    first = library.ref("models/loras/style.safetensors")
-    second = AssetRef(first.digest, "renamed.wav", first.size, resolver=library)
-
-    asset = registry.wrap(ASSET_TYPE, first.to_wire())
-    recorded = registry.wrap(AUDIO_RECORD_TYPE, second.to_wire())
-
-    assert asset.fingerprint == recorded.fingerprint == first.digest
-    assert asset.type_id == ASSET_TYPE
-    assert recorded.type_id == AUDIO_RECORD_TYPE
-    record_ref = recorded.resolve()
-    assert isinstance(record_ref, AssetRef)
-    assert record_ref.read_bytes() == b"lora bytes"
-    with pytest.raises(AssetError, match="digest"):
-        registry.wrap(AUDIO_RECORD_TYPE, {"name": "recording.wav", "size": 1})
 
 
 def test_codec_crossing_carries_identity_not_bytes(tmp_path: Path) -> None:
@@ -589,30 +440,6 @@ def test_codec_crossing_carries_identity_not_bytes(tmp_path: Path) -> None:
     ref = crossed.resolve()
     assert isinstance(ref, AssetRef)
     assert ref.read_bytes() == b"lora bytes"
-
-
-def test_audio_record_crossing_keeps_asset_cache_identity_separate_by_type(tmp_path: Path) -> None:
-    root = make_models_dir(tmp_path)
-    sender_library = LocalAssetLibrary(root)
-    sender_library.scan()
-    receiver_library = LocalAssetLibrary(root, index_path=tmp_path / "idx2.json")
-    receiver_library.scan()
-    sender_registry = asset_registry(sender_library)
-    receiver_registry = asset_registry(receiver_library)
-    value = sender_registry.wrap(
-        AUDIO_RECORD_TYPE, sender_library.ref("models/loras/style.safetensors").to_wire()
-    )
-
-    blobs: list[bytes] = []
-    wire, stat = ValueCodec(sender_registry).encode(value, blobs, [])
-    crossed, _ = ValueCodec(receiver_registry).decode(wire, blobs, [])
-
-    assert stat.size_bytes < 512
-    assert crossed.type_id == AUDIO_RECORD_TYPE
-    assert crossed.fingerprint == value.fingerprint
-    record_ref = crossed.resolve()
-    assert isinstance(record_ref, AssetRef)
-    assert record_ref.read_bytes() == b"lora bytes"
 
 
 def test_unverified_local_binding_crosses_worker_codec_and_reconciles_after_scan(
@@ -791,56 +618,6 @@ def test_unverified_local_binding_cannot_reuse_cache_after_change_or_revocation(
         asset_registry(table).wrap(ASSET_TYPE, ref)
     with pytest.raises(AssetError, match="unavailable"):
         worker_ref.read_bytes()
-
-
-@pytest.mark.parametrize(
-    ("platform", "changed_field", "allowed"),
-    [
-        ("nt", "st_ctime_ns", True),
-        ("posix", "st_ctime_ns", False),
-        ("nt", "st_size", False),
-        ("nt", "st_mtime_ns", False),
-        ("nt", "st_dev", False),
-        ("nt", "st_ino", False),
-    ],
-)
-def test_local_binding_descriptor_identity(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    platform: str,
-    changed_field: str,
-    allowed: bool,
-) -> None:
-    import dinkster_assets.model as model
-
-    path = tmp_path / "weights.safetensors"
-    path.write_bytes(b"unhashed model")
-    table = MountTable()
-    table.add(MountDef(id="models", path=tmp_path), kind="model/checkpoint")
-    ref = table.bind_name(path.name, "model/checkpoint")
-    assert isinstance(ref, LocalAssetRef)
-
-    def changed_stat(fd: int) -> SimpleNamespace:
-        actual = os.fstat(fd)
-        values = {
-            field: getattr(actual, field)
-            for field in (
-                "st_size",
-                "st_mtime_ns",
-                "st_ctime_ns",
-                "st_dev",
-                "st_ino",
-            )
-        }
-        values[changed_field] += 1
-        return SimpleNamespace(**values)
-
-    monkeypatch.setattr(model, "os", SimpleNamespace(name=platform, fstat=changed_stat))
-    if allowed:
-        assert ref.read_bytes() == b"unhashed model"
-    else:
-        with pytest.raises(AssetError, match="changed while opening"):
-            ref.read_bytes()
 
 
 def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:

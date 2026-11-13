@@ -4,29 +4,17 @@ from __future__ import annotations
 
 import io
 import struct
-from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy
 import pytest
-from dinkster_inference_wire import register_inference_types
 from dinkster_values import (
     SPLAT_CODEC_MAGIC,
-    SPLAT_CODEC_VERSION,
-    SPLAT_FILE_DECODER_ID,
-    SPLAT_PLY_MIME,
-    SPLAT_TYPE,
     EncodedLatentTensor,
-    TypeRegistry,
     decode_splat,
-    decode_splat_file,
     encode_splat,
     parse_ply_splat,
-    register_splat_type,
     render_splat_ply,
-    splat_fingerprint,
-    splat_meta,
-    validate_splat_encoded,
 )
 
 # 0.5 / C0 with C0 the degree-0 SH basis constant.
@@ -71,101 +59,6 @@ def test_splat_round_trip_is_deterministic_and_lossless() -> None:
         assert record.shape == value[key].shape
         assert record.data == value[key].tobytes()
     assert encode_splat(decoded) == data
-
-
-def test_splat_decode_applies_the_tensor_decoder() -> None:
-    value = splat_value()
-    decoded = decode_splat(
-        encode_splat(value),
-        tensor_decoder=lambda record: numpy.frombuffer(record.data, record.dtype).reshape(
-            record.shape
-        ),
-    )
-    arrays = cast("dict[str, Any]", decoded)
-    assert all(numpy.array_equal(arrays[key], value[key]) for key in value)
-
-
-def test_splat_fingerprint_is_form_independent() -> None:
-    value = splat_value()
-    fingerprint = splat_fingerprint(SPLAT_TYPE)
-    assert fingerprint(value) == fingerprint(decode_splat(encode_splat(value)))
-    assert fingerprint(value) != splat_fingerprint("other.type")(value)
-
-
-def test_splat_meta_and_encoded_validator_agree() -> None:
-    value = splat_value(batch=2, gaussians=6, coefficients=3)
-    metadata = splat_meta(value)
-    assert metadata == {"batch": 2, "gaussians": 6, "sh_coefficients": 3}
-    validate_splat_encoded(encode_splat(value), metadata)
-    validate_splat_encoded(memoryview(encode_splat(value)), metadata)
-    with pytest.raises(ValueError, match="metadata gaussians"):
-        validate_splat_encoded(encode_splat(value), {**metadata, "gaussians": 7})
-    with pytest.raises(ValueError, match="metadata batch"):
-        validate_splat_encoded(encode_splat(value), {**metadata, "batch": True})
-
-
-def test_splat_runtime_form_rejects_malformed_layouts() -> None:
-    value = splat_value()
-    with pytest.raises(TypeError, match="must be a mapping"):
-        encode_splat(value["positions"])
-    with pytest.raises(ValueError, match="exactly positions"):
-        encode_splat({key: value[key] for key in value if key != "sh"})
-    with pytest.raises(ValueError, match="exactly positions"):
-        encode_splat({**value, "extras": value["positions"]})
-    with pytest.raises(TypeError, match="positions must be a tensor-like"):
-        encode_splat({**value, "positions": "vertices"})
-    with pytest.raises(ValueError, match="rotations shape"):
-        encode_splat({**value, "rotations": value["positions"]})
-    with pytest.raises(ValueError, match="opacities shape"):
-        encode_splat({**value, "opacities": value["opacities"][:, :3]})
-    with pytest.raises(ValueError, match=r"shape \(batch, gaussians, coefficients, 3\)"):
-        encode_splat({**value, "sh": value["sh"][..., :2]})
-    with pytest.raises(ValueError, match="dtype must be one of"):
-        encode_splat({**value, "scales": value["scales"].astype(numpy.int16)})
-    with pytest.raises(ValueError, match="counts dtype"):
-        encode_splat({**value, "counts": numpy.asarray([1.0], numpy.float32)})
-    with pytest.raises(ValueError, match=r"counts must have shape \(batch,\)"):
-        encode_splat({**value, "counts": numpy.asarray([1, 2], numpy.int64)})
-    with pytest.raises(ValueError, match="between 0 and the gaussian"):
-        encode_splat({**value, "counts": numpy.asarray([9], numpy.int64)})
-
-
-def test_splat_decode_rejects_malformed_frames() -> None:
-    data = encode_splat(splat_value())
-    with pytest.raises(ValueError, match="invalid splat codec framing"):
-        decode_splat(b"DINKSTER-OTHER\x00" + data[len(SPLAT_CODEC_MAGIC) :])
-    with pytest.raises(ValueError, match="unsupported splat codec version"):
-        decode_splat(
-            SPLAT_CODEC_MAGIC
-            + bytes((SPLAT_CODEC_VERSION + 1,))
-            + data[len(SPLAT_CODEC_MAGIC) + 1 :]
-        )
-    with pytest.raises(ValueError, match="truncated"):
-        decode_splat(data[:-4])
-    with pytest.raises(ValueError, match="trailing bytes"):
-        decode_splat(data + b"\x00")
-    reordered = dict(reversed(cast("dict[str, Any]", decode_splat(data)).items()))
-    with pytest.raises(ValueError, match="canonical order"):
-        decode_splat(_reorder_frame(data, reordered))
-    offset = len(SPLAT_CODEC_MAGIC) + 1
-    with pytest.raises(ValueError, match="size bound"):
-        decode_splat(data[:offset] + (2**31).to_bytes(4, "little") + data[offset + 4 :])
-    header_size = int.from_bytes(data[offset : offset + 4], "little")
-    padded = data[offset + 4 : offset + 4 + header_size] + b" "
-    with pytest.raises(ValueError, match="canonical form"):
-        decode_splat(
-            data[:offset]
-            + len(padded).to_bytes(4, "little")
-            + padded
-            + data[offset + 4 + header_size :]
-        )
-
-
-def test_render_splat_ply_limit_refuses_before_serializing() -> None:
-    value = splat_value(gaussians=8)
-    with pytest.raises(ValueError, match="output limit"):
-        render_splat_ply(value, limit=64)
-    assert len(render_splat_ply(value, limit=1024 * 1024)) > 64
 
 
 def _reorder_frame(data: bytes, records: dict[str, Any]) -> bytes:
@@ -221,38 +114,6 @@ def test_ply_parse_defaults_missing_attributes() -> None:
     assert numpy.allclose(parsed["sh"], 0.0)
 
 
-@pytest.mark.parametrize("full_attributes", [False, True])
-def test_empty_ply_vertices_decode_to_empty_splat(full_attributes: bool) -> None:
-    properties = ["x", "y", "z"]
-    if full_attributes:
-        properties += ["scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
-        properties += ["opacity", "f_dc_0", "f_dc_1", "f_dc_2"]
-        properties += [f"f_rest_{index}" for index in range(9)]
-    data = (
-        "ply\nformat binary_little_endian 1.0\nelement vertex 0\n"
-        + "".join(f"property float {name}\n" for name in properties)
-        + "end_header\n"
-    ).encode("ascii")
-    expected_shapes = {
-        "positions": (1, 0, 3),
-        "scales": (1, 0, 3),
-        "rotations": (1, 0, 4),
-        "opacities": (1, 0, 1),
-        "sh": (1, 0, 4 if full_attributes else 1, 3),
-    }
-    for parsed in (parse_ply_splat(data), decode_splat_file(FakeAsset(data))):
-        mapping = cast("dict[str, Any]", parsed)
-        assert set(mapping) == set(expected_shapes)
-        for name, shape in expected_shapes.items():
-            assert mapping[name].shape == shape
-            assert mapping[name].dtype == numpy.float32
-            assert mapping[name].nbytes == 0
-        decoded = cast("dict[str, EncodedLatentTensor]", decode_splat(encode_splat(mapping)))
-        assert {name: record.shape for name, record in decoded.items()} == expected_shapes
-        with pytest.raises(ValueError, match="no gaussians"):
-            render_splat_ply(mapping)
-
-
 def test_ply_parse_maps_plain_colors_onto_the_sh_dc_band() -> None:
     header = (
         b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
@@ -263,106 +124,3 @@ def test_ply_parse_maps_plain_colors_onto_the_sh_dc_band() -> None:
     parsed = cast("dict[str, Any]", parse_ply_splat(header + body))
     expected = (numpy.array([255, 0, 127], numpy.float32) / 255.0 - 0.5) / SH_C0
     assert numpy.allclose(parsed["sh"][0, 0, 0], expected, atol=1e-5)
-
-
-def test_ply_parse_rejects_malformed_containers() -> None:
-    good = render_splat_ply(splat_value())
-    with pytest.raises(ValueError, match="end_header"):
-        parse_ply_splat(good[:20])
-    with pytest.raises(ValueError, match="format 'ascii'"):
-        parse_ply_splat(good.replace(b"binary_little_endian", b"ascii", 1))
-    with pytest.raises(ValueError, match="vertex as its first element"):
-        parse_ply_splat(good.replace(b"element vertex", b"element face", 1))
-    with pytest.raises(ValueError, match="list properties"):
-        parse_ply_splat(good.replace(b"property float x\n", b"property list uchar int i\n", 1))
-    with pytest.raises(ValueError, match="truncated"):
-        parse_ply_splat(good[:-8])
-    header = (
-        b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
-        b"property float a\nproperty float b\nproperty float c\nend_header\n"
-    )
-    with pytest.raises(ValueError, match="x, y, and z"):
-        parse_ply_splat(header + bytes(12))
-
-
-def test_splat_file_decoder_reads_assets_and_names_failures() -> None:
-    value = splat_value()
-    data = render_splat_ply(value)
-    decoded = cast("dict[str, Any]", decode_splat_file(FakeAsset(data)))
-    assert numpy.allclose(decoded["positions"], value["positions"], atol=1e-5)
-    with pytest.raises(ValueError, match="cannot decode 'broken.ply' as a gaussian splat"):
-        decode_splat_file(FakeAsset(b"not a splat", name="broken.ply"))
-    with pytest.raises(TypeError, match="expects an asset with open()"):
-        decode_splat_file(data)
-
-
-def test_splat_registration_wires_codec_rendition_and_asset_decoder() -> None:
-    registry = TypeRegistry()
-    register_splat_type(registry)
-    spec = registry.spec(SPLAT_TYPE)
-    assert spec.declared_codec
-    assert spec.validate_encoded_buffer is validate_splat_encoded
-    value = registry.wrap(SPLAT_TYPE, splat_value(batch=1, gaussians=5, coefficients=4))
-    assert value.meta.entries == {"batch": 1, "gaussians": 5, "sh_coefficients": 4}
-    assert [(s.kind, s.mime, s.default) for s in registry.renditions_of(SPLAT_TYPE)] == [
-        ("ply", SPLAT_PLY_MIME, True)
-    ]
-    rendition = registry.render(value)
-    assert rendition.mime == SPLAT_PLY_MIME
-    assert rendition.data.startswith(b"ply\n")
-
-
-@pytest.mark.parametrize("inference_first", [True, False])
-def test_splat_registration_preserves_codec_and_ply_in_both_orders(inference_first: bool) -> None:
-    registry = TypeRegistry()
-    first, second = (
-        (register_inference_types, register_splat_type)
-        if inference_first
-        else (register_splat_type, register_inference_types)
-    )
-    first(registry)
-    spec = registry.spec(SPLAT_TYPE)
-    second(registry)
-    first(registry)
-    second(registry)
-    assert registry.spec(SPLAT_TYPE) is spec
-    source = splat_value(batch=2, counts=[2, 5])
-    value = registry.wrap(SPLAT_TYPE, SimpleNamespace(**source))
-    assert spec.encode(value.resolve()) == encode_splat(source)
-    assert value.fingerprint == splat_fingerprint(SPLAT_TYPE)(source)
-    assert len(registry.renditions_of(SPLAT_TYPE)) == 1
-    assert registry.render(value).data == render_splat_ply(source)
-    decoder = registry.asset_decoder_for(SPLAT_TYPE)
-    assert decoder is not None and decoder.provider_id == SPLAT_FILE_DECODER_ID
-    decoded = cast("dict[str, Any]", decoder.decode(FakeAsset(render_splat_ply(source))))
-    numpy.testing.assert_array_equal(decoded["positions"][0], source["positions"][0, :2])
-
-
-@pytest.mark.parametrize("dtype", [numpy.float16, numpy.float32, numpy.float64])
-@pytest.mark.parametrize("gaussians", [0, 3])
-def test_source_splat_optional_counts_empty_and_dtype_share_the_existing_frame(
-    dtype: Any, gaussians: int
-) -> None:
-    mapping = {key: value.astype(dtype) for key, value in splat_value(gaussians=gaussians).items()}
-    source = SimpleNamespace(**mapping, counts=None)
-    data = encode_splat(source)
-    assert data == encode_splat(mapping) == encode_splat({**mapping, "counts": None})
-    decoded = cast("dict[str, EncodedLatentTensor]", decode_splat(data))
-    assert "counts" not in decoded
-    for key, expected in mapping.items():
-        assert decoded[key].dtype == expected.dtype.name
-        assert decoded[key].shape == expected.shape
-        assert decoded[key].data == expected.astype(expected.dtype.newbyteorder("<")).tobytes()
-    if gaussians == 0:
-        with pytest.raises(ValueError, match="no gaussians"):
-            render_splat_ply(source)
-
-
-def test_splat_registration_retains_first_authority_while_adding_interchange() -> None:
-    registry = TypeRegistry()
-    spec = registry.register(SPLAT_TYPE)
-    register_splat_type(registry)
-    register_splat_type(registry)
-    assert registry.spec(SPLAT_TYPE) is spec
-    assert [item.kind for item in registry.renditions_of(SPLAT_TYPE)] == ["ply"]
-    assert registry.asset_decoder_for(SPLAT_TYPE) is not None

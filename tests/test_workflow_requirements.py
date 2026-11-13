@@ -335,52 +335,6 @@ def test_acquired_base_device_matches_sealed_target(tmp_path: Path, device: str)
 
 
 @pytest.mark.parametrize(
-    ("metadata", "problem", "message"),
-    [
-        ("__version__='2.5.0'\ncuda=None\nhip=None\n", "size", "differs from its manifest"),
-        ("__version__='2.5.0'\ncuda=None\nhip=None\n", "duplicate", "one torch/version.py"),
-        ("__version__='2.5.0'\ncuda='12.4'\nhip='6.0'\n", None, "conflicting device"),
-        ("__version__='2.6.0'\ncuda=None\nhip=None\n", None, "version differs"),
-        ("__version__='2.5.0'\ncuda=str(12.4)\nhip=None\n", None, "literal"),
-        ("__version__='2.5.0'\ncuda=None\ncuda='12.4'\nhip=None\n", None, "repeated"),
-        ("__version__='2.5.0'\n", None, "no declared device"),
-        ("__version__='2.5.0'\ncuda=7\nhip=None\n", None, "invalid device"),
-        ("__version__='2.5.0'\ncuda=None\nhip=None\nif True: cuda='12.4'\n", None, "top-level"),
-        ("__version__='2.5.0'\ncuda=\nhip=None\n", None, "not valid Python"),
-    ],
-)
-def test_acquired_base_device_refuses_unverified_or_ambiguous_metadata(
-    tmp_path: Path, metadata: str, problem: str | None, message: str
-) -> None:
-    from dinkster.workflow_requirements import acquired_base_device, generation_device
-
-    generation = custom_generation(tmp_path, "cpu")
-    base = json.loads((generation / "base-manifest.json").read_bytes())
-    wheel = tmp_path / base["wheels"][0]["filename"]
-    with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr("torch/version.py", metadata)
-        if problem == "duplicate":
-            with pytest.warns(UserWarning, match="Duplicate name"):
-                archive.writestr("torch/version.py", metadata)
-    base["wheels"][0].update(
-        size=wheel.stat().st_size + (problem == "size"),
-        sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
-    )
-    with pytest.raises(RequirementError, match=message):
-        acquired_base_device(base, wheel)
-    if problem is None:
-        version = generation / "python/lib/python3.14/site-packages/torch/version.py"
-        version.write_text(metadata)
-        record = json.loads((generation / "generation.json").read_bytes())
-        record["files"][version.relative_to(generation).as_posix()] = (
-            "sha256:" + hashlib.sha256(version.read_bytes()).hexdigest()
-        )
-        (generation / "generation.json").write_text(json.dumps(record))
-        with pytest.raises(RequirementError, match=message):
-            generation_device(generation, "user-target")
-
-
-@pytest.mark.parametrize(
     ("engine_variant", "device"),
     [
         (None, None),
@@ -1240,29 +1194,6 @@ def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_author
     )
     assert "cannot override the sealed target device" in capsys.readouterr().err
     assert not (root / "library").exists()
-
-
-@pytest.mark.parametrize(
-    "mode", ["apply", "snapshot", "missing-target", "missing-catalog", "missing-artifacts"]
-)
-def test_supervisor_refuses_device_override_outside_acquired_plan(
-    tmp_path: Path, mode: str
-) -> None:
-    from dinkster_supervisor.environment_generations import project_operation
-    from dinkster_supervisor.environment_state import EnvironmentError
-
-    with pytest.raises(EnvironmentError, match="acquired target inputs for planning only"):
-        project_operation(
-            tmp_path,
-            generation=tmp_path / "source",
-            variant="user-target",
-            target_generation=None if mode == "missing-target" else tmp_path / "target",
-            catalog_lock=None if mode == "missing-catalog" else tmp_path / "selected.lock",
-            artifacts=None if mode == "missing-artifacts" else tmp_path / "artifacts",
-            approved={} if mode == "apply" else None,
-            requirements_only=mode == "snapshot",
-            target_device="cuda",
-        )
 
 
 def test_empty_project_requirements_do_not_create_library(

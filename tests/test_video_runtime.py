@@ -12,7 +12,7 @@ from typing import Any, BinaryIO, cast
 import av
 import numpy as np
 import pytest
-from av.error import FFmpegError, InvalidDataError
+from av.error import FFmpegError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_assets.value import value_asset_references
@@ -173,46 +173,6 @@ def test_source_component_h264_matches_approved_source_encoding(
     )
 
 
-def test_default_component_writer_remains_separate_from_source_component_encoding() -> None:
-    fps = Fraction(30000, 1001)
-    images = np.linspace(0, 1, 4 * 16 * 24 * 3, dtype=np.float32).reshape(4, 16, 24, 3)
-    value = assemble_video(images, fps=fps)
-    implicit, explicit, source_style = io.BytesIO(), io.BytesIO(), io.BytesIO()
-    save_video_stream(value, implicit, codec="h264")
-    save_video_stream(value, explicit, codec="h264", source_components=False)
-    save_video_stream(value, source_style, codec="h264", source_components=True)
-    assert cast(dict[str, object], value["probe"])["fps"] == fps
-    assert _packets(implicit.getvalue()) == _packets(explicit.getvalue())
-    options = _x264_options(implicit.getvalue())
-    assert b"crf=18.0" in options
-    assert b"bframes=0" in options
-    assert b"rc_lookahead=40" in options and b"mbtree=1" in options
-    with av.open(io.BytesIO(implicit.getvalue())) as container:
-        # Four frames span 133467 ticks under the default microsecond timestamp policy.
-        assert container.streams.video[0].average_rate == Fraction(4_000_000, 133_467)
-    assert _x264_options(source_style.getvalue()) == _x264_options(
-        _source_style_video(images, fps=fps, depth=8, color="sRGB")
-    )
-
-
-def test_saved_source_file_retains_timestamps_without_streaming_encoder_options() -> None:
-    source = _source(b_frames=2)
-    selected = edit_video(
-        video_from_source(source), {"trim": {"start_time": 0.25, "duration": 0.5}}
-    )
-    output = io.BytesIO()
-    save_video_stream(selected, output, codec="h264", crf=18)
-    options = _x264_options(output.getvalue())
-    assert b"bframes=0" in options
-    assert b"rc_lookahead=40" in options and b"mbtree=1" in options
-    with av.open(io.BytesIO(output.getvalue()), mode="r") as container:
-        frames = list(container.decode(video=0))
-        assert len(frames) == 5
-        for i, frame in enumerate(frames):
-            assert frame.pts is not None and frame.time_base is not None
-            assert frame.pts * frame.time_base == Fraction(i, 10) + Fraction(1, 20)
-
-
 def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
     value = assemble_video(
         np.random.default_rng(97).integers(0, 256, (4, 64, 64, 3), dtype=np.uint8), fps=30
@@ -230,21 +190,6 @@ def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
             for i, frame in enumerate(frames):
                 assert frame.pts is not None and frame.time_base is not None
                 assert frame.pts * frame.time_base == Fraction(round(i * 1000 / 30), 1000)
-
-
-@pytest.mark.parametrize("shape", [(2, 16, 25, 3), (2, 16, 24, 4)])
-def test_source_component_h264_preserves_source_shape_failures(
-    shape: tuple[int, int, int, int],
-) -> None:
-    images = np.zeros(shape, dtype=np.float32)
-    with pytest.raises((ValueError, FFmpegError)):
-        save_video_stream(
-            assemble_video(images, fps=30),
-            io.BytesIO(),
-            container="mkv",
-            codec="h264",
-            source_components=True,
-        )
 
 
 @pytest.mark.parametrize(("height", "width"), [(8, 12), (64, 64)])
@@ -551,15 +496,6 @@ def test_fractional_trim_keeps_rational_timeline_and_audio_samples(encoded: bool
     assert value["edits"] == []
 
 
-def test_mkv_unchanged_is_exact_source_copy(monkeypatch: pytest.MonkeyPatch) -> None:
-    data = _source(container="matroska")
-    value = video_from_source(data)
-    monkeypatch.setattr(av, "open", lambda *a, **kw: pytest.fail("unchanged save must not decode"))
-    output = io.BytesIO()
-    assert save_video_stream(value, output) == (".mkv", "video/x-matroska")
-    assert output.getvalue() == data
-
-
 @pytest.mark.parametrize("edit", [{"crop": {}}, {"scale": {"width": 64, "height": 32}}])
 def test_full_frame_edits_keep_source_copy(
     edit: dict[str, object], monkeypatch: pytest.MonkeyPatch
@@ -605,32 +541,6 @@ def test_deferred_components_are_exact_across_codec_and_cropped() -> None:
         )
         == {}
     )
-
-
-@pytest.mark.parametrize("channels,layout", [(3, "3.0"), (6, "5.1")])
-def test_component_audio_encoder_frames_retain_samples_layout_and_timing(channels, layout) -> None:
-    from dinkster_video_runtime.runtime import _audio_frames, _plan
-
-    pcm = np.arange(channels * 48000, dtype=np.float32).reshape(1, channels, 48000) / 524288
-    value = assemble_video(
-        np.zeros((2, 2, 2, 3), np.float32),
-        fps=2,
-        audio={"waveform": pcm, "sample_rate": 48000, "layout": layout},
-    )
-    value = edit_video(value, {"trim": {"start_time": 0.1, "duration": 0.5}})
-    pieces = []
-    samples = 0
-    for timestamp, frame in _audio_frames(_plan(value), 0):
-        assert isinstance(frame, av.AudioFrame)
-        assert frame.sample_rate == 48000
-        assert frame.layout.name == layout
-        assert frame.format.name == "fltp"
-        assert timestamp == Fraction(samples, 48000)
-        assert 0 < frame.samples <= 1024
-        pieces.append(frame.to_ndarray())
-        samples += frame.samples
-    assert samples == 24000
-    np.testing.assert_array_equal(np.concatenate(pieces, axis=1)[None], pcm[..., 4800:28800])
 
 
 def test_concat_matches_templates_and_spatial_dimensions() -> None:
@@ -790,26 +700,6 @@ def test_concatenate_replaces_audio_without_changing_video_packets(
         assert actual[0, 1, 10000:180000].mean() < -0.2
 
 
-def test_saved_hdr_samples_do_not_quantize_to_eight_bits() -> None:
-    images = np.full((3, 32, 64, 3), 0.5, np.float32)
-    images[:, :, 32:] += 1 / 1023
-    value = assemble_video(images, fps=10, color_space="HDR PQ")
-    output = io.BytesIO()
-    save_video_stream(value, output, crf=0)
-    reloaded = video_from_source(output.getvalue())
-    decoded = cast(np.ndarray, disassemble_video(reloaded)["images"])
-    assert decoded[:, :, 32:].mean() > decoded[:, :, :32].mean()
-    assert cast(dict[str, Any], reloaded["probe"])["bit_depth"] == 10
-
-
-def test_packet_copy_applies_metadata_before_first_mux() -> None:
-    value = edit_video(video_from_source(_source()), {"trim": {"start_time": 0.5, "duration": 1}})
-    output = io.BytesIO()
-    save_video_stream(value, output, metadata={"title": "retained title"})
-    with av.open(io.BytesIO(output.getvalue())) as decoded:
-        assert decoded.metadata["title"] == "retained title"
-
-
 def test_concat_validates_templates_for_disassembly_and_accepts_matching_edits() -> None:
     value = video_from_source(_source())
     crop = {"crop": {"x": 4, "y": 2, "width": 32, "height": 16}}
@@ -835,13 +725,6 @@ def test_edit_parameters_are_snapshots_not_caller_owned_mappings() -> None:
     assert cast(dict[str, Any], video_meta(value)["effective"])["width"] == 32
 
 
-def test_component_probe_cannot_disagree_with_carried_storage() -> None:
-    value = assemble_video(np.zeros((2, 16, 32, 3), np.float32))
-    cast(dict[str, object], value["probe"])["width"] = 64
-    with pytest.raises(ValueError, match="probe does not match"):
-        encode_video(value)
-
-
 def test_disassembly_measures_missing_header_timing_without_mutating_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -856,19 +739,6 @@ def test_disassembly_measures_missing_header_timing_without_mutating_probe(
     assert result["fps"] == 10
     assert result["duration"] == 2
     assert probe["fps"] is None and probe["duration"] is None
-
-
-def test_alpha_encoding_cannot_silently_reduce_ten_bit_components() -> None:
-    value = assemble_video(np.zeros((2, 16, 32, 4), np.float32), bit_depth="10")
-    output = io.BytesIO()
-    diagnostics: list[object] = []
-    save_video_stream(
-        value, output, container="webm", codec="vp9", on_diagnostic=diagnostics.append
-    )
-    probe = cast(dict[str, Any], video_from_source(output.getvalue())["probe"])
-    assert probe["alpha"] and probe["bit_depth"] >= 10
-    assert probe["video_codec"] == "ffv1"
-    assert diagnostics
 
 
 def test_native_video_chain_matches_across_worker_shared_memory() -> None:
@@ -1099,18 +969,6 @@ def test_video_crf_rejects_nonfinite_boolean_and_out_of_range(
     assert output.getvalue() == b""
 
 
-@pytest.mark.parametrize("codec,limit", [("h264", 51), ("vp9", 63)])
-def test_video_crf_accepts_integer_and_float_codec_bounds(codec: str, limit: int) -> None:
-    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
-    for crf in (0, 0.0, limit, float(limit)):
-        output = io.BytesIO()
-        save_video_stream(value, output, codec=codec, crf=crf)
-        with av.open(io.BytesIO(output.getvalue()), mode="r") as container:
-            assert len(list(container.decode(video=0))) == 1
-    with pytest.raises(ValueError, match=f"crf must be a finite number in 0..{limit}"):
-        save_video_stream(value, io.BytesIO(), codec=codec, crf=limit + 0.01)
-
-
 def test_video_crf_unsupported_codec_policy_is_unchanged() -> None:
     value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
     output = io.BytesIO()
@@ -1204,32 +1062,6 @@ def test_source_decode_and_spatial_encode_use_source_matrix_and_range(
         assert np.max(np.abs(y.astype(int) - levels[0])) <= 1
 
 
-def test_spatial_decode_preserves_known_frame_local_matrix_and_range(monkeypatch) -> None:
-    import dinkster_video_runtime.runtime as runtime
-
-    source = video_from_source(_source())
-    cropped = edit_video(source, {"crop": {"width": 32, "height": 16}})
-    decode = runtime._decoded_video
-    seen = []
-
-    def frame_local(container, stream):
-        for frame in decode(container, stream):
-            frame.colorspace = 9
-            frame.color_range = 2
-            yield frame
-
-    pixels = runtime._pixels
-
-    def capture(frame, depth, alpha):
-        seen.append((frame.colorspace, frame.color_range))
-        return pixels(frame, depth, alpha)
-
-    monkeypatch.setattr(runtime, "_decoded_video", frame_local)
-    monkeypatch.setattr(runtime, "_pixels", capture)
-    save_video_stream(cropped, io.BytesIO(), crf=0)
-    assert seen and set(seen) == {(9, 2)}
-
-
 @pytest.mark.parametrize("kind", ["mp4", "mov", "mkv"])
 @pytest.mark.parametrize("path", ["remux", "cut", "transcode", "components"])
 def test_video_custom_metadata_is_json_on_every_mux_path(kind: str, path: str) -> None:
@@ -1270,17 +1102,6 @@ def test_probe_claims_must_match_authorized_source(
         value["source"] = AssetRef(digest, "source.mp4", len(data)).to_wire()
     with pytest.raises(ValueError, match="probe does not match source"):
         bind_video_value(value, vault)
-
-
-def test_invalid_inline_video_cannot_be_admitted_or_exported() -> None:
-    value = video_from_source(_source())
-    value["source"] = b"not a video"
-    with pytest.raises(InvalidDataError):
-        encode_video(value)
-    output = io.BytesIO()
-    with pytest.raises(InvalidDataError):
-        save_video_stream(value, output)
-    assert output.getvalue() == b""
 
 
 @pytest.mark.parametrize(

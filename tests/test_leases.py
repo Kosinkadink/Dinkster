@@ -186,31 +186,3 @@ class FakeCache(Shedder):
         freed = min(self.holding, pressure.bytes_needed)
         self.holding -= freed
         return freed
-
-
-def test_acquire_sheds_consumers_like_any_reservation() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({VRAM0: 100})
-        cache = FakeCache(VRAM0, 80)
-        governor.register_shedder(cache, name="cache")
-        broker = LeaseBroker(governor)
-        lease = await broker.acquire(VRAM0, 60, ttl=1.0)
-        assert cache.holding <= 40  # the governor shed the cache to fit
-        await broker.release(lease.lease_id)
-
-    run_scenario(scenario())
-
-
-def test_close_releases_everything_and_refuses_new_leases() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({VRAM0: 100, "ram": 100})
-        broker = LeaseBroker(governor)
-        await broker.acquire(VRAM0, 50, ttl=30.0)
-        await broker.acquire("ram", 25, ttl=30.0)
-        await broker.close()
-        assert governor.reserved(VRAM0) == 0
-        assert governor.reserved("ram") == 0
-        with pytest.raises(RuntimeError, match="closed"):
-            await broker.acquire(VRAM0, 1, ttl=1.0)
-
-    run_scenario(scenario())

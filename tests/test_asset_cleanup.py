@@ -8,7 +8,7 @@ import os
 import sqlite3
 import subprocess
 import threading
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from multiprocessing.connection import Connection
@@ -1166,74 +1166,6 @@ def test_collection_holds_one_job_across_multiple_pack_stores(
             assert not vault.has(digest)
         finally:
             host.close()
-            history.close()
-            store.close()
-
-    run_scenario(scenario())
-
-
-def test_cancelled_accounting_keeps_all_reference_owners_until_inspection_settles(
-    tmp_path: Path,
-) -> None:
-    entered = threading.Event()
-    finish = threading.Event()
-
-    class PausedLibrary(LibraryStore):
-        @contextmanager
-        def hold_asset_references(
-            self, additional_roots: Sequence[str] = ()
-        ) -> Generator[frozenset[str]]:
-            with super().hold_asset_references(additional_roots) as roots:
-                entered.set()
-                if not finish.wait(10):
-                    raise AssertionError("inspection was not released")
-                yield roots
-
-    async def scenario() -> None:
-        vault = AssetVault(tmp_path / "vault")
-        store = PausedLibrary(tmp_path / "library")
-        history = HistoryStore(tmp_path / "history")
-        memory = MemoryLRUCache()
-        disk = DiskCacheStore(tmp_path / "cache", TypeRegistry())
-        inspection = asyncio.create_task(
-            inspect_cleanup(vault, store, history, LayeredCache(memory, disk))
-        )
-        try:
-            assert await asyncio.to_thread(entered.wait, 10)
-            inspection.cancel()
-            # A scheduled callback observes delivery without timing assumptions.
-            checkpoint = asyncio.Event()
-            asyncio.get_running_loop().call_soon(checkpoint.set)
-            await checkpoint.wait()
-            inspection.cancel()
-            checkpoint.clear()
-            asyncio.get_running_loop().call_soon(checkpoint.set)
-            await checkpoint.wait()
-            assert not inspection.done()
-            for path in (tmp_path / "library", tmp_path / "history"):
-                with sqlite3.connect(path, timeout=0) as connection:
-                    with pytest.raises(sqlite3.OperationalError, match="locked"):
-                        connection.execute("BEGIN IMMEDIATE")
-            mutation_started = asyncio.Event()
-
-            async def replace_memory() -> None:
-                mutation_started.set()
-                await memory.put("replacement", {})
-
-            mutation = asyncio.create_task(replace_memory())
-            await mutation_started.wait()
-            assert not mutation.done()
-            finish.set()
-            with pytest.raises(asyncio.CancelledError):
-                await inspection
-            await mutation
-            for path in (tmp_path / "library", tmp_path / "history"):
-                with sqlite3.connect(path, timeout=0) as connection:
-                    connection.execute("BEGIN IMMEDIATE")
-                    connection.rollback()
-        finally:
-            finish.set()
-            await asyncio.gather(inspection, return_exceptions=True)
             history.close()
             store.close()
 

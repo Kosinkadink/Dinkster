@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,12 +16,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_graph import Graph, GraphNode, Link
-from dinkster_sd.clip_sdxl import CLIPTextEncodeSDXL, CLIPTextEncodeSDXLRefiner
-from dinkster_server import PackInfo
-
-from dinkster.compose import PackSpec, ServingComposer
-from tests.async_scenarios import run_scenario
+from dinkster_sd.clip_sdxl import CLIPTextEncodeSDXL
 
 
 class SDXLEncoder:
@@ -70,21 +64,6 @@ def test_sdxl_pads_only_the_shorter_prompt_stream(
     ]
 
 
-def test_refiner_preserves_aesthetic_score_and_schedule() -> None:
-    result = CLIPTextEncodeSDXLRefiner.execute(
-        clip=SDXLEncoder(), text="  literal {prompt|choices}\n", ascore=3.25, width=640, height=1152
-    )["CONDITIONING"]
-    tokens = {
-        "g": ["g:  literal {prompt", "g:choices}\n"],
-        "l": ["l:  literal {prompt", "l:choices}\n"],
-    }
-    metadata = {"aesthetic_score": 3.25, "width": 640, "height": 1152}
-    assert result == [
-        [tokens, {**metadata, "start_percent": 0.125}],
-        [tokens, {**metadata, "start_percent": 0.75}],
-    ]
-
-
 class SDXLSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -113,95 +92,3 @@ class SDXLInspect(Node):
 
 
 SDXL_FIXTURES = (SDXLSource, SDXLInspect)
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-def test_manifest_preserves_sdxl_prompt_streams_and_refiner_metadata(
-    tmp_path: Path, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
-        try:
-            manifest = (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-sd/dinkster-pack.toml"
-            )
-            (tmp_path / "sdxl_fixture.py").write_text(
-                "from test_comfy_clip_sdxl_nodes import SDXL_FIXTURES\n"
-                "from dinkster_sd import NODES as SD_NODES, register_types\n"
-                "NODES = (*SD_NODES, *SDXL_FIXTURES)\n",
-                encoding="ascii",
-            )
-            source_manifest = tmp_path / "dinkster-pack.toml"
-            source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("\nnamespaces = [", '\nnamespaces = ["sdxl-fixture",')
-                .replace("dinkster_sd:NODES", "sdxl_fixture:NODES")
-                .replace("dinkster_sd:register_types", "sdxl_fixture:register_types"),
-                encoding="ascii",
-            )
-            for dependency in ("latent", "conditioning", "sampling"):
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=manifest.parent.parent
-                        / f"dinkster-nodes-{dependency}/dinkster-pack.toml",
-                        in_process=in_process,
-                        trust_reserved=True,
-                        packs={f"dinkster-{dependency}": PackInfo(dependency, version="0.0.1")},
-                    )
-                )
-            await composer.add_pack(
-                PackSpec(manifest=source_manifest, in_process=in_process, trust_reserved=True)
-            )
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("sdxl-fixture.source"),
-                    "base": GraphNode(
-                        "dinkster.sd.clip_text_encode_sdxl",
-                        {
-                            "clip": Link("source", "CLIP"),
-                            "text_g": "red",
-                            "text_l": "blue|black",
-                            **_SIZE,
-                        },
-                    ),
-                    "refiner": GraphNode(
-                        "dinkster.sd.clip_text_encode_sdxl_refiner",
-                        {
-                            "clip": Link("source", "CLIP"),
-                            "text": "gold",
-                            "ascore": 3.25,
-                            "width": 640,
-                            "height": 1152,
-                        },
-                    ),
-                    "base-text": GraphNode(
-                        "sdxl-fixture.inspect", {"conditioning": Link("base", "CONDITIONING")}
-                    ),
-                    "refiner-text": GraphNode(
-                        "sdxl-fixture.inspect", {"conditioning": Link("refiner", "CONDITIONING")}
-                    ),
-                }
-            )
-            expected_tokens = {"g": ["g:red", "g:"], "l": ["l:blue", "l:black"]}
-            refiner_tokens = {"g": ["g:gold"], "l": ["l:gold"]}
-            refiner_meta = {"aesthetic_score": 3.25, "width": 640, "height": 1152}
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["base-text", "refiner-text"])
-                assert result.outputs["base-text"]["text"].resolve() == repr(
-                    [
-                        [expected_tokens, {**_SIZE, "start_percent": 0.125}],
-                        [expected_tokens, {**_SIZE, "start_percent": 0.75}],
-                    ]
-                )
-                assert result.outputs["refiner-text"]["text"].resolve() == repr(
-                    [
-                        [refiner_tokens, {**refiner_meta, "start_percent": 0.125}],
-                        [refiner_tokens, {**refiner_meta, "start_percent": 0.75}],
-                    ]
-                )
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())

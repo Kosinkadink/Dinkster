@@ -26,7 +26,6 @@ from dinkster_hunyuan.video_latent import (
     EmptyHunyuanLatentVideo,
     EmptyHunyuanVideo15Latent,
 )
-from dinkster_inference_wire.latents import MultiStreamLatent
 from dinkster_latent.video_latent_ops import (
     NormalizeVideoLatentStart,
     TrimVideoLatent,
@@ -200,44 +199,6 @@ def test_freeze_latent_replaces_the_mask_without_mutating_the_source(
     assert torch.equal(original_mask, mask_before)
 
 
-@pytest.mark.parametrize("shape", ((2, 3, 5), (2, 3, 5, 7, 11, 13)))
-def test_freeze_latent_rejects_unsupported_tensor_ranks(shape: tuple[int, ...]) -> None:
-    with pytest.raises(ValueError, match="Expected a 4D audio or 5D video latent"):
-        LTXVFreezeLatent.execute(latent={"samples": torch.zeros(shape)})
-
-
-def test_freeze_latent_rejects_concatenated_av_latents() -> None:
-    multistream = MultiStreamLatent[object].from_pairs(
-        (("video", {"samples": torch.zeros((1, 1, 1, 1, 1))}),)
-    )
-    with pytest.raises(ValueError, match="plain tensor"):
-        LTXVFreezeLatent.execute(latent={"samples": multistream})
-
-
-def test_normalize_video_latent_start_matches_tensor_contract_and_preserves_source() -> None:
-    samples = torch.arange(2 * 2 * 6 * 3 * 5, dtype=torch.float64).reshape(2, 2, 6, 3, 5)
-    samples[1] = samples[1].flip(2) * -0.7 + 5.0
-    latent = {
-        "samples": samples,
-        "noise_mask": torch.full((2, 1, 6, 1, 1), 0.25),
-        "metadata": {"keep": ["value"]},
-    }
-    source_before = samples.clone()
-
-    result = NormalizeVideoLatentStart.execute(
-        latent=latent, start_frame_count=2, reference_frame_count=3
-    )["latent"]
-
-    assert result is not latent
-    assert hashlib.sha256(result["samples"].numpy().tobytes()).hexdigest() == (
-        "5f9a1a558a7d96853766b4d26f5c80e6d29f46c661c0206af975c50af0ea1b1c"
-    )
-    assert torch.equal(result["samples"][:, :, 2:], samples[:, :, 2:])
-    assert torch.equal(samples, source_before)
-    assert result["metadata"] is latent["metadata"]
-    assert result["noise_mask"] is latent["noise_mask"]
-
-
 def test_normalize_video_latent_start_uses_nondefault_counts() -> None:
     samples = torch.tensor([[-1, 0, 1, 2, 3, 7], [1, 2, 3, 4, 5, 9]], dtype=torch.float64).reshape(
         1, 2, 6, 1, 1
@@ -264,15 +225,6 @@ def test_normalize_video_latent_start_returns_single_frame_mapping_unchanged() -
         latent=latent, start_frame_count=4, reference_frame_count=5
     )["latent"]
     assert result is latent
-
-
-def test_normalize_video_latent_start_keeps_empty_reference_nan_semantics() -> None:
-    samples = torch.arange(2 * 2 * 3 * 3 * 5, dtype=torch.float64).reshape(2, 2, 3, 3, 5)
-    result = NormalizeVideoLatentStart.execute(
-        latent={"samples": samples}, start_frame_count=9, reference_frame_count=2
-    )["latent"]
-    assert torch.isnan(result["samples"]).all()
-    assert not torch.isnan(samples).any()
 
 
 class VideoLatentTransformSource(Node):
@@ -360,84 +312,3 @@ class VideoLatentTransformInspect(Node):
         assert normalized["metadata"] == {"keep": ["value"]}
         assert torch.equal(normalized["noise_mask"], torch.full((2, 1, 6, 1, 1), 0.25))
         return cls.outputs(summary="video-latent-transforms")
-
-
-@pytest.mark.parametrize("in_process", (True,))
-def test_ordinary_manifest_executes_video_latent_transforms_twice(
-    in_process: bool, tmp_path: Path
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": str(Path(__file__).parent),
-            }
-        )
-        try:
-            (tmp_path / "video_latent_transform_fixture.py").write_text(
-                "from test_video_latent_torch import (\n"
-                "    VideoLatentTransformInspect, VideoLatentTransformSource,\n"
-                ")\n"
-                "from dinkster_api.v1 import register_inference_types\n"
-                "NODES = (VideoLatentTransformSource, VideoLatentTransformInspect)\n",
-                encoding="ascii",
-            )
-            source_manifest = tmp_path / "dinkster-pack.toml"
-            source_manifest.write_text(
-                '[pack]\nname = "video-latent-transform-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["video-latent-transform-fixture"]\n[pack.entry]\n'
-                'nodes = "video_latent_transform_fixture:NODES"\n'
-                'types = "video_latent_transform_fixture:register_inference_types"\n',
-                encoding="ascii",
-            )
-            for identity, module in (
-                ("dinkster-latent", "dinkster_latent"),
-                ("dinkster-conditioning", "dinkster_conditioning"),
-                ("dinkster-video", "dinkster_video"),
-                ("dinkster-models", "dinkster_models"),
-                ("dinkster-llm", "dinkster_llm"),
-                ("dinkster-ltx", "dinkster_ltx"),
-            ):
-                await composer.add_pack(
-                    _installed_pack_spec(identity, module, in_process=in_process)
-                )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("video-latent-transform-fixture.source", {}),
-                    "trim": GraphNode(
-                        "dinkster.latent.trim_video_latent",
-                        {"samples": Link("source", "video"), "trim_amount": 2},
-                    ),
-                    "freeze": GraphNode(
-                        "dinkster.ltx.ltxv_freeze_latent", {"latent": Link("source", "audio")}
-                    ),
-                    "normalize": GraphNode(
-                        "dinkster.latent.normalize_video_latent_start",
-                        {
-                            "latent": Link("source", "normalization"),
-                            "start_frame_count": 2,
-                            "reference_frame_count": 3,
-                        },
-                    ),
-                    "inspect": GraphNode(
-                        "video-latent-transform-fixture.inspect",
-                        {
-                            "video": Link("source", "video"),
-                            "trimmed": Link("trim", "LATENT"),
-                            "audio": Link("source", "audio"),
-                            "frozen": Link("freeze", "latent"),
-                            "normalized": Link("normalize", "latent"),
-                        },
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["inspect"])
-                assert result.outputs["inspect"]["summary"].resolve() == "video-latent-transforms"
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

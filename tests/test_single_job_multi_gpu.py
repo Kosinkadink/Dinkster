@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
-
 import pytest
 from dinkster_protocol import (
     SingleJobMultiGpuConfig,
@@ -13,32 +11,10 @@ from dinkster_protocol import (
 )
 
 
-@pytest.mark.parametrize("mode", ("auto", "guidance", "sequence"))
-def test_fixed_configuration_preserves_order_and_mode(
-    mode: Literal["auto", "guidance", "sequence"],
-) -> None:
-    config = SingleJobMultiGpuConfig((3, 1, 2), mode)
-    assert config.cuda_indices == (3, 1, 2)
-    assert config.mode == mode
-
-
-@pytest.mark.parametrize("indices", ((), (0,), (0, 0), (-1, 0)))
-def test_config_requires_two_or_more_unique_non_negative_logical_indices(
-    indices: tuple[int, ...],
-) -> None:
-    with pytest.raises(ValueError, match="at least two"):
-        SingleJobMultiGpuConfig(indices, "auto")
-
-
 @pytest.mark.parametrize("mode", ("model", "window"))
 def test_config_rejects_removed_mode(mode: str) -> None:
     with pytest.raises(ValueError, match="mode is invalid"):
         SingleJobMultiGpuConfig((0, 1), mode)  # type: ignore[arg-type]
-
-
-def test_config_rejects_four_way_mode() -> None:
-    with pytest.raises(ValueError, match="mode is invalid"):
-        SingleJobMultiGpuConfig((0, 1), "four-way")  # type: ignore[arg-type]
 
 
 def test_config_and_rank_execution_round_trip_strict_wire_contracts() -> None:

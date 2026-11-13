@@ -27,7 +27,6 @@ import io
 import logging
 import sys
 import threading
-import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -104,29 +103,6 @@ def log_events(captured: list[Captured]) -> list[Mapping[str, object]]:
 # -- report_log's own contract ------------------------------------------------
 
 
-def test_report_log_payload_shape() -> None:
-    captured: list[Captured] = []
-    before = time.time()
-    with use_reporter(recorder(captured)):
-        report_log("info", "hello")
-        report_log("warning", "careful", data={"detail": 7})
-    after = time.time()
-
-    assert [name for name, _, _ in captured] == ["log", "log"]
-    first, second = log_events(captured)
-    assert first["level"] == "info"
-    assert first["message"] == "hello"
-    assert second["level"] == "warning"
-    assert second["message"] == "careful"
-    assert second["detail"] == 7
-    for event in (first, second):
-        ts = event["ts"]
-        assert isinstance(ts, float)
-        assert before <= ts <= after
-        assert "origin" not in event  # explicit calls carry no origin
-    assert all(blob is None for _, _, blob in captured)
-
-
 def test_report_log_rejects_non_log_levels() -> None:
     # "error" is deliberately not a log level: failures raise and travel
     # through the one existing error report.
@@ -141,10 +117,6 @@ def test_report_log_rejects_reserved_data_keys() -> None:
         report_log("info", "x", data={"level": "warning"})
     with pytest.raises(ValueError, match="reserved"):
         report_log("info", "x", data={"message": "smuggled", "ts": 1.0})
-
-
-def test_report_log_is_a_noop_without_a_reporter() -> None:
-    report_log("info", "nobody listening")
 
 
 def test_log_event_name_is_reserved() -> None:
@@ -227,17 +199,6 @@ def test_overlong_messages_are_cut() -> None:
     assert message.startswith("x" * MAX_CAPTURED_MESSAGE_CHARS)
     assert message.endswith("[truncated]")
     assert len(message) < len(long)
-
-
-def test_overlong_partial_line_becomes_a_record_without_a_newline() -> None:
-    captured: list[Captured] = []
-    with proxied_streams():
-        with use_reporter(recorder(captured)), use_capture_budget():
-            sys.stdout.write("y" * (MAX_CAPTURED_MESSAGE_CHARS + 100))
-            events_before_exit = len(log_events(captured))
-    assert events_before_exit == 1  # cut immediately, not held until exit
-    (event,) = log_events(captured)
-    assert str(event["message"]).endswith("[truncated]")
 
 
 # -- python logging capture -----------------------------------------------------

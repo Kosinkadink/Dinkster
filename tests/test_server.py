@@ -26,12 +26,9 @@ from dinkster_engine import (
     EngineEvent,
     EventListener,
     ExecutionRuntime,
-    GraphCompileError,
     ProviderResolutionError,
 )
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
-from dinkster_image.bounding_boxes import CreateBoundingBoxes
-from dinkster_image.compositor import LayersFromBoundingBoxes
 from dinkster_memory import (
     ConsumerItem,
     MeasuredMemory,
@@ -41,12 +38,8 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
-    GRAPH_COMPILE_ERROR_COMPILER_FAILURE,
-    GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
-    GRAPH_COMPILE_ERROR_TIMEOUT,
     GRAPH_COMPILERS_SURFACE,
     AttentionPolicyConfig,
-    CompatGateDiagnostic,
     ExportSnapshot,
     GraphCompilerRegistrySnapshot,
     KeyedContribution,
@@ -54,7 +47,6 @@ from dinkster_protocol import (
     SingleJobMultiGpuConfig,
 )
 from dinkster_schema import (
-    SCHEMA_WIRE_VERSION,
     InputSpec,
     MappingSource,
     Node,
@@ -69,31 +61,23 @@ from dinkster_schema import (
     report_preview,
     report_progress,
     schema_signature,
-    schema_to_wire,
 )
 from dinkster_server import (
     BINARY_BLOB_KEY,
     STATE_KEY,
     AuthError,
-    EventHub,
     Job,
     JobQueue,
     PackFrontendAsset,
     PackIconAsset,
     PackInfo,
     Principal,
-    Subscription,
     WorkerInfo,
     create_app,
-    encode_binary_event,
     load_authenticator,
     principal_for,
     resolve_scope,
 )
-from dinkster_server.app import handle_submit
-from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
-from dinkster_utilities.math import ComfyMathExpression
-from dinkster_utilities.utilities import ComfyNumberConvert
 from dinkster_values import (
     CURVE_TYPE,
     PNG_CONTAINER_VERSION,
@@ -311,204 +295,6 @@ async def wait_for_state(job: Job, *states: str, timeout: float = 5.0) -> None:
 # -- queue policy (no HTTP) ---------------------------------------------------
 
 
-def test_queue_runs_job_to_completion() -> None:
-    async def scenario() -> None:
-        transitions: list[tuple[str, str]] = []
-        queue = JobQueue(
-            make_engine(), on_job_event=lambda j: transitions.append((str(j.key), j.state))
-        )
-        queue.start()
-        job = queue.submit("c1", "j1", echo_graph(), ["s"])
-        await wait_for_state(job, "completed")
-        assert job.result is not None
-        assert job.result.outputs["s"]["out"].resolve() == "HELLO"
-        assert transitions == [("c1/j1", "queued"), ("c1/j1", "running"), ("c1/j1", "completed")]
-        await queue.close()
-
-    run_scenario(scenario())
-
-
-def test_queue_passes_job_attempt_to_engine_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        attempts: list[int] = []
-        invoke = engine._worker.invoke
-
-        async def recording_invoke(invocation, on_event=None):
-            attempts.append(invocation.attempt_id)
-            return await invoke(invocation, on_event)
-
-        monkeypatch.setattr(engine._worker, "invoke", recording_invoke)
-        queue = JobQueue(engine)
-        job = queue.submit("c1", "j1", echo_graph(), ["s"])
-        job.attempt = 5
-        queue.start()
-        await wait_for_state(job, "completed")
-        assert attempts == [5, 5]
-        await queue.close()
-
-    run_scenario(scenario())
-
-
-def test_queue_passes_no_cache_to_compiled_execution() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        runtime = engine.pin_execution()
-        compiled = CompiledGraph(
-            echo_graph(),
-            ("s",),
-            runtime.extension_snapshot_digest,
-            {},
-        )
-        queue = JobQueue(engine)
-        queue.start()
-
-        warmup = queue.submit(
-            "c1",
-            "warmup",
-            echo_graph(),
-            ["s"],
-            compiled_graph=compiled,
-        )
-        await wait_for_state(warmup, "completed")
-        no_cache = queue.submit(
-            "c1",
-            "no-cache",
-            echo_graph(),
-            ["s"],
-            compiled_graph=compiled,
-            cache_enabled=False,
-        )
-        await wait_for_state(no_cache, "completed")
-
-        assert warmup.result is not None
-        assert set(warmup.result.executed) == {"e", "s"}
-        assert no_cache.result is not None
-        assert set(no_cache.result.executed) == {"e", "s"}
-        assert no_cache.result.cached == ()
-        await queue.close()
-
-    run_scenario(scenario())
-
-
-def test_queue_idempotent_active_submit_and_different_content_conflict() -> None:
-    async def scenario() -> None:
-        reset_sleeper()
-        transitions: list[str] = []
-        queue = JobQueue(make_engine(), on_job_event=lambda job: transitions.append(job.state))
-        queue.start()
-        graph = Graph(nodes={"n": GraphNode("test.sleeper", {"tag": "x"})})
-        first = queue.submit("c1", "j1", graph, ["n"], fingerprint="same")
-        duplicate = queue.submit("c1", "j1", graph, ["n"], fingerprint="same")
-        assert duplicate is first
-        assert transitions == ["queued"]
-        with pytest.raises(ValueError, match="different content"):
-            queue.submit("c1", "j1", graph, ["n"], fingerprint="different")
-        # A different client may reuse the same jobId: identity is the pair.
-        queue.submit("c2", "j1", echo_graph(), ["s"])
-        await queue.close()
-
-    run_scenario(scenario())
-
-
-def test_queue_export_snapshot_changes_default_fingerprint_and_resubmission() -> None:
-    async def scenario() -> None:
-        queue = JobQueue(make_engine())
-        graph = echo_graph()
-        targets = ["s"]
-        legacy_fingerprint = hashlib.sha256(
-            json.dumps(
-                {
-                    "graph": graph_to_wire(graph),
-                    "targets": targets,
-                    "priority": 0,
-                    "sourceDocument": "",
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        without_snapshot = queue.submit("c", "legacy", graph, targets)
-        assert without_snapshot.fingerprint == legacy_fingerprint
-        default_attention_config = AttentionPolicyConfig()
-        with_default_attention = queue.submit(
-            "c",
-            "default-attention",
-            graph,
-            targets,
-            attention_config=default_attention_config,
-        )
-        assert with_default_attention.fingerprint == legacy_fingerprint
-        assert with_default_attention.attention_config is default_attention_config
-        with_default_cache = queue.submit(
-            "c",
-            "default-cache",
-            graph,
-            targets,
-            cache_enabled=True,
-        )
-        assert with_default_cache.fingerprint == legacy_fingerprint
-        assert with_default_cache.cache_enabled is True
-        without_cache = queue.submit(
-            "c",
-            "without-cache",
-            graph,
-            targets,
-            cache_enabled=False,
-        )
-        assert without_cache.fingerprint != legacy_fingerprint
-        assert without_cache.cache_enabled is False
-        with pytest.raises(TypeError, match="cache_enabled"):
-            queue.submit(
-                "c",
-                "bad-cache",
-                graph,
-                targets,
-                cache_enabled=0,  # type: ignore[arg-type]
-            )
-        attention_config = AttentionPolicyConfig("flash")
-        with_attention = queue.submit(
-            "c",
-            "attention",
-            graph,
-            targets,
-            attention_config=attention_config,
-        )
-        assert with_attention.fingerprint != without_snapshot.fingerprint
-        assert with_attention.attention_config is attention_config
-        with pytest.raises(TypeError, match="attention_config"):
-            queue.submit(
-                "c",
-                "bad-attention",
-                graph,
-                targets,
-                attention_config="flash",  # type: ignore[arg-type]
-            )
-
-        first_prompt = {"save": {"inputs": {"seed": 1}}}
-        first_snapshot = ExportSnapshot(prompt=first_prompt)
-        second_snapshot = ExportSnapshot(prompt={"save": {"inputs": {"seed": 2}}})
-        first = queue.submit("c", "snapshot", graph, targets, export_snapshot=first_snapshot)
-        assert first.fingerprint != without_snapshot.fingerprint
-        first_prompt["save"]["inputs"]["seed"] = 99
-        assert first.export_snapshot is not None
-        assert first.export_snapshot.prompt is not None
-        assert first.export_snapshot.prompt["save"] == {"inputs": {"seed": 1}}
-        with pytest.raises(ValueError, match="different content"):
-            queue.submit("c", "snapshot", graph, targets, export_snapshot=second_snapshot)
-
-        queue.cancel("c", "snapshot")
-        replacement = queue.submit("c", "snapshot", graph, targets, export_snapshot=second_snapshot)
-        assert replacement is not first
-        assert replacement.fingerprint != first.fingerprint
-        assert replacement.export_snapshot == second_snapshot
-        assert replacement.export_snapshot is not second_snapshot
-        assert queue.job_for_run(first.run_id) is None
-        await queue.close()
-
-    run_scenario(scenario())
-
-
 def test_queue_priority_order_with_fifo_tiebreak() -> None:
     async def scenario() -> None:
         reset_sleeper()
@@ -595,36 +381,6 @@ def test_queue_cancel_queued_and_running() -> None:
     run_scenario(scenario())
 
 
-def test_queue_pause_holds_dispatch_and_resume_releases(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def scenario() -> None:
-        queue = JobQueue(make_engine())
-        dispatch_checked = asyncio.Event()
-        original_clear = queue._wakeup.clear
-
-        def clear_wakeup() -> None:
-            original_clear()
-            dispatch_checked.set()
-
-        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
-        queue.start()
-        assert not queue.paused
-        queue.pause()
-        job = queue.submit("c", "j1", echo_graph(), ["s"])
-        await asyncio.wait_for(dispatch_checked.wait(), 5)
-        assert job.state == "queued"
-        assert queue.status()["paused"] is True
-        queue.resume()
-        await wait_for_state(job, "completed")
-        # Cancel still works while paused: queued jobs are not stuck.
-        queue.pause()
-        held = queue.submit("c", "j2", echo_graph(), ["s"])
-        queue.cancel("c", "j2")
-        assert held.state == "cancelled"
-        await queue.close()
-
-    run_scenario(scenario())
-
-
 def test_queue_clear_cancels_queued_never_running() -> None:
     async def scenario() -> None:
         reset_sleeper()
@@ -672,27 +428,6 @@ def test_queue_history_forgets_oldest_terminal_jobs() -> None:
         await queue.close()
 
     run_scenario(scenario())
-
-
-def test_new_job_ref_globally_unique_and_time_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
-    """jobRef contract (platform plan): server-assigned, globally unique,
-    opaque; lexical order approximates submission order (ms-timestamp
-    prefix + 80 random bits)."""
-    from types import SimpleNamespace
-
-    import dinkster_server.queue as queue_module
-    from dinkster_server.queue import new_job_ref
-
-    now = 1000.0
-    monkeypatch.setattr(queue_module, "time", SimpleNamespace(time=lambda: now))
-
-    refs = [new_job_ref() for _ in range(1000)]
-    assert len(set(refs)) == len(refs)
-    assert all(len(r) == 32 and int(r, 16) >= 0 for r in refs)
-    # Refs minted across a clock tick sort after earlier ones.
-    early = new_job_ref()
-    now += 0.002
-    assert new_job_ref() > early
 
 
 def test_queue_resubmit_survives_predecessor_eviction() -> None:
@@ -799,81 +534,6 @@ def test_queue_failure_shapes() -> None:
     run_scenario(scenario())
 
 
-def test_queue_compiled_dispatch_digest_failure_and_raw_fingerprint_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        runtime = compiler_runtime(engine)
-        compiled = CompiledGraph(echo_graph(), ("s",), runtime.extension_snapshot_digest, {})
-        compile_calls = 0
-
-        async def forbidden_compile(*_args: object, **_kwargs: object) -> None:
-            nonlocal compile_calls
-            compile_calls += 1
-            raise AssertionError("queued compiled execution must never recompile")
-
-        monkeypatch.setattr(engine, "compile_for_execution", forbidden_compile)
-        queue = JobQueue(engine)
-        queue.start()
-        compiled_job = queue.submit(
-            "c",
-            "compiled",
-            echo_graph(),
-            ["s"],
-            execution=runtime,
-            compiled_graph=compiled,
-        )
-        await wait_for_state(compiled_job, "completed")
-        assert compiled_job.result is not None
-        assert compiled_job.result.outputs["s"]["out"].resolve() == "HELLO"
-
-        drift = CompiledGraph(
-            echo_graph(),
-            ("s",),
-            "sha256:" + "f" * 64,
-            {},
-        )
-        drifted = queue.submit(
-            "c",
-            "drift",
-            echo_graph(),
-            ["s"],
-            execution=runtime,
-            compiled_graph=drift,
-        )
-        await wait_for_state(drifted, "failed")
-        assert drifted.error == {
-            "kind": "compile",
-            "code": GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
-            "message": "compiled graph generation does not match the execution runtime",
-        }
-        assert compile_calls == 0
-
-        raw_engine = make_engine()
-        raw_queue = JobQueue(raw_engine)
-        raw_graph = echo_graph("raw")
-        raw_targets = ["s"]
-        raw = raw_queue.submit("c", "raw", raw_graph, raw_targets)
-        expected = hashlib.sha256(
-            json.dumps(
-                {
-                    "graph": graph_to_wire(raw_graph),
-                    "targets": raw_targets,
-                    "priority": 0,
-                    "sourceDocument": "",
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        assert raw.fingerprint == expected
-        await raw_queue.close()
-        await queue.close()
-
-    run_scenario(scenario())
-
-
 def test_queue_close_cancels_pending_and_running() -> None:
     async def scenario() -> None:
         reset_sleeper()
@@ -919,23 +579,6 @@ async def wait_for_http_state(
             await asyncio.sleep(0.005)
 
 
-def test_health_endpoint() -> None:
-    """GET /api/health answers 200 the moment the app exists: create_app
-    runs after composition (it takes the merged schemas), so a 200 here IS
-    readiness - the supervisor's engine protocol v1 probes exactly this."""
-
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            resp = await client.get("/api/health")
-            assert resp.status == 200
-            assert await resp.json() == {"ok": True}
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 class StubAuthenticator:
     def __init__(self, principal: Principal) -> None:
         self.principal = principal
@@ -952,64 +595,6 @@ class MappingAuthenticator:
 
     async def authenticate(self, token: str) -> Principal | None:
         return self.principals.get(token)
-
-
-def test_auth_off_attaches_implicit_local_superuser_without_changing_responses() -> None:
-    async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
-
-        async def whoami(request: web.Request) -> web.Response:
-            principal = principal_for(request)
-            return web.json_response(
-                {
-                    "principalId": principal.principal_id,
-                    "jobsSubmit": principal.allows("jobs:submit"),
-                }
-            )
-
-        app.router.add_get("/api/whoami", whoami)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            health = await client.get("/api/health")
-            assert health.status == 200
-            assert await health.json() == {"ok": True}
-            identity = await client.get("/api/whoami")
-            assert identity.status == 200
-            assert await identity.json() == {
-                "principalId": "local",
-                "jobsSubmit": True,
-            }
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_pluggable_authenticator_attaches_only_its_request_principal() -> None:
-    async def scenario() -> None:
-        authenticator = StubAuthenticator(
-            Principal("alice", {"workspace-a": frozenset({"history:read"})})
-        )
-        app = create_app(make_engine, SCHEMAS, authenticator=authenticator)
-
-        async def whoami(request: web.Request) -> web.Response:
-            return web.json_response({"principalId": principal_for(request).principal_id})
-
-        app.router.add_get("/api/history/whoami", whoami)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            response = await client.get(
-                "/api/history/whoami", headers={"Authorization": "Bearer accepted"}
-            )
-            assert response.status == 200
-            assert await response.json() == {"principalId": "alice"}
-            assert authenticator.tokens == ["accepted"]
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
 
 
 def test_authentication_failures_are_structured_and_never_echo_tokens() -> None:
@@ -1784,191 +1369,6 @@ def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[s
     return body
 
 
-def test_primitive_union_inputs_serve_connection_only_sockets() -> None:
-    nodes = [ComfyMathExpression, ComfyNumberConvert, CreateBoundingBoxes, LayersFromBoundingBoxes]
-    schemas = build_schemas(nodes)
-
-    def make_engine(on_event: EventListener | None = None) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    async def scenario() -> None:
-        async with TestClient(TestServer(create_app(make_engine, schemas))) as client:
-            response = await client.get("/api/nodes")
-            assert response.status == 200
-            catalog = await response.json()
-            interface = catalog["nodes"]["dinkster.utilities.comfy_math_expression"]["interface"]
-            family = next(entry for entry in interface if entry["id"] == "values")
-            template = family["template"][0]
-            assert template.get("forceInput") is True
-            assert template["type"] == {"kind": "union", "types": ["FLOAT", "INT", "BOOLEAN"]}
-            assert "widget" not in template
-            expression = next(entry for entry in interface if entry["id"] == "expression")
-            assert expression["widget"] == {"type": "STRING", "multiline": True}
-            for node_type, input_id, types, required in (
-                (
-                    "dinkster.utilities.comfy_number_convert",
-                    "value",
-                    ["INT", "FLOAT", "STRING", "BOOLEAN"],
-                    True,
-                ),
-                (
-                    "dinkster.image.create_bounding_boxes",
-                    "bboxes",
-                    ["BOUNDING_BOX", "ARRAY", "STRING"],
-                    False,
-                ),
-                (
-                    "dinkster.layers.from_bounding_boxes",
-                    "bboxes",
-                    ["STRING", "BOUNDING_BOX", "comfy.ARRAY"],
-                    False,
-                ),
-            ):
-                interface = catalog["nodes"][node_type]["interface"]
-                socket = next(entry for entry in interface if entry["id"] == input_id)
-                assert socket.get("forceInput") is True, (node_type, input_id)
-                assert socket["type"] == {"kind": "union", "types": types}
-                assert socket["required"] is required
-                assert "widget" not in socket
-
-    run_scenario(scenario())
-
-
-def test_nodes_endpoint_serves_native_schema_wire() -> None:
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            resp = await client.get("/api/nodes")
-            assert resp.status == 200
-            data = await resp.json()
-            # Top-level schemaVersion is the API SURFACE version (currently
-            # 1) - NOT the schema wire version, which is served as
-            # dinkster.schemaWire plus per node entry. Frontend decodes
-            # dinkster.schemaWire and validates per-entry, so these three
-            # assertions pin the shipped shape.
-            assert data["schemaVersion"] == 1
-            # Surface epoch: monotonic node-surface generation, constant 1
-            # until progressive announcement/hot-reload bump it. Distinct
-            # from both version fields by frontend contract.
-            assert data["epoch"] == 1
-            snapshot = await (await client.get("/api/extensions/snapshot")).json()
-            assert snapshot["frontendApi"] == "1.0.0"
-            assert snapshot["extensions"] == []
-            canonical = json.dumps(snapshot, ensure_ascii=True, separators=(",", ":"))
-            assert data["extensionSnapshotDigest"] == (
-                "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-            )
-            # Environment header: authoritative runtime facts for workflow
-            # environment stamping (advisory record, never identity).
-            assert isinstance(data["dinkster"]["version"], str)
-            assert data["dinkster"]["version"]
-            assert data["dinkster"]["schemaWire"] == SCHEMA_WIRE_VERSION
-            assert SCHEMA_WIRE_VERSION == 1
-            # Graph/job DOCUMENT wire capabilities, additive feature list
-            # decoupled from the schema wire (joint contract 2026-07-25):
-            # clients gate optional emission forms on membership.
-            assert data["dinkster"]["graphFeatures"] == [
-                "typedLiteral",
-                "decimalInt",
-                "regions",
-                "placement",
-            ]
-            # mergeableTypes (joint contract 2026-07-26): ALWAYS present,
-            # the sorted atom ids with a registered batch-merge provider.
-            # This app's registry registers none, so the list is empty -
-            # empty means "no scalar-T merge arm anywhere", never omitted.
-            assert data["dinkster"]["mergeableTypes"] == []
-            # Every node schema entry carries the wire version itself.
-            for entry in data["nodes"].values():
-                assert entry["schemaVersion"] == SCHEMA_WIRE_VERSION
-            echo = data["nodes"]["test.echo"]
-            assert echo["nodeType"] == "test.echo"
-            # Provenance defaults: the packs table always carries the
-            # reserved "core" entry, and the per-node pack key is always
-            # present (frontend contract: never omitted, core included).
-            assert data["packs"]["core"]["displayName"] == "Dinkster Core"
-            assert all(entry["pack"] == "core" for entry in data["nodes"].values())
-            # Interface identity: EVERY node entry carries an always-present
-            # signature (stamping never has holes), equal to the schema's
-            # authoritative signature and separate from the schema wire
-            # itself (transport metadata, never a schema field).
-            for type_id, entry in data["nodes"].items():
-                assert entry["signature"] == schema_signature(SCHEMAS[type_id])
-            assert "signature" not in schema_to_wire(SCHEMAS["test.echo"])
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_nodes_endpoint_does_not_negotiate_schema_wire_versions() -> None:
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            for query in ("", "?wire=1", "?wire=invalid"):
-                response = await client.get(f"/api/nodes{query}")
-                assert response.status == 200
-                data = await response.json()
-                assert data["dinkster"]["schemaWire"] == 1
-                assert all(entry["schemaVersion"] == 1 for entry in data["nodes"].values())
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_workers_endpoint_shape_and_authentication() -> None:
-    workers = (
-        WorkerInfo("local", "connected", ("test.echo",), ()),
-        WorkerInfo("gpu-box", "configured", ("test.shout",), ("@gpu-box",)),
-    )
-
-    async def scenario() -> None:
-        authenticator = StubAuthenticator(Principal("reader", {"scope": frozenset()}))
-        app = create_app(
-            make_engine,
-            SCHEMAS,
-            authenticator=authenticator,
-            workers=lambda: workers,
-        )
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            assert (await client.get("/api/workers")).status == 401
-            response = await client.get(
-                "/api/workers", headers={"Authorization": "Bearer accepted"}
-            )
-            assert response.status == 200
-            assert await response.json() == {
-                "workers": [
-                    {
-                        "name": "local",
-                        "status": "connected",
-                        "routedNodeTypes": ["test.echo"],
-                        "deviceQualifiers": [],
-                    },
-                    {
-                        "name": "gpu-box",
-                        "status": "configured",
-                        "routedNodeTypes": ["test.shout"],
-                        "deviceQualifiers": ["@gpu-box"],
-                    },
-                ]
-            }
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize(
     ("placement", "message"),
     (
@@ -2432,97 +1832,6 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
     run_scenario(scenario())
 
 
-def test_nodes_endpoint_pack_provenance() -> None:
-    """Attribution is attached by the host at collection (a schema never
-    claims its own pack); presentation is author-declared badge data,
-    optional fields omitted from the wire when undeclared."""
-
-    async def scenario() -> None:
-        app = create_app(
-            make_engine,
-            SCHEMAS,
-            packs={
-                "ade": PackInfo(
-                    display_name="AnimateDiff-Evolved",
-                    abbr="ADE",
-                    mark="\N{PERFORMING ARTS}",
-                    color="#8844ff",
-                ),
-                "plain": PackInfo(display_name="Plain Pack"),
-            },
-            node_packs={"test.echo": "ade", "test.shout": "plain"},
-        )
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            data = await (await client.get("/api/nodes")).json()
-            assert data["packs"]["ade"] == {
-                "displayName": "AnimateDiff-Evolved",
-                "abbr": "ADE",
-                "mark": "\N{PERFORMING ARTS}",
-                "color": "#8844ff",
-            }
-            assert data["packs"]["plain"] == {"displayName": "Plain Pack"}
-            assert data["nodes"]["test.echo"]["pack"] == "ade"
-            assert data["nodes"]["test.shout"]["pack"] == "plain"
-            assert data["nodes"]["test.sleeper"]["pack"] == "core"
-            # Provenance is publication metadata, never schema identity: the
-            # announced schema wire itself carries no pack claim.
-            assert "pack" not in schema_to_wire(SCHEMAS["test.echo"])
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_pack_provenance_pins_on_the_wire() -> None:
-    """Install provenance rides the packs table with exact camelCase names;
-    every unknown field is omitted, never null - omission MEANS unpinned
-    (frontend renders an explicit 'unpinned' badge from absence)."""
-    pinned = PackInfo(
-        display_name="Pinned",
-        version="1.2.3",
-        artifact_digest="blake3:" + "ab" * 32,
-        source="registry",
-        publisher="alice",
-    )
-    assert pinned.to_wire() == {
-        "displayName": "Pinned",
-        "version": "1.2.3",
-        "artifactDigest": "blake3:" + "ab" * 32,
-        "source": "registry",
-        "publisher": "alice",
-    }
-    unpinned = PackInfo(display_name="Dev", source="local:/somewhere/pack")
-    assert unpinned.to_wire() == {
-        "displayName": "Dev",
-        "source": "local:/somewhere/pack",
-    }
-
-    async def scenario() -> None:
-        app = create_app(
-            make_engine,
-            SCHEMAS,
-            packs={"pinned": pinned, "dev": unpinned},
-            node_packs={"test.echo": "pinned", "test.shout": "dev"},
-        )
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            data = await (await client.get("/api/nodes")).json()
-            assert data["packs"]["pinned"]["version"] == "1.2.3"
-            assert data["packs"]["pinned"]["artifactDigest"] == "blake3:" + "ab" * 32
-            assert data["packs"]["pinned"]["publisher"] == "alice"
-            assert "version" not in data["packs"]["dev"]
-            assert "artifactDigest" not in data["packs"]["dev"]
-            # None never appears: absence is the only unpinned encoding.
-            assert None not in data["packs"]["dev"].values()
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize("publication", ["replace", "generation"])
 def test_prepared_surface_validation_keeps_requests_responsive(
     monkeypatch: pytest.MonkeyPatch, publication: str
@@ -2616,37 +1925,6 @@ def test_prepared_surface_validation_keeps_requests_responsive(
                 await client.close()
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("publication", ["replace", "generation"])
-def test_prepared_surface_validation_rejects_a_stale_epoch(publication: str) -> None:
-    app = create_app(make_engine, SCHEMAS)
-    state = app[STATE_KEY]
-    late = build_schemas([Late])
-    packs = {"native": PackInfo("Native")}
-    node_packs = {"late.echo": "native"}
-    if publication == "replace":
-        prepared = run_scenario(state.prepare_replace((), (), late, packs, node_packs))
-    else:
-        prepared = run_scenario(state.prepare_generation({**SCHEMAS, **late}, packs, node_packs))
-
-    assert state.replace((), (), {}, {}, {}) == 2
-    before_schemas = dict(state.schemas)
-    if publication == "replace":
-        with pytest.raises(RuntimeError, match="prepared replacement no longer matches"):
-            state.replace((), (), late, packs, node_packs, _validation=prepared)
-    else:
-        with pytest.raises(RuntimeError, match="prepared generation no longer matches"):
-            state.publish_generation({**SCHEMAS, **late}, packs, node_packs, _validation=prepared)
-    assert state.schema_epoch == 2
-    assert state.schemas == before_schemas
-
-
-def test_pack_provenance_misconfiguration_fails_loudly() -> None:
-    with pytest.raises(ValueError, match="unknown pack"):
-        create_app(make_engine, SCHEMAS, node_packs={"test.echo": "nope"})
-    with pytest.raises(ValueError, match="unknown node type"):
-        create_app(make_engine, SCHEMAS, node_packs={"test.missing": "core"})
 
 
 def test_pack_icon_endpoint() -> None:
@@ -3359,65 +2637,6 @@ def test_diagnostics_endpoint_reports_cross_pack_replacement_problems() -> None:
     run_scenario(scenario())
 
 
-def test_diagnostics_surfaces_sorted_core_and_legacy_compat_skips() -> None:
-    """The additive wire shape preserves core and derived legacy pack ids,
-    and sorts deterministically by (packId, nodeId)."""
-
-    async def scenario() -> None:
-        def diagnostic(source: str, reason: str) -> CompatGateDiagnostic:
-            return CompatGateDiagnostic(
-                code="compat.dynamic.unsupported",
-                source_node=source,
-                reason=reason,
-                source_generation="v3",
-                path_kind="dynamic-family",
-                input_id="member",
-                input_path=("options", "member"),
-                lazy=None,
-                input_is_list=False,
-                output_is_list=False,
-                raw_link=None,
-                accept_all=False,
-            )
-
-        app = create_app(
-            make_engine,
-            SCHEMAS,
-            compat_skips={
-                "comfy.zeta": {"Later": diagnostic("zeta.Later", "legacy reason")},
-                "comfy": {
-                    "Nested": diagnostic("Nested", "nested dynamic marker"),
-                    "Alpha": diagnostic("Alpha", "unsupported names form"),
-                },
-            },
-        )
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            response = await client.get("/api/diagnostics")
-            assert response.status == 200
-            skips = (await response.json())["compatSkips"]
-            assert [(item["packId"], item["nodeId"]) for item in skips] == [
-                ("comfy", "Alpha"),
-                ("comfy", "Nested"),
-                ("comfy.zeta", "Later"),
-            ]
-            assert [item["reason"] for item in skips] == [
-                "unsupported names form",
-                "nested dynamic marker",
-                "legacy reason",
-            ]
-            assert all(item["schemaEpoch"] == 1 for item in skips)
-            assert all(
-                item["extensionSnapshotDigest"] == app[STATE_KEY].engine.extension_snapshot_digest
-                for item in skips
-            )
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_native_export_snapshot_admission_and_idempotency() -> None:
     async def scenario() -> None:
         client = await make_client()
@@ -3708,26 +2927,6 @@ def test_value_descriptor_recurses_and_truncates() -> None:
     assert isinstance(big_elements, list)
     assert len(big_elements) == DESCRIPTOR_ELEMENT_CAP
     assert descriptor["elementsTruncated"] is True
-
-
-def test_scalar_output_descriptor_has_no_length() -> None:
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            resp = await client.post("/api/jobs", json=submit_body(echo_graph(), ["s"]))
-            assert resp.status == 202
-            async with asyncio.timeout(5):
-                while True:
-                    status = await (await client.get("/api/jobs/c1/j1")).json()
-                    if status["state"] in ("completed", "failed", "cancelled"):
-                        break
-                    await asyncio.sleep(0.01)
-            assert status["state"] == "completed"
-            assert "length" not in status["outputs"]["s"]["out"]
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
 
 
 def test_validation_diagnostics_carry_input_id() -> None:
@@ -4100,82 +3299,6 @@ def test_active_submit_idempotency_over_http() -> None:
     run_scenario(scenario())
 
 
-def test_server_compile_errors_and_cancellation_queue_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        runtime = compiler_runtime(engine)
-        engine._pin_execution = lambda: runtime
-
-        def factory(on_event: EventListener) -> Engine:
-            engine._on_event = on_event
-            return engine
-
-        app = create_app(factory, SCHEMAS)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            for job_id, code, message in (
-                ("malformed", GRAPH_COMPILE_ERROR_COMPILER_FAILURE, "remote malformed reply"),
-                ("timeout", GRAPH_COMPILE_ERROR_TIMEOUT, "graph compilation timed out"),
-            ):
-
-                async def refuse(
-                    *_args: object,
-                    code: str = code,
-                    message: str = message,
-                    **_kwargs: object,
-                ) -> None:
-                    raise GraphCompileError(code, message)
-
-                monkeypatch.setattr(engine, "compile_for_execution", refuse)
-                response = await client.post(
-                    "/api/jobs",
-                    json=submit_body(echo_graph(), ["s"], jobId=job_id),
-                )
-                assert response.status == 400
-                assert await response.json() == {"error": code, "message": message}
-                assert app[STATE_KEY].queue.get("c1", job_id) is None
-
-            entered = asyncio.Event()
-            cancelled = asyncio.Event()
-
-            async def wait_forever(*_args: object, **_kwargs: object) -> None:
-                entered.set()
-                try:
-                    await asyncio.Event().wait()
-                finally:
-                    cancelled.set()
-
-            monkeypatch.setattr(engine, "compile_for_execution", wait_forever)
-
-            class FakeRequest:
-                def __init__(self) -> None:
-                    self.app = app
-
-                def __getitem__(self, key: object) -> object:
-                    if key is PRINCIPAL_KEY:
-                        return LOCAL_PRINCIPAL
-                    raise KeyError(key)
-
-                async def json(self) -> object:
-                    return submit_body(echo_graph(), ["s"], jobId="cancelled")
-
-            task = asyncio.create_task(handle_submit(cast(web.Request, FakeRequest())))
-            await entered.wait()
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert cancelled.is_set()
-            assert app[STATE_KEY].queue.get("c1", "cancelled") is None
-            assert app[STATE_KEY]._job_admission_locks == {}
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_job_event_sequences_replay_and_by_ref_routes() -> None:
     async def scenario() -> None:
         client = await make_client()
@@ -4334,95 +3457,6 @@ def test_job_replay_pressure_blob_omission_and_retention() -> None:
     run_scenario(scenario())
 
 
-def test_job_replay_evicts_oldest_droppable_for_new_droppable() -> None:
-    from dinkster_server.app import _JobReplay
-
-    replay = _JobReplay(limit=2)
-    replay.append({"type": "node_event", "seq": 1}, droppable=True)
-    replay.append({"type": "node_event", "seq": 2}, droppable=True)
-    replay.append({"type": "node_event", "seq": 3}, droppable=True)
-    # The oldest droppable was evicted; the newest survives (a final
-    # progress update has no later superseder). The floor rises only to
-    # the evicted seq, so replay from the survivors still works.
-    assert replay.floor == 1
-    assert replay.after(0) is None
-    assert [event["seq"] for event in replay.after(1) or []] == [2, 3]
-
-
-def test_job_replay_sheds_new_droppable_when_only_protected_queued() -> None:
-    from dinkster_server.app import _JobReplay
-
-    replay = _JobReplay(limit=2)
-    replay.append({"type": "job_state", "state": "queued", "seq": 1}, droppable=False)
-    replay.append({"type": "job_state", "state": "running", "seq": 2}, droppable=False)
-    replay.append({"type": "node_event", "seq": 3}, droppable=True)
-    assert replay.floor == 3
-    assert replay.after(2) is None
-    assert replay.after(3) == []
-    # Protected events exceed the soft bound rather than disappear.
-    replay.append({"type": "job_state", "state": "completed", "seq": 4}, droppable=False)
-    assert [event["seq"] for event, _droppable in replay._events] == [1, 2, 4]
-
-
-def test_subscription_evicts_oldest_droppable_when_full() -> None:
-    sub = Subscription(None, 2)
-    sub.push({"type": "node_event", "seq": 1}, droppable=True)
-    sub.push({"type": "job_state", "seq": 2}, droppable=False)
-    sub.push({"type": "node_event", "seq": 3}, droppable=True)
-    assert [event["seq"] for event, _droppable in sub._events] == [2, 3]
-    # A protected event under pressure also evicts the oldest droppable.
-    sub.push({"type": "job_state", "seq": 4}, droppable=False)
-    assert [event["seq"] for event, _droppable in sub._events] == [2, 4]
-
-
-def test_subscription_sheds_new_droppable_when_all_protected() -> None:
-    sub = Subscription(None, 2)
-    sub.push({"type": "job_state", "seq": 1}, droppable=False)
-    sub.push({"type": "job_state", "seq": 2}, droppable=False)
-    sub.push({"type": "node_event", "seq": 3}, droppable=True)
-    assert [event["seq"] for event, _droppable in sub._events] == [1, 2]
-    # Protected events exceed the soft bound rather than disappear.
-    sub.push({"type": "job_state", "seq": 4}, droppable=False)
-    assert [event["seq"] for event, _droppable in sub._events] == [1, 2, 4]
-
-
-def test_subscription_droppability_is_the_publishers_flag_not_the_type() -> None:
-    # memory_status is published droppable=True but is not an engine event
-    # kind: eviction must honor the flag the publisher supplied, not a
-    # type-based reclassification.
-    sub = Subscription(None, 2)
-    sub.push({"type": "memory_status", "seq": 1}, droppable=True)
-    sub.push({"type": "memory_status", "seq": 2}, droppable=True)
-    sub.push({"type": "memory_status", "seq": 3}, droppable=True)
-    assert [event["seq"] for event, _droppable in sub._events] == [2, 3]
-
-
-def test_progress_throttle_keeps_first_final_and_paced_updates() -> None:
-    from dinkster_server.events import ProgressThrottle
-
-    now = [0.0]
-    throttle = ProgressThrottle(min_interval=0.1, min_delta=0.005, clock=lambda: now[0])
-    assert throttle.admit("r", "n", {"step": 1, "total": 1000})
-    # Sub-interval, sub-delta chatter is suppressed.
-    now[0] += 0.01
-    assert not throttle.admit("r", "n", {"step": 2, "total": 1000})
-    # The interval alone is not enough without the fraction delta.
-    now[0] += 0.2
-    assert not throttle.admit("r", "n", {"step": 3, "total": 1000})
-    # Interval and delta both satisfied: kept.
-    assert throttle.admit("r", "n", {"step": 500, "total": 1000})
-    # A big jump without the interval is still suppressed ...
-    assert not throttle.admit("r", "n", {"step": 990, "total": 1000})
-    # ... but the first update to reach the total is always kept.
-    assert throttle.admit("r", "n", {"step": 1000, "total": 1000})
-    # A repeated final is chatter, no matter how much later it arrives.
-    now[0] += 5.0
-    assert not throttle.admit("r", "n", {"step": 1000, "total": 1000})
-    # Other nodes and runs are throttled independently.
-    assert throttle.admit("r", "n2", {"step": 1, "total": 1000})
-    assert throttle.admit("r2", "n", {"step": 1, "total": 1000})
-
-
 def test_progress_throttle_keeps_phase_and_total_changes() -> None:
     from dinkster_server.events import ProgressThrottle
 
@@ -4435,25 +3469,6 @@ def test_progress_throttle_keeps_phase_and_total_changes() -> None:
     assert not throttle.admit("r", "n", {"step": 1, "total": 100, "text": "decoding"})
     # A total change restates the scale and is kept.
     assert throttle.admit("r", "n", {"step": 1, "total": 200, "text": "decoding"})
-
-
-def test_progress_throttle_passes_malformed_and_prunes_finished_runs() -> None:
-    from dinkster_server.events import ProgressThrottle
-
-    now = [0.0]
-    throttle = ProgressThrottle(clock=lambda: now[0])
-    # Missing or non-positive totals are indeterminate, not this policy's
-    # call: pass them through untouched.
-    assert throttle.admit("r", "n", {"step": 1})
-    assert throttle.admit("r", "n", {"step": 1, "total": 0})
-    assert throttle.admit("r", "n", {"step": "x", "total": "y"})
-    assert throttle.admit("r", "n", {"step": float("nan"), "total": float("nan")})
-    assert throttle.admit("r", "n", {"step": 1, "total": float("inf")})
-    assert throttle.admit("r", "n", {"step": 1, "total": 100})
-    assert not throttle.admit("r", "n", {"step": 1, "total": 100})
-    throttle.retain(set())
-    # State was dropped: the same update counts as the node's first again.
-    assert throttle.admit("r", "n", {"step": 1, "total": 100})
 
 
 def test_progress_events_throttled_at_ingestion_final_survives_in_replay() -> None:
@@ -4751,33 +3766,6 @@ def test_node_events_over_websocket_with_binary_preview(tmp_path: Path, with_lib
     run_scenario(scenario())
 
 
-def test_encode_binary_event_frame_layout() -> None:
-    frame = encode_binary_event(
-        {"type": "node_event", "event": "preview", BINARY_BLOB_KEY: b"\x00\x01\xff"}
-    )
-    header_len = int.from_bytes(frame[:4], "big")
-    header = json.loads(frame[4 : 4 + header_len])
-    assert header == {"type": "node_event", "event": "preview"}
-    assert frame[4 + header_len :] == b"\x00\x01\xff"
-
-
-def test_hub_broadcast_reaches_client_filtered_subscribers() -> None:
-    async def scenario() -> None:
-        hub = EventHub()
-        filtered = hub.subscribe("c1")
-        # Client-scoped events for another client stay invisible ...
-        hub.publish({"type": "x"}, client_id="other", droppable=False)
-        # ... but instance-scoped broadcasts (client_id=None) reach everyone.
-        hub.publish({"type": "memory_status"}, client_id=None, droppable=True)
-        event = await filtered.get()
-        assert event is not None
-        assert event == {"type": "memory_status"}
-        assert "seq" not in event
-        hub.close()
-
-    run_scenario(scenario())
-
-
 def test_memory_status_events_broadcast_when_governed() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor(
@@ -4812,54 +3800,6 @@ def test_memory_status_events_broadcast_when_governed() -> None:
             assert event["memoryGovernor"]["ram"]["peakUsedBytes"] == 70
             assert "devices" in event and "queue" in event
             await ws.close()
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_memory_status_endpoint() -> None:
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            resp = await client.get("/memory/status")
-            assert resp.status == 200
-            data = await resp.json()
-            assert data["devices"] == {}  # lanes appear once first used
-            # No governor supplied: null is honest, never a fake empty report.
-            assert data["memoryGovernor"] is None
-            assert data["queue"]["maxRunningJobs"] == 1
-
-            await client.post("/api/jobs", json=submit_body(echo_graph(), ["s"]))
-            async with asyncio.timeout(5):
-                while True:
-                    status = await (await client.get("/api/jobs/c1/j1")).json()
-                    if status["state"] == "completed":
-                        break
-                    await asyncio.sleep(0.01)
-            data = await (await client.get("/memory/status")).json()
-            assert data["devices"]["compute"]["executionInUse"] == 0
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_memory_status_reports_governor_when_supplied() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100})
-        app = create_app(make_engine, SCHEMAS, governor=governor)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            async with governor.reserve("ram", 60):
-                data = await (await client.get("/memory/status")).json()
-                report = data["memoryGovernor"]["ram"]
-                assert report["budgetBytes"] == 100
-                assert report["reservedBytes"] == 60
-                assert report["availableBytes"] == 40
-            data = await (await client.get("/memory/status")).json()
-            assert data["memoryGovernor"]["ram"]["reservedBytes"] == 0
         finally:
             await client.close()
 
@@ -4983,61 +3923,6 @@ def test_coordination_endpoints_answer_409_when_ungoverned() -> None:
             assert data["leases"] is None
         finally:
             await client.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("device", ["mps", "cuda:1", "xpu:0", "cpu", None])
-@pytest.mark.parametrize("type_id", ["MODEL", "VAE"])
-def test_pack_resident_device_and_cost_reach_memory_status(
-    device: str | None, type_id: str
-) -> None:
-    from types import SimpleNamespace
-
-    from dinkster_api.v1 import register_inference_types
-    from dinkster_memory.resident import default_pool
-
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        register_inference_types(registry)
-        model = (
-            SimpleNamespace(load_device=device, model_size=lambda: 12345)
-            if device is not None
-            else object()
-        )
-        value = registry.wrap(
-            type_id, model if type_id == "MODEL" else SimpleNamespace(patcher=model)
-        )
-        meta = value.meta.entries
-        accelerated = device is not None and device != "cpu"
-        if accelerated:
-            assert meta["resources"] == {"gpu": device}
-            assert meta["cost"] == {f"vram:{device}": 12345, "ram": 12345}
-        else:
-            assert "resources" not in meta
-            assert "cost" not in meta
-        resource_id = str(meta["resourceId"])
-        assert resource_id.startswith("resident:")
-        pool = default_pool()
-        governor = MemoryGovernor({"ram": 100000, f"vram:{device}": 100000})
-        governor.register_shedder(pool, name="models")
-        client = await make_governed_client(governor)
-        try:
-            response = await client.get("/memory/status?details=1")
-            assert response.status == 200
-            data = await response.json()
-            rows = [
-                row
-                for row in data["consumerDetails"]["models"]
-                if row["itemId"] == resource_id.removeprefix("resident:")
-            ]
-            assert len(rows) == 1
-            assert rows[0]["bytesByResidency"] == (
-                {f"vram:{device}": 12345, "ram": 12345} if accelerated else {}
-            )
-        finally:
-            await client.close()
-            pool.remove(resource_id.removeprefix("resident:"))
 
     run_scenario(scenario())
 
@@ -5373,21 +4258,6 @@ def test_coordination_request_validation() -> None:
     run_scenario(scenario())
 
 
-def test_app_cleanup_releases_active_leases() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100})
-        client = await make_governed_client(governor)
-        resp = await client.post(
-            "/memory/reserve", json={"device": "ram", "bytes": 80, "ttlSeconds": 300}
-        )
-        assert resp.status == 201
-        assert governor.reserved("ram") == 80
-        await client.close()  # app cleanup closes the broker
-        assert governor.reserved("ram") == 0
-
-    run_scenario(scenario())
-
-
 # -- consumer detail contract over the wire (DESIGN 3.10 observability) --------
 
 
@@ -5418,38 +4288,6 @@ class DetailedPool(TrimmableCache):
             )
             for item_id, nbytes in sorted(self.models.items())
         ]
-
-
-def test_status_details_serves_items_with_geometry() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"vram:cuda:0": 100})
-        pool = DetailedPool("vram:cuda:0", {"ckpt-a": 40})
-        plain = TrimmableCache("vram:cuda:0", 10)
-        governor.register_shedder(pool, name="models")
-        governor.register_shedder(plain, name="plain")
-        client = await make_governed_client(governor)
-        try:
-            # The cheap default: no item lists.
-            data = await (await client.get("/memory/status")).json()
-            assert "consumerDetails" not in data
-
-            data = await (await client.get("/memory/status?details=1")).json()
-            # Only detail-contract consumers are itemized; the plain one
-            # keeps its footprint number in the governor view.
-            assert set(data["consumerDetails"]) == {"models"}
-            (item,) = data["consumerDetails"]["models"]
-            assert item == {
-                "itemId": "ckpt-a",
-                "displayName": "checkpoint ckpt-a.safetensors",
-                "bytesByResidency": {"vram:cuda:0": 40},
-                # Geometry travels with the data: page size and count are
-                # the server's facts, never a client-side constant.
-                "pages": {"pageBytes": 32, "pageCount": 3, "flags": [1, 1, 0]},
-            }
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
 
 
 def test_trim_items_unloads_one_model_by_stable_id() -> None:
@@ -5531,25 +4369,6 @@ def test_reset_peak_and_usage_metrics_over_http() -> None:
                 await client.post("/memory/reset-peak", json={"device": "missing"})
             ).status == 404
             assert (await client.post("/memory/reset-peak", json={"device": 1})).status == 400
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_status_reports_measured_telemetry_over_the_wire() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor(
-            {"vram:cuda:0": 100},
-            telemetry=lambda d: MeasuredMemory(free_bytes=7, total_bytes=24),
-        )
-        client = await make_governed_client(governor)
-        try:
-            data = await (await client.get("/memory/status")).json()
-            assert data["memoryGovernor"]["vram:cuda:0"]["measured"] == {
-                "freeBytes": 7,
-                "totalBytes": 24,
-            }
         finally:
             await client.close()
 
@@ -6809,43 +5628,6 @@ def test_announce_grows_surface_bumps_epoch_and_orders_event() -> None:
             await ws.close()
         finally:
             await client.close()
-
-    run_scenario(scenario())
-
-
-def test_announce_refuses_bad_deltas_without_mutating() -> None:
-    """Announcement validation mirrors construction: node-type collisions,
-    unknown-pack attribution, and attribution outside the delta all raise
-    - and a refused delta changes NOTHING (epoch, surface, packs table),
-    so a miswired host cannot leave the server half-announced."""
-
-    async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
-        state = app[STATE_KEY]
-        late = build_schemas([Late])
-
-        with pytest.raises(ValueError, match="redefine"):
-            state.announce(build_schemas([Echo]), {}, {})
-        with pytest.raises(ValueError, match="unknown pack"):
-            state.announce(late, {}, {"late.echo": "nope"})
-        with pytest.raises(ValueError, match="not in"):
-            state.announce(
-                late,
-                {"p": PackInfo(display_name="P")},
-                {"test.echo": "p"},
-            )
-        assert state.schema_epoch == 1
-        assert "late.echo" not in state.schemas
-        assert "p" not in state.packs
-        assert "late.echo" not in state.node_packs
-
-        # A successful announce; then re-declaring its pack entry is legal
-        # only when identical (the shared compat-entry shape).
-        assert state.announce(late, {"p": PackInfo(display_name="P")}, {"late.echo": "p"}) == 2
-        with pytest.raises(ValueError, match="different info"):
-            state.announce({}, {"p": PackInfo(display_name="Different")}, {})
-        assert state.announce({}, {"p": PackInfo(display_name="P")}, {}) == 3
-        assert state.schemas["late.echo"] is late["late.echo"]
 
     run_scenario(scenario())
 

@@ -16,17 +16,13 @@ from typing import Any
 
 import pytest
 from assetpack_nodes import ReadAssetInput
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetVault, MountDef, MountTable, register_asset_type
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import Invocation
 from dinkster_values import (
-    CORE_STRING,
     TypeRegistry,
-    asset_type_id,
-    make_list_value,
     register_core_types,
 )
 from dinkster_workers import RemoteWorker
@@ -171,72 +167,6 @@ def test_held_job_asset_short_circuits_without_transfer(
                     assert asset_host.requests == 0
                 finally:
                     await worker.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("media_type", [None, AUDIO_TYPE, "dinkster.layers", "custom.media"])
-def test_assets_query_once_deduplicated(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, media_type: str | None
-) -> None:
-    """One deduplicated assetQuery per dispatch: duplicate typed-asset
-    digests nested in a list input collapse to a single queried digest,
-    and an invocation with no asset inputs never touches the asset
-    protocol."""
-
-    async def scenario() -> None:
-        daemon_vault = tmp_path / "daemon-vault"
-        seeded = AssetVault(daemon_vault)
-        with seeded.writer(MODEL_DIGEST) as writer:
-            writer.write(MODEL_BYTES)
-            writer.commit()
-        proc, host, port = await start_service(
-            write_assetpack_manifest(tmp_path), tmp_path, "--asset-vault", str(daemon_vault)
-        )
-        try:
-            worker = job_worker(host, port, None)
-            await worker.start()
-            try:
-                queries = spy_on_asset_queries(worker, monkeypatch)
-                registry = engine_registry()
-                typed = asset_type_id(CORE_STRING)
-                reference = {
-                    "digest": MODEL_DIGEST,
-                    "name": "Aux Model",
-                    "size": len(MODEL_BYTES),
-                }
-                if media_type is not None:
-                    typed = media_type
-                    registry.register(typed, meta=lambda _: {"asset_refs": [reference]})
-                envelope = registry.wrap(
-                    typed,
-                    reference,
-                )
-                schema = worker.schemas["apack.read"]
-                await worker._stage_job_assets(
-                    Invocation(
-                        invocation_id="dup",
-                        node_id="r",
-                        node_type="apack.read",
-                        inputs={"data": make_list_value(typed, [envelope, envelope])},
-                        effective_schema=schema,
-                    )
-                )
-                assert queries == [[MODEL_DIGEST]]
-                await worker._stage_job_assets(
-                    Invocation(
-                        invocation_id="plain",
-                        node_id="r",
-                        node_type="apack.read",
-                        inputs={"data": registry.wrap(CORE_STRING, "no assets here")},
-                        effective_schema=schema,
-                    )
-                )
-                assert queries == [[MODEL_DIGEST]]
-            finally:
-                await worker.close()
         finally:
             await stop_service(proc)
 

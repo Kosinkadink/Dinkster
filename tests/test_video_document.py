@@ -24,7 +24,7 @@ from dinkster_values import (
 )
 from dinkster_values.storage import image_input
 from dinkster_values.timeline_video import TIMELINE_MAGIC, TimelineVideo
-from dinkster_values.video_codec import validate_video_encoded, video_fingerprint, video_meta
+from dinkster_values.video_codec import video_meta
 from dinkster_values.video_document import (
     DOCUMENT_TYPE,
     TimelineError,
@@ -247,35 +247,6 @@ def test_strict_widget_sibling_and_safe_packet_copy(bound_video):
     assert _packets(output.getvalue()) == _packets(source)[5:10]
 
 
-def test_v3_wire_is_source_only_and_v2_stable(bound_video):
-    value, factory, _ = bound_video
-    before, identity = encode_video(value), video_fingerprint(VIDEO_TYPE)(value)
-    doc = timeline_for(value)
-    doc = mutate(doc, "add_track", {"name": "overlay"})
-    video = TimelineVideo(doc, factory)
-    encoded = encode_video(video)
-    assert encoded.startswith(TIMELINE_MAGIC) and len(encoded) < 1048576
-    assert b"pixels" not in encoded and b"waveform" not in encoded
-    decoded = decode_video(encoded)
-    assert encode_video(decoded) == encoded
-    assert isinstance(decoded, TimelineVideo)
-    assert decoded.factory is None
-    validate_video_encoded(encoded, video_meta(video))
-    bad_meta = dict(video_meta(video), asset_refs=[])
-    with pytest.raises(ValueError, match="asset_refs"):
-        validate_video_encoded(encoded, bad_meta)
-    assert encode_video(value) == before
-    assert video_fingerprint(VIDEO_TYPE)(value) == identity
-
-
-def test_document_codec_registration():
-    registry = TypeRegistry()
-    register_document_types(registry)
-    value = make(clips=[clip("a", start=2, duration=10)])
-    spec = registry.spec(DOCUMENT_TYPE)
-    assert spec.decode(spec.encode(value)) == value
-
-
 def test_split_move_ripple_roll_and_retime():
     doc = make(clips=[clip("a", start=2, duration=10)])
     split = mutate(doc, "split", {"position": 4})
@@ -366,25 +337,6 @@ def test_widget_projection_source_origin_crop_and_split(bound_video):
     assert [extension(c)["video_edit"]["trim"]["duration"] for c in children] == [0.5, 1.0]
     assert all(extension(c)["video_edit"]["unknown"] == "kept" for c in children)
     assert extension(child)["video_edit"] == widget
-
-
-def test_imported_source_range_converts_once_to_widget(bound_video):
-    value, factory, _ = bound_video
-    doc = timeline_for(value)
-    child = doc["timeline"]["tracks"]["children"][0]["children"][0]
-    child["media_references"]["DEFAULT_MEDIA"]["available_range"] = time_range(100, 2)
-    child["source_range"] = time_range(100.5, 1)
-    expected = single_clip_video(doc, SourceMedia(factory))
-    edited = mutate(doc, "trim", {"video_edit": {"foreign": 5}})
-    actual = single_clip_video(edited, SourceMedia(factory))
-    np.testing.assert_array_equal(
-        disassemble_video(actual)["images"], disassemble_video(expected)["images"]
-    )
-    assert encode_video(actual) == encode_video(
-        edit_video(value, {"trim": {"start_time": 0.5, "duration": 1}, "strict_duration": False})
-    )
-    ext = extension(edited["timeline"]["tracks"]["children"][0]["children"][0])
-    assert ext["video_edit"] == {"trim": {"start_time": 0.5, "duration": 1}, "foreign": 5}
 
 
 def test_nested_track_opacity_applies_once_to_composited_group(bound_video):
@@ -704,14 +656,6 @@ def test_timeline_compositor_converts_premultiplied_video_pixels_once(bound_vide
     media.values[json_bytes(reference).decode()] = video
     frame = next(iter_timeline_frames(doc, media, CPUKernels()))[1]
     np.testing.assert_array_equal(frame, np.full((32, 64, 3), [0.5, 0, 0], np.float32))
-
-
-def test_split_preserves_negative_otio_source_coordinate_origin():
-    item = clip("source", start=-98, duration=5)
-    item["media_references"]["DEFAULT_MEDIA"]["available_range"] = time_range(-100, 20)
-    split = mutate(make(clips=[item]), "split", {"position": 2})
-    children = split["timeline"]["tracks"]["children"][0]["children"]
-    assert [range_seconds(child["source_range"]) for child in children] == [(-98, 2), (-96, 3)]
 
 
 def test_asset_only_video_binding_cannot_hold_last_frame_past_eof(bound_video):

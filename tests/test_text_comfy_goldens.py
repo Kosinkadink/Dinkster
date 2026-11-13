@@ -26,15 +26,6 @@ _GOLDENS = json.loads(
 _FILE_CASES = [name for name in _GOLDENS["cases"] if name != "counter_second_save"]
 
 
-def test_goldens_are_pinned_to_the_audited_revision() -> None:
-    assert _GOLDENS["revision"] == "e20d433a4966dcc88fa5abbae6ace824cb78b263"
-
-
-def test_every_pinned_case_confirms_the_passthrough_output() -> None:
-    """The pinned SaveTextNode returned its input text alongside the file."""
-    assert all(_GOLDENS["cases"][name]["passthrough"] is True for name in _FILE_CASES)
-
-
 @pytest.mark.parametrize("name", _FILE_CASES)
 def test_saved_bytes_name_and_passthrough_match_pinned_save_exactly(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

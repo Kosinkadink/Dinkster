@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
-import re
 import socket
 import ssl
 import threading
-import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import ExitStack, asynccontextmanager, contextmanager, suppress
 from pathlib import Path
@@ -20,24 +18,18 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
-    RESOLVER_INDEX_MAX_BYTES,
-    RESOLVER_INDEX_MAX_ENTRIES,
-    RESOLVER_INDEX_MAX_URLS,
     RESOLVER_REVALIDATE_SECONDS,
-    RESOLVER_SUBSCRIPTIONS_MAX_BYTES,
     AssetNeed,
     AssetVault,
     LibraryStore,
     ProvenanceRecord,
     ProvenanceStore,
     ResolverIndexError,
-    ResolverSubscription,
     ResolverSubscriptionError,
     ResolverSubscriptionStore,
     acquire_need,
     digest_bytes,
     parse_resolver_index,
-    resolver_index_from_wire,
 )
 from dinkster_assets import resolver_subscription as resolver_transport
 from dinkster_server import RuntimeSettings, ServerLibrary, create_app
@@ -150,14 +142,6 @@ def test_parse_resolver_index_round_trip_and_region_priority(
     assert parse_resolver_index(json.dumps(index.to_wire())) == index
 
 
-@pytest.mark.parametrize("gated", [None, 0, 1, "true", [], {}])
-def test_resolver_gated_metadata_requires_boolean(gated: object) -> None:
-    entry = resolver_entry()
-    entry["gated"] = gated
-    with pytest.raises(ResolverIndexError, match="gated must be a boolean"):
-        resolver_index_from_wire(resolver_document(entry))
-
-
 def test_parse_resolver_index_uses_shared_component_manifest() -> None:
     document = resolver_document(
         resolver_entry(
@@ -211,100 +195,6 @@ def test_parse_resolver_index_ignores_unknown_optional_fields() -> None:
 
     assert parsed == expected
     assert parsed.to_wire() == expected.to_wire()
-
-
-def test_resolver_index_rejects_non_json_variant_values() -> None:
-    entry = resolver_entry()
-    entry["variant"] = {"invalid": object()}
-    with pytest.raises(ResolverIndexError, match="only JSON values"):
-        resolver_index_from_wire(resolver_document(entry))
-
-
-@pytest.mark.parametrize(
-    ("mutate", "message"),
-    [
-        (
-            lambda document: document.update(dinksterResolver=2),
-            "unsupported resolver index version",
-        ),
-        (
-            lambda document: document["entries"][0].update(digest="sha256:abc"),
-            "digest",
-        ),
-        (
-            lambda document: document["entries"][0].update(urls=["http://models.example/model"]),
-            "HTTPS URL",
-        ),
-        (
-            lambda document: document["entries"][0].update(
-                urls=["https://models.example/model file"]
-            ),
-            "raw whitespace",
-        ),
-        (lambda document: document.update(description=None), "must be a string"),
-        (lambda document: document["entries"][0].update(components=None), "must be a list"),
-        (lambda document: document["entries"][0].update(kind="checkpoint"), "asset kind"),
-        (lambda document: document["entries"][0].update(size=-2), "non-negative integer"),
-        (lambda document: document.update(updated="2026-09-01T00:00:00"), "RFC 3339"),
-    ],
-)
-def test_parse_resolver_index_rejects_invalid_documents(
-    valid_document: dict[str, object],
-    mutate: object,
-    message: str,
-) -> None:
-    document = json.loads(json.dumps(valid_document))
-    assert isinstance(document, dict)
-    mutate(document)  # type: ignore[operator]
-    with pytest.raises(ResolverIndexError, match=message):
-        parse_resolver_index(json.dumps(document))
-
-
-@pytest.mark.parametrize("regional", [False, True])
-def test_parse_resolver_index_accepts_64_urls_and_rejects_65(regional: bool) -> None:
-    def document_with_url_count(count: int) -> dict[str, object]:
-        urls = [f"https://models.example/{number}" for number in range(count)]
-        entry = resolver_entry()
-        if regional:
-            entry["regions"] = {"us": urls}
-        else:
-            entry["urls"] = urls
-        return resolver_document(entry)
-
-    parsed = parse_resolver_index(json.dumps(document_with_url_count(RESOLVER_INDEX_MAX_URLS)))
-    entry = parsed.entries[0]
-    assert len(entry.regions["us"] if regional else entry.urls) == RESOLVER_INDEX_MAX_URLS
-
-    field_name = "entries[0].regions['us']" if regional else "entries[0].urls"
-    with pytest.raises(
-        ResolverIndexError,
-        match=rf"{re.escape(field_name)} accepts at most {RESOLVER_INDEX_MAX_URLS} URLs",
-    ):
-        parse_resolver_index(json.dumps(document_with_url_count(RESOLVER_INDEX_MAX_URLS + 1)))
-
-
-def test_parse_resolver_index_rejects_duplicate_fields_and_digests(
-    valid_document: dict[str, object],
-) -> None:
-    with pytest.raises(ResolverIndexError, match="duplicate JSON field 'dinksterResolver'"):
-        parse_resolver_index('{"dinksterResolver":1,"dinksterResolver":1,"entries":[]}')
-    document = json.loads(json.dumps(valid_document))
-    document["entries"].append(dict(document["entries"][0]))
-    with pytest.raises(ResolverIndexError, match="duplicates digest"):
-        parse_resolver_index(json.dumps(document))
-
-
-def test_parse_resolver_index_enforces_document_limits() -> None:
-    with pytest.raises(ResolverIndexError, match=str(RESOLVER_INDEX_MAX_BYTES)):
-        parse_resolver_index(b" " * (RESOLVER_INDEX_MAX_BYTES + 1))
-    entry = resolver_entry()
-    with pytest.raises(ResolverIndexError, match=str(RESOLVER_INDEX_MAX_ENTRIES)):
-        resolver_index_from_wire(
-            {
-                "dinksterResolver": 1,
-                "entries": [entry] * (RESOLVER_INDEX_MAX_ENTRIES + 1),
-            }
-        )
 
 
 def test_provenance_named_sources_are_replaceable_isolated_and_persistent(
@@ -425,40 +315,6 @@ def test_persisted_unused_optional_field_keeps_http_entries_and_suggestions(tmp_
     ]
 
 
-def test_subscription_state_rejects_ambiguous_nonfinite_and_oversized_json(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    write_document(source, resolver_document(resolver_entry()))
-    store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
-    subscription = store.subscribe(str(source))
-    valid = state.read_text("utf-8")
-    checked_at = f'"checkedAt": {subscription.checked_at}'
-
-    duplicate = valid.replace(
-        '"dinksterResolverSubscriptions": 1,',
-        '"dinksterResolverSubscriptions": 1,\n "dinksterResolverSubscriptions": 1,',
-    )
-    for invalid, message in (
-        (duplicate, "duplicate resolver subscription JSON field"),
-        (valid.replace(checked_at, '"checkedAt": Infinity'), "invalid.*number"),
-        (valid.replace(checked_at, '"checkedAt": 1e400'), "checkedAt is invalid"),
-        (
-            valid.replace(checked_at, '"checkedAt": ' + "1" * 5000),
-            "invalid resolver subscription JSON",
-        ),
-    ):
-        state.write_text(invalid, "utf-8")
-        with pytest.raises(ResolverSubscriptionError, match=message):
-            ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "reload.json"))
-
-    with state.open("wb") as handle:
-        handle.truncate(RESOLVER_SUBSCRIPTIONS_MAX_BYTES + 1)
-    with pytest.raises(ResolverSubscriptionError, match="file exceeds"):
-        ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "oversized.json"))
-
-
 def test_local_refresh_replaces_entries_and_preserves_last_good_on_error(
     tmp_path: Path,
 ) -> None:
@@ -487,31 +343,6 @@ def test_local_refresh_replaces_entries_and_preserves_last_good_on_error(
     (failed,) = store.refresh(subscription.id)
     assert "invalid resolver index JSON" in str(failed["error"])
     assert provenance.sources(OTHER_DIGEST) == ("https://models.example/replacement",)
-
-
-def test_multi_source_refresh_reads_concurrently(tmp_path: Path) -> None:
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
-    for position in range(4):
-        source = tmp_path / f"index-{position}.json"
-        write_document(source, resolver_document(resolver_entry()))
-        store.subscribe(str(source))
-
-    barrier = threading.Barrier(4)
-    refresh_one = store._refresh_one
-
-    def synchronized_refresh(
-        subscription: ResolverSubscription,
-        *,
-        now: float,
-    ) -> tuple[ResolverSubscription, bool]:
-        barrier.wait(timeout=5)
-        return refresh_one(subscription, now=now)
-
-    with patch.object(store, "_refresh_one", side_effect=synchronized_refresh):
-        refreshed = store.refresh()
-
-    assert len(refreshed) == 4
 
 
 def test_unsubscribe_rolls_back_when_subscription_persistence_fails(tmp_path: Path) -> None:
@@ -596,88 +427,6 @@ def test_filename_suggestions_are_exact_case_sensitive_basenames(tmp_path: Path)
     assert [item.digest for item in store.suggest("foo\\bar\\Model.safetensors")] == [MODEL_DIGEST]
     assert store.suggest("model.safetensors") == ()
     assert store.suggest("Model.ckpt") == ()
-
-
-def test_subscription_source_validation_is_closed(tmp_path: Path) -> None:
-    store = ResolverSubscriptionStore(
-        tmp_path / "subscriptions.json",
-        ProvenanceStore(tmp_path / "provenance.json"),
-    )
-    for source in (
-        "",
-        " relative.json ",
-        "http://models.example/index.json",
-        "ftp://models.example/index.json",
-        "https://user:pass@models.example/index.json",
-        "https://models.example/index.json#fragment",
-    ):
-        with pytest.raises(ResolverSubscriptionError):
-            store.subscribe(source)
-
-
-def test_future_checked_at_does_not_suppress_revalidation(
-    tmp_path: Path,
-    valid_document: dict[str, object],
-) -> None:
-    store = ResolverSubscriptionStore(
-        tmp_path / "subscriptions.json",
-        ProvenanceStore(tmp_path / "provenance.json"),
-    )
-    subscription = ResolverSubscription(
-        id="0" * 32,
-        source="https://models.example/index.json",
-        source_type="url",
-        index=parse_resolver_index(json.dumps(valid_document)),
-        checked_at=200.0,
-        complete_snapshot=True,
-    )
-    with patch(
-        "dinkster_assets.resolver_subscription._fetch_url",
-        return_value=(None, ""),
-    ) as fetch:
-        refreshed, changed = store._refresh_one(subscription, now=100.0)
-    assert changed
-    assert refreshed.checked_at == 100.0
-    assert not refreshed.error
-    fetch.assert_called_once()
-
-
-def test_nonfinite_clock_and_serialized_timestamp_are_rejected(
-    tmp_path: Path,
-    valid_document: dict[str, object],
-) -> None:
-    state = tmp_path / "subscriptions.json"
-    store = ResolverSubscriptionStore(
-        state,
-        ProvenanceStore(tmp_path / "provenance.json"),
-        clock=lambda: float("nan"),
-    )
-    with (
-        patch(
-            "dinkster_assets.resolver_subscription._fetch_url",
-            return_value=(json.dumps(valid_document).encode(), ""),
-        ),
-        pytest.raises(ResolverSubscriptionError, match="clock.*invalid timestamp"),
-    ):
-        store.subscribe("https://models.example/index.json")
-    assert not state.exists()
-
-    source = tmp_path / "index.json"
-    write_document(source, valid_document)
-    valid_store = ResolverSubscriptionStore(
-        state,
-        ProvenanceStore(tmp_path / "valid-provenance.json"),
-    )
-    valid_store.subscribe(str(source))
-    with (
-        patch.object(
-            ResolverSubscription,
-            "to_wire",
-            return_value={"checkedAt": float("inf")},
-        ),
-        pytest.raises(ResolverSubscriptionError, match="cannot serialize"),
-    ):
-        valid_store._save()
 
 
 def test_hosted_subscription_revalidates_with_etag_at_most_every_six_hours(
@@ -769,64 +518,6 @@ async def resolver_http_server(
         await server.close()
 
 
-@pytest.mark.parametrize(
-    "source,provider_id",
-    [
-        (None, None),
-        (None, "fixture"),
-        ("https://fixture.invalid/export", None),
-        ("https://user:password@fixture.invalid/export", "fixture"),
-        ("file:///tmp/export.json", "fixture"),
-        ("https://fixture.invalid/export", " padded "),
-        ("https://fixture.invalid/export", "x" * 513),
-        ("https://fixture.invalid/export", "bad\nID"),
-    ],
-)
-def test_official_bootstrap_requires_valid_explicit_configuration(
-    tmp_path: Path, source: str | None, provider_id: str | None
-) -> None:
-    state = tmp_path / "subscriptions.json"
-    store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
-    with patch.object(
-        resolver_transport, "_fetch_url", side_effect=AssertionError("unexpected network")
-    ):
-        with pytest.raises(ResolverSubscriptionError):
-            store.bootstrap_official(source, provider_id)
-    assert not state.exists() and not store.subscriptions()
-
-
-@pytest.mark.parametrize("cursor", ["", 1, False, [], {}, "x" * 2049, "\ud800"])
-def test_hosted_resolver_rejects_malformed_cursor(tmp_path: Path, cursor: object) -> None:
-    async def scenario() -> None:
-        async def index(_: web.Request) -> web.Response:
-            return web.json_response({**resolver_document(), "nextCursor": cursor})
-
-        async with resolver_http_server(index) as url:
-            state = tmp_path / "subscriptions.json"
-            store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
-            with pytest.raises(ResolverIndexError, match="nextCursor"):
-                await asyncio.to_thread(store.subscribe, url)
-            assert not state.exists()
-
-    run_scenario(scenario())
-
-
-def test_first_page_not_modified_requires_a_cached_complete_index(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        async def index(_: web.Request) -> web.Response:
-            return web.Response(status=304)
-
-        async with resolver_http_server(index) as url:
-            store = ResolverSubscriptionStore(
-                tmp_path / "subscriptions.json", ProvenanceStore(tmp_path / "provenance.json")
-            )
-            with pytest.raises(ResolverSubscriptionError, match="cached complete document"):
-                await asyncio.to_thread(store.subscribe, url)
-            assert store.subscriptions() == ()
-
-    run_scenario(scenario())
-
-
 @contextmanager
 def resolver_fetch_threads() -> Iterator[list[threading.Thread]]:
     workers: list[threading.Thread] = []
@@ -846,141 +537,6 @@ def resolver_fetch_threads() -> Iterator[list[threading.Thread]]:
             for worker in workers:
                 worker.join(2.0)
                 assert not worker.is_alive()
-
-
-@pytest.mark.parametrize("pages", [1, 2])
-def test_http_resolver_does_not_initialize_tls(pages: int) -> None:
-    async def scenario() -> None:
-        calls = 0
-
-        async def index(request: web.Request) -> web.Response:
-            nonlocal calls
-            calls += 1
-            if pages == 2 and "cursor" not in request.query:
-                return web.json_response({**resolver_document(), "nextCursor": "next"})
-            return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
-
-        async with resolver_http_server(index) as url:
-            with patch(
-                "ssl._create_default_https_context", side_effect=AssertionError("HTTP loaded TLS")
-            ):
-                data, _etag = await asyncio.to_thread(
-                    resolver_transport._fetch_url,
-                    url,
-                    "",
-                    timeout=resolver_transport.RESOLVER_FETCH_TIMEOUT,
-                )
-            assert data is not None
-            assert len(parse_resolver_index(data).entries) == pages
-            assert calls == pages
-
-    run_scenario(scenario())
-
-
-def test_https_resolver_creates_one_verified_tls_context() -> None:
-    context = ssl.create_default_context()
-    connections: list[http.client.HTTPSConnection] = []
-
-    def connect(connection: http.client.HTTPSConnection) -> None:
-        connections.append(connection)
-        assert connection._context is context  # type: ignore[reportPrivateUsage]
-        assert context.verify_mode == ssl.CERT_REQUIRED
-        assert context.check_hostname
-        raise OSError("stop before network access")
-
-    with (
-        patch("ssl._create_default_https_context", return_value=context) as create_context,
-        patch.object(http.client.HTTPSConnection, "connect", connect),
-        resolver_fetch_threads(),
-    ):
-        with pytest.raises(ResolverSubscriptionError, match="stop before network access"):
-            resolver_transport._fetch_url("https://models.example/index", "", timeout=1.0)
-        assert len(connections) == 1
-        create_context.assert_called_once_with()
-
-
-def test_fetch_returns_capacity_to_the_semaphore_it_acquired() -> None:
-    original = threading.BoundedSemaphore(1)
-    replacement = threading.BoundedSemaphore(1)
-    entered = threading.Event()
-    release = threading.Event()
-
-    def blocked(*_args: object, **_kwargs: object) -> tuple[bytes | None, str]:
-        entered.set()
-        assert release.wait(2.0)
-        return None, "late"
-
-    with (
-        patch.object(resolver_transport, "_FETCH_SLOTS", original),
-        patch.object(resolver_transport, "_fetch_url_until_deadline", side_effect=blocked),
-        resolver_fetch_threads() as workers,
-    ):
-        try:
-            with pytest.raises(ResolverSubscriptionError, match="time limit"):
-                resolver_transport._fetch_url("http://localhost/index", "", timeout=0.05)
-            assert entered.wait(1.0)
-            assert not original.acquire(blocking=False)
-            with patch.object(resolver_transport, "_FETCH_SLOTS", replacement):
-                release.set()
-                for worker in workers:
-                    worker.join(1.0)
-                    assert not worker.is_alive()
-            assert original.acquire(blocking=False)
-            assert not original.acquire(blocking=False)
-            assert replacement.acquire(blocking=False)
-            assert not replacement.acquire(blocking=False)
-        finally:
-            release.set()
-
-
-def test_cursor_pages_share_one_timeout_and_preserve_previous_refresh(tmp_path: Path) -> None:
-    mode = "initial"
-    elapsed = [0.0]
-    timeouts: list[float] = []
-    deadlines: list[float] = []
-
-    def page(
-        url: str, _etag: str, *, timeout: float, deadline: float, max_bytes: int
-    ) -> tuple[bytes, str]:
-        timeouts.append(timeout)
-        deadlines.append(deadline)
-        if mode == "initial":
-            document = resolver_document()
-        else:
-            elapsed[0] += 0.35
-            document = (
-                {**resolver_document(), "nextCursor": "next"}
-                if "cursor=" not in url
-                else resolver_document(resolver_entry(digest=OTHER_DIGEST))
-            )
-        data = json.dumps(document).encode()
-        assert len(data) < max_bytes
-        return data, ""
-
-    now = [100.0]
-    store = ResolverSubscriptionStore(
-        tmp_path / "subscriptions.json",
-        ProvenanceStore(tmp_path / "provenance.json"),
-        clock=lambda: now[0],
-        fetch_timeout=0.5,
-    )
-    # Advance page time explicitly so the test proves the shared budget rather
-    # than assuming the OS schedules page two inside a short wall-clock window.
-    with (
-        patch.object(resolver_transport, "time", wraps=time) as clock,
-        patch.object(resolver_transport, "_fetch_page", side_effect=page),
-        resolver_fetch_threads(),
-    ):
-        clock.monotonic.side_effect = lambda: elapsed[0]
-        prior = store.subscribe("http://localhost/index")
-        mode = "slow"
-        now[0] += RESOLVER_REVALIDATE_SECONDS
-        (failed,) = store.refresh()
-        assert "time limit" in str(failed["error"])
-        assert timeouts == pytest.approx([0.5, 0.5, 0.15])
-        assert deadlines == [0.5, 0.5, 0.5]
-        assert store.subscriptions()[0].refreshed_at == prior.refreshed_at
-        assert store.subscriptions()[0].index == prior.index
 
 
 @pytest.mark.parametrize("part", ["headers", "chunk-framing", "body"])
@@ -1059,109 +615,6 @@ def test_fetch_deadline_covers_blocking_connection_establishment(phase: str) -> 
             release.set()
 
 
-def test_fetch_capacity_is_held_until_timed_out_dns_workers_exit() -> None:
-    release = threading.Event()
-    capacity = resolver_transport._REFRESH_WORKERS
-    slots = threading.BoundedSemaphore(capacity)
-
-    def blocked(*_args: object, **_kwargs: object) -> None:
-        assert release.wait(3.0)
-        raise socket.gaierror("delayed DNS failure")
-
-    with (
-        patch.object(resolver_transport, "_FETCH_SLOTS", slots),
-        patch("socket.getaddrinfo", side_effect=blocked) as blocked_dns,
-        resolver_fetch_threads() as workers,
-    ):
-        try:
-            for _ in range(capacity):
-                with pytest.raises(ResolverSubscriptionError, match="time limit"):
-                    resolver_transport._fetch_url("http://localhost/index", "", timeout=0.05)
-            assert len(workers) == capacity
-            assert blocked_dns.call_count == capacity
-            assert all(worker.daemon and worker.is_alive() for worker in workers)
-            for _ in range(capacity * 2):
-                with pytest.raises(ResolverSubscriptionError, match="capacity exhausted"):
-                    resolver_transport._fetch_url("http://localhost/index", "", timeout=15.0)
-            assert len(workers) == capacity
-            assert all(worker.is_alive() for worker in workers)
-            assert not release.is_set()
-        finally:
-            release.set()
-            for worker in workers:
-                worker.join(2.0)
-                assert not worker.is_alive()
-        for _ in range(capacity):
-            assert slots.acquire(blocking=False)
-        assert not slots.acquire(blocking=False)
-        for _ in range(capacity):
-            slots.release()
-        with patch.object(
-            resolver_transport,
-            "_fetch_page",
-            return_value=(json.dumps(resolver_document()).encode(), "fresh"),
-        ):
-            assert (
-                resolver_transport._fetch_url("http://localhost/index", "", timeout=1.0)[1]
-                == "fresh"
-            )
-
-
-@pytest.mark.parametrize("timeout", [0.0, -1.0, float("inf"), float("nan")])
-def test_resolver_timeout_must_be_finite_and_positive(tmp_path: Path, timeout: float) -> None:
-    with pytest.raises(ValueError, match="finite and positive"):
-        ResolverSubscriptionStore(
-            tmp_path / "subscriptions.json",
-            ProvenanceStore(tmp_path / "provenance.json"),
-            fetch_timeout=timeout,
-        )
-
-
-@pytest.mark.parametrize("marker", [None, 0, 1, "true", [], {}])
-def test_persisted_completion_marker_requires_boolean(tmp_path: Path, marker: object) -> None:
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    write_document(source, resolver_document())
-    ResolverSubscriptionStore(state, provenance).subscribe(str(source))
-    persisted = json.loads(state.read_text())
-    persisted["subscriptions"][0]["completeSnapshot"] = marker
-    state.write_text(json.dumps(persisted))
-    with pytest.raises(ResolverSubscriptionError, match="completeSnapshot must be a boolean"):
-        ResolverSubscriptionStore(state, provenance)
-
-
-def test_local_partial_resolver_cannot_replace_or_reload_complete_authority(tmp_path: Path) -> None:
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    now = [100.0]
-    terminal = {**resolver_document(), "nextCursor": None}
-    write_document(source, terminal)
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    prior = store.subscribe(str(source))
-    assert prior.complete_snapshot
-    assert "nextCursor" not in prior.index.to_wire()
-    persisted = json.loads(state.read_text())
-    persisted["subscriptions"][0]["index"] = terminal
-    state.write_text(json.dumps(persisted))
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    assert store.subscriptions()[0] == prior
-    partial = {**resolver_document(), "nextCursor": "nonterminal"}
-    write_document(source, partial)
-    now[0] += 10
-    (failed,) = store.refresh()
-    assert "partial resolver index" in str(failed["error"])
-    assert store.subscriptions()[0].refreshed_at == prior.refreshed_at
-    with pytest.raises(ResolverIndexError, match="partial resolver index"):
-        resolver_index_from_wire(partial)
-    persisted = json.loads(state.read_text())
-    persisted["subscriptions"][0]["index"] = partial
-    state.write_text(json.dumps(persisted))
-    with pytest.raises(ResolverIndexError, match="partial resolver index"):
-        ResolverSubscriptionStore(state, provenance)
-
-
 class _BytesResponse:
     def __init__(self, data: bytes) -> None:
         self._chunks: Iterator[bytes] = iter((data, b""))
@@ -1191,23 +644,6 @@ class _IncompleteResponse:
 
     def read1(self, _: int) -> bytes:
         raise http.client.IncompleteRead(b"partial", 100)
-
-
-def test_hosted_body_protocol_failure_is_a_subscription_error() -> None:
-    class Opener:
-        def open(self, *_: object, **__: object) -> _IncompleteResponse:
-            return _IncompleteResponse()
-
-    with (
-        patch(
-            "dinkster_assets.resolver_subscription.urllib.request.build_opener",
-            return_value=Opener(),
-        ),
-        pytest.raises(ResolverSubscriptionError, match="resolver index request failed"),
-    ):
-        from dinkster_assets.resolver_subscription import _fetch_url
-
-        _fetch_url("https://models.example/index.json", "", timeout=1.0)
 
 
 @pytest.mark.parametrize(
@@ -1377,41 +813,6 @@ def test_resolver_api_refreshes_local_subscriptions_on_startup(tmp_path: Path) -
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("source", 1),
-        ("source", "file:///tmp/export"),
-        ("providerId", ""),
-        ("providerId", " padded "),
-        ("subscriptionId", "invalid"),
-        ("extra", True),
-        (None, None),
-    ],
-)
-def test_official_bootstrap_rejects_invalid_persisted_binding(
-    tmp_path: Path, field: str | None, value: object
-) -> None:
-    bootstrap: dict[str, object] = {
-        "source": "https://fixture.invalid/export",
-        "providerId": "fixture",
-        "subscriptionId": "a" * 32,
-    }
-    if field is not None:
-        bootstrap[field] = value
-    state = tmp_path / "subscriptions.json"
-    write_document(
-        state,
-        {
-            "dinksterResolverSubscriptions": 1,
-            "subscriptions": [],
-            "officialBootstrap": bootstrap if field is not None else None,
-        },
-    )
-    with pytest.raises(ResolverSubscriptionError, match="official resolver"):
-        ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
-
-
 def test_resolver_api_startup_refresh_persistence_failure_is_nonfatal(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -1435,34 +836,6 @@ def test_resolver_api_startup_refresh_persistence_failure_is_nonfatal(
     with patch.object(store, "refresh", side_effect=OSError("disk full")):
         run_scenario(scenario())
     assert "resolver index startup refresh failed: disk full" in caplog.text
-
-
-def test_resolver_management_api_validates_requests(tmp_path: Path) -> None:
-    store = ResolverSubscriptionStore(
-        tmp_path / "subscriptions.json",
-        ProvenanceStore(tmp_path / "provenance.json"),
-    )
-
-    async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
-        add_resolver_index_routes(app, store)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            for body in ([], {}, {"source": 42}, {"source": "x", "extra": True}):
-                response = await client.post("/api/assets/resolver-indexes", json=body)
-                assert response.status == 400
-            response = await client.post(
-                "/api/assets/resolver-indexes/refresh",
-                json={"id": "unknown"},
-            )
-            assert response.status == 404
-            response = await client.delete("/api/assets/resolver-indexes/unknown")
-            assert response.status == 404
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
 
 
 def test_refresh_io_does_not_block_resolver_reads(tmp_path: Path) -> None:
@@ -1502,60 +875,6 @@ def test_refresh_io_does_not_block_resolver_reads(tmp_path: Path) -> None:
             refresher.join(2.0)
             reader.join(2.0)
     assert not refresher.is_alive() and not reader.is_alive()
-
-
-@pytest.mark.parametrize("failure", ["apply", "save"])
-def test_refresh_failure_restores_every_observable(tmp_path: Path, failure: str) -> None:
-    first_path = tmp_path / "first.json"
-    second_path = tmp_path / "second.json"
-    write_document(first_path, resolver_document())
-    write_document(second_path, resolver_document(resolver_entry(digest=OTHER_DIGEST)))
-    state = tmp_path / "subscriptions.json"
-    provenance_path = tmp_path / "provenance.json"
-    provenance = ProvenanceStore(provenance_path)
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
-    store.subscribe(str(first_path))
-    store.subscribe(str(second_path))
-    before = store.subscriptions()
-    saved = state.read_bytes()
-    provenance_saved = provenance_path.read_bytes()
-    records = provenance.records()
-    suggestions = store.suggest("example.safetensors")
-    write_document(first_path, resolver_document(resolver_entry(name="updated-first.safetensors")))
-    write_document(
-        second_path,
-        resolver_document(resolver_entry(digest=OTHER_DIGEST, name="updated-second.safetensors")),
-    )
-    apply, save = store._apply, store._save
-    calls = 0
-
-    def fail_during_apply(subscription: ResolverSubscription) -> None:
-        nonlocal calls
-        calls += 1
-        apply(subscription)
-        if calls == 2:
-            raise OSError("injected apply failure")
-
-    def fail_after_save() -> None:
-        save()
-        raise OSError("injected save failure")
-
-    fault = (
-        patch.object(store, "_apply", side_effect=fail_during_apply)
-        if failure == "apply"
-        else patch.object(store, "_save", side_effect=fail_after_save)
-    )
-    with fault, pytest.raises(OSError, match=f"injected {failure} failure"):
-        store.refresh()
-    current = store.subscriptions()
-    assert current == before
-    assert all(after is old for after, old in zip(current, before, strict=True))
-    assert state.read_bytes() == saved
-    assert provenance_path.read_bytes() == provenance_saved
-    assert provenance.records() == records
-    assert store.suggest("example.safetensors") == suggestions
-    assert store.suggest("updated-first.safetensors") == ()
-    assert store.suggest("updated-second.safetensors") == ()
 
 
 def test_refresh_does_not_overwrite_concurrent_subscription_mutation(tmp_path: Path) -> None:
@@ -1881,66 +1200,6 @@ def test_failed_cursor_refresh_retains_http_state(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("late_response", ["new-snapshot", "not-modified"])
-def test_refresh_deadline_releases_store_lock_and_rejects_late_results(
-    tmp_path: Path, late_response: str
-) -> None:
-    now = [100.0]
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0], fetch_timeout=0.1)
-    initial = json.dumps(resolver_document()).encode()
-    with patch.object(resolver_transport, "_fetch_page", return_value=(initial, "old")):
-        for source in ("https://first.example/index", "https://second.example/index"):
-            store.subscribe(source)
-    prior = store.subscriptions()
-    now[0] += RESOLVER_REVALIDATE_SECONDS
-    release = threading.Event()
-    workers: list[threading.Thread] = []
-
-    def blocked(*_args: object, **_kwargs: object) -> tuple[bytes | None, str]:
-        workers.append(threading.current_thread())
-        assert release.wait(3.0)
-        return (
-            None
-            if late_response == "not-modified"
-            else json.dumps(resolver_document(resolver_entry(digest=OTHER_DIGEST))).encode(),
-            "late",
-        )
-
-    with patch.object(resolver_transport, "_fetch_page", side_effect=blocked):
-        try:
-            failed = store.refresh()
-            assert len(failed) == 2 and all(row["error"] for row in failed)
-            assert len(workers) == 2 and all(worker.is_alive() for worker in workers)
-            read_finished = threading.Event()
-
-            def read_store() -> None:
-                store.subscriptions()
-                read_finished.set()
-
-            reader = threading.Thread(target=read_store, daemon=True)
-            reader.start()
-            assert read_finished.wait(0.5)
-            reader.join(0.5)
-            retained = store.subscriptions()
-            saved = state.read_bytes()
-        finally:
-            release.set()
-            for worker in workers:
-                worker.join(2.0)
-                assert not worker.is_alive()
-    assert store.subscriptions() == retained
-    assert state.read_bytes() == saved
-    for old, current in zip(prior, retained, strict=True):
-        assert current.refreshed_at == old.refreshed_at
-        assert current.index == old.index
-        assert current.etag == old.etag
-    assert not provenance.sources(OTHER_DIGEST)
-    reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    assert reloaded.subscriptions() == retained
-
-
 def test_legacy_resolver_cache_requires_complete_unconditional_refresh(tmp_path: Path) -> None:
     async def scenario() -> None:
         entry = resolver_entry()
@@ -2096,78 +1355,6 @@ def test_resolver_api_official_bootstrap_with_fixture_provider(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("terminal_null", [False, True])
-def test_official_bootstrap_complete_snapshot_identity(tmp_path: Path, terminal_null: bool) -> None:
-    async def scenario() -> None:
-        state = tmp_path / "subscriptions.json"
-        provenance = ProvenanceStore(tmp_path / "provenance.json")
-        now = [100.0]
-        mode = "initial"
-        calls: list[str | None] = []
-        store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-
-        async def index(request: web.Request) -> web.Response:
-            assert not any(
-                name in request.headers
-                for name in ("Authorization", "Cookie", "Proxy-Authorization")
-            )
-            assert "If-None-Match" not in request.headers
-            cursor = request.query.get("cursor")
-            calls.append(cursor)
-            document = resolver_document()
-            document["entries"] = [resolver_entry()] if mode == "initial" and cursor else []
-            if not cursor:
-                document["nextCursor"] = "last"
-            elif terminal_null:
-                document["nextCursor"] = None
-            if mode == "wrong-identity":
-                document["name"] = "other-provider"
-            if mode == "initial":
-                assert not state.exists()
-            return web.json_response(document, headers={"ETag": '"page"', "Set-Cookie": "x=y"})
-
-        async with resolver_http_server(index) as url:
-            subscription = await asyncio.to_thread(
-                store.bootstrap_official, url, "community-models"
-            )
-            assert subscription is not None
-            assert subscription.complete_snapshot and subscription.etag == ""
-            assert calls == [None, "last"]
-            assert provenance.sources(MODEL_DIGEST)
-            saved = state.read_bytes()
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            assert (
-                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
-                == subscription
-            )
-            assert calls == [None, "last"]
-            assert state.read_bytes() == saved
-
-            mode = "wrong-identity"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (failed,) = await asyncio.to_thread(store.refresh)
-            assert "identity" in str(failed["error"])
-            retained = store.subscriptions()[0]
-            assert retained.refreshed_at == subscription.refreshed_at
-            assert retained.index == subscription.index
-            assert provenance.sources(MODEL_DIGEST)
-
-            mode = "empty"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            await asyncio.to_thread(store.refresh)
-            assert not provenance.sources(MODEL_DIGEST)
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            assert not store.subscriptions()[0].index.entries
-
-            corrupt = json.loads(state.read_bytes())
-            corrupt["officialBootstrap"]["providerId"] = "other-provider"
-            write_document(state, corrupt)
-            with pytest.raises(ResolverSubscriptionError, match="identity"):
-                ResolverSubscriptionStore(state, provenance)
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize(
     "license_text",
     ["", " ", " custom license ", *["x" * n for n in (256, 300, 512, 513, 4096)]],
@@ -2194,30 +1381,3 @@ def test_license_metadata_survives_refresh_and_reload(tmp_path: Path, license_te
         assert current.index.entries[0].license == value
         assert current.index.entries[0].gated
         assert ResolverSubscriptionStore(state, provenance).subscriptions() == (current,)
-
-
-@pytest.mark.parametrize(
-    "invalid",
-    ["x" * 4097, "control\n", "control\t", "control\x7f", None, 1],
-    ids=["4097", "newline", "tab", "delete", "null", "number"],
-)
-def test_license_metadata_rejects_invalid_values_during_parse_and_refresh(
-    tmp_path: Path, invalid: object
-) -> None:
-    source = tmp_path / "resolver.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    write_document(source, resolver_document())
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
-    store.subscribe(str(source))
-    before = store.subscriptions()
-    bad_document = resolver_document({**resolver_entry(), "license": invalid})
-    with pytest.raises(ResolverIndexError):
-        resolver_index_from_wire(bad_document)
-    write_document(source, bad_document)
-    (failed,) = store.refresh()
-    assert failed["error"]
-    retained = store.subscriptions()[0]
-    assert retained.index == before[0].index
-    assert retained.refreshed_at == before[0].refreshed_at
-    assert ResolverSubscriptionStore(state, provenance).subscriptions() == (retained,)

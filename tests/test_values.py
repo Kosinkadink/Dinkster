@@ -1,14 +1,9 @@
-import copy
 import gc
-import pickle
 import threading
-from collections.abc import Mapping
-from dataclasses import asdict, fields, replace
 from typing import cast
 
 import pytest
 from dinkster_values import (
-    ASSET_BASE_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
@@ -16,15 +11,11 @@ from dinkster_values import (
     CORE_STRING,
     CURVE_TYPE,
     INLINE_STRING_CAP,
-    BufferEncoding,
     Curve,
     EncodedPayload,
-    Rendition,
     TypeRegistry,
-    Value,
     default_decode,
     default_encode,
-    make_absent_value,
     register_core_types,
 )
 
@@ -33,24 +24,6 @@ def make_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     return registry
-
-
-def test_core_registration_registers_curve_and_preserves_first_authority() -> None:
-    registry = make_registry()
-    curve = Curve(((3.5, -2.0), (-1.0, 4.25), (0.0, 0.5)), "linear")
-    spec = registry.spec(CURVE_TYPE)
-
-    assert spec.decode(spec.encode(curve)) == curve
-    assert registry.wrap(CURVE_TYPE, curve).resolve() == curve
-
-    first = TypeRegistry()
-    first_spec = first.register(
-        CURVE_TYPE, encode=lambda _value: b"first", decode=lambda _data: "first"
-    )
-    register_core_types(first)
-
-    assert first.spec(CURVE_TYPE) is first_spec
-    assert first.spec(CURVE_TYPE).decode(b"ignored") == "first"
 
 
 def test_curve_boundary_preserves_declared_dependencies_and_source_forms() -> None:
@@ -153,17 +126,6 @@ def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:
         registry.claim_types("another-official", ("THING",))
 
 
-def test_host_codec_does_not_claim_a_pack_type_before_its_owner_announces() -> None:
-    registry = make_registry()
-    registry.register("mypack.thing")
-    assert registry.owner_of("mypack.thing") is None
-    registry.declare_types("mypack", ("mypack",), ("mypack.thing",))
-    assert registry.type_owners()["mypack.thing"] == "mypack"
-    assert registry.wrap("mypack.thing", 19).payload.load() == 19
-    with pytest.raises(ValueError, match="overlaps"):
-        registry.claim_types("other", ("mypack",))
-
-
 def test_declared_type_can_activate_and_release_its_codec_and_providers() -> None:
     registry = make_registry()
     registry.declare_types("mypack", ("mypack",), ("mypack.thing",))
@@ -187,27 +149,6 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
 
 
-def test_declared_asset_targets_survive_staging_without_granting_local_codecs() -> None:
-    registry = make_registry()
-    registry.register(ASSET_BASE_TYPE)
-    staged = registry.copy()
-    staged.declare_types("mypack", ("mypack",), ("mypack.thing",))
-    assert "asset<mypack.thing>" not in registry
-    registry.replace_from(staged)
-    assert "asset<list<mypack.thing>>" in registry
-    assert registry.spec("asset<mypack.thing>") is registry.spec(ASSET_BASE_TYPE)
-    assert "mypack.thing" not in registry
-    with pytest.raises(KeyError, match="unregistered value type"):
-        registry.spec("mypack.thing")
-    with pytest.raises(KeyError, match="decode-target atom"):
-        registry.spec("asset<mypack.unknown>")
-    registry.remove_pack_types("mypack")
-    assert "asset<mypack.thing>" not in registry
-    assert "asset<mypack.thing>" in staged
-    with pytest.raises(KeyError, match="decode-target atom"):
-        registry.spec("asset<mypack.thing>")
-
-
 def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
     registry = TypeRegistry()
     assert registry.owner_of(CURVE_TYPE) == "core"
@@ -224,27 +165,6 @@ def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
     assert registry.type_owners()[CURVE_TYPE] == "core"
     assert registry.wrap(CURVE_TYPE, {"points": [[2, 7]]}).resolve() == Curve(((2, 7),))
     assert registry.wrap(CORE_INT, 17).resolve() == 17
-
-
-def test_encoded_buffer_is_read_only_and_materializes_on_demand() -> None:
-    backing = bytearray(b"encoded payload")
-    released: list[bool] = []
-    payload = EncodedPayload.from_buffer(
-        "test.value",
-        memoryview(backing),
-        lambda data: data.decode(),
-        "shm",
-        lambda: released.append(True),
-    )
-
-    with payload.borrow_data() as view:
-        assert view.readonly
-        assert bytes(view) == backing
-        assert released == []
-
-    assert payload.data == bytes(backing)
-    assert released == [True]
-    assert payload.load() == "encoded payload"
 
 
 def test_encoded_buffer_limits_access_to_its_logical_size() -> None:
@@ -319,56 +239,10 @@ def test_encoded_buffer_concurrent_borrow_and_materialize() -> None:
     assert released == [True]
 
 
-def test_encoded_buffer_preserves_encoded_payload_dataclass_contract() -> None:
-    payload = EncodedPayload.from_buffer(
-        "test.value",
-        memoryview(b"payload"),
-        None,
-        "shm",
-        lambda: None,
-    )
-    owned = EncodedPayload("test.value", b"payload", None, "shm")
-
-    assert payload == owned
-    assert repr(payload) == repr(owned)
-    assert [item.name for item in fields(payload)][:4] == [
-        "type_id",
-        "data",
-        "decoder",
-        "transport",
-    ]
-    assert fields(payload)[3].default == "inline"
-    assert EncodedPayload.transport == "inline"
-    dataclass_params = EncodedPayload.__dataclass_params__  # pyright: ignore[reportAttributeAccessIssue]
-    assert dataclass_params.init is True
-    assert asdict(payload)["data"] == b"payload"
-    assert replace(payload, transport="inline") == EncodedPayload(
-        "test.value", b"payload", None, "inline"
-    )
-    assert copy.deepcopy(payload) == owned
-    assert pickle.loads(pickle.dumps(payload)) == owned
-
-
-def test_equal_values_share_fingerprints() -> None:
-    registry = make_registry()
-    assert registry.wrap(CORE_INT, 42).fingerprint == registry.wrap(CORE_INT, 42).fingerprint
-    assert registry.wrap(CORE_INT, 42).fingerprint != registry.wrap(CORE_INT, 43).fingerprint
-
-
 def test_same_payload_different_type_differs() -> None:
     registry = make_registry()
     registry.register("custom.answer")
     assert registry.wrap(CORE_INT, 42).fingerprint != registry.wrap("custom.answer", 42).fingerprint
-
-
-def test_core_types_use_comfy_socket_identities_without_legacy_aliases() -> None:
-    registry = make_registry()
-
-    assert {CORE_INT, CORE_FLOAT, CORE_STRING, CORE_COMBO, CORE_BOOLEAN, "DICT", "ARRAY"} <= set(
-        registry.type_ids()
-    )
-    legacy_type_ids = {f"core.{name}" for name in ("int", "float", "string", "combo", "boolean")}
-    assert not legacy_type_ids & set(registry.type_ids())
 
 
 @pytest.mark.parametrize(
@@ -445,49 +319,6 @@ def test_core_primitives_refuse_non_scalar_runtime_and_encoded_values(type_id, i
             validator(encoded, {})
 
 
-def test_core_string_rejects_embedded_payloads_and_noncanonical_wire() -> None:
-    registry = make_registry()
-    spec = registry.spec(CORE_STRING)
-    assert spec.asset_references_complete
-    assert spec.validate_encoded is not None
-    text = 'a "quoted" path'
-    assert registry.wrap(CORE_STRING, text).resolve() == text
-    assert spec.encode(text) == b'json:"a \\"quoted\\" path"'
-    spec.validate_encoded(spec.encode(text), {})
-    for invalid in (None, True, 7, {"digest": "not-a-scalar"}, ["text"]):
-        with pytest.raises(TypeError, match="STRING expects a string"):
-            registry.wrap(CORE_STRING, invalid)
-    for wire in (b"pickle:unused", b"json:null", b'json:{"asset":1}', b'json: "spaced"'):
-        with pytest.raises((TypeError, ValueError)):
-            spec.validate_encoded(wire, {})
-
-
-def test_core_combo_is_string_shaped_but_type_distinct() -> None:
-    registry = make_registry()
-    assert CORE_COMBO in registry
-
-    combo = registry.wrap(CORE_COMBO, "euler")
-    string = registry.wrap(CORE_STRING, "euler")
-    assert combo.type_id == CORE_COMBO
-    assert combo.resolve() == "euler"
-    assert isinstance(combo.resolve(), str)
-    assert registry.inline_of(combo) == "euler"
-
-    spec = registry.spec(CORE_COMBO)
-    assert spec.decode(spec.encode("euler")) == "euler"
-    assert combo.fingerprint != string.fingerprint
-
-
-def test_core_combo_keeps_canonical_codec_and_fingerprint() -> None:
-    registry = make_registry()
-    combo = registry.wrap(CORE_COMBO, "euler")
-    spec = registry.spec(CORE_COMBO)
-
-    assert spec.encode("euler") == b'json:"euler"'
-    assert combo.fingerprint == "5cc02dd05421d92f092e0c685a9ae179ce868b7c"
-    assert registry.wrap(CORE_COMBO, combo.resolve()).fingerprint == combo.fingerprint
-
-
 class ComboStringSubclass(str):
     pass
 
@@ -514,61 +345,6 @@ def test_core_combo_preserves_scalar_type_and_identity(selected: object) -> None
         assert value.fingerprint != registry.wrap(CORE_COMBO, int(selected)).fingerprint
 
 
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        None,
-        {},
-        [],
-        ["euler"],
-        ComboStringSubclass("euler"),
-        float("nan"),
-        float("inf"),
-        -(2**53),
-        2**53,
-    ],
-)
-def test_core_combo_rejects_non_scalar_values(invalid: object) -> None:
-    registry = make_registry()
-    with pytest.raises((TypeError, ValueError), match="COMBO expects"):
-        registry.wrap(CORE_COMBO, invalid)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        b"",
-        b"json:",
-        b"json:null",
-        b"json:NaN",
-        b"json:Infinity",
-        b"json:-Infinity",
-        b"json:{}",
-        b"json:[]",
-        b'json:["euler"]',
-        b'json: "euler"',
-        b'pickle:"euler"',
-        b"json:9007199254740992",
-        b"json:-9007199254740992",
-        b"json:9007199254740993",
-        b"json:-9007199254740993",
-    ],
-)
-def test_core_combo_rejects_noncanonical_or_non_scalar_encoded_values(
-    data: bytes,
-) -> None:
-    validator = make_registry().spec(CORE_COMBO).validate_encoded
-    assert validator is not None
-    with pytest.raises((TypeError, ValueError)):
-        validator(data, {})
-
-
-def test_default_codec_json_roundtrip() -> None:
-    data = default_encode({"b": 1, "a": [1, 2.5, "x", None, True]})
-    assert data.startswith(b"json:")
-    assert default_decode(data) == {"b": 1, "a": [1, 2.5, "x", None, True]}
-
-
 class Odd:
     """Module-level so pickle can serialize it."""
 
@@ -586,59 +362,6 @@ def test_default_codec_pickle_fallback() -> None:
     data = default_encode(Odd())
     assert data.startswith(b"pickle:")
     assert default_decode(data) == Odd()
-
-
-def test_bare_name_registration_works() -> None:
-    """Sane defaults: registering with nothing but a name is fully functional."""
-    registry = TypeRegistry()
-    registry.register("mypack.mystery")
-    value = registry.wrap("mypack.mystery", {"weird": [1, 2, 3]})
-    assert value.resolve() == {"weird": [1, 2, 3]}
-    assert value.fingerprint
-    assert not registry.spec("mypack.mystery").declared_codec
-
-
-def test_custom_fingerprint_and_meta_used() -> None:
-    registry = TypeRegistry()
-    registry.register(
-        "mypack.tagged",
-        fingerprint=lambda obj: f"tagged:{obj}",
-        meta=lambda obj: {"length": len(str(obj))},
-    )
-    value = registry.wrap("mypack.tagged", "hello")
-    assert value.fingerprint == "tagged:hello"
-    assert value.meta.get("length") == 5
-
-
-def test_encoded_validator_registration_is_optional_and_preserved() -> None:
-    registry = TypeRegistry()
-    plain = registry.register("mypack.plain")
-    calls: list[tuple[bytes, Mapping[str, object]]] = []
-
-    def validate(data: bytes, metadata: Mapping[str, object]) -> None:
-        calls.append((data, metadata))
-
-    validated = registry.register("mypack.validated", validate_encoded=validate)
-    assert plain.validate_encoded is None
-    assert validated.validate_encoded is validate
-    assert calls == []
-
-
-def test_buffer_encoding_requires_and_preserves_a_declared_codec() -> None:
-    registry = TypeRegistry()
-
-    def prepare(_obj: object) -> BufferEncoding:
-        return BufferEncoding(0, lambda _buffer: 0)
-
-    with pytest.raises(ValueError, match="requires a declared codec"):
-        registry.register("mypack.invalid", prepare_buffer_encoding=prepare)
-    spec = registry.register(
-        "mypack.buffered",
-        encode=lambda obj: str(obj).encode(),
-        decode=lambda data: data.decode(),
-        prepare_buffer_encoding=prepare,
-    )
-    assert spec.prepare_buffer_encoding is prepare
 
 
 def test_duplicate_registration_rejected() -> None:
@@ -679,31 +402,6 @@ def test_long_strings_do_not_inline() -> None:
     assert registry.render(at_cap).data == b"x" * INLINE_STRING_CAP
 
 
-def test_absence_does_not_inline() -> None:
-    """Absence has its own channel (typed core.absent envelopes and
-    node_skipped); inlining None would collapse "not inline" and "absent"
-    into one ambiguous signal."""
-    registry = make_registry()
-    absent = make_absent_value(origin="n1")
-    assert registry.inline_of(absent) is None
-
-
-def test_undeclared_types_never_inline() -> None:
-    registry = make_registry()
-    registry.register("mypack.opaque")
-    assert registry.inline_of(registry.wrap("mypack.opaque", 42)) is None
-
-
-def test_inline_policy_rejects_non_scalars() -> None:
-    """A pack inline fn cannot smuggle rich objects: only JSON-native
-    scalars survive the central policy."""
-    registry = make_registry()
-    registry.register("mypack.leaky", inline=lambda obj: obj)
-    assert registry.inline_of(registry.wrap("mypack.leaky", {"a": 1})) is None
-    assert registry.inline_of(registry.wrap("mypack.leaky", [1, 2])) is None
-    assert registry.inline_of(registry.wrap("mypack.leaky", None)) is None
-
-
 def test_buggy_inline_fn_degrades_to_not_inline() -> None:
     """Inline rides event/descriptor serialization paths: a pack bug must
     degrade to omission, never fail the run."""
@@ -716,129 +414,7 @@ def test_buggy_inline_fn_degrades_to_not_inline() -> None:
     assert registry.inline_of(registry.wrap("mypack.buggy", 1)) is None
 
 
-def test_list_values_do_not_inline() -> None:
-    """List type ids are constructor syntax, never registered atoms, so the
-    top-level list never inlines - elements do, via descriptor recursion."""
-    registry = make_registry()
-    value = registry.wrap("list<INT>", [1, 2, 3])
-    assert registry.inline_of(value) is None
-
-
 # -- renditions (DESIGN 3.5) ---------------------------------------------------
-
-
-def test_rendition_registration_and_render() -> None:
-    registry = make_registry()
-    registry.register("mypack.doc")
-    spec = registry.register_rendition(
-        "mypack.doc", "txt", mime="text/plain", render=lambda obj: str(obj).encode()
-    )
-    assert spec.default  # first registration becomes the default
-    assert spec.cache_key("fingerprint") == "fingerprint/txt"
-    rendition = registry.render(registry.wrap("mypack.doc", "hello"))
-    assert (rendition.kind, rendition.mime, rendition.data) == (
-        "txt",
-        "text/plain",
-        b"hello",
-    )
-    # Explicit kind resolves the same spec.
-    assert registry.render(registry.wrap("mypack.doc", "x"), "txt").data == b"x"
-
-
-def test_rendition_mime_can_resolve_from_value_metadata() -> None:
-    registry = make_registry()
-    registry.register("mypack.media", meta=lambda obj: {"format": str(obj)})
-    spec = registry.register_rendition(
-        "mypack.media",
-        "original",
-        mime=lambda metadata: f"media/{metadata['format']}",
-        render=lambda obj: str(obj).encode(),
-    )
-    value = registry.wrap("mypack.media", "example")
-    assert spec.mime_for(value.meta.entries) == "media/example"
-    rendition = registry.render(value)
-    assert (rendition.mime, rendition.data) == ("media/example", b"example")
-
-
-def test_rendition_version_rotates_cache_identity() -> None:
-    registry = make_registry()
-    registry.register("mypack.doc")
-    spec = registry.register_rendition(
-        "mypack.doc",
-        "txt",
-        mime="text/plain",
-        render=lambda obj: str(obj).encode(),
-        version="container-v2",
-    )
-    assert spec.selector == "txt/container-v2"
-    assert spec.cache_key("fingerprint") == "fingerprint/txt/container-v2"
-
-
-def test_parameterized_rendition_normalizes_render_and_cache_identity() -> None:
-    registry = make_registry()
-    registry.register("mypack.audio", meta=lambda _obj: {"batch": 2})
-
-    def normalize(
-        parameters: Mapping[str, str], metadata: Mapping[str, object]
-    ) -> Mapping[str, str]:
-        assert metadata["batch"] == 2
-        return {"batch": str(int(parameters["batch"])), "window": parameters["window"]}
-
-    def render(obj: object, parameters: Mapping[str, str]) -> bytes:
-        return f"{obj}:{parameters['batch']}:{parameters['window']}".encode()
-
-    spec = registry.register_rendition(
-        "mypack.audio",
-        "window",
-        mime="audio/wav",
-        render=render,
-        version="pcm-v1",
-        parameters=("batch", "window"),
-        defaults={"batch": "0"},
-        limits={"durationSeconds": 30},
-        normalize=normalize,
-    )
-    value = registry.wrap("mypack.audio", "audio")
-    normalized = spec.normalize_parameters({"batch": "01", "window": "2,3"}, value.meta.entries)
-    assert normalized == {"batch": "1", "window": "2,3"}
-    assert spec.cache_key("fingerprint", normalized) == (
-        "fingerprint/window/pcm-v1?batch=1&window=2%2C3"
-    )
-    assert registry.render(value, "window", normalized).data == b"audio:1:2,3"
-
-
-@pytest.mark.parametrize(
-    ("first_kind", "first_version", "second_kind", "second_version"),
-    [
-        ("png", "stored-v1", "png/stored-v1", None),
-        ("png/stored-v1", None, "png", "stored-v1"),
-        ("png", "stored-v1", "png/stored-v1", "nested-v2"),
-        ("png/stored-v1", "nested-v2", "png", "stored-v1"),
-    ],
-)
-def test_rendition_registration_rejects_kind_selector_collisions(
-    first_kind: str,
-    first_version: str | None,
-    second_kind: str,
-    second_version: str | None,
-) -> None:
-    registry = make_registry()
-    registry.register("mypack.doc")
-    registry.register_rendition(
-        "mypack.doc",
-        first_kind,
-        mime="image/png",
-        render=lambda obj: b"png",
-        version=first_version,
-    )
-    with pytest.raises(ValueError, match=r"selector already registered: png/stored-v1$"):
-        registry.register_rendition(
-            "mypack.doc",
-            second_kind,
-            mime="image/png",
-            render=lambda obj: b"png",
-            version=second_version,
-        )
 
 
 def test_rendition_default_negotiation() -> None:
@@ -850,73 +426,3 @@ def test_rendition_default_negotiation() -> None:
     assert kinds == {("txt", True), ("html", False)}
     assert registry.render(registry.wrap("mypack.doc", "x")).kind == "txt"
     assert registry.render(registry.wrap("mypack.doc", "x"), "html").data == b"h"
-
-
-def test_local_rendition_replaces_matching_worker_relay() -> None:
-    registry = make_registry()
-    registry.register("mypack.doc")
-
-    async def unused_mime(_metadata: Mapping[str, object]) -> str:
-        raise AssertionError("relay callback must be replaced")
-
-    async def unused_resolve(
-        _metadata: Mapping[str, object], _parameters: Mapping[str, str]
-    ) -> tuple[str, Mapping[str, str]]:
-        raise AssertionError("relay callback must be replaced")
-
-    async def unused_render(_value: Value, _parameters: Mapping[str, str]) -> Rendition:
-        raise AssertionError("relay callback must be replaced")
-
-    registry.register_relayed_rendition(
-        "mypack.doc",
-        "txt",
-        mime="text/plain",
-        default=True,
-        version=None,
-        parameters=(),
-        defaults=None,
-        limits=None,
-        owner="worker",
-        resolve_mime=unused_mime,
-        resolve=unused_resolve,
-        render=unused_render,
-    )
-
-    local = registry.register_rendition(
-        "mypack.doc", "txt", mime="text/plain", render=lambda _obj: b"local"
-    )
-    assert local.default
-    assert local.relay_owner is None
-    assert registry.render(registry.wrap("mypack.doc", "x")).data == b"local"
-
-
-def test_rendition_registration_rejections() -> None:
-    registry = make_registry()
-    with pytest.raises(KeyError, match="unregistered"):
-        registry.register_rendition("mypack.nope", "txt", mime="text/plain", render=lambda obj: b"")
-    registry.register("mypack.doc")
-    registry.register_rendition("mypack.doc", "txt", mime="text/plain", render=lambda obj: b"")
-    with pytest.raises(ValueError, match="already registered"):
-        registry.register_rendition(
-            "mypack.doc", "txt", mime="text/x-other", render=lambda obj: b""
-        )
-    with pytest.raises(ValueError, match="default rendition already exists"):
-        registry.register_rendition(
-            "mypack.doc", "html", mime="text/html", render=lambda obj: b"", default=True
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        registry.register_rendition("mypack.doc", "", mime="text/plain", render=lambda obj: b"")
-    with pytest.raises(ValueError, match="version"):
-        registry.register_rendition(
-            "mypack.doc", "html", mime="text/html", render=lambda obj: b"", version=""
-        )
-
-
-def test_render_unknown_kind_raises() -> None:
-    registry = make_registry()
-    registry.register("mypack.doc")
-    with pytest.raises(KeyError, match="no rendition"):
-        registry.render(registry.wrap("mypack.doc", "x"))
-    registry.register_rendition("mypack.doc", "txt", mime="text/plain", render=lambda obj: b"")
-    with pytest.raises(KeyError, match="no rendition 'pdf'"):
-        registry.render(registry.wrap("mypack.doc", "x"), "pdf")

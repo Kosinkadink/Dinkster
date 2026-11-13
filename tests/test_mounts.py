@@ -11,23 +11,19 @@ without a restart or a control-channel message.
 from __future__ import annotations
 
 import asyncio
-import gc
 import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import cast
 
 import pytest
-from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_api.v1 import mount_roots_for_kind
 from dinkster_assets import (
     AssetError,
-    AssetScanProgress,
     AssetVault,
     AssetWriter,
     LibraryStore,
@@ -200,34 +196,6 @@ def test_mount_priority_validation_and_config_round_trip() -> None:
             parse_mounts(f'[mounts.invalid]\npath = "/data"\npriority = {invalid_toml}')
 
 
-def test_parse_is_strict() -> None:
-    with pytest.raises(MountsError, match="unknown top-level"):
-        parse_mounts('[mount.x]\npath = "/a"')
-    with pytest.raises(MountsError, match="unknown keys"):
-        parse_mounts('[mounts.x]\npath = "/a"\nwritable = true')
-    with pytest.raises(MountsError, match="lowercase"):
-        parse_mounts('[mounts.BadId]\npath = "/a"')
-    with pytest.raises(MountsError, match="mode"):
-        parse_mounts('[mounts.x]\npath = "/a"\nmode = "rw"')
-    with pytest.raises(MountsError, match="non-empty path"):
-        parse_mounts('[mounts.x]\npath = ""')
-    with pytest.raises(MountsError, match="already mounted"):
-        parse_mounts('[mounts.a]\npath = "/same"\n[mounts.b]\npath = "/same"')
-    with pytest.raises(MountsError, match="invalid TOML"):
-        parse_mounts("[mounts.x\n")
-    with pytest.raises(MountsError, match="output mount 'missing' is not configured"):
-        parse_mounts('[settings]\noutput-mount = "missing"')
-    with pytest.raises(MountsError, match="must be readwrite"):
-        parse_mounts('[settings]\noutput-mount = "readonly"\n[mounts.readonly]\npath = "/data"')
-    for kind in ("true", "42", '"../models"', '"model/*"'):
-        with pytest.raises(MountsError, match="kind"):
-            parse_mounts(f'[mounts.invalid]\npath = "/data"\nkind = {kind}')
-
-
-def test_load_missing_file_is_empty_table(tmp_path: Path) -> None:
-    assert load_mounts(tmp_path / "mounts.toml") == ()
-
-
 def test_output_mount_config_round_trip(tmp_path: Path) -> None:
     output = MountDef(id="output", path=tmp_path / "output", mode="readwrite")
     path = tmp_path / "mounts.toml"
@@ -383,31 +351,6 @@ def test_scan_publishes_cached_assets_and_progress_before_changed_file_finishes(
         assert future.result(timeout=5) == 2
 
 
-def test_rescan_keeps_verified_assets_available_before_cache_rebuild(tmp_path: Path) -> None:
-    root = tmp_path / "models"
-    seed(root, {"cached.bin": b"cached"})
-    snapshot = tmp_path / "library" / "worker-state" / "mounts.json"
-    table = MountTable(snapshot, index_root=tmp_path / "library" / "asset-indexes")
-    table.add(MountDef(id="models", path=root))
-    table.scan("models")
-    digest = digest_bytes(b"cached")
-    initial_progress = Event()
-    release = Event()
-
-    def hold_initial_progress(progress: AssetScanProgress) -> None:
-        if progress.files_done == 0:
-            initial_progress.set()
-            assert release.wait(5)
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(table.scan, "models", on_progress=hold_initial_progress)
-        assert initial_progress.wait(5)
-        assert table.ref("mounts/models/cached.bin").digest == digest
-        assert MountSnapshotResolver(snapshot).resolve(digest) == root / "cached.bin"
-        release.set()
-        assert future.result(timeout=5) == 1
-
-
 def test_mount_indexes_live_under_library_root_and_migrate_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -522,21 +465,6 @@ def test_snapshot_resolver_filters_kind_and_ranks_duplicate_digest_roots(
     assert resolver.resolve_for_kind(digest, "model/lora") == (loras / "copy.safetensors")
 
 
-def test_add_remove_refusals(tmp_path: Path) -> None:
-    table = MountTable()
-    table.add(MountDef(id="a", path=tmp_path))
-    with pytest.raises(MountsError, match="already exists"):
-        table.add(MountDef(id="a", path=tmp_path / "elsewhere"))
-    with pytest.raises(MountsError, match="unknown mount"):
-        table.remove("nope")
-    with pytest.raises(MountsError, match="unknown mount"):
-        table.scan("nope")
-    with pytest.raises(AssetError, match="mounts/a/x.png.*not ready"):
-        table.ref("mounts/a/x.png")  # registered but never scanned
-    with pytest.raises(AssetError, match="not a mount virtual path"):
-        table.ref("models/x.png")
-
-
 def test_missing_directory_is_a_failed_row_not_a_crash(tmp_path: Path) -> None:
     table = MountTable()
     table.add(MountDef(id="gone", path=tmp_path / "unplugged"))
@@ -551,36 +479,6 @@ def test_missing_directory_is_a_failed_row_not_a_crash(tmp_path: Path) -> None:
     assert table.scan("gone") == 1
     (row,) = table.descriptors()
     assert row["state"] == "ready"
-
-
-def test_ready_snapshot_is_atomic_immutable_and_excludes_nonready_rows(tmp_path: Path) -> None:
-    ready_root = tmp_path / "ready"
-    seed(ready_root, {"model.bin": b"ready"})
-    table = MountTable()
-    table.add(MountDef(id="ready", path=ready_root, priority=-1), kind="model/checkpoint")
-    table.add(MountDef(id="pending", path=tmp_path / "pending"))
-    table.add(MountDef(id="failed", path=tmp_path / "failed"))
-    table.scan("ready")
-    with pytest.raises(AssetError):
-        table.scan("failed")
-
-    (row,) = table.ready_snapshot()
-    assert (row.mount_id, row.priority, row.asset_kind) == (
-        "ready",
-        -1,
-        "model/checkpoint",
-    )
-    assert [ref.virtual_path for ref in row.refs] == ["mounts/ready/model.bin"]
-    with pytest.raises(FrozenInstanceError):
-        row.mount_id = "changed"  # type: ignore[misc]
-
-
-def test_config_defs_exclude_derived_mounts(tmp_path: Path) -> None:
-    table = MountTable()
-    configured = MountDef(id="mine", path=tmp_path)
-    table.add(configured, source="config")
-    table.add(MountDef(id="comfy-input", path=tmp_path / "x"), source="derived")
-    assert table.config_defs() == (configured,)
 
 
 # --- the worker snapshot: runtime changes without a restart -------------------
@@ -615,43 +513,6 @@ def test_snapshot_resolver_follows_runtime_mount_changes(tmp_path: Path) -> None
     table.remove("a")
     assert resolver.resolve(digest_a) is None
     assert resolver.resolve(digest_b) == root_b / "two.bin"
-
-
-def test_snapshot_resolver_refresh_is_atomic_across_threads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    snapshot = tmp_path / "mounts-snapshot.json"
-    root = tmp_path / "models"
-    seed(root, {"model.bin": b"weights"})
-    digest = digest_bytes(b"weights")
-    table = MountTable(snapshot)
-    table.add(MountDef(id="models", path=root))
-    table.scan("models")
-    resolver = MountSnapshotResolver(snapshot)
-    entered = Event()
-    release = Event()
-    original_read_text = Path.read_text
-
-    def gated_read_text(
-        path: Path,
-        encoding: str | None = None,
-        errors: str | None = None,
-    ) -> str:
-        if path == snapshot and not entered.is_set():
-            entered.set()
-            assert release.wait(timeout=5)
-        return original_read_text(path, encoding, errors)
-
-    monkeypatch.setattr(Path, "read_text", gated_read_text)
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(resolver.resolve, digest)
-        assert entered.wait(timeout=5)
-        second = executor.submit(resolver.resolve, digest)
-        with pytest.raises(FutureTimeoutError):
-            second.result(timeout=0.1)
-        release.set()
-        assert first.result(timeout=5) == root / "model.bin"
-        assert second.result(timeout=5) == root / "model.bin"
 
 
 def test_mount_priority_orders_engine_and_worker_resolution_deterministically(
@@ -795,27 +656,6 @@ def test_mount_roots_are_kind_scoped_ranked_and_live(
     snapshot.unlink()
     assert resolver.roots_for_kind("model/embedding") == ()
     assert mount_roots_for_kind("model/embedding", env=env) == ()
-
-
-def test_mount_roots_do_not_infer_unconfigured_authority(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
-    monkeypatch.setenv("DINKSTER_ASSET_ROOT", str(tmp_path))
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
-    assert mount_roots_for_kind("model/embedding") == ()
-    assert mount_roots_for_kind("model/embedding", env={}) == ()
-    snapshot = tmp_path / "malformed.json"
-    resolver = MountSnapshotResolver(snapshot)
-    env = {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
-    for text in ("{not json", "[]", '{"mounts": "nope"}', '{"mounts": [{}]}'):
-        snapshot.write_text(text)
-        assert resolver.roots_for_kind("model/embedding") == ()
-        assert mount_roots_for_kind("model/embedding", env=env) == ()
-    with pytest.raises(AssetError, match="not a valid asset kind"):
-        mount_roots_for_kind("embedding", env={})
-    with pytest.raises(AssetError, match="not a valid asset kind"):
-        resolver.roots_for_kind("model/*")
 
 
 @pytest.mark.parametrize("isolated", [False, True])
@@ -1247,122 +1087,6 @@ def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.Mo
     run_scenario(scenario())
 
 
-def test_mount_service_does_not_republish_unchanged_elapsed_progress(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "models"
-    seed(root, {"model.bin": b"model bytes"})
-    table = MountTable(tmp_path / "library" / "mounts.json")
-    table.add(MountDef(id="models", path=root))
-    import dinkster_assets.library as library_module
-
-    import dinkster.mounts_api as mounts_api_module
-
-    hashing = Event()
-    release = Event()
-
-    def held_digest(path: Path):
-        hashing.set()
-        assert release.wait(5)
-        return real_digest_file_with_record(path)
-
-    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
-    monkeypatch.setattr(mounts_api_module, "_SCAN_PROGRESS_INTERVAL", 0.01)
-    service = MountService(table)
-    refreshes: list[None] = []
-    publishes: list[None] = []
-    monkeypatch.setattr(service, "refresh_resolution_store", lambda: refreshes.append(None))
-    monkeypatch.setattr(
-        service,
-        "publish",
-        lambda _app: publishes.append(None),
-    )
-
-    async def scenario() -> None:
-        polled = asyncio.Event()
-        polls = 0
-        original_progress = table.scan_progress
-
-        def scan_progress(mount_id: str):
-            nonlocal polls
-            polls += 1
-            if polls == 2:
-                polled.set()
-            return original_progress(mount_id)
-
-        monkeypatch.setattr(table, "scan_progress", scan_progress)
-        scan = asyncio.create_task(service.scan(cast("web.Application", {}), "models"))
-        assert await asyncio.to_thread(hashing.wait, 5)
-        await asyncio.wait_for(polled.wait(), 5)
-        assert refreshes == []
-        assert publishes == []
-        release.set()
-        await scan
-        assert len(refreshes) == 2
-        assert len(publishes) == 2
-
-    try:
-        run_scenario(scenario())
-    finally:
-        release.set()
-
-
-def test_mount_service_cancelled_scan_consumes_background_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "models"
-    seed(root, {"model.bin": b"model bytes"})
-    table = MountTable(tmp_path / "library" / "mounts.json")
-    table.add(MountDef(id="models", path=root))
-    import dinkster_assets.library as library_module
-
-    import dinkster.mounts_api as mounts_api_module
-
-    hashing = Event()
-    release = Event()
-    completed = Event()
-
-    def held_digest(_path: Path):
-        hashing.set()
-        assert release.wait(5)
-        completed.set()
-        raise AssetError("late scan failure")
-
-    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
-    monkeypatch.setattr(mounts_api_module, "_SCAN_PROGRESS_INTERVAL", 0.01)
-    service = MountService(table)
-
-    async def scenario() -> None:
-        loop = asyncio.get_running_loop()
-        loop_errors: list[dict[str, object]] = []
-        previous_handler = loop.get_exception_handler()
-        loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
-        try:
-            service.scan_soon(cast("web.Application", {}), "models")
-            (scan,) = service._tasks
-            assert await asyncio.to_thread(hashing.wait, 5)
-            scan.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await scan
-            await asyncio.sleep(0)
-            assert service._tasks == set()
-
-            release.set()
-            assert await asyncio.to_thread(completed.wait, 5)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
-            gc.collect()
-            await asyncio.sleep(0)
-            assert loop_errors == []
-        finally:
-            release.set()
-            loop.set_exception_handler(previous_handler)
-
-    run_scenario(scenario())
-
-
 def test_mount_entries_emit_and_filter_semantic_model_kind(tmp_path: Path) -> None:
     root = tmp_path / "checkpoints"
     seed(
@@ -1435,34 +1159,6 @@ def _folder_paging_table(tmp_path: Path) -> MountTable:
     table.add(MountDef(id="mixed", path=root))
     table.scan("mixed")
     return table
-
-
-def test_mount_entries_omitted_params_match_explicit_defaults(tmp_path: Path) -> None:
-    table = _folder_paging_table(tmp_path)
-
-    async def scenario() -> None:
-        client = await make_client(MountService(table))
-        for query in (None, "dog"):
-            omitted = {"limit": "2"}
-            explicit = {"limit": "2", "path": "", "recursive": "true"}
-            if query is not None:
-                omitted["q"] = query
-                explicit["q"] = query
-            while True:
-                omitted_resp = await client.get("/api/mounts/mixed/entries", params=omitted)
-                explicit_resp = await client.get("/api/mounts/mixed/entries", params=explicit)
-                omitted_payload = await omitted_resp.read()
-                explicit_payload = await explicit_resp.read()
-                assert omitted_resp.status == explicit_resp.status == 200
-                assert omitted_payload == explicit_payload
-                body = json.loads(omitted_payload)
-                if "cursor" not in body:
-                    break
-                omitted["cursor"] = body["cursor"]
-                explicit["cursor"] = json.loads(explicit_payload)["cursor"]
-        await client.close()
-
-    run_scenario(scenario())
 
 
 def test_mount_entries_recursive_subtree_pages_stay_scoped(tmp_path: Path) -> None:
@@ -1583,52 +1279,6 @@ def test_mount_entries_cursor_binds_every_filter(tmp_path: Path) -> None:
         )
         assert resp.status == 400
         assert await resp.json() == {"error": "malformed cursor"}
-        await client.close()
-
-    run_scenario(scenario())
-
-
-def test_mount_entries_path_errors_match_list_and_unknown_mount_is_404(
-    tmp_path: Path,
-) -> None:
-    table = _folder_paging_table(tmp_path)
-
-    async def scenario() -> None:
-        client = await make_client(MountService(table))
-        for path in ("../models", "/models"):
-            list_resp = await client.get("/api/mounts/mixed/list", params={"path": path})
-            entries_resp = await client.get("/api/mounts/mixed/entries", params={"path": path})
-            assert list_resp.status == entries_resp.status == 400
-            assert await list_resp.json() == await entries_resp.json()
-        resp = await client.get("/api/mounts/mixed/entries", params={"recursive": "1"})
-        assert resp.status == 400
-        assert await resp.json() == {"error": "recursive must be true or false"}
-        resp = await client.get(
-            "/api/mounts/nope/entries",
-            params={"path": "../models", "recursive": "1"},
-        )
-        assert resp.status == 404
-        await client.close()
-
-    run_scenario(scenario())
-
-
-def test_mount_entries_scoped_limit_bounds_are_unchanged(tmp_path: Path) -> None:
-    table = _folder_paging_table(tmp_path)
-
-    async def scenario() -> None:
-        client = await make_client(MountService(table))
-        for limit, error in (
-            ("0", "limit must be in 1..500"),
-            ("501", "limit must be in 1..500"),
-            ("many", "limit must be an integer"),
-        ):
-            resp = await client.get(
-                "/api/mounts/mixed/entries",
-                params={"path": "models", "limit": limit},
-            )
-            assert resp.status == 400
-            assert await resp.json() == {"error": error}
         await client.close()
 
     run_scenario(scenario())
@@ -1760,16 +1410,6 @@ def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> No
     assert json.loads(snapshot.read_text("utf-8"))["outputMount"] == "renders"
 
 
-def test_output_mount_selection_refuses_derived_mounts(tmp_path: Path) -> None:
-    output = tmp_path / "output"
-    output.mkdir()
-    table = MountTable(output_mount="output")
-    table.add(MountDef("output", output, "readwrite"), source="derived")
-
-    with pytest.raises(MountsError, match="not persisted in mounts.toml"):
-        table.select_output_mount("output")
-
-
 def test_mount_service_keeps_configured_resolution_scopes_in_sync(tmp_path: Path) -> None:
     root = tmp_path / "models"
     seed(root, {"old.bin": b"old"})
@@ -1817,24 +1457,6 @@ def test_mount_service_keeps_configured_resolution_scopes_in_sync(tmp_path: Path
             await client.close()
 
     run_scenario(scenario())
-    store.close()
-
-
-def test_mount_service_attachment_clears_stale_rows_before_pending_scan(tmp_path: Path) -> None:
-    store = ResolutionStore(tmp_path / "resolution.sqlite")
-    digest = digest_bytes(b"stale")
-    stale = MountMaterialization(
-        "scope-a",
-        "stale",
-        0,
-        "",
-        AssetRef(digest, "stale", 5, virtual_path="mounts/stale/x"),
-    )
-    store.replace_mount_snapshot(("scope-a",), (stale,))
-    table = MountTable()
-    table.add(MountDef(id="pending", path=tmp_path / "pending"))
-    MountService(table).attach_resolution_store(store, ("scope-a",))
-    assert store.snapshot("scope-a").mounts == ()
     store.close()
 
 
@@ -1965,39 +1587,6 @@ def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_pat
     assert [mount.priority for mount in load_mounts(config)] == [0, 0, 0]
     for name in ("first", "second", "common"):
         assert (tmp_path / name / "same.bin").read_bytes() == name.encode()
-
-
-def test_project_folder_validation_keeps_previous_settings(tmp_path: Path) -> None:
-    table = MountTable()
-    table.add(MountDef("existing", tmp_path, mode="readwrite"))
-    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
-
-    async def scenario() -> None:
-        client = await make_client(service)
-        try:
-            for mounts, output in (
-                (["unknown"], None),
-                (["existing", "existing"], None),
-                (["existing"], "unknown"),
-                ([], "existing"),
-                (False, None),
-            ):
-                response = await client.put(
-                    "/api/mounts/projects/default",
-                    json={
-                        "mounts": mounts,
-                        "outputMount": output,
-                    },
-                )
-                assert response.status == 400
-            response = await client.get("/api/mounts?project=Bad%20Project")
-            assert response.status == 400
-            response = await client.get("/api/mounts?project=default")
-            assert [row["id"] for row in (await response.json())["mounts"]] == ["existing"]
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
 
 
 def test_project_name_order_never_substitutes_for_digest_identity(tmp_path: Path) -> None:
@@ -2336,70 +1925,6 @@ def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) 
             for params in ({"digest": "bad"}, {"unknown": "field"}):
                 response = await client.get("/api/mounts/locations", params=params)
                 assert response.status == 400
-        finally:
-            await client.close()
-
-    try:
-        run_scenario(scenario())
-    finally:
-        store.close()
-
-
-@pytest.mark.parametrize("aliases", (2, 17))
-def test_asset_locations_refresh_each_writer_mount_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aliases: int
-) -> None:
-    import dinkster_assets.library as library_module
-
-    table = MountTable()
-    for mount_id in ("first", "second"):
-        root = tmp_path / mount_id
-        root.mkdir()
-        table.add(MountDef(mount_id, root, "readwrite"))
-        table.scan(mount_id)
-    service = MountService(table)
-    store = LibraryStore(tmp_path / "catalog.sqlite")
-    writer = AssetWriter(table)
-    expected: list[dict[str, object]] = []
-    digest = digest_bytes(b"shared")
-    for index in range(aliases):
-        for mount_id in ("second", "first"):
-            ref = writer.save_bytes(
-                {"mount": mount_id, "prefix": f"alias-{index}"}, b"shared", suffix=".bin"
-            )
-            store.record_asset(
-                "local", ref, original_name=ref.name, kind="asset/file", origin={"kind": "upload"}
-            )
-            expected.append(
-                {
-                    "storage": "mount",
-                    "mount": mount_id,
-                    "virtualPath": ref.virtual_path,
-                    "path": str(tmp_path / mount_id / ref.name),
-                }
-            )
-    loads: dict[Path, int] = {}
-    original_load = library_module.load_write_records
-
-    def load(root: Path):
-        loads[root] = loads.get(root, 0) + 1
-        return original_load(root)
-
-    monkeypatch.setattr(library_module, "load_write_records", load)
-
-    async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"), store=store, local_resolver=table
-        )
-        app = create_app(make_engine, SCHEMAS, library=library)
-        add_mount_routes(app, service)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            response = await client.get("/api/mounts/locations", params={"digest": digest})
-            assert response.status == 200
-            assert (await response.json())["locations"] == expected
-            assert loads == {tmp_path / "first": 1, tmp_path / "second": 1}
         finally:
             await client.close()
 

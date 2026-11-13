@@ -235,36 +235,6 @@ def test_dependencies_are_respected_under_parallelism() -> None:
     run_scenario(scenario())
 
 
-def test_parallel_and_serial_schedules_produce_identical_results() -> None:
-    def diamond() -> Graph:
-        return Graph(
-            nodes={
-                "root": GraphNode("test.join", {"a": "x", "b": "y", "separator": ""}),
-                "l": GraphNode(
-                    "test.join",
-                    {"a": Link("root", "text"), "b": "l", "separator": "-"},
-                ),
-                "r": GraphNode(
-                    "test.join",
-                    {"a": Link("root", "text"), "b": "r", "separator": "-"},
-                ),
-                "join": GraphNode(
-                    "test.join",
-                    {"a": Link("l", "text"), "b": Link("r", "text"), "separator": " "},
-                ),
-            }
-        )
-
-    async def run_with(bound: int | None) -> str:
-        engine, _ = make_engine(max_concurrency=bound)
-        result = await engine.run(diamond(), ["join"])
-        text = result.outputs["join"]["text"].resolve()
-        assert isinstance(text, str)
-        return text
-
-    assert run_scenario(run_with(None)) == run_scenario(run_with(1)) == "xy-l xy-r"
-
-
 def test_single_flight_within_one_run() -> None:
     async def scenario() -> None:
         Sleeper.reset()

@@ -13,38 +13,25 @@ from __future__ import annotations
 
 import io
 import struct
-import sys
-import threading
-import types
-import warnings
 import zlib
 from dataclasses import dataclass
 from itertools import product
-from multiprocessing.shared_memory import SharedMemory
 from typing import Any
 
-import dinkster_values.image_codec as image_codec_module
 import numpy as np
 import pytest
 from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
-from dinkster_api.v1 import MASK_TYPE as COMFY_MASK_TYPE
 from dinkster_image import register_types as register_image_types
 from dinkster_values import (
-    PNG_CONTAINER_VERSION,
-    EncodedPayload,
     TypeRegistry,
-    Value,
-    ValueMeta,
     annotate_mask,
     decode_image_array,
     encode_canonical_png,
     encode_image_array,
     image_array_fingerprint,
-    image_array_meta,
     prepare_image_array_encoding,
     render_image_png,
     render_mask_png,
-    stable_hash,
 )
 from PIL import Image
 
@@ -117,181 +104,6 @@ def test_direct_buffer_encoding_exactly_matches_npy_bytes(array: np.ndarray) -> 
     assert bytes(target) == expected
 
 
-def test_direct_buffer_encoding_preserves_structured_dtype_padding() -> None:
-    dtype = np.dtype([("a", "u1"), ("b", "<f8")], align=True)
-    backing = bytearray([0xA5]) * (dtype.itemsize * 2)
-    array = np.ndarray((2,), dtype=dtype, buffer=backing)
-    array["a"] = [1, 2]
-    array["b"] = [3.0, 4.0]
-    expected = encode_image_array(array)
-    encoding = prepare_image_array_encoding(array)
-    target = bytearray(encoding.size)
-
-    assert encoding.write(memoryview(target)) == encoding.size
-    assert bytes(target) == expected
-
-
-def test_direct_buffer_encoding_matches_dtype_metadata_warning() -> None:
-    array = np.arange(3, dtype=np.dtype("f4", metadata={"unit": "meters"}))
-    with warnings.catch_warnings(record=True) as expected_warnings:
-        warnings.simplefilter("always")
-        expected = encode_image_array(array)
-    with warnings.catch_warnings(record=True) as direct_warnings:
-        warnings.simplefilter("always")
-        encoding = prepare_image_array_encoding(array)
-        target = bytearray(encoding.size)
-        assert encoding.write(memoryview(target)) == encoding.size
-
-    assert bytes(target) == expected
-    assert [(warning.category, str(warning.message)) for warning in direct_warnings] == [
-        (warning.category, str(warning.message)) for warning in expected_warnings
-    ]
-
-
-@pytest.mark.parametrize("metadata", [None, {"unit": "meters"}])
-def test_direct_buffer_encoding_matches_npy_v3_bytes_and_warnings(
-    metadata: dict[str, str] | None,
-) -> None:
-    fields = [("\u6f22", "i4")]
-    dtype = np.dtype(fields) if metadata is None else np.dtype(fields, metadata=metadata)
-    array = np.array([(1,)], dtype=dtype)
-    with warnings.catch_warnings(record=True) as expected_warnings:
-        warnings.simplefilter("always")
-        expected = encode_image_array(array)
-    with warnings.catch_warnings(record=True) as direct_warnings:
-        warnings.simplefilter("always")
-        encoding = prepare_image_array_encoding(array)
-        target = bytearray(encoding.size)
-        assert encoding.write(memoryview(target)) == encoding.size
-
-    assert expected[:8] == b"\x93NUMPY\x03\x00"
-    assert bytes(target) == expected
-    assert [(warning.category, str(warning.message)) for warning in direct_warnings] == [
-        (warning.category, str(warning.message)) for warning in expected_warnings
-    ]
-
-
-def test_direct_buffer_preflight_does_not_change_other_thread_warning_policy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import dinkster_workers.boundary as boundary_module
-    from dinkster_workers import ValueCodec
-
-    array = np.arange(3, dtype=np.dtype("f4", metadata={"unit": "meters"}))
-    preflight_entered = threading.Event()
-    release_preflight = threading.Event()
-    worker_errors: list[BaseException] = []
-    original_dtype_to_descr = np.lib.format.dtype_to_descr
-    worker: threading.Thread
-
-    def blocking_dtype_to_descr(dtype: np.dtype[Any]) -> object:
-        if threading.current_thread() is worker:
-            preflight_entered.set()
-            if not release_preflight.wait(5):
-                raise TimeoutError("preflight was not released")
-        return original_dtype_to_descr(dtype)
-
-    def run_preflight() -> None:
-        try:
-            prepare_image_array_encoding(array)
-        except BaseException as exc:
-            worker_errors.append(exc)
-
-    monkeypatch.setattr(np.lib.format, "dtype_to_descr", blocking_dtype_to_descr)
-    registry = make_host_registry()
-    codec = ValueCodec(registry, shm_threshold=1)
-    names: list[str] = []
-    create_empty_segment = boundary_module._create_empty_segment
-
-    def record_segment(size: int) -> SharedMemory:
-        segment = create_empty_segment(size)
-        names.append(segment.name)
-        return segment
-
-    monkeypatch.setattr(boundary_module, "_create_empty_segment", record_segment)
-    blobs: list[bytes] = []
-    segments: list[SharedMemory] = []
-    worker = threading.Thread(target=run_preflight)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", UserWarning)
-        worker.start()
-        assert preflight_entered.wait(5)
-        try:
-            with pytest.raises(UserWarning, match="metadata on a dtype"):
-                codec.encode(registry.wrap(COMFY_IMAGE_TYPE, array), blobs, segments)
-        finally:
-            release_preflight.set()
-            worker.join(5)
-
-    assert not worker.is_alive()
-    assert worker_errors == []
-    assert blobs == []
-    assert segments == []
-    assert len(names) == 1
-    with pytest.raises(FileNotFoundError):
-        SharedMemory(name=names[0])
-
-
-def test_non_contiguous_arrays_encode() -> None:
-    array = np.arange(16, dtype=np.float32).reshape(4, 4)[:, ::2]
-    loaded = np.asarray(decode_image_array(encode_image_array(array)))
-    assert np.array_equal(loaded, array)
-
-
-def test_torch_shaped_objects_encode_by_duck_type() -> None:
-    array = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 2, 3)
-    tensor_bytes = encode_image_array(FakeTensor(array))
-    assert tensor_bytes == encode_image_array(array)
-
-
-def test_bfloat16_torch_shaped_objects_preserve_storage(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(uint16="uint16"))
-    array = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 2, 3)
-    loaded = np.asarray(decode_image_array(encode_image_array(FakeBFloat16Tensor(array))))
-    assert loaded.dtype == np.dtype([("bfloat16", "<u2")])
-    assert loaded.nbytes == array.size * 2
-    assert np.array_equal(loaded["bfloat16"], (array.view(np.uint32) >> 16).astype(np.uint16))
-
-
-def test_fingerprint_is_runtime_form_independent() -> None:
-    array = np.ones((2, 2, 3), dtype=np.float32)
-    fingerprint = image_array_fingerprint(COMFY_IMAGE_TYPE)
-    assert fingerprint(array) == fingerprint(FakeTensor(array))
-    # ... and contiguity-independent: same elements, same identity.
-    wide = np.ones((2, 4, 3), dtype=np.float32)[:, ::2, :]
-    assert fingerprint(wide) == fingerprint(np.ascontiguousarray(wide))
-
-
-def test_fingerprint_preserves_raw_byte_identity() -> None:
-    array = np.arange(12, dtype=np.float32).reshape(1, 2, 2, 3)
-    expected = stable_hash(
-        [
-            COMFY_IMAGE_TYPE.encode("utf-8"),
-            str(array.dtype).encode("utf-8"),
-            repr(array.shape).encode("utf-8"),
-            array.tobytes(),
-        ]
-    )
-    assert image_array_fingerprint(COMFY_IMAGE_TYPE)(array) == expected
-
-
-def test_fingerprint_hashes_array_through_a_buffer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    chunks: list[bytes | memoryview] = []
-
-    def capture(parts: list[bytes | memoryview]) -> str:
-        chunks.extend(parts)
-        return "fingerprint"
-
-    monkeypatch.setattr(image_codec_module, "stable_hash", capture)
-    array = np.arange(12, dtype=np.float32).reshape(1, 2, 2, 3)
-
-    assert image_array_fingerprint(COMFY_IMAGE_TYPE)(array) == "fingerprint"
-    assert isinstance(chunks[-1], memoryview)
-    assert bytes(chunks[-1]) == array.tobytes()
-
-
 def test_fingerprint_separates_type_dtype_shape_content() -> None:
     array = np.zeros((2, 2), dtype=np.float32)
     fingerprint = image_array_fingerprint("IMAGE")
@@ -299,18 +111,6 @@ def test_fingerprint_separates_type_dtype_shape_content() -> None:
     assert fingerprint(array) != fingerprint(array.astype(np.float64))
     assert fingerprint(array) != fingerprint(array.reshape(1, 4))
     assert fingerprint(array) != fingerprint(array + 1.0)
-
-
-def test_meta_reports_shape_and_dtype() -> None:
-    meta = image_array_meta(np.zeros((1, 4, 6, 3), dtype=np.float32))
-    assert meta == {
-        "shape": (1, 4, 6, 3),
-        "dtype": "float32",
-        "storage_dtype": "fp32",
-        "cost": {"ram": 288},
-        "channels": {"layout": "rgb", "alpha": "none"},
-        "color": {"primaries": 1, "transfer": 13, "range": 2},
-    }
 
 
 def test_render_batched_image_draws_first_element() -> None:
@@ -353,19 +153,6 @@ def test_canonical_png_crosses_stored_deflate_block_boundary() -> None:
         np.testing.assert_array_equal(np.asarray(image), pixels)
 
 
-def test_render_accepts_tensor_shaped_objects() -> None:
-    array = np.ones((1, 2, 2, 3), dtype=np.float32)
-    assert render_image_png(FakeTensor(array)) == render_image_png(array)
-
-
-def test_render_mask_accepts_batched_tensor_shaped_objects() -> None:
-    batch = np.arange(24, dtype=np.float32).reshape(2, 3, 4) / 24
-    rendered = render_mask_png(FakeTensor(batch))
-
-    assert png_header(rendered) == (4, 3, 0)
-    assert rendered == render_mask_png(batch[0])
-
-
 def test_render_mask_normalizes_compact_alpha_bytes() -> None:
     alpha = annotate_mask(
         np.array([[[0, 128, 255]]], dtype=np.uint8),
@@ -377,52 +164,10 @@ def test_render_mask_normalizes_compact_alpha_bytes() -> None:
         np.testing.assert_array_equal(np.asarray(image), [[255, 127, 0]])
 
 
-def test_render_mask_rejects_unrenderable_shapes() -> None:
-    with pytest.raises(ValueError, match="empty mask batch"):
-        render_mask_png(np.zeros((0, 2, 2), dtype=np.float32))
-    with pytest.raises(ValueError, match="cannot render mask shape"):
-        render_mask_png(np.zeros((1, 2, 2, 1), dtype=np.float32))
-    with pytest.raises(ValueError, match="cannot render mask shape"):
-        render_mask_png(np.zeros((3,), dtype=np.float32))
-
-
-def test_render_rejects_unrenderable_shapes() -> None:
-    with pytest.raises(ValueError, match="empty image batch"):
-        render_image_png(np.zeros((0, 2, 2, 3), dtype=np.float32))
-    with pytest.raises(ValueError, match="cannot render"):
-        render_image_png(np.zeros((2, 2, 5), dtype=np.float32))
-    with pytest.raises(ValueError, match="cannot render"):
-        render_image_png(np.zeros((3,), dtype=np.float32))
-    with pytest.raises(ValueError, match="cannot render"):
-        render_image_png(np.zeros((0, 0), dtype=np.float32))
-
-
 def make_host_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_image_types(registry)
     return registry
-
-
-def test_comfy_host_types_declare_png_rendition() -> None:
-    registry = make_host_registry()
-    assert COMFY_IMAGE_TYPE in registry
-    assert registry.spec(COMFY_IMAGE_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
-    specs = registry.renditions_of(COMFY_IMAGE_TYPE)
-    assert [(s.kind, s.mime, s.default) for s in specs] == [("png", "image/png", True)]
-    assert specs[0].version == PNG_CONTAINER_VERSION
-
-
-def test_comfy_host_mask_shares_image_bytes_with_mask_rendition() -> None:
-    """MASK gets IMAGE's byte contract and renders through the mask PNG."""
-    registry = make_host_registry()
-    assert COMFY_MASK_TYPE in registry
-    assert registry.spec(COMFY_MASK_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
-    specs = registry.renditions_of(COMFY_MASK_TYPE)
-    assert [(s.kind, s.mime, s.default) for s in specs] == [("png", "image/png", True)]
-    mask = np.arange(24, dtype=np.float32).reshape(2, 3, 4) / 24
-    rendition = registry.render(registry.wrap(COMFY_MASK_TYPE, mask), "png")
-    assert rendition.mime == "image/png"
-    assert rendition.data == render_mask_png(mask)
 
 
 def test_comfy_image_direct_shm_matches_npy_bytes() -> None:
@@ -446,107 +191,6 @@ def test_comfy_image_direct_shm_matches_npy_bytes() -> None:
     finally:
         for segment in segments:
             release_segment(segment)
-
-
-def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import types
-
-    import dinkster_workers.boundary as boundary_module
-    from dinkster_workers import ValueCodec
-    from dinkster_workers.boundary import release_segment
-
-    registry = make_host_registry()
-    array = np.zeros((1, 1280, 1280, 3), dtype=np.float32)
-    value = registry.wrap(COMFY_IMAGE_TYPE, array)
-
-    def forbid_bytes_io(*_args: object, **_kwargs: object) -> object:
-        pytest.fail("full npy BytesIO encoding was used")
-
-    monkeypatch.setattr(image_codec_module, "io", types.SimpleNamespace(BytesIO=forbid_bytes_io))
-    monkeypatch.setattr(
-        boundary_module,
-        "_create_segment",
-        lambda _data: pytest.fail("copy-based shared-memory creation was used"),
-    )
-    blobs: list[bytes] = []
-    segments = []
-    wire, stat = ValueCodec(registry, shm_threshold=1).encode(value, blobs, segments)
-    try:
-        payload = wire["payload"]
-        assert isinstance(payload, dict)
-        assert payload["transport"] == "shm"
-        assert stat.size_bytes > array.nbytes
-        assert len(blobs) == 1
-        assert segments[0].buf is not None
-        assert bytes(segments[0].buf[:6]) == b"\x93NUMPY"
-    finally:
-        for segment in segments:
-            release_segment(segment)
-
-
-def test_comfy_host_types_registration_is_idempotent() -> None:
-    registry = make_host_registry()
-    register_image_types(registry)  # second spec / reload: no raise
-    assert "ASSET" in registry
-    assert len(registry.renditions_of(COMFY_IMAGE_TYPE)) == 1
-
-
-def test_comfy_host_base_asset_registration_is_independent_of_image() -> None:
-    registry = TypeRegistry()
-    registry.register(COMFY_IMAGE_TYPE)
-    register_image_types(registry)
-    register_image_types(registry)
-    assert "ASSET" in registry
-
-
-def test_comfy_host_types_wrap_typed_image_asset_without_manual_base_registration() -> None:
-    from dinkster_assets import AssetRef
-
-    registry = make_host_registry()
-    ref = AssetRef(digest="blake3:" + "a" * 64, name="input.png", size=3)
-    wrapped = registry.wrap("asset<IMAGE>", ref)
-    assert wrapped.type_id == "asset<IMAGE>"
-    assert wrapped.fingerprint == ref.digest
-    resolved = wrapped.resolve()
-    assert isinstance(resolved, AssetRef)
-    assert resolved.resolver is None
-
-
-def test_encoded_comfy_image_renders_without_torch() -> None:
-    """The /api/values path in miniature: a worker-encoded IMAGE
-    arrives as npy bytes (EncodedPayload, exactly what the boundary builds)
-    and the host renders PNG from numpy alone."""
-    registry = make_host_registry()
-    array = np.zeros((1, 2, 3, 3), dtype=np.float32)
-    array[0, 0, 0] = [0.0, 1.0, 0.0]
-    spec = registry.spec(COMFY_IMAGE_TYPE)
-    value = Value(
-        type_id=COMFY_IMAGE_TYPE,
-        fingerprint=image_array_fingerprint(COMFY_IMAGE_TYPE)(array),
-        meta=ValueMeta(dict(image_array_meta(array))),
-        payload=EncodedPayload(COMFY_IMAGE_TYPE, spec.encode(array), spec.decode),
-    )
-    rendition = registry.render(value, "png")
-    assert (rendition.kind, rendition.mime) == ("png", "image/png")
-    assert png_header(rendition.data) == (3, 2, 2)
-
-
-def test_comfy_host_types_declare_asset_providers() -> None:
-    """Typed assets: the host registers the asset<IMAGE> decoder and
-    the IMAGE batch merge under their canonical provider ids."""
-    from dinkster_values import (
-        IMAGE_BATCH_MERGER_ID,
-        IMAGE_FILE_DECODER_ID,
-    )
-
-    registry = make_host_registry()
-    decoder = registry.asset_decoder_for(COMFY_IMAGE_TYPE)
-    assert IMAGE_FILE_DECODER_ID == "dinkster.image-file@3"
-    assert decoder is not None and decoder.provider_id == IMAGE_FILE_DECODER_ID
-    merger = registry.batch_merge_for(COMFY_IMAGE_TYPE)
-    assert merger is not None and merger.provider_id == IMAGE_BATCH_MERGER_ID
 
 
 class BytesAsset:

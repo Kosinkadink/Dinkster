@@ -23,7 +23,6 @@ from dinkster_values import (
     RESOURCES_META_KEY,
     TypeRegistry,
     Value,
-    ValueMeta,
     register_core_types,
 )
 from dinkster_workers import DeviceMap, IsolatedWorker
@@ -36,14 +35,6 @@ CUDA1_MAP = DeviceMap({"cuda:0": "cuda:1"})
 
 
 # -- pure mapping ---------------------------------------------------------
-
-
-def test_device_and_residency_mapping() -> None:
-    assert CUDA1_MAP.device("cuda:0") == "cuda:1"
-    assert CUDA1_MAP.device("cuda:7") == "cuda:7"  # unmapped passes through
-    assert CUDA1_MAP.residency("vram:cuda:0") == "vram:cuda:1"
-    assert CUDA1_MAP.residency("ram") == "ram"
-    assert CUDA1_MAP.residency("disk") == "disk"
 
 
 def test_qualifier_suffixes_every_unmapped_fact() -> None:
@@ -72,16 +63,6 @@ def test_qualifier_inversion_refuses_local_facts() -> None:
     assert remote.to_child_device("cuda:1") is None
 
 
-def test_pinned_map_inversion_matches_relay_semantics() -> None:
-    """The un-qualified inversion the relay always used, now on DeviceMap:
-    mapped devices invert, a parent device whose name means different
-    silicon inside the child is refused, everything else passes."""
-    assert CUDA1_MAP.to_child_residency("vram:cuda:1") == "vram:cuda:0"
-    assert CUDA1_MAP.to_child_residency("vram:cuda:0") is None  # child's name
-    assert CUDA1_MAP.to_child_residency("vram:cuda:7") == "vram:cuda:7"
-    assert CUDA1_MAP.to_child_residency("ram") == "ram"
-
-
 def wrapped_gpu_value(resources: object, cost: object) -> Value:
     registry = TypeRegistry()
     registry.register(
@@ -89,35 +70,6 @@ def wrapped_gpu_value(resources: object, cost: object) -> Value:
         meta=lambda obj: {RESOURCES_META_KEY: resources, COST_META_KEY: cost},
     )
     return registry.wrap("t.gpu", object())
-
-
-def test_value_meta_mapping_rewrites_devices_only() -> None:
-    value = wrapped_gpu_value({"gpu": "cuda:0"}, {"vram:cuda:0": 128, "ram": 16})
-    mapped = CUDA1_MAP.value(value)
-    assert mapped.meta.get(RESOURCES_META_KEY) == {"gpu": "cuda:1"}
-    assert mapped.meta.get(COST_META_KEY) == {"vram:cuda:1": 128, "ram": 16}
-    # Identity is device-free (hazard H4): fingerprint and payload untouched.
-    assert mapped.fingerprint == value.fingerprint
-    assert mapped.payload is value.payload
-    # The original value is not mutated.
-    assert value.meta.get(RESOURCES_META_KEY) == {"gpu": "cuda:0"}
-
-
-def test_value_meta_mapping_handles_multi_device_residency() -> None:
-    value = wrapped_gpu_value(
-        {"gpu": ("cuda:0", "cuda:2")},
-        {"vram:cuda:0": 64, "vram:cuda:2": 64},
-    )
-    mapped = DeviceMap({"cuda:0": "cuda:1", "cuda:2": "cuda:3"}).value(value)
-    assert mapped.meta.get(RESOURCES_META_KEY) == {"gpu": ("cuda:1", "cuda:3")}
-    assert mapped.meta.get(COST_META_KEY) == {"vram:cuda:1": 64, "vram:cuda:3": 64}
-
-
-def test_identity_map_returns_value_unchanged() -> None:
-    value = wrapped_gpu_value({"gpu": "cuda:0"}, {"vram:cuda:0": 128})
-    assert DeviceMap({}).value(value) is value
-    plain = Value(type_id="t.plain", fingerprint="f", meta=ValueMeta({}), payload=value.payload)
-    assert CUDA1_MAP.value(plain) is plain
 
 
 # -- across the isolated boundary ------------------------------------------

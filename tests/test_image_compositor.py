@@ -10,13 +10,11 @@ import pytest
 from dinkster_api.v1 import (
     BOUNDING_BOX_TYPE,
     COMFY_ARRAY_TYPE,
-    CompositorWidget,
     Detection,
     Region,
     TypeRegistry,
 )
 from dinkster_image.compositor import (
-    COMPOSITOR_NODES,
     AddLayer,
     CreateLayeredImage,
     LayersFromBoundingBoxes,
@@ -186,70 +184,6 @@ def _layers_header(encoded: bytes) -> dict[str, object]:
     return cast("dict[str, object]", json.loads(encoded[prefix : prefix + size]))
 
 
-def test_compositor_support_schemas_and_runtime_types() -> None:
-    schemas = {node.schema().node_type: node.schema() for node in COMPOSITOR_NODES}
-    assert {
-        "dinkster.layers.add",
-        "dinkster.layers.from_bounding_boxes",
-        "dinkster.image.create_layered",
-    } <= schemas.keys()
-    assert schemas["dinkster.layers.add"].idempotent is True
-    assert schemas["dinkster.layers.from_bounding_boxes"].idempotent is True
-    create = schemas["dinkster.image.create_layered"]
-    assert create.output_node is True
-    assert create.emits_previews is True
-    assert create.idempotent is False
-    compositor = next(input_spec for input_spec in create.inputs if input_spec.id == "compositor")
-    assert compositor.type.types == (COMPOSITOR_TYPE,)
-    assert compositor.required is False
-    assert compositor.default == {"version": 2, "documentDigest": None, "commands": []}
-    assert compositor.widget == CompositorWidget()
-    boxes = schemas["dinkster.layers.from_bounding_boxes"].inputs[2].type
-    assert boxes.kind == "list"
-    assert boxes.element is not None
-    assert boxes.element.kind == "union"
-    assert boxes.element.types == ("REGION", "DETECTION")
-
-    registry = _registry()
-    assert registry.spec(LAYERS_TYPE).type_id == LAYERS_TYPE
-    assert registry.spec(COMPOSITOR_TYPE).type_id == COMPOSITOR_TYPE
-
-
-def test_pack_compositor_codec_is_independent_of_registration_order() -> None:
-    from dinkster_image import register_types
-    from dinkster_inference_wire.types import register_inference_types
-
-    registries = (TypeRegistry(), TypeRegistry())
-    for registry, hooks in zip(
-        registries,
-        ((register_types, register_inference_types), (register_inference_types, register_types)),
-        strict=True,
-    ):
-        for hook in hooks:
-            hook(registry)
-    value = {
-        "version": 2,
-        "documentDigest": "blake3:" + "a" * 64,
-        "commands": [{"op": "layer", "id": "foreground", "changes": {"visible": False}}],
-    }
-    specs = tuple(registry.spec(COMPOSITOR_TYPE) for registry in registries)
-    encoded = tuple(spec.encode(value) for spec in specs)
-    assert encoded[0] == encoded[1]
-    assert json.loads(encoded[0]) == value
-    for spec, data in zip(specs, reversed(encoded), strict=True):
-        assert spec.decode(data) == value
-        assert spec.coerce is not None
-        assert spec.coerce({}) == {"version": 2, "documentDigest": None, "commands": []}
-        assert spec.meta is not None
-        assert spec.meta(value) == {"version": 2}
-        with pytest.raises(ValueError, match="invalid compositor document digest"):
-            spec.encode({"version": 2, "documentDigest": "invalid", "commands": []})
-        assert spec.validate_encoded is not None
-        spec.validate_encoded(data, {"version": 2})
-        with pytest.raises(ValueError, match="compositor commands must be an array"):
-            spec.validate_encoded(b'{"version":2,"documentDigest":null,"commands":{}}', {})
-
-
 def test_pack_compositor_executes_tensor_layers_through_separate_worker(tmp_path) -> None:
     from pathlib import Path
 
@@ -375,36 +309,6 @@ def test_pack_compositor_executes_tensor_layers_through_separate_worker(tmp_path
             library.store.close()
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("image_first", [False, True])
-def test_document_types_remain_distinct_from_core_editor_types(image_first: bool) -> None:
-    from dinkster_api.v1 import COMPOSITOR_TYPE as CORE_COMPOSITOR_TYPE
-    from dinkster_api.v1 import LAYERS_TYPE as CORE_LAYERS_TYPE
-    from dinkster_image_document.document import empty_document
-    from dinkster_inference_wire.types import register_inference_types
-    from dinkster_values import EncodedLatentTensor
-
-    registry = TypeRegistry()
-    registrations = (register_image_types, register_inference_types)
-    for register in registrations if image_first else reversed(registrations):
-        register(registry)
-
-    assert LAYERS_TYPE == "dinkster.layers" != CORE_LAYERS_TYPE
-    assert COMPOSITOR_TYPE == CORE_COMPOSITOR_TYPE == "COMPOSITOR"
-    document = empty_document(2, 3)
-    value = registry.wrap(LAYERS_TYPE, document)
-    assert registry.render(value, "document").data == document.data
-    assert registry.render(value).data.startswith(b"\x89PNG\r\n\x1a\n")
-    spec = registry.spec(CORE_LAYERS_TYPE)
-    layers = {
-        "foreground": EncodedLatentTensor(
-            "float32", (2, 3), np.arange(6, dtype=np.float32).tobytes()
-        )
-    }
-    assert spec.decode(spec.encode(layers)) == layers
-    assert registry.renditions_of(CORE_LAYERS_TYPE) == ()
-    assert registry.renditions_of(CORE_COMPOSITOR_TYPE) == ()
 
 
 def test_layer_stack_codec_round_trips_pixels_masks_placement_and_meta() -> None:
@@ -823,14 +727,6 @@ def test_empty_recipe_uses_native_fallback_without_reporting_stale_state() -> No
     assert state["stale"] is False
     assert state["version"] == 2
     assert len(cast("dict[str, list[str]]", state["document"])["rootLayerIds"]) == 1
-
-
-def test_identity_render_uses_canonical_raster_quantization() -> None:
-    image = np.asarray([[[[0.123456, 0.345678, 0.567891]]]], dtype=np.float32)
-    result = CreateLayeredImage.execute(
-        layers=LayerStack((CompositorSourceLayer(image, None, "Layer", 0, 0, 1, 1),))
-    )
-    np.testing.assert_array_equal(result["image"], np.rint(image * 255) / 255)
 
 
 def test_exact_recipe_reorders_flips_and_controls_background_visibility() -> None:

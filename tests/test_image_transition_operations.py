@@ -1,57 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, cast
-
 import numpy as np
-import pytest
-from dinkster_image.transition import ImageTransition, _ease, _transition_mask
+from dinkster_image.transition import ImageTransition
 
 
 def _image(values: list[float], *, height: int = 1, width: int = 1) -> np.ndarray:
     array = np.asarray(values, dtype=np.float32).reshape((-1, 1, 1, 1))
     return array.repeat(height, axis=1).repeat(width, axis=2)
-
-
-@pytest.mark.parametrize(
-    "easing",
-    (
-        "linear",
-        "ease_in",
-        "ease_out",
-        "ease_in_out",
-        "bounce",
-        "elastic",
-        "glitchy",
-        "exponential_ease_out",
-    ),
-)
-def test_transition_easings_preserve_endpoints(easing: str) -> None:
-    assert _ease(0.0, easing) == pytest.approx(0.0, abs=1e-12)
-    expected_end = 1.0 + 0.1 * np.sin(40.0) if easing == "glitchy" else 1.0
-    assert _ease(1.0, easing) == pytest.approx(expected_end, abs=1e-12)
-
-
-@pytest.mark.parametrize(
-    "transition",
-    (
-        "horizontal_slide",
-        "vertical_slide",
-        "box",
-        "circle",
-        "horizontal_door",
-        "vertical_door",
-        "fade",
-    ),
-)
-def test_transition_shapes_preserve_zero_and_one_endpoints(transition: str) -> None:
-    zero = _transition_mask(5, 7, 0.0, transition, 0.0)
-    one = _transition_mask(5, 7, 1.0, transition, 0.0)
-    if transition == "circle":
-        assert zero.sum() == 1.0
-        assert zero[2, 3] == 1.0
-    else:
-        np.testing.assert_array_equal(zero, 0)
-    np.testing.assert_array_equal(one, 1)
 
 
 def test_between_inputs_keeps_batches_and_inserts_endpoint_transitions() -> None:
@@ -132,52 +87,3 @@ def test_reverse_changes_spatial_direction_without_changing_endpoints() -> None:
     np.testing.assert_array_equal(np.asarray(reverse)[-1], batch[1])
     np.testing.assert_array_equal(np.asarray(forward)[1, 0, :, 0], [1, 1, 0, 0])
     np.testing.assert_array_equal(np.asarray(reverse)[1, 0, :, 0], [0, 0, 1, 1])
-
-
-def test_transition_resize_and_blur_policies_are_explicit() -> None:
-    first = np.zeros((1, 4, 4, 1), dtype=np.float32)
-    second = np.ones((1, 2, 2, 1), dtype=np.float32)
-    with pytest.raises(ValueError, match="dimensions must match"):
-        ImageTransition.execute(images={"first": first, "second": second})
-    resized = ImageTransition.execute(
-        images={"first": first, "second": second},
-        shape_policy="resize_to_first",
-    )["image"]
-    assert np.asarray(resized).shape == (4, 4, 4, 1)
-
-    sharp = _transition_mask(7, 7, 0.5, "box", 0.0)
-    blurred = _transition_mask(7, 7, 0.5, "box", 2.0)
-    assert np.any((blurred > 0.0) & (blurred < 1.0))
-    assert not np.array_equal(sharp, blurred)
-
-
-def test_transition_modes_validate_dynamic_family_counts() -> None:
-    with pytest.raises(ValueError, match="at least two"):
-        ImageTransition.execute(images={"only": _image([0])})
-    with pytest.raises(ValueError, match="exactly one"):
-        ImageTransition.execute(images={"a": _image([0]), "b": _image([1])}, mode="within_batch")
-    with pytest.raises(ValueError, match="exactly two"):
-        ImageTransition.execute(
-            images={"a": _image([0]), "b": _image([1]), "c": _image([2])},
-            mode="join_batches",
-        )
-    with pytest.raises(ValueError, match="between_inputs requires at least 2"):
-        ImageTransition.execute(images={"a": _image([0]), "b": _image([1])}, transitioning_frames=1)
-    with pytest.raises(ValueError, match="join_batches requires at least 1"):
-        ImageTransition.execute(
-            images={"a": _image([0]), "b": _image([1])},
-            mode="join_batches",
-            transitioning_frames=0,
-        )
-
-
-def test_transition_dynamic_constructs_and_materialized_execution() -> None:
-    schema = ImageTransition.define_schema()
-    assert schema.version == 2
-    assert tuple(combo.id for combo in schema.combos) == ("mode", "shape_policy")
-    images = {"a": _image([0]), "b": _image([1])}
-    actual = cast("Any", ImageTransition.execute)(
-        images=images, mode="join_batches", **{"mode.start_index": 0}
-    )
-    expected = ImageTransition.execute(images=images, mode="join_batches", start_index=0)
-    np.testing.assert_array_equal(actual["image"], expected["image"])

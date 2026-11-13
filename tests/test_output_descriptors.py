@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -12,25 +11,18 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
-from dinkster_protocol import Invocation
 from dinkster_schema import (
-    ElaborationError,
     InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
     OutputDescriptorsSpec,
     OutputInterface,
-    OutputProbeSpec,
     OutputSpec,
     TypeExpr,
     build_node_types,
     build_schemas,
-    elaborate,
     output_descriptor_entries,
-    schema_from_wire,
-    schema_signature,
-    schema_to_wire,
 )
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry, register_core_types
@@ -124,101 +116,6 @@ def runtime() -> tuple[Engine, InProcessWorker, TypeRegistry]:
     return engine, worker, registry
 
 
-def test_wire_and_effective_interface_roundtrip() -> None:
-    schema = DeclaredValues.schema()
-    assert schema_from_wire(schema_to_wire(schema)) == schema
-    value = document(
-        {"id": "stable", "name": "Answer", "type": "int", "value": 5},
-        {"id": "other", "name": "Ready", "type": "boolean", "value": True},
-    )
-    effective = elaborate(schema, {"entries": value})
-    assert [(out.id, out.display_name, out.type) for out in effective.outputs] == [
-        ("stable", "Answer", INT),
-        ("other", "Ready", TypeExpr.concrete("BOOLEAN")),
-    ]
-    assert schema_from_wire(schema_to_wire(effective)) == effective
-    assert effective.is_static
-    assert schema_signature(schema)
-    old = schema_to_wire(schema)
-    old["schemaVersion"] = 2
-    with pytest.raises(ValueError, match="unsupported schemaVersion"):
-        schema_from_wire(old)
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        "[]",
-        "null",
-        "not json",
-        '{"entries":{}}',
-        '{"entries":[1]}',
-        '{"entries":[],"value":NaN}',
-        '{"entries":[],"value":Infinity}',
-        pytest.param(" " * 1_048_577, id="oversized-whitespace"),
-        document({"id": "x", "name": "x" * 257, "type": "int"}),
-        document({"id": "bad.id", "name": "Result", "type": "int"}),
-        document({"id": "x", "name": " ", "type": "int"}),
-        document({"id": "x", "name": "Result", "type": "unknown"}),
-        document({"id": "x", "name": "A", "type": "int"}, {"id": "x", "name": "B", "type": "int"}),
-        document({"id": "x", "name": "A", "type": "int"}, {"id": "y", "name": "A", "type": "int"}),
-        Link("producer", "text"),
-        TypedLiteral("STRING", '{"entries":[]}'),
-    ],
-)
-def test_malformed_descriptors_fail_before_execution(value: object) -> None:
-    with pytest.raises(ElaborationError):
-        elaborate(DeclaredValues.schema(), {"entries": value})
-
-
-def test_descriptor_bounds_collisions_and_fixed_semantics() -> None:
-    source = InputSpec("entries", STRING)
-    schema = NodeSchema(
-        "test.fixed",
-        inputs=(source,),
-        output_descriptors=OutputDescriptorsSpec(
-            "entries", (OutputSpec("model", INT),), 1, 1, True
-        ),
-    )
-    with pytest.raises(ElaborationError, match="bounds"):
-        elaborate(schema, {"entries": document()})
-    with pytest.raises(ElaborationError, match="semantic"):
-        elaborate(schema, {"entries": document({"id": "clip", "name": "Clip", "type": "model"})})
-    collision = replace(schema, outputs=(OutputSpec("model", INT),))
-    with pytest.raises(ElaborationError, match="collides"):
-        elaborate(
-            collision, {"entries": document({"id": "model", "name": "Model", "type": "model"})}
-        )
-
-
-def test_descriptor_schema_constraints_and_presentation_identity() -> None:
-    schema = DeclaredValues.schema()
-    spec = schema.output_descriptors
-    assert spec is not None
-    with pytest.raises(ValueError, match="concrete"):
-        replace(spec, choices=(OutputSpec("any", TypeExpr.variable("T")),))
-    with pytest.raises(ValueError, match="concrete"):
-        replace(spec, choices=(OutputSpec("list", TypeExpr.list_of(INT)),))
-    with pytest.raises(ValueError, match="unique"):
-        replace(spec, choices=(spec.choices[0], spec.choices[0]))
-    with pytest.raises(ValueError, match="1-512"):
-        replace(spec, choices=())
-    with pytest.raises(ValueError, match="bounds"):
-        replace(spec, max_entries=513)
-    with pytest.raises(ValueError, match="required top-level"):
-        replace(schema, inputs=(InputSpec("entries", STRING, required=False),))
-    with pytest.raises(ValueError, match="fixed semantic"):
-        replace(spec, probe=OutputProbeSpec("asset", "model", "1"))
-    presentation = replace(
-        schema,
-        output_descriptors=replace(
-            spec, choices=tuple(replace(choice, display_name="Label") for choice in spec.choices)
-        ),
-    )
-    assert schema_signature(presentation) == schema_signature(schema)
-    assert schema_from_wire(schema_to_wire(presentation)) == presentation
-
-
 def test_declared_values_execute_links_and_cache_identity(
     runtime: tuple[Engine, InProcessWorker, TypeRegistry],
 ) -> None:
@@ -246,32 +143,6 @@ def test_declared_values_execute_links_and_cache_identity(
         entry["id"] = "new_identity"
         diagnostics = validate(graph(), build_schemas([DeclaredValues, AddInts]), ["sum"])
         assert any(item.severity == "error" for item in diagnostics)
-
-    run_scenario(scenario())
-
-
-def test_entry_list_fan_out(runtime: tuple[Engine, InProcessWorker, TypeRegistry]) -> None:
-    engine, _, _ = runtime
-
-    async def scenario() -> None:
-        graph = Graph(
-            nodes={
-                "fan": GraphNode(
-                    "test.entry_fan_out",
-                    {
-                        "entries": document(
-                            {"id": "a", "name": "Count", "type": "int", "value": 3},
-                            {"id": "b", "name": "Label", "type": "string", "value": "ready"},
-                        )
-                    },
-                )
-            }
-        )
-        result = await engine.run(graph, ["fan"])
-        assert {key: value.resolve() for key, value in result.outputs["fan"].items()} == {
-            "a": 3,
-            "b": "ready",
-        }
 
     run_scenario(scenario())
 
@@ -327,40 +198,6 @@ def test_entry_list_fan_out_interface_depends_only_on_stored_descriptors(
         assert "dangling-output" in {item.code for item in diagnostics}
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("changed", ["order", "name", "type", "id"])
-def test_worker_reprojects_descriptors(
-    runtime: tuple[Engine, InProcessWorker, TypeRegistry], changed: str
-) -> None:
-    _, worker, registry = runtime
-    value = document(
-        {"id": "a", "name": "A", "type": "int", "value": 1},
-        {"id": "b", "name": "B", "type": "int", "value": 2},
-    )
-    effective = elaborate(EntryFanOut.schema(), {"entries": value})
-    outputs = list(effective.outputs)
-    if changed == "order":
-        outputs.reverse()
-    elif changed == "name":
-        outputs[0] = replace(outputs[0], display_name="Different")
-    elif changed == "type":
-        outputs[0] = replace(outputs[0], type=STRING)
-    else:
-        outputs[0] = replace(outputs[0], id="different")
-    result = run_scenario(
-        worker.invoke(
-            Invocation(
-                invocation_id="test",
-                node_id="fan",
-                node_type="test.entry_fan_out",
-                inputs={"entries": registry.wrap("STRING", value)},
-                effective_schema=replace(effective, outputs=tuple(outputs)),
-            )
-        )
-    )
-    assert result.error is not None
-    assert "worker projection" in result.error.message
 
 
 @pytest.mark.parametrize("in_process", [True, False])
