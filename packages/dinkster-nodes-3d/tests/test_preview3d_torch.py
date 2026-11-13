@@ -10,7 +10,6 @@ from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_3d import register_types as register_inference_types
 from dinkster_3d.preview3d import Preview3D
 from dinkster_api.v1 import (
     FILE_3D_TYPE,
@@ -136,7 +135,6 @@ def test_deprecated_preview_preserves_granted_file_and_optional_metadata(
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_inference_types(registry)
         composer = ServingComposer(
             registry=registry,
             worker_env={

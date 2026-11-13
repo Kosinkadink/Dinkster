@@ -299,7 +299,7 @@ declared settings returns 404. Unauthenticated requests return 401; PUT also
 requires `settings:write` and returns 403 without it. Unreadable stored data or
 a persistence failure returns 500.
 
-With `dinkster-serve --library-root <root>`, accepted values are atomically
+With `python -m dinkster.serve --library-root <root>`, accepted values are atomically
 stored by the host in `<root>/pack-settings/<packId>.json`, one complete JSON
 object per pack. Packs do not read or write these files themselves. Without a
 library root, values live in memory and reset when the server restarts. A pack

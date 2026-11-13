@@ -1,4 +1,4 @@
-"""Inspect managed setup inputs and initialize local library folders."""
+"""Plan and apply a locked managed generation."""
 
 from __future__ import annotations
 
@@ -19,13 +19,12 @@ from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_moun
 from dinkster_registry import InstallError
 from dinkster_workers.provision import ProvisionError
 
-from .installer import Installer
 from .project_folders import ProjectFolders
 
 
-def default_roots() -> tuple[Path, Path]:
+def default_project() -> Path:
     home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
-    return home / "library", home / "packs"
+    return home / "project"
 
 
 def ensure_default_mounts(library_root: Path) -> None:
@@ -354,7 +353,7 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="dinkster setup",
-        description="Inspect published generation inputs or prepare the local library",
+        description="Plan and build a managed generation from published locks",
     )
     confirmation = parser.add_mutually_exclusive_group()
     confirmation.add_argument("--yes", action="store_true", help="apply without prompting")
@@ -362,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         "--plan", action="store_true", help="inspect published setup without applying"
     )
     parser.add_argument("--json", action="store_true", help="emit the setup plan as JSON")
-    parser.add_argument("--root", type=Path)
+    parser.add_argument("--root", type=Path, default=default_project())
     parser.add_argument("--data", type=Path)
     parser.add_argument("--variant")
     parser.add_argument("--engine", default="main")
@@ -376,56 +375,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args(argv)
-    if (
-        args.plan
-        or args.yes
-        or args.root
-        or args.variant
-        or args.mirror
-        or args.json
-        or args.offline
-    ):
-        if args.root is None:
-            args.root = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")) / "project"
-        try:
-            result = _plan(args)
-            if not args.plan:
-                print("\n".join(cast("list[str]", result["plan"])), file=sys.stderr)
-                if not args.yes:
-                    if not sys.stdin.isatty():
-                        raise InstallError(
-                            "confirmation requires a terminal; use --yes to apply "
-                            "or --plan to inspect"
-                        )
-                    if input("Apply this plan? [y/N] ").strip().lower() not in {"y", "yes"}:
-                        return 0
-                return _apply(args, result)
-        except (InstallError, ProvisionError, OSError, ValueError) as exc:
-            print(f"setup refused: {exc}", file=sys.stderr)
-            return 1
-        print(
-            json.dumps(result, sort_keys=True)
-            if args.json
-            else "\n".join(cast("list[str]", result["plan"]))
-        )
-        return 0
-    if (
-        args.json
-        or args.root
-        or args.data
-        or args.variant
-        or args.mirror
-        or args.offline
-        or args.channel
-        or args.engine != "main"
-        or args.port != 3639
-        or args.gpu
-    ):
-        parser.error("managed selection options require --plan")
-    library_root, install_root = default_roots()
-    ensure_default_mounts(library_root)
-    Installer(install_root)
-    print(f"Library: {library_root}")
-    print(f"Packs: {install_root}")
-    print("Setup complete. Run `dinkster` to open the editor.")
+    try:
+        result = _plan(args)
+        if not args.plan:
+            print("\n".join(cast("list[str]", result["plan"])), file=sys.stderr)
+            if not args.yes:
+                if not sys.stdin.isatty():
+                    raise InstallError(
+                        "confirmation requires a terminal; use --yes to apply or --plan to inspect"
+                    )
+                if input("Apply this plan? [y/N] ").strip().lower() not in {"y", "yes"}:
+                    return 0
+            return _apply(args, result)
+    except (InstallError, ProvisionError, OSError, ValueError) as exc:
+        print(f"setup refused: {exc}", file=sys.stderr)
+        return 1
+    print(
+        json.dumps(result, sort_keys=True)
+        if args.json
+        else "\n".join(cast("list[str]", result["plan"]))
+    )
     return 0

@@ -2294,6 +2294,7 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
     manifest.write_text(
         MANIFEST.replace('version = "1.0"', 'version = "2.3.0"')
         + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+        + '[pack.extra-requires]\ncpu=["helper>=2"]\ncuda=["cuda-helper>=3"]\n'
     )
     result = run_manifest_admission(root, "archive-test", "2.3.0", engine_version=engine)
     assert result.blocked is (engine in {"0.8.9", "1.0.0"})
@@ -2302,6 +2303,10 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
         assert "archive-test@2.3.0" in message and ">=0.9,<1" in message and engine in message
     else:
         assert result.data is not None and result.data["dinkster"] == ">=0.9,<1"
+        assert result.data["pythonExtraRequirements"] == {
+            "cpu": ["helper>=2"],
+            "cuda": ["cuda-helper>=3"],
+        }
     mismatch = run_manifest_admission(root, "archive-test", "2.3.1")
     assert mismatch.blocked and "does not match submission" in mismatch.findings[0].message
 

@@ -17,28 +17,48 @@
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
+  Selected file records retain their issuing origins and distribution versions;
+  changing acquisition mirrors or registry aliases cannot change those origins.
+  Base-owned replacements retain the base issuer even when engine metadata
+  also lists the same wheel bytes.
+  Custom bases retain engine dependency origins from their selected published
+  dependency variant, independently of the custom base's name.
 - Managed generation pack selection checks cached notices against sealed library
-  identities and transitive pack sources. A malicious dependency blocks its
-  consumer as affected, not malicious. Missing or changed wheel provenance refuses
+  identities, transitive pack sources and their selected libraries. A malicious
+  dependency blocks its consumer as affected, not malicious. Missing or changed wheel provenance refuses
   selection when security checking is configured. Generation selection refreshes
   before checking. Catalog preparation also checks before importing pack code,
   using the provisioned wheel receipts before the generation is sealed. Sealed
   generations continue to require the recorded receipt hashes.
+  Dependency vulnerability advice matches the exact issuing registry, distribution,
+  version and file digest, preserving pending continuation and explicit denial.
+  Missing issuing origins refuse security-checked selection rather than guessing
+  authority from download URLs, local cache paths or the pack's registry.
+- Security repair planning can offer one compatible published pack release or
+  dependency-lock change excluding refused files. It checks engine, Python,
+  accelerator-specific, shared-library and pack dependency constraints for the
+  entire proposed selection. No offer retains a blocked release or dependency.
+  Unknown candidate constraints refuse an offer. Already installed vulnerable
+  releases can remain pending; a changed release requires its own approval.
+  Planning downloads metadata only: it does not import packs, acquire payloads,
+  change current software or approve an installation. An offer requires a separate
+  host-owned approval plan; no compatible offer leaves the refusal in effect.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.
-- Plain `pip install dinkster` supports CLI, catalog serving and torch-free
-  packs without installing torch or the inference runtime. Install
-  `dinkster[inference]` for in-process inference packs; missing inference
-  dependencies report that extra rather than installing them implicitly.
-  Managed generations and contributor setup retain inference support.
+- Plain `pip install dinkster` installs the CLI without torch or the inference
+  runtime in the caller's interpreter. Public setup builds a managed generation
+  with locked pack environments, including its inference runtime; public serving
+  uses that generation. Install `dinkster[inference]` for explicit in-process
+  library use; missing inference dependencies report that extra rather than
+  installing them implicitly. Contributor setup retains inference support.
 - Static-only registry installs require the schema 2 split catalog with per-pack
   version files; schema 1 all-releases indexes are refused. Selection and
   acquisition share a snapshot within each operation; the next operation reads
   current publication state.
   Unknown index schemas refuse with an instruction to update Dinkster.
 - Managed generation hosts can opt into local human pack previews with
-  `dinkster-serve --generation /absolute/project/generations/N --allow-pack-install`
+  `python -m dinkster.serve --generation /absolute/project/generations/N --allow-pack-install`
   or the inherited `DINKSTER_ALLOW_PACK_INSTALL=1` setting. Without opt-in the
   routes do not exist. Exact selections produce a review and copyable commands
   for that project. Run the plan command, inspect its output, then run the apply
@@ -180,6 +200,8 @@
   including local development packs. Updates keep recorded registry provenance
   and do not downgrade; missing releases and invalid published locks are reported
   together without acquiring pack payloads or changing the project.
+  Resolved selections retain the issuing endpoint, so changing or removing a
+  local registry name cannot redirect their acquisition or security matching.
 - Published pack install/update commands on an active managed project display
   the retained engine/base/variant, old/new identities, proposed generation,
   published locks, verified cached versus downloadable payloads, wheel-byte
@@ -422,7 +444,7 @@
   as an upper bound across all locked wheel alternatives, not a target-selected
   download promise. `--offline --plan` reads retained release and registry metadata
   only; it does not fetch or repair missing metadata or wheel payloads.
-- `dinkster setup --root PATH --variant VARIANT` prints the published input plan
+- `dinkster setup --variant VARIANT` prints the published input plan
   and asks `Apply this plan? [y/N]`. Declining changes nothing; non-terminal use
   requires `--yes`. Confirmed setup rechecks source and dependency-lock identities,
   acquires their verified pack archives, and builds and activates a managed
@@ -430,6 +452,13 @@
   `--offline --yes` uses retained release and registry metadata, runtime inputs
   and locked pack wheels without acquisition. Missing or corrupt inputs refuse
   before installation state changes. `--offline --plan` remains read-only.
+- Public setup, serve, stop, update, rollback and bare launch use the managed
+  project at `$DINKSTER_HOME/project` (default `~/.dinkster/project`) or an
+  explicit `--root`. Starting without setup refuses without acquiring software.
+  Bare launch opens the ready engine URL unless `--no-browser` is selected;
+  `serve` and `dinkster-serve` do not open a browser. The engine continues under
+  the supervisor until stopped. Update and rollback retain their plan/consent
+  flow and software-history protections.
 - Pack wheel and dependency-metadata downloads retry dropped connections,
   TLS transport failures, timeouts and HTTP 5xx responses up to three times.
   Every attempt has a 30-second network timeout, with a wait between attempts.

@@ -763,7 +763,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
             assert software.engine_release == initial["engine"]["release"]
             assert software.base == initial["base"]["fixture-cpu"]["id"]
             locked = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
-            assert locked.get("healthy") == entry
+            assert locked.get("healthy") == replace(
+                entry, source=f"registry:http://127.0.0.1:{server.server_port}"
+            )
             pack_python = (
                 generation
                 / "packs/healthy"
@@ -950,16 +952,20 @@ def test_managed_pack_install_requires_exact_security_approval(
     monkeypatch.setattr(sys.modules[__name__], "_run", run)
     with pytest.raises(Observed):
         test_fresh_install_engine_update_pack_install_and_exact_restore(
-            tmp_path, monkeypatch, capsys, "supervisor"
+            tmp_path, monkeypatch, capsys, "supervisor", "pack"
         )
 
 
-@pytest.mark.parametrize("pack_route", ["supervisor", "command"])
+@pytest.mark.parametrize(
+    ("pack_route", "notice_kind"),
+    [("supervisor", "pack"), ("command", "pack"), ("supervisor", "dependency")],
+)
 def test_fresh_install_engine_update_pack_install_and_exact_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     pack_route: str,
+    notice_kind: str,
 ):
     from importlib.metadata import version
 
@@ -967,7 +973,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     from dinkster_registry import LockedPack, Lockfile, artifact_digest
     from dinkster_security.store import SecurityStore
     from dinkster_workers.boundary import PROTOCOL_VERSION
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_generations import _workspace_tree
     from test_installer import _serve_artifacts, _static_indexes, _static_release, run_cli
@@ -1002,16 +1008,20 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     catalog_flags = ("--catalog-lock", str(empty_catalog), "--artifacts", str(artifacts))
     pack = tmp_path / "pack"
     pack.mkdir()
+    dependency = wheel(tmp_path, "fixture_helper", "1.0", 38)
+    requirements = ("fixture-helper>=1",) if notice_kind == "dependency" else ()
     (pack / "dinkster-pack.toml").write_text(
         HEALTHY_MANIFEST.replace('name = "healthy-nodes"', 'name = "healthy"')
         .replace("healthy_nodes:", "healthy:")
-        .replace('requires = ["numpy>=1.26"]', "requires = []")
+        .replace('requires = ["numpy>=1.26"]', f"requires = {list(requirements)!r}")
         .replace("[pack]\n", '[pack]\nversion = "1.0.0"\nengine = ">=1,<3"\n')
     )
     (pack / "healthy").mkdir()
     marker = tmp_path / "healthy-imported"
     (pack / "healthy/__init__.py").write_text(
-        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n" + HEALTHY_NODES
+        ("import fixture_helper\nassert fixture_helper.VALUE == 38\n" if requirements else "")
+        + f"from pathlib import Path\nPath({str(marker)!r}).touch()\n"
+        + HEALTHY_NODES
     )
     (pack / "pyproject.toml").write_text('[project]\nname="healthy"\nversion="1.0.0"\n')
     archive = tmp_path / "healthy-1.0.0-py3-none-any.whl"
@@ -1021,7 +1031,30 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         "healthy", "1.0.0", artifact_digest(payload), "dinkster", ("healthy",), "registry:official"
     )
     lock_path = tmp_path / "healthy.pack-lock.json"
-    PackLock("healthy", "fixture-cpu", ">=3.12", (), (), ()).write(lock_path)
+    PackLock(
+        "healthy",
+        "fixture-cpu",
+        ">=3.12",
+        requirements,
+        (),
+        (
+            LockedDistribution(
+                "fixture-helper",
+                "1.0",
+                (
+                    LockedWheel(
+                        dependency.name,
+                        dependency.stat().st_size,
+                        content_digest(dependency)[7:],
+                        dependency.as_uri(),
+                        "https://registry.example.test",
+                    ),
+                ),
+            ),
+        )
+        if requirements
+        else (),
+    ).write(lock_path)
     lock = lock_path.read_bytes()
     lock_url = "locks/" + artifact_digest(lock).replace(":", "/") + ".json"
     release = {
@@ -1185,7 +1218,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
         assert Lockfile.from_record_json(snapshots[2]["metadata"]["dinkster.lock"]) == Lockfile.of(
-            [entry]
+            [replace(entry, source=f"registry:http://127.0.0.1:{server.server_port}")]
         )
         assert (
             snapshots[2]["metadata"]["packs/healthy/pack-lock.json"].encode("utf-8")
@@ -1276,14 +1309,18 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         feed = _feed("malicious")
         feed["registry"] = registry
         feed["notices"][0]["release"].update(
-            pack=entry.pack, version=entry.version, artifactDigest=entry.artifact_digest
+            pack="fixture-helper" if requirements else entry.pack,
+            version="1.0" if requirements else entry.version,
+            artifactDigest=content_digest(dependency) if requirements else entry.artifact_digest,
         )
         (root / "security.toml").write_text(
             f'[feed_urls]\n"{registry}" = "{registry}/security/index.json"\n'
         )
         registry_files["/security/index.json"] = lambda: _signed(feed, key)
         code, result = _run(root, "restore", "3", "--yes", timeout=120)
-        assert code != 0 and "security malicious" in str(result), result
+        assert code != 0 and ("security affected" if requirements else "security malicious") in str(
+            result
+        ), result
         assert not marker.exists()
         assert (root / "current").read_text() == "4\n"
         assert len(history(root)) == 4
@@ -1907,6 +1944,7 @@ def test_adoption_materializes_pack_dependencies_and_restores_after_pruning(
                                         len(extra_archive),
                                         hashlib.sha256(extra_archive).hexdigest(),
                                         endpoint + "/static/" + outer_wheel["url"],
+                                        endpoint,
                                     ),
                                 ),
                             ),
@@ -2654,9 +2692,14 @@ def test_missing_base_offers_minimal_compatible_replacements(
         expected_wheels = []
         base_manifest = json.loads(chosen["snapshot"]["metadata"]["base-manifest.json"])
         expected_wheels.extend(
-            {key: row[key] for key in ("filename", "size", "sha256")}
+            {
+                **{key: row[key] for key in ("filename", "size", "sha256")},
+                "registry": row.get("index"),
+            }
             for row in base_manifest["wheels"]
         )
+        engine_manifest = json.loads(chosen["snapshot"]["metadata"]["engine-manifest.json"])
+        repository = engine_manifest.get("repository")
         release = mirror / "engine" / expected_engine["release"][7:]
         for path in release.glob("*.whl"):
             expected_wheels.append(
@@ -2664,6 +2707,7 @@ def test_missing_base_offers_minimal_compatible_replacements(
                     "filename": path.name,
                     "size": path.stat().st_size,
                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "registry": f"https://github.com/{repository}" if repository else None,
                 }
             )
         expected_receipt = {

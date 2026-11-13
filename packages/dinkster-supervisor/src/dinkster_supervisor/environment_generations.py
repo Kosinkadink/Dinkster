@@ -19,7 +19,11 @@ from typing import cast
 from blake3 import blake3
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 
-from .environment_constraints import requirement_hashes, selected_wheel_requirements
+from .environment_constraints import (
+    installed_wheel_origins,
+    requirement_hashes,
+    selected_wheel_requirements,
+)
 from .environment_downloads import fetch_artifact
 from .environment_state import (
     EnvironmentError,
@@ -881,6 +885,18 @@ def build_generation(
             )
             if manifest_identity != engine_release:
                 raise EnvironmentError("retained engine manifest does not match engine release")
+        receipt = read_document(destination / "installed-wheels.json")
+        receipt["wheels"] = installed_wheel_origins(
+            cast("list[dict[str, object]]", receipt["wheels"]),
+            read_document(destination / "base-manifest.json")
+            if (destination / "base-manifest.json").is_file()
+            else {},
+            read_document(destination / "engine-manifest.json")
+            if (destination / "engine-manifest.json").is_file()
+            else {},
+            cast("str", (artifact_sources or {}).get("dependencyVariant", variant)),
+        )
+        write_document(destination / "installed-wheels.json", receipt)
         provisioned: set[str] = set()
         if (
             source_generation is not None

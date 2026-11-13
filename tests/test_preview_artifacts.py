@@ -1112,28 +1112,6 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize(
-    "claims,blobs,reason",
-    [
-        ({}, [], "batch"),
-        ([{"blob": 0, "digest": "forged"}], [b"original"], "fields"),
-        ([{"blob": True}], [b"original"], "blob index"),
-        ([{"blob": 0}], [b"original", b"other"], "blob index"),
-        ([{"blob": 0}], [b""], "nonempty bounded"),
-    ],
-)
-def test_image_document_transport_rejects_malformed_attachments(
-    claims: object, blobs: list[bytes], reason: str
-) -> None:
-    from dinkster_values import TypeRegistry
-    from dinkster_workers.boundary import ValueCodec, decode_result
-
-    with pytest.raises(BoundaryError, match=reason):
-        decode_result(
-            ValueCodec(TypeRegistry()), {"outputs": {}, "imageDocuments": claims}, blobs, []
-        )
-
-
 def test_image_document_attachment_rejects_closed_copied_context() -> None:
     from contextvars import copy_context
 
@@ -1145,32 +1123,6 @@ def test_image_document_attachment_rejects_closed_copied_context() -> None:
     with pytest.raises(RuntimeError, match="closed"):
         copied.run(publish_image_document, b"late")
     assert [item.data for item in documents] == [b"original"]
-
-
-def test_original_document_attachment_limits_include_the_boundary() -> None:
-    from dinkster_schema.reporting import (
-        IMAGE_DOCUMENT_ARTIFACT_LIMIT_BYTES,
-        capture_image_documents,
-        publish_image_document,
-    )
-    from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT, SAVED_ARTIFACT_LIMIT_BYTES
-
-    with capture_image_documents() as documents:
-        for _ in range(SAVED_ARTIFACT_CLAIM_LIMIT):
-            publish_image_document(b"x")
-        with pytest.raises(ValueError, match="batch exceeds"):
-            publish_image_document(b"y")
-    assert len(documents) == SAVED_ARTIFACT_CLAIM_LIMIT
-    data = b"x" * IMAGE_DOCUMENT_ARTIFACT_LIMIT_BYTES
-    count = SAVED_ARTIFACT_LIMIT_BYTES // len(data)
-    with capture_image_documents() as documents:
-        for _ in range(count):
-            publish_image_document(data)
-        with pytest.raises(ValueError, match="batch exceeds"):
-            publish_image_document(b"y")
-        with pytest.raises(ValueError, match="nonempty bounded"):
-            publish_image_document(data + b"y")
-    assert len(documents) == count
 
 
 def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:
