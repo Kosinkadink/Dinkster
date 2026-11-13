@@ -1,0 +1,26 @@
+name: Prepare contributor generation
+description: Build the contributor runtime, stop its engine, and install optional validation evidence
+inputs:
+  python:
+    description: Optional Python version or interpreter path for the generation
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Prepare the contributor generation
+      shell: bash
+      env:
+        GENERATION_PYTHON: ${{ inputs.python }}
+      run: |
+        arguments=()
+        variant=linux-cpu
+        if [ "$RUNNER_OS" = Windows ]; then variant=win-cpu; fi
+        if [ -n "$GENERATION_PYTHON" ]; then
+          arguments+=(--python "$(uv python find --managed-python "$GENERATION_PYTHON")")
+        fi
+        uv run --no-project python scripts/develop.py setup --variant "$variant" --yes "${arguments[@]}"
+        python scripts/develop.py stop --yes
+        if [ -n "${DINKSTER_EVIDENCE_ROOT:-}" ]; then
+          python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
+            "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
+        fi

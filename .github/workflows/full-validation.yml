@@ -95,19 +95,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Prepare the contributor generation
-        shell: bash
-        run: |
-          arguments=()
-          variant=win-cpu
-          if [ "$RUNNER_OS" = Linux ]; then
-            variant=linux-cpu
-            arguments+=(--python "$(uv python find --managed-python '${{ matrix.python-version }}')")
-          fi
-          uv run --no-project python scripts/develop.py setup --variant "$variant" --yes "${arguments[@]}"
-          python scripts/develop.py stop --yes
-          python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
-            "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
+      - uses: ./.github/actions/prepare-contributor-generation
+        with:
+          python: ${{ matrix.os == 'linux' && matrix.python-version || '' }}
       - name: Verify the Linux CPU runtime
         if: matrix.os == 'linux'
         shell: bash
@@ -291,16 +281,7 @@ jobs:
           python-version: "3.14.10"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Prepare the Windows contributor generation
-        shell: pwsh
-        run: |
-          uv run --no-project python scripts/develop.py setup --variant win-cpu --yes
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/develop.py stop --yes
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' `
-            "$env:DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: ./.github/actions/prepare-contributor-generation
       - name: Verify published Windows engine dependencies
         shell: pwsh
         run: |
