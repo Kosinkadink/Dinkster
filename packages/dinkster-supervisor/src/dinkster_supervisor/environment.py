@@ -1451,6 +1451,13 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
                         args.root, (), args.output, security_pack=args.pack, security_all=all_packs
                     )
                 )
+        result["workInventory"] = {
+            "status": "unavailable",
+            "reason": (
+                "Workflow impacts are unavailable offline; inspect submitted work through "
+                "runtime /api/security. A compatible install is not proof of workflow behavior."
+            ),
+        }
         return 0
     if args.security_action in {"list", "details"}:
         number = args.generation if args.generation is not None else read_current(args.root)
@@ -2026,8 +2033,101 @@ def run(args: argparse.Namespace) -> int:
                 for warning in cast("list[str]", report[key]):
                     print(f"Warning: {warning}")
         if args.operation == "security" and code == 0:
-            if "security" in result or "policy" in result:
-                print(json.dumps(result.get("security", result.get("policy")), indent=2))
+            security_report = cast("dict[str, object]", result.get("security", {}))
+            if security_report:
+                print(
+                    f"Generation: {security_report['generation']} ({security_report['software']})"
+                )
+                for finding in cast("list[dict[str, object]]", security_report["findings"]):
+                    details = cast("dict[str, object]", finding["details"])
+                    print(
+                        f"{finding['pack']}=={finding['version']}: {finding['state']}, "
+                        f"decision {finding['decision']}, "
+                        f"execution {'allowed' if finding['allowed'] else 'refused'}"
+                    )
+                    print(f"  Digest: {finding['artifactDigest']}; registry: {finding['registry']}")
+                    print(
+                        f"  Notice: {finding['notice']} revision {finding['revision']} "
+                        f"from {finding['noticeRegistry']}; incident: {details['incident']}"
+                    )
+                    print(f"  Last verified: {finding['lastVerifiedAt'] or 'not received'}")
+                    print(
+                        "  Notice details: "
+                        + json.dumps(details, sort_keys=True, ensure_ascii=True)
+                    )
+                    advice = cast("dict[str, object]", finding["recovery"])
+                    print(f"  Recovery: {advice['status']}. {advice['action']}")
+                    print(
+                        f"  Compatible fix: {advice['repair']}; "
+                        f"preview with security fix-one --pack {finding['pack']} or fix-all."
+                    )
+                if not security_report["findings"]:
+                    print("No active notices match the inspected software in received evidence.")
+                for feed in cast("list[dict[str, object]]", security_report["feeds"]):
+                    print(
+                        f"Feed {feed['registry']}: {feed['status']}; "
+                        f"last verified {feed['lastVerifiedAt'] or 'not received'}; "
+                        f"explicit age refusal {'on' if feed['ageRefused'] else 'off'}"
+                    )
+                    if feed["refreshError"]:
+                        print(
+                            f"  Refresh unavailable: {feed['refreshError']}; cached blocks remain."
+                        )
+                inventory = cast("dict[str, object]", security_report["workInventory"])
+                print(f"Work: {inventory['reason']}")
+                recovery = cast("dict[str, object]", security_report["recovery"])
+                print(f"Activation recovery: {recovery['state']}. {recovery['action']}")
+            if "policy" in result or security_report:
+                policy = cast(
+                    "dict[str, object]", result.get("policy", security_report.get("policy", {}))
+                )
+                print(f"Vulnerability refusal: {'on' if policy['refuseVulnerable'] else 'off'}")
+                age = policy["maximumFeedAgeSeconds"]
+                print(
+                    f"Maximum feed age: {str(age) + ' seconds' if age is not None else 'not set'}"
+                )
+            if "decision" in result:
+                print(
+                    f"Notice {result['notice']} revision {result['revision']} "
+                    f"from {result['registry']}: {result['decision']}"
+                )
+                print("The recorded answer can be changed; stopped work is not resumed.")
+            if args.security_action == "import":
+                print(f"Verified feed from {result['registry']}, revision {result['revision']}.")
+            if args.security_action in {"fix-one", "fix-all"}:
+                metadata = cast(
+                    "dict[str, object]", result.get("metadata", result.get("packPlan", {}))
+                )
+                if metadata:
+                    print("Reviewed release selection:")
+                    print(json.dumps(metadata["sources"], indent=2, ensure_ascii=True))
+                    print("Exact dependency locks:")
+                    print(json.dumps(metadata["dependencyLocks"], indent=2, ensure_ascii=True))
+                    print(
+                        "Engine and base are retained; "
+                        "unselected locks and placement are unchanged."
+                    )
+                inventory = cast("dict[str, object]", result["workInventory"])
+                print(inventory["reason"])
+                if "approval" in result:
+                    print(f"Retained inputs: {args.output}")
+                    print(f"Approval digest: {result['approval']}")
+                    print("Apply only the reviewed inputs with --input DIR --approval DIGEST.")
+                if "securityRepair" in result:
+                    repair = cast("dict[str, object]", result["securityRepair"])
+                    if repair["status"] == "no-compatible-fix":
+                        print(
+                            "No compatible fix exists among the reviewed candidates; "
+                            "nothing changed."
+                        )
+                    elif repair["status"] == "search-incomplete":
+                        print(
+                            "Compatible-fix search is incomplete; no absence of a fix is claimed."
+                        )
+                    else:
+                        print("No repair is required for the selected packs in received evidence.")
+                    for reason in cast("list[str]", repair.get("reasons", [])):
+                        print(f"  {reason}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     if code == 0 and "url" in result and args.operation == "start" and args.open_browser:
