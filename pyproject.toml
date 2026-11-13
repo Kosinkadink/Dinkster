@@ -13,7 +13,6 @@ dependencies = [
     "dinkster-engine==0.0.3",
     "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
-    "numba>=0.67",
     "opencv-contrib-python-headless>=5.0,<5.1",
     "PyOpenGL>=3.1.8,<4",
     "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",

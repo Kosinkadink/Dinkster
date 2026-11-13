@@ -233,21 +233,10 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
-        for member in ("remote", "image", "dev"):
-            relative = f"packages/dinkster-nodes-{member}/pyproject.toml"
-            committed = tomllib.loads(
-                subprocess.check_output(["git", "show", f"HEAD:{relative}"], cwd=ROOT, text=True)
-            )["project"]["version"]
-            actual = tomllib.loads((staged / relative).read_text())["project"]["version"]
-            assert actual == (committed if member in {"remote", "image"} else version)
-        helper = tomllib.loads(
-            (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
+        development_pack = tomllib.loads(
+            (staged / "packages/dinkster-nodes-dev/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.6"
-        models = tomllib.loads(
-            (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
-        )["project"]
-        assert "dinkster-pack-helpers==0.0.6" in models["dependencies"]
+        assert development_pack["version"] == version
         for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],

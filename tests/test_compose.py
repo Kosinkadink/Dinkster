@@ -83,24 +83,24 @@ def text_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (module / "__init__.py").write_text("NODES = ()\n", encoding="utf-8")
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "dinkster-text"\nversion = "0.0.3"\n'
+        '[pack]\nname = "dinkster-text"\nversion = "0.0.4"\n'
         'engine = ">=0.0.2.dev0,<2"\npublisher = "dinkster"\n'
         'namespaces = ["dinkster.text"]\n'
         '[pack.entry]\nnodes = "dinkster_text:NODES"\n',
         encoding="utf-8",
     )
     (root / "pyproject.toml").write_text(
-        '[project]\nname = "dinkster-text"\nversion = "0.0.3"\n', encoding="utf-8"
+        '[project]\nname = "dinkster-text"\nversion = "0.0.4"\n', encoding="utf-8"
     )
     lock = Lockfile.of(
         [
             LockedPack(
                 "dinkster-text",
-                "0.0.3",
+                "0.0.4",
                 compose._installed_pack_digest(manifest, module),
                 "dinkster",
                 ("dinkster-text",),
-                "python:dinkster-text==0.0.3",
+                "python:dinkster-text==0.0.4",
             )
         ]
     )
@@ -720,7 +720,7 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     manifest = bundled / "dinkster_text/dinkster-pack.toml"
     manifest.parent.mkdir(parents=True)
     manifest.write_text("invalid bundled manifest\n")
-    distribution = editable_distribution(source_root, "0.0.3")
+    distribution = editable_distribution(source_root, "0.0.4")
     distribution.files = (Path("dinkster_text/dinkster-pack.toml"),)
     distribution.locate_file = lambda path: bundled / path
     monkeypatch.setattr(compose.importlib.metadata, "distribution", lambda _name: distribution)
@@ -732,7 +732,7 @@ def test_default_pack_prefers_loaded_source_tree_over_bundled_copy(
     assert spec.packs is not None
     info = spec.packs[pack_id]
     assert info.source == locked.source
-    assert info.version == "0.0.3"
+    assert info.version == "0.0.4"
     assert info.artifact_digest == locked.artifact_digest
 
 
@@ -963,7 +963,7 @@ def test_pack_manifest_version_and_distribution_provenance_are_independent(
     monkeypatch.setattr(compose, "_default_pack_lock", lambda: changed)
 
     def distribution(name: str):
-        installed = editable_distribution(text_pack, "0.0.3")
+        installed = editable_distribution(text_pack, "0.0.4")
         if name == "dinkster-text" and mismatch == "distribution":
             return SimpleNamespace(
                 version="9.0.0",
@@ -1095,7 +1095,7 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
     from dinkster import compose
 
     real_distribution = compose.importlib.metadata.distribution
-    text_distribution = editable_distribution(text_pack, "0.0.3")
+    text_distribution = editable_distribution(text_pack, "0.0.4")
 
     def distribution(name: str):
         if name == "dinkster-nodes-std":
@@ -1113,12 +1113,18 @@ def test_checkout_defaults_do_not_require_standard_suite_distribution(
         assert load_manifest(spec.manifest).name == pack_id
 
 
-def test_installed_engine_has_no_implicit_pack_selection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("checkout", [False, True])
+def test_engine_has_no_implicit_pack_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkout: bool
 ) -> None:
     from dinkster import compose
 
-    monkeypatch.setattr(compose, "__file__", str(tmp_path / "site-packages/dinkster/compose.py"))
+    package = tmp_path / ("src" if checkout else "site-packages") / "dinkster"
+    package.mkdir(parents=True)
+    if checkout:
+        (tmp_path / "pyproject.toml").write_text("")
+    monkeypatch.setattr(compose, "__file__", str(package / "compose.py"))
+    monkeypatch.setattr(compose, "_CHECKOUT_PACKS_LOCK", package / "checkout-packs.lock")
     compose._default_pack_lock.cache_clear()
     try:
         assert compose.default_pack_ids() == ()

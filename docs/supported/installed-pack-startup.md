@@ -668,12 +668,10 @@
   invoking published setup or loading a standalone installed-pack root. The
   terminal and node catalog label the source session as unreviewed and not
   reproducible from dependency ranges; the browser opens after health succeeds.
-- A pip-installed engine has no implicit official pack selection. Managed
-  generations serve their admitted registry sources. Checkout development
-  selects verified local sources with each pack's declared version, without
-  requiring an installed pack distribution.
-- Checkout defaults retain their managed source lock without requiring an
-  installed standard-suite distribution.
+- Installed engines and engine checkouts have no implicit official pack selection.
+  Managed generations serve their admitted registry sources. Checkout development
+  selects local pack manifests explicitly; production pack sources and their
+  publication versions are owned by the standalone pack repository.
 - Development scaffolding is workspace-only and is excluded from engine and
   official-pack releases.
 - Engine release assembly records variant-specific dependency wheel identities
