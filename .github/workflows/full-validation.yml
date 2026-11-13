@@ -98,13 +98,16 @@ jobs:
       - name: Prepare the contributor generation
         shell: bash
         run: |
-          arguments=(--library-source "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance")
+          arguments=()
           variant=win-cpu
           if [ "$RUNNER_OS" = Linux ]; then
             variant=linux-cpu
             arguments+=(--python "$(uv python find --managed-python '${{ matrix.python-version }}')")
           fi
           uv run --no-project python scripts/develop.py setup --variant "$variant" --yes "${arguments[@]}"
+          python scripts/develop.py stop --yes
+          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
+            "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
       - name: Verify the Linux CPU runtime
         if: matrix.os == 'linux'
         shell: bash
@@ -291,8 +294,12 @@ jobs:
       - name: Prepare the Windows contributor generation
         shell: pwsh
         run: |
-          uv run --no-project python scripts/develop.py setup --variant win-cpu --yes `
-            --library-source "$env:DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
+          uv run --no-project python scripts/develop.py setup --variant win-cpu --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/develop.py stop --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' `
+            "$env:DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify published Windows engine dependencies
         shell: pwsh
@@ -481,6 +488,7 @@ jobs:
           python-version: "3.12"
       - run: |
           uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
           python scripts/develop.py run -- python -m pytest -v \
             tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
             'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'

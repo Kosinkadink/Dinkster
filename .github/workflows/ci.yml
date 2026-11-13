@@ -46,7 +46,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
         if: steps.paths.outputs.docs != 'true'
       - run: bash scripts/ci-fast.sh checks
         if: steps.paths.outputs.docs != 'true'
@@ -114,7 +116,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
         if: needs.checks.outputs.docs != 'true'
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'

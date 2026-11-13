@@ -111,7 +111,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Prepare contributor admission tooling
-        run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+        run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
       - name: Acquire the engine's exact published CPU base manifest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -195,7 +197,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Prepare contributor admission tooling
-        run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+        run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
       - name: Provision the exact prepared engine on the verified pinned base
         run: |
           version=$(jq -j '.engineVersion' admission-sources/engine.json)
