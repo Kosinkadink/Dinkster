@@ -11,7 +11,7 @@ Apple M4, 32 GiB unified memory, macOS 15.7.4 (24G517), arm64 CPython
 3.12.11, PyTorch 2.13.0, torchvision 0.28.0, NumPy 2.5.1, Pillow 12.0.0,
 and no Aimdo. The recorded comparison used the historical kitchen environment
 listed in the linked verification evidence; it does not validate the current
-comfy-kitchen 0.2.40 pin. Environments and downloads are clone-local;
+comfy-kitchen 0.2.41 pin. Environments and downloads are clone-local;
 neither a system Python install nor a CUDA runtime is required. The engine
 environment is torch-free. The comparison uses a separate,
 unmodified [ComfyUI master checkout](https://github.com/Comfy-Org/ComfyUI/commit/15eb748b3ec5f8a0a2d470b7fb280e2d7579f916)
