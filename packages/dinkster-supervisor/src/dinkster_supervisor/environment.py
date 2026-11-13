@@ -1386,11 +1386,48 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
 
 def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     from .limits import SECURITY_FEED_LIMIT_BYTES
-    from .security.host import SecurityHost
+    from .security.host import HostSettings, SecurityHost
 
     if not (args.root / "security.sqlite3").is_file():
         raise EnvironmentError("security operation requires an independently provisioned install")
     host = SecurityHost(args.root)
+    if args.security_action == "policy":
+        changed = (
+            args.refuse_vulnerable is not None
+            or args.maximum_feed_age_seconds is not None
+            or args.no_maximum_feed_age
+        )
+        if changed:
+            with writer_lock(args.root):
+                host.load_settings()
+                values = host.settings.model_dump()
+                if args.refuse_vulnerable is not None:
+                    values["refuse_vulnerable"] = args.refuse_vulnerable
+                if args.maximum_feed_age_seconds is not None or args.no_maximum_feed_age:
+                    values["maximum_feed_age_seconds"] = args.maximum_feed_age_seconds
+                settings = HostSettings.model_validate(values)
+                text = (
+                    f"refresh_interval_seconds = {settings.refresh_interval_seconds}\n"
+                    f"request_timeout_seconds = {settings.request_timeout_seconds}\n"
+                    f"refuse_vulnerable = {json.dumps(settings.refuse_vulnerable)}\n"
+                )
+                if settings.maximum_feed_age_seconds is not None:
+                    text += f"maximum_feed_age_seconds = {settings.maximum_feed_age_seconds}\n"
+                text += "\n[feed_urls]\n" + "".join(
+                    f"{json.dumps(issuer)} = {json.dumps(str(url))}\n"
+                    for issuer, url in settings.feed_urls.items()
+                )
+                atomic_write(args.root / "security.toml", text)
+                host.settings = settings
+        result.update(
+            policy={
+                "refuseVulnerable": host.settings.refuse_vulnerable,
+                "maximumFeedAgeSeconds": host.settings.maximum_feed_age_seconds,
+            },
+            status="applied" if changed else "clean",
+            automaticResume=False,
+        )
+        return 0
     if args.security_action == "import":
         with args.file.open("rb") as stream:
             data = stream.read(SECURITY_FEED_LIMIT_BYTES + 1)
@@ -1426,6 +1463,11 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     security.add_argument("--json", action="store_true", help="emit exactly one result object")
     security_actions = security.add_subparsers(dest="security_action", required=True)
+    policy = security_actions.add_parser("policy", help="read or explicitly change local policy")
+    policy.add_argument("--refuse-vulnerable", action=argparse.BooleanOptionalAction, default=None)
+    age = policy.add_mutually_exclusive_group()
+    age.add_argument("--maximum-feed-age-seconds", type=int)
+    age.add_argument("--no-maximum-feed-age", action="store_true")
     for action in ("approve", "disapprove"):
         answer = security_actions.add_parser(action, help="change an exact vulnerability answer")
         answer.add_argument("--registry", required=True)

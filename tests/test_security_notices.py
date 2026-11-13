@@ -235,10 +235,10 @@ def test_host_default_outage_continues_and_local_policy_is_explicit(
 )
 def test_host_refuses_invalid_local_policy_before_transport(tmp_path: Path, config: str):
     (tmp_path / "security.toml").write_text(config)
-    host = SecurityHost(tmp_path)
     with pytest.raises(ValueError):
+        host = SecurityHost(tmp_path)
         host.refresh()
-    assert host.store.registries() == ()
+    assert SecurityStore(tmp_path / "security.sqlite3").registries() == ()
 
 
 @pytest.mark.parametrize("stop_reason", ["malicious", "denied"])
@@ -1353,6 +1353,34 @@ def test_public_cli_import_and_changed_exact_answers(tmp_path: Path):
     assert command("disapprove", *identity[:-1], "2")["status"] == "error"
     assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
     cached = host.store.cached(REGISTRY)
+    defaults = {"refuseVulnerable": False, "maximumFeedAgeSeconds": None}
+    assert command("policy")["policy"] == defaults
+    assert not (root / "security.toml").exists()
+    (root / "security.toml").write_text(
+        "refresh_interval_seconds = 17.5\nrequest_timeout_seconds = 2.5\n"
+        f'[feed_urls]\n"{REGISTRY}" = "http://127.0.0.1:1/offline"\n'
+    )
+    selected = command("policy", "--refuse-vulnerable", "--maximum-feed-age-seconds", "7200")
+    assert selected["policy"] == {"refuseVulnerable": True, "maximumFeedAgeSeconds": 7200}
+    restarted = SecurityHost(root)
+    assert restarted.settings.refresh_interval_seconds == 17.5
+    assert restarted.settings.request_timeout_seconds == 2.5
+    assert str(restarted.settings.feed_urls[REGISTRY]) == "http://127.0.0.1:1/offline"
+    assert restarted.settings.refuse_vulnerable is True
+    artifact = Artifact(REGISTRY, Release.model_validate(_feed()["notices"][0]["release"]))
+    assert not restarted.assess((artifact,)).allowed
+    before = (root / "security.toml").read_bytes()
+    assert command("policy", "--maximum-feed-age-seconds", "0")["status"] == "error"
+    assert (root / "security.toml").read_bytes() == before
+    assert command("policy", "--no-refuse-vulnerable")["policy"] == {
+        "refuseVulnerable": False,
+        "maximumFeedAgeSeconds": 7200,
+    }
+    reset = command("policy", "--no-refuse-vulnerable", "--no-maximum-feed-age")
+    assert reset["policy"] == defaults
+    assert SecurityHost(root).settings.maximum_feed_age_seconds is None
+    assert SecurityHost(root).assess((artifact,)).allowed
+    assert host.store.cached(REGISTRY) == cached
     untrusted = Ed25519PrivateKey.generate()
     feed_file.write_bytes(_signed(_feed("malicious", revision=2), untrusted))
     assert command("import", "--registry", REGISTRY, "--file", str(feed_file))["status"] == "error"

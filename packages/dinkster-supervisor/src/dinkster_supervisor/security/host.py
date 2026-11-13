@@ -46,18 +46,22 @@ class SecurityHost:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.store = SecurityStore(root / "security.sqlite3")
-        self.settings = HostSettings()
+        self.load_settings()
         self.refresh_errors: dict[str, str] = {}
         self._reported: set[tuple[str, str, int, str, str]] = set()
 
-    def refresh(self) -> None:
-        """Try every trusted issuer independently; outage never erases its checkpoint."""
+    def load_settings(self) -> None:
+        """Read local policy without a network refresh or changing accepted evidence."""
         config = self.root / "security.toml"
         self.settings = (
             HostSettings.model_validate(tomllib.loads(config.read_text(encoding="utf-8")))
             if config.is_file()
             else HostSettings()
         )
+
+    def refresh(self) -> None:
+        """Try every trusted issuer independently; outage never erases its checkpoint."""
+        self.load_settings()
         registries = self.store.registries()
         if set(self.settings.feed_urls) - set(registries):
             raise SecurityError("security feed override has no independently provisioned trust")

@@ -23,6 +23,11 @@
   Public environment commands accept exact-notice approval/disapproval changes
   after unattended start and authenticated signed-feed file import. Rejected
   imports preserve cached evidence and answers; neither operation resumes work.
+  Operators can read or explicitly change vulnerability refusal and maximum feed
+  age through `security --json policy`. Policy reads do not fetch feeds or create
+  configuration. Changes preserve mirror/timing settings and accepted evidence;
+  invalid values leave the previous policy intact. A new host reads configured
+  policy before assessment, and a running host reloads it on refresh.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.

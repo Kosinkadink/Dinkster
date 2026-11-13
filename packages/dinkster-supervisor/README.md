@@ -50,7 +50,8 @@ and decisions; downloads are limited to 32 MiB and do not send registry bearer
 credentials. Default policy has no feed-age refusal. An explicit maximum age
 uses signed `issuedAt`, not the time of the latest successful download. Explicit
 vulnerability refusal applies to retained releases too. Local policy reloads
-on refresh; malformed policy refuses rather than silently reverting to defaults.
+at host creation and on refresh; malformed policy refuses rather than silently
+reverting to defaults.
 Installer acquisition, install, rollback and serving selection refresh before
 their policy check. Managed generation pack selection also refreshes its project
 root. Serving uses the selected generation's project root, otherwise the install
@@ -77,6 +78,12 @@ be changed; stale revisions and malicious notices cannot be approved. These
 commands do not start or resume execution. `security --json import --registry
 ISSUER --file PATH` verifies a signed feed through the same trusted store before
 replacing its checkpoint; rejected files leave accepted evidence and answers intact.
+`security --json policy` reads the current local policy without a network request
+or creating a configuration file. Explicit `--refuse-vulnerable` or
+`--no-refuse-vulnerable` and `--maximum-feed-age-seconds N` or
+`--no-maximum-feed-age` persist those choices while preserving mirrors and refresh
+timing. Invalid settings leave the previous file intact. These changes do not
+install software or resume work; serving hosts reload policy on refresh.
 
 ## Ingress
 
