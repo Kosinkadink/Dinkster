@@ -167,6 +167,7 @@ jobs:
           variant=linux-cpu
           if [ "$RUNNER_OS" = Windows ]; then variant=win-cpu; fi
           uv run --no-project python scripts/develop.py setup --variant "$variant" --yes
+          python scripts/develop.py stop --yes
       - name: Verify the generation inventory and CPU runtime
         shell: bash
         run: |
