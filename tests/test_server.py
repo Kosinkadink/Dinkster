@@ -4109,7 +4109,15 @@ def test_empty_registry_server_skips_compile_and_preserves_generated_id_event_va
         graph = Graph({"$gen-submitted": GraphNode("test.echo", {"text": "raw"})})
         direct_events: list[EngineEvent] = []
         direct_engine = make_engine(direct_events.append)
-        await direct_engine.run(graph, ["$gen-submitted"], run_id="direct")
+        await direct_engine.run(
+            graph,
+            ["$gen-submitted"],
+            run_id="direct",
+            execution=replace(
+                direct_engine.pin_execution(),
+                require_image_document_publication=True,
+            ),
+        )
 
         server_events: list[EngineEvent] = []
         engine_box: list[Engine] = []
@@ -4278,7 +4286,10 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
             status = await wait_for_http_state(client, "c1", "j1", "completed")
             assert set(status["outputs"]) == {"$gen-test-compiled"}
             assert len(calls) == 1
-            assert job.execution is old_runtime
+            assert job.execution == replace(
+                old_runtime,
+                require_image_document_publication=True,
+            )
             assert job.compiled_graph.extension_snapshot_digest == (
                 old_runtime.extension_snapshot_digest
             )
