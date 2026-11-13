@@ -106,7 +106,7 @@ jobs:
           fi
           uv run --no-project python scripts/develop.py setup --variant "$variant" --yes "${arguments[@]}"
           python scripts/develop.py stop --yes
-          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
+          python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
             "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
       - name: Verify the Linux CPU runtime
         if: matrix.os == 'linux'
@@ -298,7 +298,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/develop.py stop --yes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' `
+          python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' `
             "$env:DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify published Windows engine dependencies

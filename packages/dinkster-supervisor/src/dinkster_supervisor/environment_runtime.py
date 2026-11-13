@@ -83,8 +83,14 @@ def run_generation(root: Path, command: list[str]) -> int:
         environment = dict(os.environ)
         for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONHOME", "PYTHONPATH"):
             environment.pop(name, None)
+        scripts = subprocess.check_output(
+            [str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_path('scripts'))"],
+            text=True,
+        ).strip()
         environment["VIRTUAL_ENV"] = str(python.parent.parent)
-        environment["PATH"] = str(python.parent) + os.pathsep + environment.get("PATH", "")
+        environment["PATH"] = os.pathsep.join(
+            (scripts, str(python.parent), environment.get("PATH", ""))
+        )
         environment["DINKSTER_EXECUTION_PYTHON"] = str(python)
         executable = (
             str(python)

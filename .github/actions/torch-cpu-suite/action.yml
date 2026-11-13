@@ -25,7 +25,7 @@ runs:
         uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
         python scripts/develop.py stop --yes
         if [ -n "${DINKSTER_EVIDENCE_ROOT:-}" ]; then
-          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
+          python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
             "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
         fi
     - name: Assert pinned AVX2 dispatch
