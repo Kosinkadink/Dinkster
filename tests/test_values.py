@@ -319,10 +319,6 @@ def test_core_primitives_refuse_non_scalar_runtime_and_encoded_values(type_id, i
             validator(encoded, {})
 
 
-class ComboStringSubclass(str):
-    pass
-
-
 @pytest.mark.parametrize(
     "selected", [False, True, 0, 1, 8, 10, 1.5, -2.75, "8", -(2**53 - 1), 2**53 - 1]
 )

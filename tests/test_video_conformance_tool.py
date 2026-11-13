@@ -1,22 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
 from typing import cast
 
 TOOL_PATH = Path(__file__).resolve().parent.parent / "tools" / "video_conformance.py"
-
-
-def _tool() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("video_conformance", TOOL_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_rss_gate_saves_video_in_a_fresh_process(tmp_path: Path) -> None:

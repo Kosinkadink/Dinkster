@@ -22,8 +22,6 @@ from dinkster_protocol import (
     WORKGROUP_DATA_PLANE_CAPABILITY,
     AbortWorkGroup,
     AttentionCapabilityEvidence,
-    AttentionPolicyConfig,
-    AttentionRouteToken,
     BeginWorkGroup,
     CancelWorkGroup,
     CommitWorkGroup,
@@ -43,7 +41,6 @@ from dinkster_protocol import (
     WorkGroupReleased,
     WorkUnitFailed,
     WorkUnitResult,
-    derive_attention_route_token,
 )
 from dinkster_schema import (
     ComboOption,
@@ -324,41 +321,6 @@ class _Reservations:
         yield
 
 
-class _RecordingReservations:
-    def __init__(self) -> None:
-        self.calls: list[tuple[ReservationRequest, ...]] = []
-
-    @asynccontextmanager
-    async def reserve(self, requests: tuple[ReservationRequest, ...]):
-        self.calls.append(requests)
-        yield
-
-
-class _RefusingReservations:
-    def __init__(self) -> None:
-        self.calls: list[tuple[ReservationRequest, ...]] = []
-
-    @asynccontextmanager
-    async def reserve(self, requests: tuple[ReservationRequest, ...]):
-        self.calls.append(requests)
-        raise RuntimeError("admission refused")
-        yield
-
-
-def _single_job_pool(
-    tmp_path: Path,
-) -> tuple[_SingleJobWorkerPool, tuple[_SingleJobFakeWorker, ...]]:
-    workers = (_SingleJobFakeWorker(0), _SingleJobFakeWorker(1))
-    lanes = tuple(_ReplicaLane(rank, worker) for rank, worker in enumerate(workers))  # type: ignore[arg-type]
-    pool = _SingleJobWorkerPool(lanes, tmp_path / "rendezvous", "guidance")
-
-    async def invoke_ranks(lanes, _config, invocations, on_event):
-        return await pool._invoke_ranks(lanes, invocations, on_event)
-
-    pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
-    return pool, workers
-
-
 def _single_job_invocation(inputs: Mapping[str, Value] | None = None) -> Invocation:
     return Invocation(
         "invocation",
@@ -444,13 +406,6 @@ def test_single_job_pool_retries_failed_replacement_startup(tmp_path: Path) -> N
         assert all(worker.started for worker in generations[2])
 
     run_scenario(scenario())
-
-
-def _attention_token(*, policy: str = "auto") -> AttentionRouteToken:
-    return derive_attention_route_token(
-        _attention_capabilities(),
-        AttentionPolicyConfig(policy),  # type: ignore[arg-type]
-    )
 
 
 def _attention_capabilities(*, kitchen: bool = False) -> AttentionCapabilityEvidence:
@@ -1055,54 +1010,6 @@ def test_generation_provider_is_explicit_and_suppresses_lazy_native_inputs(
 
 def _env(*roots: Path) -> dict[str, str]:
     return {"PYTHONPATH": os.pathsep.join(str(root) for root in roots)}
-
-
-def _write_resident_arm_pack(root: Path) -> Path:
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "resident_nodes.py").write_text(
-        """from collections.abc import Mapping
-from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import RESOURCE_HANDLE_TYPE, ResourceHandle, register_resource_handle_type
-
-def register_types(registry):
-    register_resource_handle_type(registry)
-
-class Resident(Node):
-    @classmethod
-    def define_schema(cls):
-        return NodeSchema(
-            node_type="resident.make",
-            inputs=(),
-            outputs=(OutputSpec("out", TypeExpr.list_of(TypeExpr.concrete(RESOURCE_HANDLE_TYPE))),),
-        )
-    @classmethod
-    def execute(cls):
-        return cls.outputs(out=[
-            ResourceHandle(resource_id="local", kind="model", obj=object()),
-            ResourceHandle(resource_id="foreign", kind="model", owner="foreign-session"),
-        ])
-
-class AltResident(Resident):
-    pass
-
-NODES = [Resident]
-ARM_NODES = {"alt": [AltResident]}
-"""
-    )
-    manifest = root / "dinkster-pack.toml"
-    manifest.write_text(
-        """[pack]
-name = "resident"
-publisher = "dinkster"
-[pack.arms]
-alt = ["resident.make"]
-[pack.entry]
-nodes = "resident_nodes:NODES"
-types = "resident_nodes:register_types"
-arm_nodes = "resident_nodes:ARM_NODES"
-"""
-    )
-    return manifest
 
 
 def _graph(node_type: str, value: str = "x") -> Graph:

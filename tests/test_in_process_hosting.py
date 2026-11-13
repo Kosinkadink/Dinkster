@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode
-from dinkster_memory import ModelTenantHandle, TenantRegistration
-from dinkster_registry import InstallError, LockedPack, Lockfile
+from dinkster_registry import InstallError, Lockfile
 from dinkster_server import PackInfo, create_app
 from dinkster_workers import ManifestError
 from dinkster_workers.doctor import DoctorReport, Finding
@@ -31,15 +27,6 @@ from dinkster.installer import (
 from tests.async_scenarios import run_scenario
 
 PINS = {"torch": "2.13.0", "comfy-aimdo": "0.4.13"}
-
-
-def _lockfile() -> Lockfile:
-    return Lockfile(
-        packs=(
-            LockedPack("alpha", "1.0.0", "blake3:" + "1" * 64, "pub", ("alpha",), "registry:x"),
-            LockedPack("beta", "1.0.0", "blake3:" + "2" * 64, "pub", ("beta",), "registry:x"),
-        )
-    )
 
 
 def _manifest(directory: Path, *, extra: str = "") -> Path:
@@ -279,98 +266,3 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
     )
     assert installer.rollback() == 3
     assert _decode_hosting_record(root / "generations" / "3.hosting.json").in_process == ("alpha",)
-
-
-@dataclass
-class _Handle:
-    pack: str
-    model_id: str
-    size_estimate_bytes: int
-    device_preference: str | None = None
-    registry: Any | None = None
-    started: asyncio.Event | None = None
-    release: asyncio.Event | None = None
-    offloads: int = 0
-    evictions: int = 0
-
-    async def offload(self) -> None:
-        self.offloads += 1
-        if self.started is not None:
-            self.started.set()
-        if self.release is not None:
-            await self.release.wait()
-        if self.registry is not None:
-            await self.registry.register(self)
-
-    async def evict(self) -> None:
-        self.evictions += 1
-
-
-class _StrictFakeRegistry:
-    """Executable specification for every H3.1 tenant amendment."""
-
-    def __init__(self, budget: int = 1_000, assigned_device: str = "cuda:1") -> None:
-        self.budget = budget
-        self.assigned_device = assigned_device
-        self.live: dict[tuple[str, str], tuple[ModelTenantHandle, TenantRegistration, int]] = {}
-        self.notifications: list[TenantRegistration] = []
-        self._callback_owner: asyncio.Task[object] | None = None
-        self._lock = asyncio.Lock()
-
-    async def register(self, handle: ModelTenantHandle) -> TenantRegistration:
-        if asyncio.current_task() is self._callback_owner:
-            raise RuntimeError("tenant callbacks are non-reentrant")
-        async with self._lock:
-            key = (handle.pack, handle.model_id)
-            if key in self.live:
-                raise RuntimeError("duplicate tenant identity")
-            used = sum(item[2] for item in self.live.values())
-            if used + handle.size_estimate_bytes > self.budget:
-                raise RuntimeError("tenant budget refused")
-            registration = TenantRegistration(
-                f"{handle.pack}:{handle.model_id}", self.assigned_device
-            )
-            self.live[key] = (handle, registration, handle.size_estimate_bytes)
-            return registration
-
-    async def unregister(self, registration: TenantRegistration) -> None:
-        if asyncio.current_task() is self._callback_owner:
-            raise RuntimeError("tenant callbacks are non-reentrant")
-        async with self._lock:
-            key = next(key for key, item in self.live.items() if item[1] == registration)
-            del self.live[key]
-
-    async def terminal_release(self, registration: TenantRegistration) -> None:
-        await self.evict(registration)
-        await self.unregister(registration)
-
-    async def notify_resident(self, registration: TenantRegistration) -> None:
-        if asyncio.current_task() is self._callback_owner:
-            raise RuntimeError("tenant callbacks are non-reentrant")
-        async with self._lock:
-            item = next(item for item in self.live.values() if item[1] == registration)
-            if item[2] > self.budget:
-                raise RuntimeError("tenant budget refused")
-            self.notifications.append(registration)
-
-    async def offload(self, registration: TenantRegistration) -> None:
-        async with self._lock:
-            handle = next(item[0] for item in self.live.values() if item[1] == registration)
-            self._callback_owner = asyncio.current_task()
-            try:
-                await handle.offload()
-            finally:
-                self._callback_owner = None
-
-    async def evict(self, registration: TenantRegistration) -> None:
-        async with self._lock:
-            handle = next(item[0] for item in self.live.values() if item[1] == registration)
-            self._callback_owner = asyncio.current_task()
-            try:
-                await handle.evict()
-            finally:
-                self._callback_owner = None
-
-    def allocate(self, registration: TenantRegistration, device: str) -> None:
-        if registration.assigned_device != device:
-            raise RuntimeError("allocation is not on the assigned device")

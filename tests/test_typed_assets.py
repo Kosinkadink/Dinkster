@@ -67,10 +67,6 @@ def make_registry() -> TypeRegistry:
     return registry
 
 
-def ref_for(data: bytes, name: str = "note.txt") -> AssetRef:
-    return AssetRef(digest=digest_bytes(data), name=name, size=len(data))
-
-
 def test_decoder_registration_rules() -> None:
     registry = make_registry()
     registry.register_asset_decoder("STRING", provider_id="t.text@1", decode=lambda ref: "x")

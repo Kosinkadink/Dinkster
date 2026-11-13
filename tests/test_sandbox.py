@@ -937,10 +937,6 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
 # -- probe jail (the doctor's import probe under bwrap) ------------------------
 
 
-def _ro_bound(argv: list[str]) -> list[str]:
-    return [argv[i + 1] for i, arg in enumerate(argv) if arg == "--ro-bind"]
-
-
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
 def test_probe_jail_refuses_dissolving_root(tmp_path: Path) -> None:
     from dinkster_workers import build_probe_bwrap_command

@@ -26,13 +26,3 @@ def test_sigmas_tensor_fingerprint_covers_dtype_shape_and_raw_bytes() -> None:
     assert fingerprint(baseline) != fingerprint(
         EncodedLatentTensor("float32", (1,), b"\x00\x00\x00@")
     )
-
-
-class RuntimeSampler:
-    def sample(self) -> str:
-        return "sampled"
-
-
-class RuntimeNoise:
-    def generate_noise(self) -> str:
-        return "noise"

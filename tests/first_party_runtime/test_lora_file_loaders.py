@@ -2,35 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from dinkster_models import lora_file_loaders as loaders
-
-
-class _VerifiedAsset:
-    def __init__(self) -> None:
-        self.digest = "digest"
-        self.local_path_calls = 0
-
-    def local_path(self) -> Path:
-        self.local_path_calls += 1
-        return Path("/verified/lora.safetensors")
-
-
-class _LocalAsset:
-    def __init__(self) -> None:
-        self.binding = "mount:lora.safetensors"
-        self.local_path_calls = 0
-
-    def local_path(self) -> Path:
-        self.local_path_calls += 1
-        return Path("/local/lora.safetensors")
-
-
-def _patch_assets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(loaders, "AssetRef", _VerifiedAsset)
-    monkeypatch.setattr(loaders, "LocalAssetRef", _LocalAsset)
 
 
 def test_zero_strength_returns_before_asset_resolution_or_inference(

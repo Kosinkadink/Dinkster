@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import copy
-import json
 from dataclasses import replace
 from typing import Any, cast
 
 import pytest
 from dinkster_protocol import (
-    BlockedOutput,
     CurrentNodeRef,
     CurrentOutputRef,
     DirectReturn,
@@ -47,24 +45,6 @@ def registry() -> TypeRegistry:
     result = TypeRegistry()
     register_core_types(result)
     return result
-
-
-def direct_outcome() -> InvocationReturn:
-    value = registry().wrap("STRING", "payload")
-    return InvocationReturn(
-        ReturnBatch(
-            "scalar",
-            (
-                DirectReturn(
-                    (
-                        ("a", PresentOutput(value)),
-                        ("b", BlockedOutput(None)),
-                        ("c", CurrentOutputRef("a")),
-                    )
-                ),
-            ),
-        )
-    )
 
 
 def expanded_outcome() -> InvocationReturn:
@@ -185,14 +165,6 @@ def test_heterogeneous_list_result_roundtrip_and_envelope_validation() -> None:
 
 def algebra(header: dict[str, object]) -> dict[str, Any]:
     return cast("dict[str, Any]", header["resultAlgebra"])
-
-
-def replace_document(header: dict[str, object], document: object) -> dict[str, object]:
-    changed = copy.deepcopy(header)
-    algebra(changed)["document"] = json.dumps(
-        document, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
-    return changed
 
 
 @pytest.mark.parametrize(

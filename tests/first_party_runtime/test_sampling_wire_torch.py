@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-from typing import Any
-
 import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_STRING,
     SIGMAS_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
     TypeExpr,
     materialize_latent,
 )
@@ -73,37 +66,3 @@ def test_sigmas_tensor_codec_preserves_cpu_tensor_bytes(tensor: torch.Tensor) ->
 
 SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 STRING = TypeExpr.concrete(CORE_STRING)
-
-
-class SigmaSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="sigma-source.source",
-            inputs=(InputSpec("case", STRING),),
-            outputs=(OutputSpec("sigmas", SIGMAS),),
-        )
-
-    @classmethod
-    def execute(cls, *, case: str) -> dict[str, object]:
-        return cls.outputs(sigmas=_sigma_case(case))
-
-
-class SigmaConsumer(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="sigma-consumer.consumer",
-            inputs=(InputSpec("sigmas", SIGMAS),),
-            outputs=(OutputSpec("summary", STRING),),
-        )
-
-    @classmethod
-    def execute(cls, *, sigmas: Any) -> dict[str, object]:
-        tensor = materialize_latent(sigmas)
-        return cls.outputs(
-            summary=(
-                f"{tensor.dtype};{tuple(tensor.shape)};"
-                f"{hashlib.sha256(_raw_bytes(tensor)).hexdigest()}"
-            )
-        )

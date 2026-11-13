@@ -21,11 +21,9 @@ from dinkster_api.v1 import current_export_snapshot
 from dinkster_caches import MemoryLRUCache
 from dinkster_collab import SessionService, add_session_routes
 from dinkster_engine import (
-    CompiledGraph,
     Engine,
     EngineEvent,
     EventListener,
-    ExecutionRuntime,
     ProviderResolutionError,
 )
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
@@ -38,11 +36,8 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
-    GRAPH_COMPILERS_SURFACE,
     AttentionPolicyConfig,
     ExportSnapshot,
-    GraphCompilerRegistrySnapshot,
-    KeyedContribution,
     PackSettingsSchema,
     SingleJobMultiGpuConfig,
 )
@@ -235,40 +230,6 @@ def make_engine(on_event: EventListener | None = None) -> Engine:
         worker=InProcessWorker(build_node_types(NODES), registry),
         cache=MemoryLRUCache(),
         on_event=on_event,
-    )
-
-
-def compiler_runtime(engine: Engine) -> ExecutionRuntime:
-    async def unused_transport(*_args: object) -> Mapping[str, object]:
-        raise AssertionError("tests replace compile_for_execution before transport")
-
-    contribution = KeyedContribution(
-        surface_id=GRAPH_COMPILERS_SURFACE,
-        id="test.compiler",
-        behavior_metadata=(("contractVersion", 1), ("order", 0)),
-    )
-    return replace(
-        engine.pin_execution(),
-        graph_compiler_registry=GraphCompilerRegistrySnapshot((contribution,)),
-        graph_compile_transport=unused_transport,
-    )
-
-
-def generated_echo_compiled(runtime: ExecutionRuntime, text: str = "compiled") -> CompiledGraph:
-    node_id = "$gen-test-compiled"
-    return CompiledGraph(
-        Graph({node_id: GraphNode("test.echo", {"text": text})}),
-        (node_id,),
-        runtime.extension_snapshot_digest,
-        {
-            node_id: {
-                "nodeId": node_id,
-                "compilerId": "test.compiler",
-                "passIndex": 0,
-                "sources": ("e",),
-                "localKey": "compiled",
-            }
-        },
     )
 
 

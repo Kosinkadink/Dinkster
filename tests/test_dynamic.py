@@ -9,7 +9,6 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError, GraphValidationError, Invocation
 from dinkster_graph import Graph, GraphNode, Link, validate
-from dinkster_protocol import CachedResult
 from dinkster_schema import (
     InputFamilySpec,
     InputSpec,
@@ -24,7 +23,7 @@ from dinkster_schema import (
     build_schemas,
     elaborate,
 )
-from dinkster_values import TypeRegistry, Value, register_core_types
+from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES as BASE_NODES
 from scaffold_nodes import register_scaffold_types
@@ -436,48 +435,4 @@ def test_wrong_grouped_return_members_fail_at_the_worker_boundary() -> None:
     run_scenario(scenario())
 
 
-class WrongShapeCache:
-    """Returns a hit whose output ids do not match the effective schema."""
-
-    def __init__(self, wrong: Mapping[str, Value]) -> None:
-        self._wrong = wrong
-        self.puts = 0
-
-    async def get(self, key: str) -> CachedResult | None:
-        return CachedResult(self._wrong)
-
-    async def put(self, key: str, outputs: Mapping[str, Value]) -> None:
-        self.puts += 1
-
-
-class PlainStatic(Node):
-    """execute() takes exactly its declared inputs: injecting output_spec
-    into a static node would TypeError here."""
-
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="test.plain_static",
-            inputs=(InputSpec("a", STRING),),
-            outputs=(OutputSpec("out", STRING),),
-        )
-
-    @classmethod
-    def execute(cls, *, a: str) -> Mapping[str, object]:
-        return cls.outputs(out=a)
-
-
 # --- the run-scoped snapshot: topology is fixed at run() entry ---
-
-
-class MutatingCache(MemoryLRUCache):
-    """Simulates a frontend mutating the document mid-run: the mutation runs
-    while the engine is inside an awaited cache call."""
-
-    def __init__(self, mutate: object) -> None:
-        super().__init__()
-        self._mutate = mutate
-
-    async def get(self, key: str):  # type: ignore[override]
-        self._mutate()  # type: ignore[operator]
-        return await super().get(key)

@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_latent.latent import (
     LatentBlend,
     LatentComposite,
@@ -18,7 +17,6 @@ from dinkster_latent.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
-from dinkster_values import EncodedLatentTensor
 
 
 class ArrayTensor:
@@ -166,27 +164,3 @@ def test_latent_crop_clamps_offset_to_leave_eight_cells() -> None:
         result["samples"].array, np.arange(130).reshape(1, 1, 10, 13)[:, :, 2:10, 5:13]
     )
     assert result["note"] == "keep"
-
-
-class PortableLatentSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="latent-fixture.source",
-            outputs=(
-                OutputSpec("samples", TypeExpr.concrete("LATENT")),
-                OutputSpec("mask", TypeExpr.concrete("MASK")),
-            ),
-        )
-
-    @classmethod
-    def execute(cls) -> dict[str, object]:
-        return {
-            "samples": {
-                "samples": EncodedLatentTensor(
-                    "float32", (1, 2, 2, 3), np.arange(12, dtype=np.float32).tobytes()
-                ),
-                "note": "keep",
-            },
-            "mask": np.arange(6, dtype=np.float32).reshape(1, 2, 3) / 5,
-        }

@@ -4,7 +4,6 @@ from typing import Any, cast
 import pytest
 from dinkster_schema import (
     OPTION_KEY_PATTERN,
-    AssetWidget,
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,
@@ -13,7 +12,6 @@ from dinkster_schema import (
     Node,
     NodeOutputError,
     NodeSchema,
-    OutputRepresents,
     OutputSpec,
     TypeExpr,
     schema_from_wire,
@@ -31,32 +29,6 @@ SCHEMA = NodeSchema(
     ),
     outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
 )
-
-
-def _represented_schema(
-    *,
-    represents: OutputRepresents | None = None,
-    combos: tuple[DynamicComboSpec, ...] = (),
-) -> NodeSchema:
-    image = TypeExpr.concrete("IMAGE")
-    return NodeSchema(
-        node_type="test.represented-output",
-        inputs=(
-            InputSpec(
-                "image",
-                TypeExpr.asset_of(image),
-                widget=AssetWidget(kind="media/image"),
-            ),
-        ),
-        outputs=(
-            OutputSpec(
-                "image",
-                image,
-                represents=represents or OutputRepresents("image", "decoded-image"),
-            ),
-        ),
-        combos=combos,
-    )
 
 
 EXPRESSION_MIRROR = MirrorSpec(

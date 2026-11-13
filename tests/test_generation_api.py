@@ -7,7 +7,6 @@ import json
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import replace
 from types import TracebackType
 from typing import Self, cast
 
@@ -166,162 +165,6 @@ class _FailingProvider(_Provider):
         return _FailingStream((), self)
 
 
-class _MalformedProvider(_Provider):
-    mode = "normal"
-
-    def generate(
-        self,
-        request: GenerationRequest,
-        *,
-        cancelled: Callable[[], bool],
-    ) -> _Stream:
-        base = super().generate(request, cancelled=cancelled)
-        events = tuple(base)
-        base.close()
-        terminal = cast("GenerationTerminalEvent", events[-1])
-        if self.mode == "duplicate":
-            events = (*events, terminal)
-        elif self.mode == "drop":
-            events = (
-                *events[:-1],
-                GenerationTerminalEvent(replace(terminal.result, continuation=None)),
-            )
-        elif self.mode in {"replace", "spontaneous"}:
-            events = (
-                *events[:-1],
-                GenerationTerminalEvent(
-                    replace(
-                        terminal.result,
-                        continuation=GenerationSessionHandle(
-                            self.id,
-                            self.model_identity,
-                            "f" * 32,
-                        ),
-                    )
-                ),
-            )
-        return _Stream(events, self)
-
-
-class _CleanupProvider(_Provider):
-    def __init__(self) -> None:
-        super().__init__()
-        self.close_session_calls: list[str] = []
-        self.close_calls = 0
-
-    def close_session(self, session: GenerationSessionHandle) -> None:
-        self.close_session_calls.append(session.session_id)
-        if len(self.close_session_calls) == 1:
-            raise RuntimeError("session cleanup failed")
-        super().close_session(session)
-
-    def close(self) -> None:
-        self.close_calls += 1
-        if self.close_calls == 1:
-            raise RuntimeError("provider cleanup failed")
-        super().close()
-
-
-class _WrongIdCleanupProvider(_CleanupProvider):
-    @property
-    def id(self) -> str:
-        return "dinkster.wrong-provider"
-
-
-class _SessionOnlyCleanupProvider(_Provider):
-    def __init__(self) -> None:
-        super().__init__()
-        self.close_session_calls = 0
-
-    def __getattribute__(self, name: str):
-        if name == "close":
-            return None
-        return super().__getattribute__(name)
-
-    def close_session(self, session: GenerationSessionHandle) -> None:
-        self.close_session_calls += 1
-        if self.close_session_calls == 1:
-            raise RuntimeError("session cleanup failed")
-        super().close_session(session)
-
-
-class _CloseFailingStream(_Stream):
-    def __init__(self, events: tuple[GenerationEvent, ...], provider: _Provider) -> None:
-        super().__init__(events, provider)
-        self.close_calls = 0
-
-    def close(self) -> None:
-        self.close_calls += 1
-        if self.close_calls == 1:
-            raise RuntimeError("stream cleanup failed")
-        super().close()
-
-
-class _CloseFailingProvider(_Provider):
-    def __init__(self) -> None:
-        super().__init__()
-        self.stream: _CloseFailingStream | None = None
-
-    def generate(
-        self,
-        request: GenerationRequest,
-        *,
-        cancelled: Callable[[], bool],
-    ) -> _CloseFailingStream:
-        assert not cancelled()
-        self.requests.append(request)
-        self.stream = _CloseFailingStream((), self)
-        return self.stream
-
-
-class _LookaheadBarrierStream(_Stream):
-    def __init__(
-        self,
-        events: tuple[GenerationEvent, ...],
-        provider: _Provider,
-        started: threading.Event,
-        release: threading.Event,
-    ) -> None:
-        super().__init__(events, provider)
-        self._started = started
-        self._release = release
-
-    def __next__(self) -> GenerationEvent:
-        try:
-            return super().__next__()
-        except StopIteration:
-            self._started.set()
-            if not self._release.wait(2.0):
-                raise RuntimeError("lookahead release timed out") from None
-            raise
-
-
-class _LookaheadBarrierProvider(_Provider):
-    def __init__(self) -> None:
-        super().__init__()
-        self.block_lookahead = False
-        self.lookahead_started = threading.Event()
-        self.release_lookahead = threading.Event()
-
-    def generate(
-        self,
-        request: GenerationRequest,
-        *,
-        cancelled: Callable[[], bool],
-    ) -> _Stream:
-        stream = super().generate(request, cancelled=cancelled)
-        if not self.block_lookahead:
-            return stream
-        events = tuple(stream)
-        stream.close()
-        return _LookaheadBarrierStream(
-            events,
-            self,
-            self.lookahead_started,
-            self.release_lookahead,
-        )
-
-
 def _make_engine(on_event: EventListener | None = None) -> Engine:
     registry = TypeRegistry()
     register_core_types(registry)
@@ -378,30 +221,6 @@ def _sse_frames(body: str) -> list[tuple[str, dict[str, object]]]:
             )
         )
     return frames
-
-
-def _direct_stream(
-    service: GenerationService,
-    *,
-    session_id: str | None = None,
-    open_session: bool = False,
-    store_session: bool = True,
-):
-    cancelled = threading.Event()
-    return service.open_stream(
-        MODEL,
-        owner="owner",
-        prompt="Hi",
-        messages=(),
-        sampler=GenerationSamplerChain((GenerationSamplerStage(GenerationSamplerKind.GREEDY),)),
-        stop=GenerationStopConditions(2),
-        seed=None,
-        session_id=session_id,
-        open_session=open_session,
-        store_session=store_session,
-        cancelled=cancelled.is_set,
-        cancel=cancelled.set,
-    )
 
 
 def test_native_generation_sessions_are_principal_owned_and_lifecycle_managed() -> None:

@@ -12,12 +12,10 @@ death.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-from dinkster_assets import ASSET_TYPE, AssetRef, register_asset_type
 from dinkster_engine import Invocation, InvocationResult, OnInvocationEvent
 from dinkster_memory import (
     BudgetExceeded,
@@ -323,11 +321,6 @@ def core_registry() -> TypeRegistry:
     return registry
 
 
-def _feed_frame(reader: asyncio.StreamReader, header: dict[str, object]) -> None:
-    encoded = json.dumps({**header, "blobs": []}, separators=(",", ":")).encode()
-    reader.feed_data(len(encoded).to_bytes(4, "big") + encoded)
-
-
 def test_isolated_lease_grant_hold_release(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
@@ -484,27 +477,6 @@ def test_isolated_close_unwinds_held_leases(tmp_path: Path) -> None:
 
 
 # -- checkpoint policy -----------------------------------------------------
-
-
-def asset_invocation(size: int, *, arm: str | None = None) -> Invocation:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_asset_type(registry)
-    ref = AssetRef(digest=DIGEST, name="model.safetensors", size=size)
-    return Invocation(
-        invocation_id="i1",
-        node_id="load",
-        node_type="dinkster.load_checkpoint",
-        inputs={"checkpoint": registry.wrap(ASSET_TYPE, ref)},
-        effective_schema=NodeSchema(
-            node_type="dinkster.load_checkpoint",
-            display_name="Load Checkpoint",
-            category="compat",
-            inputs=(InputSpec("checkpoint", TypeExpr.concrete(ASSET_TYPE)),),
-            outputs=(),
-        ),
-        arm=arm,
-    )
 
 
 def resident_input(

@@ -69,8 +69,6 @@ from dinkster_workers import host as host_module
 from dinkster_workers.boundary import (
     PROTOCOL_VERSION,
     ValueCodec,
-    read_frame,
-    write_frame,
 )
 from dinkster_workers.doctor import diagnose
 from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
@@ -401,51 +399,6 @@ def negotiated_session() -> BoundarySession:
     return session
 
 
-async def start_test_host() -> tuple[
-    asyncio.StreamReader,
-    asyncio.StreamWriter,
-    asyncio.Server,
-    asyncio.Task[None],
-]:
-    registry = core_registry()
-    worker = InProcessWorker({}, registry)
-    accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
-
-    async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        task = asyncio.current_task()
-        assert task is not None
-        accepted.set_result(task)
-        await host_module.serve_connection(
-            reader,
-            writer,
-            pack_name="test",
-            worker=worker,
-            schemas={},
-            planner=None,
-            consumers={},
-            codec=ValueCodec(registry),
-        )
-
-    server = await asyncio.start_server(accept, "127.0.0.1", 0)
-    address = server.sockets[0].getsockname()
-    reader, writer = await asyncio.open_connection(address[0], address[1])
-    host_task = await accepted
-    hello = await read_frame(reader)
-    assert hello is not None and hello[0]["type"] == "hello"
-    return reader, writer, server, host_task
-
-
-async def stop_test_host(
-    writer: asyncio.StreamWriter,
-    server: asyncio.Server,
-    host_task: asyncio.Task[None],
-) -> None:
-    await write_frame(writer, {"type": "shutdown"}, [])
-    await host_task
-    server.close()
-    await server.wait_closed()
-
-
 @pytest.mark.parametrize("worker_protocol", (PROTOCOL_VERSION, PROTOCOL_VERSION + 1))
 def test_separately_shipped_worker_negotiates_protocol(
     monkeypatch: pytest.MonkeyPatch, worker_protocol: int
@@ -497,28 +450,6 @@ def test_separately_shipped_worker_negotiates_protocol(
             await server.wait_closed()
 
     run_scenario(scenario())
-
-
-class CapturingLauncher(Launcher):
-    def __init__(self) -> None:
-        self.spec: LaunchSpec | None = None
-
-    async def launch(self, spec: LaunchSpec) -> asyncio.subprocess.Process:
-        self.spec = spec
-        raise RuntimeError("launch captured")
-
-
-class FakeHeadroomSession:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-        self.frames: list[dict[str, object]] = []
-
-    async def send(self, header: object, blobs: object) -> None:
-        del blobs
-        if self.fail:
-            raise ConnectionError("dying")
-        assert isinstance(header, dict)
-        self.frames.append(header)
 
 
 def image_graph(ratio: float = 0.5) -> Graph:

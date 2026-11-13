@@ -629,11 +629,6 @@ def _audio_header(wire: bytes) -> tuple[dict[str, Any], bytes]:
     return json.loads(wire[offset : offset + length]), wire[offset + length :]
 
 
-def _audio_wire(header: dict[str, Any], payload: bytes = b"") -> bytes:
-    body = json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
-    return b"DINKSTER-AUDIO\x02" + struct.pack("<I", len(body)) + body + payload
-
-
 @pytest.fixture(params=["flac", "matroska"])
 def inline_encoded_audio(request):
     import av

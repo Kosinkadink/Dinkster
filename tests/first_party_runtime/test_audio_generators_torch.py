@@ -2,22 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 import torch
-from dinkster_api.v1 import (
-    AUDIO_TYPE,
-    CORE_STRING,
-    LATENT_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
-    TypeExpr,
-    materialize_audio,
-    materialize_latent,
-)
 from dinkster_audio.audio_generators import EmptyAudio
 from dinkster_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
 
@@ -53,30 +39,3 @@ def test_minimax_frames_round_clamp_then_convert(seconds: float, batch: int, len
     assert samples.dtype is torch.float32
     assert samples.device.type == "cpu"
     assert not samples.count_nonzero()
-
-
-class AudioGeneratorInspect(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="audio-generator-fixture.inspect",
-            inputs=(
-                InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),
-                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
-            ),
-            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
-        )
-
-    @classmethod
-    def execute(cls, *, audio: Any, latent: Any) -> dict[str, object]:
-        audio, latent = materialize_audio(audio), materialize_latent(latent)
-        assert set(audio) == {"waveform", "sample_rate"}
-        assert audio["sample_rate"] == 8
-        assert audio["waveform"].shape == (1, 2, 2)
-        assert set(latent) == {"samples", "type", "downscale_ratio_temporal"}
-        assert latent["type"] == "audio" and latent["downscale_ratio_temporal"] == 512
-        assert latent["samples"].shape == (2, 128, 13)
-        for tensor in (audio["waveform"], latent["samples"]):
-            assert tensor.dtype is torch.float32 and tensor.device.type == "cpu"
-            assert not tensor.count_nonzero()
-        return cls.outputs(result="audio generators exact")

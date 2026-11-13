@@ -5,7 +5,6 @@ import contextlib
 import threading
 import time
 from collections.abc import Mapping
-from pathlib import Path
 
 import pytest
 from dinkster_api.v1 import current_export_snapshot
@@ -36,10 +35,8 @@ from dinkster_values import (
 )
 from dinkster_workers import (
     InProcessWorker,
-    LaunchSpec,
     current_execution_context,
 )
-from dinkster_workers.launch import Launcher
 
 from tests.async_scenarios import run_scenario
 
@@ -59,36 +56,6 @@ class SlowSyncNode(Node):
         time.sleep(0.1)
         report_event("review.thread", {"ok": True})
         return cls.outputs(value="done")
-
-
-class ComboAdmissionNode(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        combo = TypeExpr.concrete(CORE_COMBO)
-        return NodeSchema(
-            node_type="review.combo_admission",
-            inputs=(InputSpec("value", combo),),
-            outputs=(OutputSpec("value", combo),),
-        )
-
-    @classmethod
-    def execute(cls, *, value: str) -> Mapping[str, object]:
-        return cls.outputs(value=value)
-
-
-class StringAdmissionNode(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        string = TypeExpr.concrete(CORE_STRING)
-        return NodeSchema(
-            node_type="review.string_admission",
-            inputs=(InputSpec("value", string),),
-            outputs=(OutputSpec("value", string),),
-        )
-
-    @classmethod
-    def execute(cls, *, value: str) -> Mapping[str, object]:
-        return cls.outputs(value=value)
 
 
 class ComboListAdmissionNode(Node):
@@ -205,14 +172,6 @@ def test_worker_preserves_combo_list_order_duplicates_and_fingerprint() -> None:
         assert output.fingerprint == value.fingerprint
 
     run_scenario(scenario())
-
-
-class RaisingLauncher(Launcher):
-    endpoint: Path | None = None
-
-    async def launch(self, spec: LaunchSpec) -> asyncio.subprocess.Process:
-        self.endpoint = spec.endpoint_dir
-        raise RuntimeError("launch failed")
 
 
 def test_async_lazy_hooks_await_in_pack_and_execution_contexts() -> None:

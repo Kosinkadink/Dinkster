@@ -5,13 +5,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import dinkster_protocol as protocol
 import pytest
 from dinkster_protocol import (
     EXTENSION_SCOPES,
     ActiveExtension,
     ExtensionSnapshot,
-    KeyedContribution,
     canonical_extension_snapshot,
     extension_behavior_hash,
 )
@@ -107,23 +105,6 @@ def test_snapshot_serialization_and_hash_are_deterministic_and_order_sensitive()
     assert extension_behavior_hash(first) != extension_behavior_hash(reresolved)
     assert extension_behavior_hash(first) != extension_behavior_hash(provider_changed)
     assert len(extension_behavior_hash(first)) == 64
-
-
-def _compiler(
-    id: str,
-    order: object,
-    *,
-    surface_id: str = protocol.GRAPH_COMPILERS_SURFACE,
-    aliases: tuple[str, ...] = (),
-    extra_metadata: tuple[tuple[str, object], ...] = (),
-) -> KeyedContribution:
-    metadata = tuple(sorted((("contractVersion", 1), *extra_metadata, ("order", order))))
-    return KeyedContribution(
-        surface_id=surface_id,
-        id=id,
-        aliases=aliases,
-        behavior_metadata=metadata,  # type: ignore[arg-type]
-    )
 
 
 @pytest.mark.parametrize(

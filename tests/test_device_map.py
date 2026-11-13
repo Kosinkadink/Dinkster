@@ -22,7 +22,6 @@ from dinkster_values import (
     COST_META_KEY,
     RESOURCES_META_KEY,
     TypeRegistry,
-    Value,
     register_core_types,
 )
 from dinkster_workers import DeviceMap, IsolatedWorker
@@ -61,15 +60,6 @@ def test_qualifier_inversion_refuses_local_facts() -> None:
     assert remote.to_child_residency("ram") is None  # local ram
     assert remote.to_child_device("cuda:1@box1") == "cuda:1"
     assert remote.to_child_device("cuda:1") is None
-
-
-def wrapped_gpu_value(resources: object, cost: object) -> Value:
-    registry = TypeRegistry()
-    registry.register(
-        "t.gpu",
-        meta=lambda obj: {RESOURCES_META_KEY: resources, COST_META_KEY: cost},
-    )
-    return registry.wrap("t.gpu", object())
 
 
 # -- across the isolated boundary ------------------------------------------

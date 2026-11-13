@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import math
-from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -225,90 +223,3 @@ def test_normalize_video_latent_start_returns_single_frame_mapping_unchanged() -
         latent=latent, start_frame_count=4, reference_frame_count=5
     )["latent"]
     assert result is latent
-
-
-class VideoLatentTransformSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="video-latent-transform-fixture.source",
-            outputs=(
-                OutputSpec("video", TypeExpr.concrete(LATENT_TYPE)),
-                OutputSpec("audio", TypeExpr.concrete(LATENT_TYPE)),
-                OutputSpec("normalization", TypeExpr.concrete(LATENT_TYPE)),
-            ),
-        )
-
-    @classmethod
-    def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(
-            video={
-                "samples": torch.arange(2 * 3 * 5 * 7 * 11, dtype=torch.float64).reshape(
-                    2, 3, 5, 7, 11
-                ),
-                "noise_mask": torch.full((2, 1, 5, 1, 1), 0.75),
-                "metadata": "video",
-            },
-            audio={
-                "samples": torch.arange(2 * 3 * 5 * 11, dtype=torch.float64).reshape(2, 3, 5, 11),
-                "noise_mask": torch.full((2, 1, 5, 1), 0.75),
-                "metadata": "audio",
-            },
-            normalization={
-                "samples": torch.cat(
-                    (
-                        torch.arange(2 * 2 * 6 * 3 * 5, dtype=torch.float64).reshape(2, 2, 6, 3, 5)[
-                            :1
-                        ],
-                        torch.arange(2 * 2 * 6 * 3 * 5, dtype=torch.float64)
-                        .reshape(2, 2, 6, 3, 5)[1:]
-                        .flip(3)
-                        .mul(-0.7)
-                        .add(5.0),
-                    )
-                ),
-                "noise_mask": torch.full((2, 1, 6, 1, 1), 0.25),
-                "metadata": {"keep": ["value"]},
-            },
-        )
-
-
-class VideoLatentTransformInspect(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        latent = TypeExpr.concrete(LATENT_TYPE)
-        return NodeSchema(
-            node_type="video-latent-transform-fixture.inspect",
-            inputs=tuple(
-                InputSpec(name, latent)
-                for name in ("video", "trimmed", "audio", "frozen", "normalized")
-            ),
-            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
-        )
-
-    @classmethod
-    def execute(cls, **latents: object) -> Mapping[str, object]:
-        video = materialize_latent(latents["video"])
-        trimmed = materialize_latent(latents["trimmed"])
-        audio = materialize_latent(latents["audio"])
-        frozen = materialize_latent(latents["frozen"])
-        normalized = materialize_latent(latents["normalized"])
-        assert video["samples"].shape == (2, 3, 5, 7, 11)
-        assert torch.equal(video["noise_mask"], torch.full((2, 1, 5, 1, 1), 0.75))
-        assert trimmed["samples"].shape == (2, 3, 3, 7, 11)
-        assert torch.equal(trimmed["noise_mask"], video["noise_mask"])
-        assert trimmed["metadata"] == "video"
-        assert audio["samples"].shape == (2, 3, 5, 11)
-        assert torch.equal(audio["noise_mask"], torch.full((2, 1, 5, 1), 0.75))
-        assert frozen["samples"].shape == (2, 3, 5, 11)
-        assert frozen["noise_mask"].shape == (2, 1, 5, 1)
-        assert frozen["noise_mask"].dtype == torch.float32
-        assert not torch.count_nonzero(frozen["noise_mask"])
-        assert frozen["metadata"] == "audio"
-        assert normalized["samples"].shape == (2, 2, 6, 3, 5)
-        assert hashlib.sha256(normalized["samples"].numpy().tobytes()).hexdigest() == (
-            "5f9a1a558a7d96853766b4d26f5c80e6d29f46c661c0206af975c50af0ea1b1c"
-        )
-        assert normalized["metadata"] == {"keep": ["value"]}
-        assert torch.equal(normalized["noise_mask"], torch.full((2, 1, 6, 1, 1), 0.25))
-        return cls.outputs(summary="video-latent-transforms")

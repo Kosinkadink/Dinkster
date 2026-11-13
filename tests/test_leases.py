@@ -15,9 +15,7 @@ from dinkster_memory import (
     BudgetExceeded,
     LeaseBroker,
     MemoryGovernor,
-    PressureSignal,
     ReservationTimeout,
-    Shedder,
 )
 
 from tests.async_scenarios import run_scenario
@@ -172,17 +170,3 @@ def test_waiting_acquire_gets_full_ttl_at_grant(
         await broker.close()
 
     run_scenario(scenario())
-
-
-class FakeCache(Shedder):
-    def __init__(self, device: str, holding: int) -> None:
-        self.device = device
-        self.holding = holding
-
-    def footprint(self, device: str) -> int:
-        return self.holding if device == self.device else 0
-
-    async def shed(self, pressure: PressureSignal) -> int:
-        freed = min(self.holding, pressure.bytes_needed)
-        self.holding -= freed
-        return freed

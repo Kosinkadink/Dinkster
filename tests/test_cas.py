@@ -17,7 +17,6 @@ import mmap
 import multiprocessing
 import os
 import threading
-from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -59,17 +58,6 @@ from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from test_engine import InProcessWorkerFactory, image_graph
 
 from tests.async_scenarios import run_scenario
-
-
-class ExplodingMapping(Mapping[str, object]):
-    def __getitem__(self, key: str) -> object:
-        raise KeyError(key)
-
-    def __iter__(self) -> Iterator[str]:
-        raise RuntimeError("metadata exploded")
-
-    def __len__(self) -> int:
-        return 1
 
 
 def make_registry() -> TypeRegistry:

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import numpy as np
 import pytest
 import torch
 from dinkster_inference.cli_args import args
@@ -17,13 +14,7 @@ from dinkster_api.v1 import (  # noqa: E402
     IMAGE_TYPE,
     LATENT_TYPE,
     MASK_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
     TypeExpr,
-    materialize_image,
-    materialize_latent,
 )
 from dinkster_image.ported.post_processing import (  # noqa: E402
     BatchImagesNode,
@@ -186,79 +177,3 @@ def test_mkl_lab_shared_statistics_preserve_reference_operation_order(
     assert not torch.equal(expected, legacy)
     assert torch.equal(actual, expected)
     assert torch.equal(target, target_before)
-
-
-class PostProcessingSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="post-processing-fixture.source",
-            outputs=(
-                OutputSpec("target", _IMAGE),
-                OutputSpec("reference", _IMAGE),
-                OutputSpec("image", _IMAGE),
-                OutputSpec("mask", _MASK),
-                OutputSpec("latent", _LATENT),
-            ),
-        )
-
-    @classmethod
-    def execute(cls) -> dict[str, object]:
-        target = np.arange(45, dtype=np.float32).reshape(1, 3, 5, 3) / 45
-        return cls.outputs(
-            target=target,
-            reference=1.0 - target,
-            image=np.full((1, 2, 3, 3), 0.25, dtype=np.float32),
-            mask=np.arange(6, dtype=np.float32).reshape(1, 2, 3) / 5,
-            latent={"samples": np.arange(24, dtype=np.float32).reshape(1, 4, 2, 3)},
-        )
-
-
-class PostProcessingInspect(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="post-processing-fixture.inspect",
-            inputs=(
-                InputSpec("source", _IMAGE),
-                InputSpec("resized", _IMAGE),
-                InputSpec("images", _IMAGE),
-                InputSpec("masks", _MASK),
-                InputSpec("latents", _LATENT),
-                InputSpec("transfer", _IMAGE),
-            ),
-            outputs=(
-                OutputSpec("source_pixel", _FLOAT),
-                OutputSpec("resized_width", _FLOAT),
-                OutputSpec("image_batch", _FLOAT),
-                OutputSpec("mask_batch", _FLOAT),
-                OutputSpec("latent_batch", _FLOAT),
-                OutputSpec("transfer_delta", _FLOAT),
-            ),
-        )
-
-    @classmethod
-    def execute(
-        cls,
-        *,
-        source: Any,
-        resized: Any,
-        images: Any,
-        masks: Any,
-        latents: Any,
-        transfer: Any,
-    ) -> dict[str, object]:
-        source = materialize_image(source)
-        resized = materialize_image(resized)
-        images = materialize_image(images)
-        masks = materialize_image(masks)
-        latents = materialize_latent(latents)
-        transfer = materialize_image(transfer)
-        return cls.outputs(
-            source_pixel=float(source[0, 0, 0, 0]),
-            resized_width=float(resized.shape[2]),
-            image_batch=float(images.shape[0]),
-            mask_batch=float(masks.shape[0]),
-            latent_batch=float(latents["samples"].shape[0]),
-            transfer_delta=float(torch.abs(transfer - source).sum()),
-        )

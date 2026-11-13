@@ -12,7 +12,6 @@ from dinkster_protocol import (
     CancelWorkGroup,
     CommitWorkGroup,
     DeviceResourceId,
-    DispatchWork,
     PrepareReplica,
     ReleaseWorkGroup,
     ReplicaBinding,
@@ -33,7 +32,6 @@ from dinkster_protocol import (
     WorkGroupProtocolError,
     WorkGroupRefused,
     WorkGroupReleased,
-    WorkGroupState,
     WorkUnitDefinition,
     WorkUnitFailed,
     WorkUnitId,
@@ -113,19 +111,6 @@ def messages() -> tuple[object, ...]:
         ReleaseWorkGroup(**child),
         WorkGroupReleased(**child),
     )
-
-
-def prepared_lifecycle() -> WorkGroupLifecycle:
-    state, _ = reduce_workgroup(WorkGroupLifecycle(definition()), BeginAdmission())
-    for replica in ("b", "a"):
-        state, _ = reduce_workgroup(state, WorkGroupPrepared(**child_kwargs(replica)))
-    assert state.state is WorkGroupState.DISPATCHING
-    return state
-
-
-def running_lifecycle() -> WorkGroupLifecycle:
-    state, _ = reduce_workgroup(prepared_lifecycle(), DispatchWork())
-    return state
 
 
 @pytest.mark.parametrize("message", messages())

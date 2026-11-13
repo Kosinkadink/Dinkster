@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-from typing import Any
-
 import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_STRING,
     SAM3_TRACK_DATA_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
     TypeExpr,
     TypeRegistry,
     materialize_latent,
@@ -67,31 +60,6 @@ def _track(case: str) -> dict[str, object]:
             "metadata": {"source": ["prompt", ("point", 4)]},
         }
     raise ValueError(f"unknown SAM3 track case: {case}")
-
-
-def _track_summary(value: dict[str, object]) -> str:
-    packed = value["packed_masks"]
-    if packed is None:
-        packed_summary = "none"
-    else:
-        tensor = packed
-        assert isinstance(tensor, torch.Tensor)
-        packed_summary = ";".join(
-            (
-                str(tensor.dtype),
-                str(tuple(tensor.shape)),
-                hashlib.sha256(tensor.contiguous().numpy().tobytes()).hexdigest(),
-            )
-        )
-    return repr(
-        (
-            packed_summary,
-            value["orig_size"],
-            value["n_frames"],
-            value.get("scores", "absent"),
-            tuple(sorted(value["metadata"].items())),
-        )
-    )
 
 
 def _assert_structure(actual: object, expected: object) -> None:
@@ -167,34 +135,3 @@ def test_public_sam3_track_codec_materializes_torch_data_without_mutating_source
 
 SAM3_TRACK = TypeExpr.concrete(SAM3_TRACK_DATA_TYPE)
 STRING = TypeExpr.concrete(CORE_STRING)
-
-
-class SAM3TrackSource(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="sam3-public-source.source",
-            inputs=(InputSpec("case", STRING),),
-            outputs=(OutputSpec("track", SAM3_TRACK),),
-        )
-
-    @classmethod
-    def execute(cls, *, case: str) -> dict[str, object]:
-        return cls.outputs(track=_track(case))
-
-
-class SAM3TrackConsumer(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="sam3-public-consumer.consumer",
-            inputs=(InputSpec("track", SAM3_TRACK), InputSpec("case", STRING)),
-            outputs=(OutputSpec("summary", STRING),),
-        )
-
-    @classmethod
-    def execute(cls, *, track: Any, case: str) -> dict[str, object]:
-        restored = materialize_latent(track)
-        assert isinstance(restored, dict)
-        _assert_track(restored, case)
-        return cls.outputs(summary=_track_summary(restored))

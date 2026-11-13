@@ -53,18 +53,6 @@ class FakeTensor:
         return self.array
 
 
-@dataclass
-class FakeBFloat16Tensor(FakeTensor):
-    dtype: str = "torch.bfloat16"
-
-    def view(self, dtype: object) -> FakeTensor:
-        assert dtype == "uint16"
-        return FakeTensor((self.array.view(np.uint32) >> 16).astype(np.uint16))
-
-    def numpy(self) -> np.ndarray:
-        raise TypeError("Got unsupported ScalarType BFloat16")
-
-
 def png_header(data: bytes) -> tuple[int, int, int]:
     """(width, height, color_type) from the IHDR chunk. Full chunk-grammar
     decoding lives in test_renditions.py against the same renderer."""

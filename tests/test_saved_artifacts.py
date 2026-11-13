@@ -9,7 +9,6 @@ import struct
 import time
 import zlib
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from dinkster_api.v1 import attach_saved_artifact
@@ -171,26 +170,6 @@ def test_host_rejects_file_changed_during_capture(
     monkeypatch.setattr(os, "fstat", changing_fstat)
     with pytest.raises(AssetError, match="changed while"):
         authority.capture((_candidate(subfolder=""),), "save", 0)
-
-
-def _stat_override(original: os.stat_result, **overrides: object) -> SimpleNamespace:
-    """Return a stat-like object with specified fields overridden, preserving all others."""
-    names = (
-        "st_mode",
-        "st_ino",
-        "st_dev",
-        "st_nlink",
-        "st_uid",
-        "st_gid",
-        "st_size",
-        "st_atime",
-        "st_mtime",
-        "st_ctime",
-        "st_atime_ns",
-        "st_mtime_ns",
-        "st_ctime_ns",
-    )
-    return SimpleNamespace(**{name: overrides.get(name, getattr(original, name)) for name in names})
 
 
 def test_capture_is_stable_across_repeated_calls(tmp_path: Path) -> None:

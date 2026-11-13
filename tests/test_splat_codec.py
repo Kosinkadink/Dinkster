@@ -9,7 +9,6 @@ from typing import Any, cast
 import numpy
 import pytest
 from dinkster_values import (
-    SPLAT_CODEC_MAGIC,
     EncodedLatentTensor,
     decode_splat,
     encode_splat,
@@ -59,17 +58,6 @@ def test_splat_round_trip_is_deterministic_and_lossless() -> None:
         assert record.shape == value[key].shape
         assert record.data == value[key].tobytes()
     assert encode_splat(decoded) == data
-
-
-def _reorder_frame(data: bytes, records: dict[str, Any]) -> bytes:
-    import json
-
-    offset = len(SPLAT_CODEC_MAGIC)
-    manifest = [[key, record.dtype, list(record.shape)] for key, record in records.items()]
-    header = json.dumps({"arrays": manifest}, separators=(",", ":")).encode()
-    frame = [data[: offset + 1], len(header).to_bytes(4, "little"), header]
-    frame.extend(record.data for record in records.values())
-    return b"".join(frame)
 
 
 def test_ply_round_trip_recovers_activated_values() -> None:

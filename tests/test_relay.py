@@ -19,7 +19,6 @@ from dinkster_engine import Engine, Invocation
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import (
     FullReleaseCommitResult,
-    FullReleaseResult,
     GovernorReservationService,
     MemoryGovernor,
     ReleaseCandidate,
@@ -28,7 +27,7 @@ from dinkster_memory.resident import ResidentPool
 from dinkster_schema import Node
 from dinkster_values import ResourcePins, TypeRegistry, register_core_types, resident_resource_id
 from dinkster_workers import DeviceMap, GroupIsolatedWorker, IsolatedWorker, ReleaseGuard
-from dinkster_workers.boundary import ValueCodec, read_frame, write_frame
+from dinkster_workers.boundary import ValueCodec
 from dinkster_workers.host import serve_connection
 from dinkster_workers.in_process import InProcessWorker
 from dinkster_workers.session import BoundarySession
@@ -636,146 +635,6 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
             await group.close()
 
     run_scenario(scenario())
-
-
-async def _exercise_host_duplicate_commit(duplicate_worker_instance: str | None) -> None:
-    class BlockingConsumer:
-        def __init__(self) -> None:
-            self.entered = asyncio.Event()
-            self.finish = asyncio.Event()
-            self.calls = 0
-
-        def footprint(self, device: str) -> int:
-            del device
-            return 0
-
-        async def shed(self, pressure: object) -> int:
-            del pressure
-            return 0
-
-        async def full_release(self) -> FullReleaseResult:
-            self.calls += 1
-            self.entered.set()
-            await self.finish.wait()
-            return FullReleaseResult("complete")
-
-    registry = core_registry()
-    worker = InProcessWorker({}, registry)
-    consumer = BlockingConsumer()
-    maintenance_operations: set[tuple[object, str]] = set()
-    accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
-
-    async def accept(reader, writer) -> None:
-        task = asyncio.current_task()
-        assert task is not None
-        accepted.set_result(task)
-        await serve_connection(
-            reader,
-            writer,
-            pack_name="empty",
-            worker=worker,
-            schemas={},
-            planner=None,
-            consumers={"blocking": consumer},
-            codec=ValueCodec(registry),
-            process_maintenance_operations=maintenance_operations,
-        )
-
-    server = await asyncio.start_server(accept, "127.0.0.1", 0)
-    address = server.sockets[0].getsockname()
-    reader, writer = await asyncio.open_connection(address[0], address[1])
-    host_task = await accepted
-    hello = await read_frame(reader)
-    assert hello is not None
-    worker_instance = hello[0]["workerInstance"]
-    assert isinstance(worker_instance, str)
-    operation_id = "blocked-commit"
-
-    async def read_request(request_id: str) -> dict[str, object]:
-        while True:
-            frame = await asyncio.wait_for(read_frame(reader), 2)
-            assert frame is not None
-            if frame[0].get("requestId") == request_id:
-                return frame[0]
-
-    try:
-        await write_frame(
-            writer,
-            {
-                "type": "memoryFreeQuery",
-                "requestId": "query",
-                "operationRequestId": operation_id,
-                "workerInstance": worker_instance,
-            },
-            [],
-        )
-        candidates = await read_request("query")
-        assert candidates["status"] == "complete"
-        candidate_consumers = cast("list[dict[str, object]]", candidates["consumers"])
-        commit_selection = [
-            {
-                "consumer": item["consumer"],
-                "queryStatus": item["status"],
-                "candidates": item.get("candidates", []),
-            }
-            for item in candidate_consumers
-        ]
-        await write_frame(
-            writer,
-            {
-                "type": "memoryFreeCommit",
-                "requestId": "first-commit",
-                "operationRequestId": operation_id,
-                "workerInstance": worker_instance,
-                "workerStatus": candidates["status"],
-                "consumers": commit_selection,
-            },
-            [],
-        )
-        await asyncio.wait_for(consumer.entered.wait(), 2)
-        assert consumer.calls == 1
-        assert maintenance_operations
-
-        await write_frame(
-            writer,
-            {
-                "type": "memoryFreeCommit",
-                "requestId": "duplicate-commit",
-                "operationRequestId": operation_id,
-                "workerInstance": duplicate_worker_instance or worker_instance,
-                "workerStatus": candidates["status"],
-                "consumers": commit_selection,
-            },
-            [],
-        )
-        duplicate = await read_request("duplicate-commit")
-        assert duplicate == {
-            "type": "memoryFreeResult",
-            "requestId": "duplicate-commit",
-            "operationRequestId": operation_id,
-            "workerInstance": worker_instance,
-            "status": "error",
-            "error": "full-release commit is already active",
-            "consumers": [],
-            "blobs": [],
-        }
-        assert consumer.calls == 1
-        assert maintenance_operations
-
-        consumer.finish.set()
-        completed = await read_request("first-commit")
-        assert completed["status"] == "complete"
-        assert consumer.calls == 1
-        assert not maintenance_operations
-    finally:
-        consumer.finish.set()
-        with suppress(Exception):
-            await write_frame(writer, {"type": "shutdown"}, [])
-        writer.close()
-        await writer.wait_closed()
-        await asyncio.wait_for(host_task, 2)
-        server.close()
-        await server.wait_closed()
 
 
 @pytest.mark.parametrize("gate_status", ("complete", "busy", "error"))

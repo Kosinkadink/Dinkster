@@ -285,29 +285,3 @@ def test_host_terminal_paths_close_and_refuse_late_materialization(
         assert events == ["sweep", "open", "materialize", "materialize", "close"]
 
     run_scenario(scenario())
-
-
-class _DoubleCancelWorker(_HostWorker):
-    def __init__(self, registry: TypeRegistry, ref: AssetRef) -> None:
-        super().__init__(registry, ref, node_error=False)
-        self.entered = threading.Event()
-        self.allow_late = threading.Event()
-        self.late_refused = threading.Event()
-
-    async def invoke(self, invocation: Invocation, on_event: Any = None) -> InvocationResult:
-        del on_event
-
-        def execute() -> InvocationResult:
-            context = current_execution_context()
-            assert context is not None and context.materialize_source is not None
-            context.materialize_source(self.ref, "media/image", "input")
-            self.entered.set()
-            assert self.allow_late.wait(5)
-            try:
-                context.materialize_source(self.ref, "media/image", "input")
-            except RuntimeError as exc:
-                assert "closing or closed" in str(exc)
-                self.late_refused.set()
-            return InvocationResult(outputs={"out": self.registry.wrap("STRING", "ok")})
-
-        return await asyncio.to_thread(execute)

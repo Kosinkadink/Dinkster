@@ -8,30 +8,14 @@ from pathlib import Path
 import pytest
 from dinkster_api.v1 import with_identity_replacement
 from dinkster_graph import Graph, GraphNode, migrate_pure_node_type_replacements
-from dinkster_schema import Node, NodeSchema
+from dinkster_schema import NodeSchema
 from dinkster_schema.replace import ReplacementRule
 from dinkster_schema.wire import schema_to_wire
 from dinkster_text.text import StringConcatenate, StringFormat
 from dinkster_workers import load_manifest
-from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import default_pack_specs
 from tests.async_scenarios import run_scenario
-
-
-def _source_schemas() -> dict[str, NodeSchema]:
-    schemas = {}
-    for spec in default_pack_specs():
-        manifest = load_manifest(spec.manifest)
-        nodes = resolve_entry(manifest.nodes_entry)
-        assert isinstance(nodes, (list, tuple))
-        for node in nodes:
-            assert isinstance(node, type) and issubclass(node, Node)
-            schema = node.schema()
-            for rule in schema.replacements:
-                assert rule.from_type not in schemas
-                schemas[rule.from_type] = schema
-    return schemas
 
 
 @pytest.mark.parametrize("display_name", ["", "Authored name"])

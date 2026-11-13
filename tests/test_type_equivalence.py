@@ -45,14 +45,6 @@ def _register_image_type(registry: TypeRegistry, type_id: str) -> None:
     )
 
 
-def _image_registry() -> TypeRegistry:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    for type_id in (IMAGE, MASK):
-        _register_image_type(registry, type_id)
-    return registry
-
-
 def test_registry_type_equivalence_rejects_ambiguous_or_invalid_pairs() -> None:
     registry = TypeRegistry()
     for type_id in ("compat.value", "native.value", "other.value"):

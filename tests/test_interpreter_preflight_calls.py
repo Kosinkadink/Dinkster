@@ -6,19 +6,10 @@ from pathlib import Path
 
 import pytest
 from dinkster_workers import doctor
-from dinkster_workers.interpreter import InterpreterPreflightError
 
 
 def _venv_python(venv_dir: Path) -> Path:
     return venv_dir / "Scripts" / "python.exe" if os.name == "nt" else venv_dir / "bin" / "python"
-
-
-def _reject(_interpreter: Path | str) -> tuple[int, int]:
-    raise InterpreterPreflightError("unsupported selected interpreter")
-
-
-def _unexpected(*_args: object, **_kwargs: object) -> None:
-    raise AssertionError("child import, probe, or launcher was reached")
 
 
 def _manifest(root: Path, name: str = "test-pack") -> Path:
@@ -53,8 +44,3 @@ def test_doctor_reports_interpreter_timeout_before_child_import_probe(
     assert finding.severity == "error"
     assert "version check timed out after 5s" in finding.message
     assert "Python >=3.12" in finding.fix
-
-
-class _UnexpectedLauncher:
-    async def launch(self, _spec: object) -> None:
-        _unexpected()

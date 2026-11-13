@@ -25,7 +25,6 @@ from dinkster_assets import (
     AssetRef,
     AssetResolver,
     AssetVault,
-    LocalAssetRef,
     digest_bytes,
     register_audio_value_type,
     register_video_value_type,
@@ -646,10 +645,6 @@ def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:
         meta=ValueMeta({"asset_refs": [ref.to_wire()]}),
         payload=PyObjPayload({"source": ref, "edits": []}),
     )
-
-
-def _unverified_wire() -> dict[str, object]:
-    return LocalAssetRef("local-source", "source.mkv", 12, "input/source.mkv").to_wire()
 
 
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
