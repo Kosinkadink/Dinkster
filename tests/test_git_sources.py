@@ -48,7 +48,12 @@ def test_fetch_refuses_invalid_tls_despite_global_disable(git_server):
 
 @pytest.mark.parametrize(
     "ref,message",
-    [("absent", "cannot fetch"), ("lfs", "LFS pointers"), ("submodule", "submodules")],
+    [
+        ("absent", "cannot fetch"),
+        ("lfs", "LFS pointers"),
+        ("submodule", "submodules"),
+        ("symlink", "symlinks"),
+    ],
 )
 def test_fetch_refuses_unavailable_or_incomplete_sources(git_server, ref, message):
     with pytest.raises(EnvironmentError, match=message):

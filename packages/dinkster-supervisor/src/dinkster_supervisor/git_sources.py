@@ -84,6 +84,8 @@ def _isolated_config() -> Generator[str | None]:
 
 def _check_tree(tree: pygit2.Tree) -> None:
     for entry in tree:
+        if entry.filemode == pygit2.GIT_FILEMODE_LINK:
+            raise EnvironmentError("git development sources with symlinks are not supported")
         if entry.filemode == pygit2.GIT_FILEMODE_COMMIT:
             raise EnvironmentError("git development sources with submodules are not supported")
         if isinstance(entry, pygit2.Tree):

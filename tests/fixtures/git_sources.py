@@ -39,6 +39,7 @@ def git_server(tmp_path_factory: pytest.TempPathFactory):
             pygit2.GIT_FILEMODE_BLOB,
         ),
         ("submodule", None, pygit2.GIT_FILEMODE_COMMIT),
+        ("symlink", b"../outside.py", pygit2.GIT_FILEMODE_LINK),
     ):
         package = repository.TreeBuilder()
         package.insert("node.py", repository.create_blob(text) if text else commits["main"], mode)
