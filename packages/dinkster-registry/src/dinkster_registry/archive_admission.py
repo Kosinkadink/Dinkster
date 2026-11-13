@@ -565,6 +565,8 @@ def run_locked_probe(
                 GenerationPackages.inspect(generation_python),
                 variant=variant,
                 own_environment_size=0,
+                wheel_store=wheel_store,
+                offline=offline,
             )
             fetch_pack_wheels(plan, wheel_store, offline=offline)
             python = provision_pack(

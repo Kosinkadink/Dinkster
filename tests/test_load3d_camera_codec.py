@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from dinkster_3d import register_types
 from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_STRING,
@@ -21,6 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     TypeRegistry,
 )
+from dinkster_api.v1 import register_inference_types as register_types
 from dinkster_graph import Graph, GraphNode, Link
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -153,7 +153,7 @@ def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_proces
     async def scenario() -> None:
         (tmp_path / "load3d_camera_fixture.py").write_text(
             "from test_load3d_camera_codec import CameraConsumer, CameraSource\n"
-            "from dinkster_3d import register_types\n"
+            "from dinkster_api.v1 import register_inference_types as register_types\n"
             "NODES = (CameraSource, CameraConsumer)\n",
             encoding="ascii",
         )
@@ -217,7 +217,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
         for module, (node, namespace) in modules.items():
             (tmp_path / f"{module}.py").write_text(
                 f"from test_load3d_camera_codec import {node}\n"
-                "from dinkster_3d import register_types\n"
+                "from dinkster_api.v1 import register_inference_types as register_types\n"
                 f"NODES = ({node},)\n",
                 encoding="ascii",
             )
@@ -235,13 +235,7 @@ def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (
-                        str(tmp_path),
-                        str(test_directory),
-                        str(test_directory.parents[1] / "packages/dinkster-nodes-3d/src"),
-                    )
-                ),
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(test_directory))),
             },
         )
         try:

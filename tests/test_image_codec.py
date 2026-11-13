@@ -5,7 +5,7 @@ What this proves: the bytes round-trip losslessly through numpy alone (the
 torchless-engine half of the IMAGE story), torch tensors are accepted
 by duck type without this interpreter ever importing torch, fingerprints
 are runtime-form-independent (hazard H4: a tensor fingerprinted in a worker
-keys the same cache entry as its numpy twin here), and the image pack
+keys the same cache entry as its numpy twin here), and the canonical media
 registration declares and serves the PNG
 rendition from encoded payloads - the /api/values path in miniature."""
 
@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pytest
 from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
-from dinkster_image import register_types as register_image_types
+from dinkster_api.v1 import register_asset_type, register_media_types
 from dinkster_values import (
     TypeRegistry,
     annotate_mask,
@@ -51,6 +51,18 @@ class FakeTensor:
 
     def numpy(self) -> np.ndarray:
         return self.array
+
+
+@dataclass
+class FakeBFloat16Tensor(FakeTensor):
+    dtype: str = "torch.bfloat16"
+
+    def view(self, dtype: object) -> FakeTensor:
+        assert dtype == "uint16"
+        return FakeTensor((self.array.view(np.uint32) >> 16).astype(np.uint16))
+
+    def numpy(self) -> np.ndarray:
+        raise TypeError("Got unsupported ScalarType BFloat16")
 
 
 def png_header(data: bytes) -> tuple[int, int, int]:
@@ -154,7 +166,8 @@ def test_render_mask_normalizes_compact_alpha_bytes() -> None:
 
 def make_host_registry() -> TypeRegistry:
     registry = TypeRegistry()
-    register_image_types(registry)
+    register_asset_type(registry)
+    register_media_types(registry)
     return registry
 
 

@@ -62,6 +62,21 @@ class ListLength(Node):
         return cls.outputs(length=len(list))
 
 
+class IntegerPair(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        integer = TypeExpr.concrete(CORE_INT)
+        return NodeSchema(
+            node_type="test.integer_pair",
+            inputs=(InputSpec("left", integer), InputSpec("right", integer)),
+            outputs=(OutputSpec("list", TypeExpr.list_of(integer)),),
+        )
+
+    @classmethod
+    def execute(cls, *, left: int, right: int) -> Mapping[str, object]:
+        return cls.outputs(list=[left, right])
+
+
 def make_engine(
     events: list[EngineEvent] | None = None,
     *,
@@ -82,7 +97,7 @@ def make_engine(
 
     runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     return Engine(
-        schemas=build_schemas([*SCAFFOLD_NODES, ListLength]),
+        schemas=build_schemas([*SCAFFOLD_NODES, ListLength, IntegerPair]),
         registry=registry,
         worker=worker,
         pin_execution=lambda: runtime,
@@ -95,7 +110,7 @@ def make_engine(
 def InProcessWorkerFactory(registry: TypeRegistry):
     from dinkster_workers import InProcessWorker
 
-    return InProcessWorker(build_node_types([*SCAFFOLD_NODES, ListLength]), registry)
+    return InProcessWorker(build_node_types([*SCAFFOLD_NODES, ListLength, IntegerPair]), registry)
 
 
 def image_graph(ratio: float = 0.5) -> Graph:
@@ -1254,8 +1269,8 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
             "x": GraphNode("dev.execution.value", {"value": 3}),
             "y": GraphNode("dev.execution.value", {"value": 4}),
             "mk": GraphNode(
-                "dinkster.utilities.make_list",
-                {"items.a": Link("x", "value"), "items.b": Link("y", "value")},
+                "test.integer_pair",
+                {"left": Link("x", "value"), "right": Link("y", "value")},
             ),
             "len": GraphNode("test.list_length", {"list": Link("mk", "list")}),
         }

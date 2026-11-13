@@ -1,6 +1,7 @@
 """Native format substitutions use persistent diagnostics with actual output facts."""
 
 import io
+import json
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -41,7 +42,31 @@ from PIL import Image
 
 from tests.async_scenarios import run_scenario
 from tests.test_formats_audio_components import _stereo_samples, _wav_audio
-from tests.test_video_io import _mount
+
+
+def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    root = tmp_path / "out"
+    root.mkdir()
+    index = root / ".dinkster-asset-index.json"
+    index.write_text("{}", "utf-8")
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "mounts": [
+                    {
+                        "id": "comfy-output",
+                        "root": str(root),
+                        "index": str(index),
+                        "mode": "readwrite",
+                    }
+                ]
+            }
+        ),
+        "utf-8",
+    )
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    return root, snapshot
 
 
 class FormatSource(Node):

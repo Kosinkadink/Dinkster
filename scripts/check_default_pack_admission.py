@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import email.parser
 import hashlib
 import json
 import re
@@ -10,16 +11,16 @@ import shutil
 import subprocess
 import tempfile
 import threading
-import time
-import tomllib
+import zipfile
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from graphlib import TopologicalSorter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from dinkster_registry import LockedPack, Lockfile, unpack_artifact
+from dinkster_registry import LockedPack, Lockfile, artifact_digest, unpack_artifact
 from dinkster_registry.archive_admission import (
+    ARCHIVE_LIMIT,
     ProbeSettings,
     StageResult,
     admission_timing,
@@ -39,7 +40,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from dinkster.installer import InstallError, http_registry_fetcher
+from dinkster.installer import http_registry_fetcher
 from dinkster.registries import (
     NamedRegistry,
     RegistryConfig,
@@ -47,13 +48,40 @@ from dinkster.registries import (
     default_pack_minimums,
     prepare_registry_sources,
     read_registry_pack_locks,
-    registry_source_lock,
     resolve_release,
 )
-from scripts.build_official_packs import build, library_metadata, official_library
 from scripts.prepare_admission_engine import read_runtime
-from scripts.run_selected_pack_tests import run_selected_tests, selected_library_wheels
-from scripts.select_official_packs import select_packs
+
+
+def library_metadata(archive: Path) -> tuple[str, str, tuple[str, ...]]:
+    """Read library identity without importing code or treating it as a node pack."""
+    with zipfile.ZipFile(archive) as wheel:
+        names = wheel.namelist()
+        if any(PurePosixPath(name).name == "dinkster-pack.toml" for name in names):
+            raise ValueError("official library wheel must not contain a node manifest")
+        metadata = [name for name in names if name.endswith(".dist-info/METADATA")]
+        if len(metadata) != 1:
+            raise ValueError("official library wheel requires one distribution")
+        fields = email.parser.BytesParser().parsebytes(wheel.read(metadata[0]))
+        return fields["Name"], fields["Version"], tuple(fields.get_all("Requires-Dist", []))
+
+
+def selected_library_wheels(catalog: Lockfile, artifacts: Path) -> dict[str, Path]:
+    """Identify manifestless entries and verify their locked library identity."""
+    libraries = {}
+    for pack in catalog.packs:
+        archive = pack_archive_path(artifacts, pack.artifact_digest)
+        with zipfile.ZipFile(archive) as wheel:
+            if any(Path(name).name == "dinkster-pack.toml" for name in wheel.namelist()):
+                continue
+        data = archive.read_bytes()
+        if not 1 <= len(data) <= ARCHIVE_LIMIT or artifact_digest(data) != pack.artifact_digest:
+            raise ValueError(f"selected library {pack.pack} size or digest mismatch")
+        name, version, _ = library_metadata(archive)
+        if (name, version) != (pack.pack, pack.version) or pack.claims:
+            raise ValueError(f"selected library {pack.pack} identity mismatch")
+        libraries[pack.pack] = archive
+    return libraries
 
 
 @contextmanager
@@ -119,16 +147,11 @@ def _require_accepted(result: StageResult, identity: str) -> None:
 
 
 def prepare_library_sources(
-    registry: NamedRegistry, catalog: Lockfile, artifacts: Path, root: Path
+    registry: NamedRegistry, catalog: Lockfile, artifacts: Path
 ) -> Lockfile:
     """Close registry library requirements over verified selected archive bytes."""
     entries = {pack.pack: pack for pack in catalog.packs}
     libraries = selected_library_wheels(catalog, artifacts)
-    known_libraries = {
-        identity[0]
-        for path in (root / "packages").glob("*/pyproject.toml")
-        if (identity := official_library(tomllib.loads(path.read_text())))
-    }
     index = StaticPackIndex()
     library_names: set[str] | None = None
     root_requirements: list[str] = []
@@ -166,7 +189,7 @@ def prepare_library_sources(
                     continue
                 if name not in libraries:
                     if library_names is None:
-                        library_names = known_libraries | {
+                        library_names = {
                             str(row["name"])
                             for row in index.catalog(registry, include_libraries=True)
                             if row.get("library") is True
@@ -239,8 +262,6 @@ def check_defaults(
     registry: NamedRegistry,
     *,
     engine_version: str,
-    candidate_base: str | None = None,
-    published_sources: Path | None = None,
     prepare_output: Path | None = None,
     prepared_sources: Path | None = None,
     test_packs: tuple[str, ...] = (),
@@ -258,11 +279,6 @@ def check_defaults(
         generation_python, base_id, constraints, variant = read_runtime(
             runtime.resolve(), root, engine_version
         )
-    if (
-        sum(value is not None for value in (candidate_base, published_sources, prepared_sources))
-        > 1
-    ):
-        raise ValueError("select candidate or published sources, not both")
     if prepare_output is not None and prepared_sources is not None:
         raise ValueError("cannot prepare sources from a prepared selection")
     if any(value is not None for value in (generation_python, base_id, constraints)):
@@ -296,87 +312,6 @@ def check_defaults(
                     pack.pack: PackLock.read(prepared_sources / "pack-locks" / f"{pack.pack}.json")
                     for pack in selected.packs
                 }
-        elif candidate_base is not None:
-            candidates = tuple(
-                pack
-                for pack in select_packs(root, before=candidate_base, version_changes_only=True)
-                if pack in minimums
-            )
-            if candidates:
-                output = work / "candidate"
-                with admission_timing("defaults", "candidate-build"):
-                    if generation_python is None:
-                        build(root, output, packs=candidates)
-                    else:
-                        build(
-                            root,
-                            output,
-                            packs=candidates,
-                            variant=variant,
-                            python=generation_python,
-                            constraints=constraints,
-                            indexes=("https://pypi.org/simple",),
-                            find_links=(runtime.resolve() / "wheelhouse",)
-                            if runtime is not None
-                            else (),
-                            accelerator="cpu",
-                        )
-                selected = Lockfile.from_record_json((output / "official-packs.lock").read_text())
-                for pack in selected.packs:
-                    shutil.copyfile(
-                        output / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl",
-                        artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip",
-                    )
-                    if generation_python is not None:
-                        locks[pack.pack] = PackLock.read(
-                            output / f"{pack.pack}-{pack.version}-{variant}.pack-lock.json"
-                        )
-        elif published_sources is not None:
-            published = Lockfile.from_record_json(published_sources.read_text())
-            library_names = {
-                identity[0]
-                for path in (root / "packages").glob("*/pyproject.toml")
-                if (identity := official_library(tomllib.loads(path.read_text())))
-            }
-            head = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=root, text=True
-            ).strip()
-            if not published.packs or any(
-                pack.source != f"git:Kosinkadink/Dinkster@{head}" for pack in published.packs
-            ):
-                raise ValueError("publication sources do not match the engine checkout")
-            deadline = time.monotonic() + 600
-            entries = []
-            for pack in published.packs:
-                if pack.pack not in minimums and pack.pack not in library_names:
-                    continue
-                while True:
-                    try:
-                        with admission_timing(pack.pack, "published-resolution"):
-                            release = resolve_release(
-                                registry,
-                                pack.pack,
-                                pack.version,
-                                engine_version=None
-                                if pack.pack in library_names
-                                else engine_version,
-                            )
-                        break
-                    except InstallError:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(min(10, max(0, deadline - time.monotonic())))
-                if release.artifact_digest != pack.artifact_digest:
-                    raise ValueError(f"published {pack.pack}@{pack.version} digest mismatch")
-                archive = artifacts / f"{pack.artifact_digest.removeprefix('blake3:')}.zip"
-                with admission_timing(pack.pack, "published-download"):
-                    archive.write_bytes(http_registry_fetcher(registry.endpoint)(release))
-                entries.append(
-                    release
-                    if pack.pack in library_names
-                    else registry_source_lock(release, archive, engine_version=engine_version)
-                )
-            selected = Lockfile.of(entries)
         if prepared_sources is not None:
             if missing := set(minimums) - {pack.pack for pack in selected.packs}:
                 raise ValueError(f"prepared sources omit defaults: {sorted(missing)}")
@@ -394,7 +329,7 @@ def check_defaults(
                     engine_version=engine_version,
                 )
             catalog = Lockfile.of((*catalog.packs, *selected.packs))
-            catalog = prepare_library_sources(registry, catalog, artifacts, root)
+            catalog = prepare_library_sources(registry, catalog, artifacts)
         if not catalog.packs:
             raise ValueError("engine admission requires a nonempty default set")
         if generation_python is not None:
@@ -590,18 +525,6 @@ def check_defaults(
                 results.append(
                     {"pack": name, "version": pack.version, "artifactDigest": pack.artifact_digest}
                 )
-        with admission_timing("defaults", "selected-tests"):
-            if generation_python is None:
-                raise ValueError("selected tests require the managed engine and dependency locks")
-            run_selected_tests(
-                root,
-                catalog,
-                artifacts,
-                generation_python=generation_python,
-                locks=locks,
-                variant=variant,
-                test_packs=test_packs,
-            )
         return {"engineVersion": engine_version, "packs": results}
 
 
@@ -609,10 +532,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", default="https://registry.dinkster.org")
     parser.add_argument("--engine-version", required=True)
-    selection = parser.add_mutually_exclusive_group()
-    selection.add_argument("--candidate-base")
-    selection.add_argument("--published-sources", type=Path)
-    selection.add_argument("--prepared-sources", type=Path)
+    parser.add_argument("--prepared-sources", type=Path)
     parser.add_argument("--prepare-output", type=Path)
     parser.add_argument("--pack", action="append", default=[])
     parser.add_argument("--generation-python", type=Path)
@@ -626,8 +546,6 @@ if __name__ == "__main__":
             check_defaults(
                 NamedRegistry("", args.registry),
                 engine_version=args.engine_version,
-                candidate_base=args.candidate_base,
-                published_sources=args.published_sources,
                 prepare_output=args.prepare_output,
                 prepared_sources=args.prepared_sources,
                 test_packs=tuple(args.pack),

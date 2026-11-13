@@ -73,10 +73,9 @@ unchanged by parallel execution.
 Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
 Do not use retries to hide a parallel-only failure. Package suites launched
 from their own project directory retain that project's pytest settings.
-Selected-archive admission with multiple test files splits whole files between
-two serial pytest processes after shared catalog preparation. Each process
-tracks unavailable exports and executed tests with its inline plugin. Any test
-or collection failure fails admission, and at least one selected test must pass.
+First-party selected-wheel behavioral admission runs in the standalone pack
+repository. Engine default-pack admission resolves published archives and runs
+the scanner against the engine under test; it does not build or test pack sources.
 
 Full-validation jobs run serially inside each matrix shard with
 `PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
@@ -111,25 +110,28 @@ the evidence repository. Generation fails if the evidence checkout or its
 `.github/workflows/ci.yml` always reports `format, lint, types` and `tests`.
 Docs-only changes skip environment provisioning and test execution inside
 those jobs. Other changes run Ruff format, Ruff lint and both platform
-Pyright checks with `bash scripts/ci-fast.sh checks`. The test job runs the
-engine subset with `bash scripts/ci-fast.sh tests`, selected pack tests, or
-both, according to the changed paths. Engine subset examples include:
+Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
+only these checks. Ready pull requests run the whole configured kept Linux
+suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
+pack-only changes. Frontend decoding reads the live catalog of an isolated
+CPU generation acquired by supervisor setup from the published main channel.
+Setup prepares its catalogs before sealing. After stopping its assigned backend,
+the current checkout engine serves the generation's admitted packs and runtimes;
+it does not substitute the published engine catalog or checkout defaults.
+An unavailable default pack or an empty default catalog fails the export.
+There is no hand-picked file list, network-marker exclusion,
+forced offline mode, or changed-path runtime deselection. Real install tests
+acquire their dependencies; tests of offline behavior control their own inputs.
+The four audited environment suites retain
+their existing nonblocking policy under #867.
 
-- `tests/test_release_install.py`: release wheel and install surface checks.
-- `tests/test_schema.py`: schema construction and type validation.
-- `tests/test_schema_current_contracts.py`: generated current schema contracts.
-- `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
-- `tests/test_graph.py`: graph validation and execution planning.
-- `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
-
-These tests use synthetic data. The validation-input contract checks the prepared
-evidence location without reading model data. `tools/ci_selection.py` selects
-install/environment tests and the Windows jobs only for runtime-related changes.
-A pack-only change selects that pack's behavioral tests; shared library changes
-also select its declared dependents. Registry default pack admission gates only
-scanner or harness changes. Publication preflight runs for publisher or manifest
-changes, not ordinary pack source edits. Reproduce the checks and engine subset after
-`uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
+`tools/ci_selection.py` additionally selects changed packs' behavioral tests;
+shared library changes also select their declared dependents. Registry default
+pack admission gates only scanner or harness changes. Publication preflight runs
+for publisher or manifest changes, not ordinary pack source edits. Reproduce the
+checks and whole configured suite after
+`python scripts/develop.py setup --variant linux-cpu --yes`
+with `bash scripts/ci-fast.sh`.
 
 Landing requires the selected hosted jobs green and a fresh LOW verifier PASS at
 the offered head. Running the counted full suite or its shards locally is not a
@@ -156,12 +158,10 @@ The selections and setup commands in
 | Coverage report | The selected platform's coverage artifacts combined, without a percentage floor |
 
 Build the CPU runtime with
-`uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
-or `--variant win-cpu` on Windows. The same Python implementation serves the
-launcher and CPU action; its receipt is `.run/environment-base.json`.
-Contributor setup acceptance runs the root and pack checks with the bundle's
-Python version. The Linux CPython 3.12 row describes its separate full-validation
-root jobs; it does not override the selected bundle interpreter.
+`uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes`
+on Linux or `--variant win-cpu` on Windows. Execute root and pack checks with
+`python scripts/develop.py run -- python -m pytest`. The generation records
+its selected interpreter and complete dependency inventory.
 Keep isolated pack-install tests: workspace editables are not evidence that a
 published pack declares its complete dependencies. Pin CPU dispatch with
 `ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.
@@ -176,7 +176,7 @@ pinned validation inputs prepared, the counted CPU root command is:
 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES='' \
   DINKSTER_ACCELERATOR=cpu DINKSTER_SLOW_TESTS=1 \
   /home/kosin/comfy-vibe-station/run_counted_suite.sh \
-  .venv/bin/python -m pytest -q --durations=0 --durations-min=0 \
+  python scripts/develop.py run -- python -m pytest -q --durations=0 --durations-min=0 \
   --junitxml=test-results/root.xml \
   --deselect=tests/test_sandbox.py::TestLiveJail \
   --deselect=tests/test_doctor.py::TestLiveJailedProbe \
@@ -311,9 +311,10 @@ second real-artifact run. Sampling-runtime validation lives in
 integration:
 
 ```bash
-uv run --no-sync python scripts/prepare_validation_inputs.py
-uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-.venv/bin/python -m pytest -q
+uv run --no-project python scripts/prepare_validation_inputs.py
+uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes \
+  --library-source ../.dinkster-evidence-source/packages/dinkster-acceptance
+python scripts/develop.py run -- python -m pytest -q
 ```
 
 The preparation command checks out the revision in
@@ -324,11 +325,10 @@ evidence revision, so local and hosted full validation execute the same benchmar
 and acceptance sources. Access to the private evidence repository is required
 only for the full maintainer suite, not to install or run Dinkster.
 
-On Windows, run the same Python entry point with `--variant win-cpu` for CPU
-checks or omit the variant to select the compatible NVIDIA bundle. Use native
-`.venv\Scripts\python.exe` paths. Rerunning setup reasserts the selected
-environment; `--force` rebuilds `.venv` without deleting the verified base store.
-Run tools with `uv run --no-sync` to retain the manifest's binary wheels.
+On Windows, use the same entry point with `--variant win-cpu` for CPU checks
+or explicitly select `--variant win-nvidia`. Commands run through the active
+generation's interpreter on every platform; checkout-level uv operations do not
+modify its binary wheels.
 
 MediaRecorder WebM upload tests generate local samples only for the writable
 `libopus` and `libvorbis` encoders present in the installed PyAV wheel. The
@@ -336,7 +336,7 @@ fixture gate always requires `libopus`; decode-side admission separately keeps
 Vorbis WebM coverage when the wheel cannot generate it through `libvorbis`.
 
 Run each vision package's full `tests` directory and the benchmark selector
-above with `.venv/bin/python -m pytest -q` too. Supply the real-artifact
+above with `python scripts/develop.py run -- python -m pytest -q` too. Supply the real-artifact
 environment variables documented in the provider READMEs and composite
 action; an absent artifact's skip is not real-model validation. Training and
 GPU checks in the Torch README also remain required

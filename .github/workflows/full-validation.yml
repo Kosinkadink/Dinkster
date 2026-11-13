@@ -95,20 +95,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - uses: ./.github/actions/windows-python
-        if: matrix.os == 'windows'
-      - run: uv sync --all-packages
-        if: matrix.os == 'windows'
-      - name: Install the locked Linux workspace with CPU torch
+      - uses: ./.github/actions/prepare-contributor-generation
+        with:
+          python: ${{ matrix.os == 'linux' && matrix.python-version || '' }}
+      - name: Verify the Linux CPU runtime
         if: matrix.os == 'linux'
         shell: bash
         run: |
-          uv export --locked --all-packages --no-hashes --no-annotate --no-header \
-            | sed '/^nvidia-/d; /^triton==/d' > "$RUNNER_TEMP/linux-root-requirements.txt"
-          uv venv --clear --python '${{ matrix.python-version }}'
-          uv pip sync --python .venv/bin/python --torch-backend cpu "$RUNNER_TEMP/linux-root-requirements.txt"
-          echo 'UV_NO_SYNC=1' >> "$GITHUB_ENV"
-          .venv/bin/python - <<'PY'
+          python scripts/develop.py run -- python - <<'PY'
           from importlib.metadata import distributions
           import torch
           import torchvision
@@ -120,24 +114,22 @@ jobs:
               for distribution in distributions()
           )
           PY
-      - name: Install and verify published Windows engine dependencies
+      - name: Verify published Windows engine dependencies
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
-          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
-            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
-          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
-      - run: uv run --locked ruff format --check .
+          python scripts/develop.py run -- python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: python scripts/develop.py run -- ruff format --check .
         if: matrix.run_checks
-      - run: uv run ruff check .
+      - run: python scripts/develop.py run -- ruff check .
         if: matrix.run_checks
-      - run: uv run pyright
+      - run: python scripts/develop.py run -- pyright
         if: matrix.run_checks
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - run: >
-          uv run python -m pytest -q ${{ matrix.pytest_args }}
+          python scripts/develop.py run -- python -m pytest -q ${{ matrix.pytest_args }}
           --ignore-glob=tests/test_environment_*.py
           --ignore=tests/test_installer.py
           --ignore=tests/test_release_install.py
@@ -150,7 +142,7 @@ jobs:
         env:
           DINKSTER_SLOW_TESTS: "1"
       - run: >
-          uv run python -m pytest -q ${{ matrix.pytest_args }}
+          python scripts/develop.py run -- python -m pytest -q ${{ matrix.pytest_args }}
           --case-shard-file tests/test_environment_history.py
           --case-shard-file tests/test_environment_generations.py
           --deselect=tests/test_sandbox.py::TestLiveJail
@@ -188,13 +180,13 @@ jobs:
           name: test-timings-windows-${{ matrix.shard }}
           path: test-results/windows-${{ matrix.shard }}.xml
           if-no-files-found: error
-      - run: uv run dinkster demo
+      - run: python scripts/develop.py run -- dinkster demo
         if: matrix.run_checks
-      - run: uv run dinkster-isolated
+      - run: python scripts/develop.py run -- dinkster-isolated
         if: matrix.run_checks
       - name: Export the published default catalog
         if: matrix.os == 'linux' && matrix.run_checks
-        run: uv run --no-sync python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
       - uses: actions/checkout@v4
         if: matrix.os == 'linux' && matrix.run_checks
         with:
@@ -222,49 +214,6 @@ jobs:
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
 
-  torch-cpu:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.validation-plan.outputs.run-torch == 'true'
-    name: ${{ matrix.suite == 'vision' && 'vision pack tests' || 'node pack tests' }} (CPU${{ matrix.shard }})
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suite: comfy
-            shard: ", shard 1"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 1/4"
-          - suite: comfy
-            shard: ", shard 2"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 2/4"
-          - suite: comfy
-            shard: ", shard 3"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 3/4"
-          - suite: comfy
-            shard: ", shard 4"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 4/4"
-          - suite: vision
-            shard: ""
-            pytest-args: ""
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - name: Install the CPU software shader renderer
-        if: matrix.suite != 'vision'
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-        timeout-minutes: 5
-      - uses: ./.github/actions/torch-cpu-suite
-        with:
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          suite: ${{ matrix.suite }}
-          comfy-pytest-args: ${{ matrix.pytest-args }}
-
   windows-runtime:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-windows == 'true'
@@ -289,16 +238,12 @@ jobs:
           python-version: "3.14.10"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - uses: ./.github/actions/windows-python
-      - name: Set up Windows runtime environment
-        run: uv sync --locked --all-packages
-      - name: Install and verify published Windows engine dependencies
+      - uses: ./.github/actions/prepare-contributor-generation
+      - name: Verify published Windows engine dependencies
         shell: pwsh
         run: |
-          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
-          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
-            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
-          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+          python scripts/develop.py run -- python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create a disposable ReFS clone-test volume
         shell: pwsh
         run: |
@@ -342,7 +287,7 @@ jobs:
             '--case-shard-file', 'tests/test_environment_history.py',
             '--case-shard-file', 'tests/test_environment_transactions.py'
           )
-          uv run --no-sync python -m pytest -q @files `
+          python scripts/develop.py run -- python -m pytest -q @files `
             -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/8 --durations=0 `
             @caseShardArgs `
             --cov=dinkster_api --cov=dinkster_assets `
@@ -383,7 +328,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --all-packages
+      - run: uv sync --locked --only-group dev
       - uses: actions/download-artifact@v4
         with:
           pattern: coverage-shard-*
@@ -401,8 +346,8 @@ jobs:
             done
           fi
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
-          uv run coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
-          uv run coverage report
+          uv run --no-project --python .venv coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
+          uv run --no-project --python .venv coverage report
 
   main-status:
     name: main validation status
@@ -410,7 +355,6 @@ jobs:
     needs:
       - validation-plan
       - test
-      - torch-cpu
       - windows-runtime
       - coverage-gate
       - probe-jail
@@ -421,14 +365,13 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
-          TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
           PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s","probeJail":"%s"}}\n' \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","windowsRuntime":"%s","coverage":"%s","probeJail":"%s"}}\n' \
             "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
-            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" "$PROBE_JAIL_RESULT" \
+            "$RUNTIME_RESULT" "$COVERAGE_RESULT" "$PROBE_JAIL_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -441,21 +384,14 @@ jobs:
       - name: Require every selected lane to pass
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
-          RUN_TORCH: ${{ needs.validation-plan.outputs.run-torch }}
           RUN_WINDOWS: ${{ needs.validation-plan.outputs.run-windows }}
           TEST_RESULT: ${{ needs.test.result }}
-          TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
           PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
-          if [ "$RUN_TORCH" = true ]; then
-            test "$TORCH_RESULT" = success
-          else
-            test "$TORCH_RESULT" = skipped
-          fi
           if [ "$RUN_WINDOWS" = true ]; then
             test "$RUNTIME_RESULT" = success
             test "$PROBE_JAIL_RESULT" = skipped
@@ -480,7 +416,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          uv sync --locked --all-packages
-          uv run --no-sync python -m pytest -v \
-            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
-            'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
+          python scripts/develop.py run -- python -m pytest -v \
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe

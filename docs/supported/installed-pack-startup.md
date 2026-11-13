@@ -1,5 +1,18 @@
 ## Installed pack startup
 
+- Compatible engine dependency updates retain existing published packs without
+  republishing them; declared pack and private-wheel dependency ranges still apply.
+
+- Local setup resolves registry pack dependencies against that pack's recorded
+  registry index for the selected variant, alongside the selected base's package
+  indexes and retained wheels. It does not search other packs' registries.
+
+- A managed update, repair, restore or rollback can start its replacement on
+  another OS-assigned port if the planned port is occupied. The recorded URL
+  follows the actual listener. The previous engine keeps serving until the
+  replacement passes health checks; interrupted activation remains recoverable.
+  An explicit standalone start still uses its requested port.
+
 - Pack installation, retained rollback and serving selection enforce locally
   cached verified security notices. Known malicious artifacts and explicitly
   denied vulnerable releases refuse without deleting retained bytes or changing
@@ -44,6 +57,17 @@
   even when security policy refuses execution. Inspection does not refresh feeds,
   import pack code, acquire payloads, alter evidence or resume work. Unknown packs
   and changed sealed inputs refuse; offline work inventory is explicitly unavailable.
+  Without `--json`, list/details describe classifications, exact notices and
+  issuing files, decisions, feed age/verification, policy and recovery in text.
+  Human repair previews show exact release/dependency locks and explain absent
+  or incomplete compatible fixes; retained plans print their approval digest.
+  Both output modes explicitly mark offline workflow impacts unavailable rather
+  than equating install compatibility with workflow behavior. Human answer
+  commands confirm the durable decision without resuming stopped work.
+  Malicious and affected incident guidance explains that blocking is not cleanup
+  and cannot undo theft, persistence or output changes. It recommends appropriate
+  isolation, credential rotation from a trusted machine, exposure assessment and
+  rebuilding from trusted inputs while preserving evidence.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
@@ -216,8 +240,8 @@
   code. New node-pack directories are discovered without a family allowlist.
   Development scaffolding stays unpublished.
 - First-party source resolution reads runtime IDs and node entry modules from
-  manifests and distribution names from project metadata or installed wheel
-  records. Runtime, distribution and import names need not match. Discovery
+  installed wheel manifests and distribution names from wheel records.
+  Runtime, distribution and import names need not match. Discovery
   does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
@@ -338,9 +362,9 @@
   A missing lock, changed artifact or incompatible base refuses admission.
   Missing defaults, rejected packs and security review requirements fail the
   check without publishing any pack.
-- Selected-archive behavioral tests use each first-party pack's independent
-  distribution, including vision packs. They verify selected source provenance
-  and refuse checkout fallbacks or replacement of engine-owned tests.
+- First-party pack behavioral tests run in the standalone pack repository
+  against its selected wheels and published engine. Engine default-set admission
+  scans published archives without building pack sources or selecting pack tests.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
@@ -571,12 +595,13 @@
   accepts the same opt-in, with an explicit host interpreter override when its
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
-  Official packs built from the explicitly selected checkout may serve under
-  reserved namespaces in that local generation. Other Git, local and pip
-  sources do not gain reserved-namespace trust, even with publisher `dinkster`.
-  Libraries built alongside those packs supply their locked dependencies
-  without a registry download and must match the dependency lock's digest.
-  Libraries are not installed or cataloged as node packs.
+  Default packs come from the registry, not the engine checkout, and their
+  dependencies resolve against the locally built engine and base constraints.
+  Explicit `develop --pack-source` selections build the chosen pack and library
+  sources; official packs built this way may serve under reserved namespaces
+  in that local generation. Other Git, local and pip sources do not gain
+  reserved-namespace trust, even with publisher `dinkster`. Local libraries must
+  match their dependency lock's digest and are not cataloged as node packs.
   Default setup and Desktop remain published-bundle consumers.
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the
@@ -683,12 +708,10 @@
   invoking published setup or loading a standalone installed-pack root. The
   terminal and node catalog label the source session as unreviewed and not
   reproducible from dependency ranges; the browser opens after health succeeds.
-- A pip-installed engine has no implicit official pack selection. Managed
-  generations serve their admitted registry sources. Checkout development
-  selects verified local sources with each pack's declared version, without
-  requiring an installed pack distribution.
-- Checkout defaults retain their managed source lock without requiring an
-  installed standard-suite distribution.
+- Installed engines and engine checkouts have no implicit official pack selection.
+  Managed generations serve their admitted registry sources. Checkout development
+  selects local pack manifests explicitly; production pack sources and their
+  publication versions are owned by the standalone pack repository.
 - Development scaffolding is workspace-only and is excluded from engine and
   official-pack releases.
 - Engine release assembly records variant-specific dependency wheel identities
@@ -894,6 +917,23 @@ matching the host; `--python /absolute/python` explicitly selects an existing
 interpreter instead of the configured standalone interpreter. Use `--port PORT`
 when the default listener is occupied. Project and store directories must be
 outside selected source folders. Unmarked sources build from verified copies.
+`develop --contributor` includes the checkout's development tools and inference
+extra in the generation and uses the engine's working folders live. Pack inputs
+are optional in contributor mode; explicitly selected pack and library folders
+keep the same live/captured rules. Run tools with
+`dinkster run --root /absolute/project -- python -m pytest` (or another command
+after `--`). The command inherits the terminal and working directory, returns
+the tool's exit status, and uses the active generation's interpreter and tools.
+It holds that generation against collection until the command exits.
+From an unprepared checkout, `uv run --no-project python scripts/develop.py setup --yes`
+bootstraps only the supervisor, then uses that same contributor generation builder.
+The default project is the checkout's sibling `.<checkout-name>-development`,
+not its root `.venv`. Use `python scripts/develop.py run -- python -m pytest`
+for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
+`run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
+generation. The CPU variant is the default; pass `--variant NAME` to setup for
+another host-compatible variant.
+
 Use `--live-engine`, `--live-pack /absolute/pack`, or
 `--live-library /absolute/helper` on both plan and apply commands to run from
 explicitly selected local folders instead. A live folder must also be a source
@@ -944,8 +984,7 @@ of its last inputs can make exact recovery unavailable.
 Source paths, package roots, content digests and available Git commit/dirty state
 describe the captured working bytes, including selected untracked edits. Recovery
 does not reset, clean, overwrite or back up author folders. Workflows, models,
-outputs and other project data are not recovered by software restore. No bundled
-Git, Git-URL fetching or contributor-environment synchronization is provided by
-this operation. When invoking tools through `uv run`, `--no-sync` prevents uv from
-silently changing that tool environment to match a checkout lock; it does not
-capture an environment or make arbitrary unrecorded edits recoverable.
+outputs and other project data are not recovered by software restore. Contributor
+commands run in their selected generation, separately from any checkout-managed uv
+environment. That separation does not make live edits recoverable; omit live
+marks when an exactly restorable capture is needed.

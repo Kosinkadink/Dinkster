@@ -6,11 +6,9 @@ on:
     paths:
       - .github/workflows/dependency-runtime.yml
       - .github/actions/torch-cpu-suite/action.yml
-      - scripts/setup_envs.py
+      - scripts/develop.py
       - scripts/base_bundles.json
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
-      - tools/minimax_h3_multigpu_receipt.py
-      - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
       - packages/dinkster-video-runtime/pyproject.toml
@@ -118,7 +116,7 @@ jobs:
       - name: Verify released native extension and external timelines
         shell: bash
         run: |
-          uv run --no-sync python - <<'PY'
+          uv run --locked --no-dev --package dinkster-video-runtime python - <<'PY'
           import importlib.metadata
           from pathlib import Path
 
@@ -161,16 +159,17 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Install the published CPU base and locked workspace
+      - name: Prepare the CPU contributor generation
         shell: bash
         run: |
           variant=linux-cpu
           if [ "$RUNNER_OS" = Windows ]; then variant=win-cpu; fi
-          uv run --no-project python scripts/setup_envs.py --variant "$variant"
-      - name: Verify the selected bundle and CPU runtime
+          uv run --no-project python scripts/develop.py setup --variant "$variant" --yes
+          python scripts/develop.py stop --yes
+      - name: Verify the generation inventory and CPU runtime
         shell: bash
         run: |
-          uv run --no-sync python - <<'PY'
+          python scripts/develop.py run -- python - <<'PY'
           import importlib.metadata
           import json
           import sys
@@ -178,7 +177,7 @@ jobs:
           import torch
           import torchvision
 
-          manifest = json.loads(Path('.run/environment-base.json').read_text())
+          manifest = json.loads((Path(sys.prefix).parent / 'base-manifest.json').read_text())
           assert sys.version.split()[0] == manifest['python']
           for wheel in manifest['wheels']:
               assert importlib.metadata.version(wheel['name']) == wheel['version'], wheel
@@ -189,10 +188,5 @@ jobs:
           boxes = torch.tensor([[0., 0., 2., 2.], [0., 0., 1., 1.], [3., 3., 4., 4.]])
           scores = torch.tensor([0.9, 0.8, 0.7])
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
-          print('Published CPU base, installed inventory and NMS passed:', manifest['id'])
+          print('CPU generation inventory and NMS passed:', manifest['id'])
           PY
-      - name: Test the public sampler cold import
-        shell: bash
-        run: |
-          uv run --no-sync python -m pytest -q \
-            packages/dinkster-nodes-void/tests/test_void_sampler_torch.py

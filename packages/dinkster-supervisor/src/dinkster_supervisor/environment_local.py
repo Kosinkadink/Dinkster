@@ -13,25 +13,22 @@ import sys
 import tarfile
 import tempfile
 import tomllib
-import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
-from blake3 import blake3
-from dinkster_store import object_path, pack_archive_path, pack_label, readable_label
+from dinkster_store import object_path, readable_label
 from packaging.requirements import Requirement
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .environment_artifacts import base_label, engine_label
-from .environment_constraints import effective_constraints, requirement_hashes
-from .environment_downloads import DownloadError, fetch_artifact
+from .environment_constraints import effective_constraints
+from .environment_downloads import fetch_artifact
 from .environment_state import (
     EnvironmentError,
     content_digest,
-    interpreter,
     read_document,
     write_document,
 )
@@ -190,6 +187,19 @@ def retain_wheels(
                     / filename
                 )
                 fetch_artifact((directory,), filename, destination, sha, size)
+        if sha is not None and size is None:
+            cached = (
+                object_path(
+                    store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+                )
+                / filename
+            )
+            if (
+                cached.is_file()
+                and not cached.is_symlink()
+                and content_digest(cached) == "sha256:" + sha
+            ):
+                size = cached.stat().st_size
         if sha is not None and size is None and urlsplit(url).scheme == "https":
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
@@ -263,6 +273,7 @@ def prepare_local(
             with tarfile.open(archive) as payload:
                 payload.extractall(work / "runtime", filter="data")
             python = work / "runtime" / definition["executable"]
+        contributor = selection.get("development", {}).get("contributor", False)
         exported = work / "export.txt"
         run_local_command(
             [
@@ -270,7 +281,7 @@ def prepare_local(
                 "export",
                 "--locked",
                 "--all-packages",
-                "--no-dev",
+                *(["--extra", "inference"] if contributor else ["--no-dev"]),
                 "--group",
                 "engine-base",
                 "--no-emit-workspace",
@@ -287,14 +298,21 @@ def prepare_local(
             packages.setdefault(package["name"], []).append(package)
         # All backend-specific descendants must be replaced, including remove-only CUDA rows.
         replaces: set[str] = set()
-        pending = list(selection["packages"])
+        visited: set[tuple[str, tuple[str, ...]]] = set()
+        pending: list[tuple[str, tuple[str, ...]]] = [(name, ()) for name in selection["packages"]]
         while pending:
-            name = pending.pop()
-            if name in replaces:
+            name, extras = pending.pop()
+            if (name, extras) in visited:
                 continue
+            visited.add((name, extras))
             replaces.add(name)
             for package in packages.get(name, []):
-                pending.extend(dep["name"] for dep in package.get("dependencies", []))
+                dependencies = list(package.get("dependencies", []))
+                for extra in extras:
+                    dependencies.extend(package.get("optional-dependencies", {}).get(extra, []))
+                pending.extend(
+                    (dep["name"], tuple(sorted(dep.get("extra", [])))) for dep in dependencies
+                )
         pins = work / "pins.txt"
         pins.write_text(
             "\n".join(
@@ -391,6 +409,8 @@ def prepare_local(
         engine_requirements = work / "engine.in"
         engine_requirements.write_text(
             "\n".join(str(path) for path in (*sorted(built.glob("*.whl")), *library_wheels))
+            + "\n"
+            + (engine_constraints if contributor else "")
         )
         engine = _resolve(
             engine_requirements,
@@ -499,98 +519,3 @@ def prepare_local(
             "worker_protocol": selection["workerProtocol"],
             "source_kind": "local",
         }
-
-
-def prepare_local_packs(
-    generation: Path,
-    *,
-    source: Path,
-    store: Path,
-    release: str,
-    selection: dict[str, Any],
-    in_process: tuple[str, ...] = (),
-) -> None:
-    """Resolve checkout pack requirements against this target, never a published base lock."""
-    from .environment_generations import pack_operation, prepare_pack_catalogs, stage_pack_sources
-
-    artifacts = object_path(store / "engines", release) / "artifacts"
-    links = [
-        str(object_path(store / "wheels", "sha256:" + digest))
-        for digest in sorted(requirement_hashes((generation / "constraints.txt").read_text()))
-    ]
-    run_local_command(
-        [
-            str(interpreter(generation)),
-            "-B",
-            str(source / "scripts/build_official_packs.py"),
-            "--output",
-            str(artifacts),
-            "--variant",
-            selection["variant"],
-            "--generation-python",
-            str(interpreter(generation)),
-            "--constraints",
-            str(generation / "constraints.txt"),
-            "--index",
-            "https://pypi.org/simple",
-            "--find-links-stdin",
-        ],
-        cwd=source,
-        input=json.dumps(links),
-    )
-    catalog_lock = artifacts / "official-packs.lock"
-    catalog = json.loads(catalog_lock.read_text(encoding="utf-8"))
-    libraries: set[str] = set()
-    library_wheels: dict[str, tuple[str, int]] = {}
-    for archive in artifacts.glob("*.whl"):
-        data = archive.read_bytes()
-        digest = blake3(data).hexdigest()
-        pack, version, _, _ = parse_wheel_filename(archive.name)
-        with zipfile.ZipFile(archive) as wheel_file:
-            if not any(Path(name).name == "dinkster-pack.toml" for name in wheel_file.namelist()):
-                libraries.add(pack)
-                library_wheels[archive.name] = (hashlib.sha256(data).hexdigest(), len(data))
-        cached = pack_archive_path(
-            artifacts,
-            "blake3:" + digest,
-            label=pack_label(pack, str(version)),
-        )
-        if archive != cached:
-            cached.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(archive, cached)
-    locks: list[Path] = []
-    for path in sorted(artifacts.glob("*.pack-lock.json")):
-        dependency_lock = json.loads(path.read_text(encoding="utf-8"))
-        if dependency_lock["pack"] in libraries:
-            continue
-        locks.append(path)
-        for distribution in dependency_lock["packages"]:
-            for wheel in distribution["wheels"]:
-                if wheel["filename"] in library_wheels:
-                    if library_wheels[wheel["filename"]] != (wheel["sha256"], wheel["size"]):
-                        raise DownloadError(f"corrupt locally built library: {wheel['filename']}")
-                    cached = object_path(store / "wheels", "sha256:" + wheel["sha256"])
-                    fetch_artifact(
-                        (str(artifacts),),
-                        wheel["filename"],
-                        cached / wheel["filename"],
-                        wheel["sha256"],
-                        wheel["size"],
-                    )
-    catalog["packs"] = [entry for entry in catalog["packs"] if entry["pack"] not in libraries]
-    for entry in catalog["packs"]:
-        entry["source"] = "local-build:" + entry["source"]
-    write_document(catalog_lock, catalog)
-    for operation in ("preflight", "rebuild", "doctor"):
-        pack_operation(
-            operation,
-            generation=generation,
-            store=store,
-            variant=selection["variant"],
-            worker_protocol=selection["workerProtocol"],
-            own_environment_size=0,
-            locks=tuple(locks) if operation != "doctor" else (),
-            in_process_packs=in_process,
-        )
-    stage_pack_sources(generation, catalog_lock=catalog_lock, artifacts=artifacts)
-    prepare_pack_catalogs(generation, in_process)

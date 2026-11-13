@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -66,21 +67,63 @@ def generation_runtime_lock(root: Path) -> Generator[None]:
         yield
 
 
+def run_generation(root: Path, command: list[str]) -> int:
+    """Keep the active interpreter protected from collection while a tool uses it."""
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        raise EnvironmentError("run requires a command after --")
+    with writer_lock(root):
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("project has no active generation; run develop or setup first")
+        target = root / "generations" / str(current)
+        Generation.read(target / "generation.json")
+        python = interpreter(target)
+        environment = dict(os.environ)
+        for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONHOME", "PYTHONPATH"):
+            environment.pop(name, None)
+        scripts = subprocess.check_output(
+            [str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_path('scripts'))"],
+            text=True,
+        ).strip()
+        environment["VIRTUAL_ENV"] = str(python.parent.parent)
+        environment["PATH"] = os.pathsep.join(
+            (scripts, str(python.parent), environment.get("PATH", ""))
+        )
+        environment["DINKSTER_EXECUTION_PYTHON"] = str(python)
+        executable = (
+            str(python)
+            if command[0] == "python"
+            else shutil.which(command[0], path=environment["PATH"])
+        )
+        if executable is None:
+            raise EnvironmentError(f"command not found in generation or PATH: {command[0]}")
+        return subprocess.run([executable, *command[1:]], env=environment).returncode
+
+
 def start_engine(
     root: Path,
     generation: int,
     name: str,
     port: int,
     gpus: tuple[str, ...] = (),
+    *,
+    activation_journal: Path | None = None,
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
     with generation_runtime_lock(root):
-        return _start_engine(root, generation, name, port, gpus)
+        return _start_engine(root, generation, name, port, gpus, activation_journal)
 
 
 def _start_engine(
-    root: Path, generation: int, name: str, port: int, gpus: tuple[str, ...]
+    root: Path,
+    generation: int,
+    name: str,
+    port: int,
+    gpus: tuple[str, ...],
+    activation_journal: Path | None,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
@@ -135,6 +178,11 @@ def _start_engine(
         "127.0.0.1",
         "--port",
         str(port),
+        *(
+            ["--activation-journal", str(activation_journal), "--activation-name", name]
+            if activation_journal is not None
+            else []
+        ),
         "--",
         str(python),
         "-I",
@@ -148,6 +196,11 @@ def _start_engine(
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]
+    development = target / "development-sources.json"
+    if development.is_file():
+        frontend = read_document(development).get("frontendRoot")
+        if frontend is not None:
+            command.extend(["--frontend-root", str(frontend)])
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
         log_offset = log.tell()
@@ -164,7 +217,9 @@ def _start_engine(
     while time.monotonic() < deadline:
         inspected = _inspect(record)
         # A Python launcher may forward to a supervisor with a different PID.
-        if _identity_matches(inspected) and inspected["pid"] != record["pid"]:
+        if _identity_matches(inspected) and (
+            inspected["pid"] != record["pid"] or inspected["port"] != record["port"]
+        ):
             record = inspected
             _write_record(root, name, record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
@@ -504,6 +559,19 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
         # A crashed supervisor does not prove that its engine child exited.
         inspected["state"] = "failed"
         return inspected
+    listener = lifecycle / "listener.json"
+    if listener.is_file():
+        binding = read_document(listener)
+        port = binding.get("port")
+        if binding.get("instance") != inspected["instance"] or type(port) is not int:
+            raise EnvironmentError("invalid supervisor listener record")
+        validate_assignment(
+            cast("int", inspected["generation"]),
+            cast("str", inspected["name"]),
+            port,
+            tuple(cast("list[str]", inspected["gpus"])),
+        )
+        inspected.update(port=port, url=f"http://127.0.0.1:{port}")
     try:
         status = _request(cast("str", inspected["url"]) + "/supervisor/status")
     except (HTTPError, URLError, ValueError):

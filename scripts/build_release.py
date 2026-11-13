@@ -93,19 +93,10 @@ def is_official_library(project: dict) -> bool:
     return project.get("tool", {}).get("dinkster", {}).get("official-library") is True
 
 
-def uses_engine_version(root: Path, path: Path) -> bool:
-    if project_metadata(path)[0] == "dinkster-supervisor":
-        return False
-    if is_official_library(tomllib.loads(path.read_text(encoding="utf-8"))):
-        return False
-    if (
-        path.parent.parent != root / "packages"
-        or not path.parent.name.startswith("dinkster-nodes-")
-        or path.parent.name in {"dinkster-nodes-dev", "dinkster-nodes-generation"}
-    ):
-        return True
-    manifests = [path.parent / "dinkster-pack.toml", *path.parent.glob("*_pack/dinkster-pack.toml")]
-    return not any(manifest.is_file() for manifest in manifests)
+def uses_engine_version(path: Path) -> bool:
+    return project_metadata(path)[0] != "dinkster-supervisor" and not is_official_library(
+        tomllib.loads(path.read_text(encoding="utf-8"))
+    )
 
 
 def release_version(root: Path, tag: str) -> str:
@@ -116,7 +107,7 @@ def release_version(root: Path, tag: str) -> str:
     mismatches = [
         f"{name}={project_metadata(path)[1]}"
         for name, path in workspace_projects(root).items()
-        if uses_engine_version(root, path) and project_metadata(path)[1] != version
+        if uses_engine_version(path) and project_metadata(path)[1] != version
     ]
     if mismatches:
         raise ValueError(
@@ -162,7 +153,7 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
             source.extractall(staged, filter="data")
         projects = workspace_projects(staged)
         versions = {
-            name: version if uses_engine_version(staged, path) else project_metadata(path)[1]
+            name: version if uses_engine_version(path) else project_metadata(path)[1]
             for name, path in projects.items()
         }
         for name, path in projects.items():

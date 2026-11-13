@@ -68,24 +68,19 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        latent_pack = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-latent"
         (tmp_path / "empty_latent_fixture.py").write_text(
             "from tests.test_latent_codec import EmptyLatentInspect, EmptyLatentSource\n"
-            "from dinkster_latent import NODES as LATENT_NODES\n"
-            "from dinkster_latent.types import register_types\n"
-            "NODES = (*LATENT_NODES, EmptyLatentSource, EmptyLatentInspect)\n",
+            "from dinkster_api.v1 import register_media_types\n"
+            "NODES = (EmptyLatentSource, EmptyLatentInspect)\n",
             encoding="ascii",
         )
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            (latent_pack / "dinkster-pack.toml")
-            .read_text(encoding="ascii")
-            .replace("namespaces = [", 'namespaces = ["empty-latent-fixture",')
-            .replace("dinkster_latent:NODES", "empty_latent_fixture:NODES")
-            .replace(
-                "dinkster_latent.types:register_types",
-                "empty_latent_fixture:register_types",
-            ),
+            '[pack]\nname = "empty-latent-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["empty-latent-fixture"]\n'
+            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+            '[pack.entry]\nnodes = "empty_latent_fixture:NODES"\n'
+            'types = "empty_latent_fixture:register_media_types"\n',
             encoding="ascii",
         )
         graph = Graph(
@@ -101,7 +96,9 @@ def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
                 cache_mode="layered",
                 cache_dir=tmp_path / "cache",
                 worker_env={
-                    "PYTHONPATH": os.pathsep.join((str(tmp_path), str(latent_pack.parents[1])))
+                    "PYTHONPATH": os.pathsep.join(
+                        (str(tmp_path), str(Path(__file__).resolve().parents[1]))
+                    )
                 },
             )
             try:

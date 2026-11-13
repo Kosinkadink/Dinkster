@@ -894,14 +894,12 @@ directory is the build artifact used by installation checks and publication:
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
 
-The workflow also builds the official pack source ZIPs and `official-packs.lock`
-with `scripts/build_official_packs.py` and admits them through repeated
-`--artifact` inputs. Pack versions use the engine's public version (without
-the local `+g<commit>` segment); the existing pack lock retains the full source
-commit. These payloads have the same artifact hashes and checksums as other
-release assets but are not `workspaceWheels` and are never uploaded to PyPI.
-The engine wheel also carries these ZIPs and their catalog as package data,
-so a pip-installed engine can stage its defaults without a selected generation.
+Engine releases contain no first-party pack source archives or bundled schema
+catalogs. Their `defaultPacks` metadata names published pack versions from
+`src/dinkster/default-packs.toml`. First-party packs are built and published by
+`Kosinkadink/dinkster-nodes` against published engine packages. A managed
+installation resolves those published defaults against its engine and base,
+then records the admitted pack sources in the selected generation's lock.
 
 The separate tools workflow uses interpreter definitions pinned from
 `Dinkster-Environments`, including its verified SQLite override and functional
@@ -909,10 +907,6 @@ probe on Windows. Native ZIPs are published only with the tools manifest, never
 with the engine release or on PyPI. Engine finalization rejects native tools
 ZIPs. Installation checks, GitHub release upload and PyPI selection consume
 the engine-only directory.
-Finalization also requires one dependency lock for every official catalog pack
-and selected base variant. It uses the registry and worker lock parsers to
-verify identities and refuses local wheel or index URLs before copying payloads
-or rewriting the release manifest.
 
 The engine release id used by channels is `sha256:` followed by the SHA-256
 of the exact `release-manifest.json` bytes. The manifest lists payload assets,

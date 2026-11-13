@@ -105,9 +105,13 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert not root.exists()
 
 
-def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(tmp_path: Path):
+def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from dinkster_supervisor.environment_artifacts import acquire
 
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     mirror, store, root = tmp_path / "mirror", tmp_path / "store", tmp_path / "project"
     base, engine, _ = _mirror(mirror)
     acquire(discover((str(mirror),), "main"), "fixture-cpu", store)
@@ -1681,8 +1685,14 @@ environment.main()
 @pytest.mark.parametrize("public_command", [False, True])
 @pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
 def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
-    tmp_path: Path, problem: str | None, public_command: bool, capsys
+    tmp_path: Path,
+    problem: str | None,
+    public_command: bool,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     source = Path(__file__).resolve().parents[1]
     engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
     for relative in (

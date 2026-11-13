@@ -104,8 +104,8 @@ main after landing; a local counted suite or its shards is not a landing gate.
 - For a ready pull request affecting official pack inputs, read the `Published pack versions` check green at the exact head before adding `ready-to-land`. Keep drafts light; raise affected pack or library versions when built archives or install locks differ from the published version.
 
 ```
-.venv/bin/ruff check .
-.venv/bin/pyright
+python scripts/develop.py run -- ruff check .
+python scripts/develop.py run -- pyright
 ```
 
 Ruff and pyright must be clean at every frozen head. During development, run
@@ -117,11 +117,4 @@ The pack runtime matrix in `docs/testing.md` describes full-validation coverage,
 not a local pre-freeze requirement. Issue-specific real-stack acceptance
 evidence still applies; root/member passes do not replace that evidence.
 
-Stale wheel cache after rebase: when a pull or rebase changes a node pack or
-its committed lockfile, a plain `uv sync --all-packages --frozen` can re-link
-stale cached wheels whose artifact digests no longer match the committed
-`dinkster.lock`, producing spurious `dinkster.compose`
-PackageNotFoundError/CompositionError failures in the local root suite (clean
-CI installs are unaffected). Run `uv sync --reinstall` (or
-`uv sync --reinstall-package <name>` for the affected pack) before treating
-such failures as real regressions.
+- After checkout dependency or pack lock changes, rerun `python scripts/develop.py setup --yes` before testing. Checkout-level `uv sync` does not update the contributor generation. Run tools through `scripts/develop.py run` so they use its interpreter and selected torch build.

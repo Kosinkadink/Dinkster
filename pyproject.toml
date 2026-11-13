@@ -13,7 +13,6 @@ dependencies = [
     "dinkster-engine==0.0.3",
     "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
-    "numba>=0.67",
     "opencv-contrib-python-headless>=5.0,<5.1",
     "PyOpenGL>=3.1.8,<4",
     "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",
@@ -66,6 +65,7 @@ dev = [
     "pyright>=1.1.390",
     "scipy-stubs>=1.18.1.0",
     "dinkster-opentimelineio==0.19.0",
+    "dinkster-inference",
     "threadpoolctl>=3.7",
 ]
 
@@ -94,8 +94,6 @@ dinkster-caches = { workspace = true }
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
 dinkster-memory = { workspace = true }
-dinkster-nodes-remote = { workspace = true }
-dinkster-image = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
 dinkster-registry = { workspace = true }
@@ -127,10 +125,7 @@ ignore = ["UP040", "UP046", "UP047"]
 
 [tool.pytest.ini_options]
 addopts = "-n logical --maxprocesses=8 --dist=worksteal --max-worker-restart=0"
-testpaths = [
-    "tests",
-    "packages/dinkster-nodes-remote/tests",
-]
+testpaths = ["tests"]
 # Tests import helpers as `tests.*` / `tools.*`, which requires the repo
 # root on sys.path. `python -m pytest` adds it implicitly; the `pytest`
 # entrypoint (what CI's `uv run pytest` invokes) does not.
@@ -147,48 +142,10 @@ faulthandler_timeout = 600
 
 [tool.pyright]
 pythonVersion = "3.12"
-venvPath = "."
-venv = ".venv"
 include = ["packages", "src", "tests"]
 extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 # Torch execution modules are checked in their isolated worker environment.
-exclude = [
-    "tests/first_party_runtime",
-    "packages/dinkster-nodes-sampling/tests",
-    "packages/dinkster-nodes-models/tests",
-    "packages/dinkster-nodes-conditioning/tests",
-    "packages/dinkster-nodes-latent/tests",
-    "packages/dinkster-nodes-audio/tests",
-    "packages/dinkster-nodes-video/tests",
-    "packages/dinkster-nodes-sd/tests",
-    "packages/dinkster-nodes-flux/tests",
-    "packages/dinkster-nodes-qwen/tests",
-    "packages/dinkster-nodes-hidream/tests",
-    "packages/dinkster-nodes-audio-models/tests",
-    "packages/dinkster-nodes-misc-models/tests",
-    "packages/dinkster-nodes-llm/tests",
-    "packages/dinkster-nodes-upscale/tests",
-    "packages/dinkster-nodes-cosmos/tests",
-    "packages/dinkster-nodes-hunyuan/tests",
-    "packages/dinkster-nodes-ltx/tests",
-    "packages/dinkster-nodes-minimax/tests",
-    "packages/dinkster-nodes-seedvr/tests",
-    "packages/dinkster-nodes-void/tests",
-    "packages/dinkster-nodes-wan/tests",
-    "packages/dinkster-nodes-image/tests",
-    "packages/dinkster-nodes-utilities/tests",
-    "packages/dinkster-nodes-3d/tests",
-    "packages/dinkster-nodes-3d-models/tests",
-    "packages/dinkster-nodes-vision-background-removal/tests",
-    "packages/dinkster-nodes-vision-depth-anything-3/tests",
-    "packages/dinkster-nodes-vision-marigold/tests",
-    "packages/dinkster-nodes-vision-mediapipe/tests",
-    "packages/dinkster-nodes-vision-moge/tests",
-    "packages/dinkster-nodes-vision-rtdetr/tests",
-    "packages/dinkster-nodes-vision-sam3/tests",
-    "packages/dinkster-nodes-vision-sam3d-body/tests",
-    "packages/dinkster-nodes-vision-sdpose/tests",
-]
+exclude = ["tests/first_party_runtime"]
 # The packages are the load-bearing code: strict there. Tests and the demo
 # CLI stay on standard - useful checking without annotation ceremony.
 strict = ["packages"]

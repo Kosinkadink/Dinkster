@@ -1,18 +1,12 @@
 name: Registry default pack admission
 
 on:
-  workflow_run:
-    workflows: ["Independent official pack publication"]
-    types: [completed]
-    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/default-pack-admission.yml
       - scripts/check_default_pack_admission.py
       - scripts/prepare_admission_engine.py
-      - scripts/run_selected_pack_tests.py
-      - scripts/_selected_pack_test_child.py
       - scripts/setup_probe_jail.sh
       - packages/dinkster-registry/src/dinkster_registry/*admission.py
       - packages/dinkster-workers/src/dinkster_workers/pack_wheel.py
@@ -23,68 +17,32 @@ on:
       - tests/test_pack_wheel.py
       - tests/test_sandbox.py
       - tests/test_doctor.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/default-pack-admission.yml
+      - scripts/check_default_pack_admission.py
+      - scripts/prepare_admission_engine.py
+      - scripts/setup_probe_jail.sh
+      - packages/dinkster-registry/src/dinkster_registry/*admission.py
+      - packages/dinkster-workers/src/dinkster_workers/pack_wheel.py
+      - packages/dinkster-workers/src/dinkster_workers/sandbox*
+      - packages/dinkster-workers/src/dinkster_workers/doctor*
 
 permissions:
   contents: read
 
 concurrency:
-  group: default-pack-admission-${{ github.event.workflow_run.id || github.ref }}
+  group: default-pack-admission-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  select:
-    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || (github.repository == 'Kosinkadink/Dinkster' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == 'Kosinkadink/Dinkster' && github.event.workflow_run.conclusion == 'success')
-    permissions:
-      contents: read
-      actions: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    outputs:
-      engine: ${{ steps.identity.outputs.engine }}
-      version: ${{ steps.identity.outputs.version }}
-    steps:
-      - name: Require a successful publication job, not a skipped publication
-        if: github.event_name == 'workflow_run'
-        id: publication
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-              ...context.repo, run_id: context.payload.workflow_run.id, per_page: 100,
-            });
-            core.setOutput('published', jobs.some(job => job.name === 'publish' && job.conclusion === 'success'));
-      - uses: actions/download-artifact@v4
-        if: steps.publication.outputs.published == 'true'
-        with:
-          name: official-publication-inputs
-          path: .publication
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-      - name: Select the engine bound to the publication inputs
-        id: identity
-        uses: actions/github-script@v7
-        with:
-          script: |
-            if (context.eventName === 'pull_request') {
-              core.setOutput('engine', context.payload.pull_request.head.sha);
-            } else if ('${{ steps.publication.outputs.published }}' === 'true') {
-              const fs = require('fs');
-              const engine = JSON.parse(fs.readFileSync('.publication/engine/release-manifest.json', 'utf8'));
-              if (engine.repository !== 'Kosinkadink/Dinkster' || !/^[0-9a-f]{40}$/.test(engine.commit) || typeof engine.version !== 'string') {
-                throw new Error('Publication must identify an exact engine commit and version');
-              }
-              core.setOutput('engine', engine.commit);
-              core.setOutput('version', engine.version);
-            }
-
   prepare:
-    needs: select
-    if: needs.select.outputs.engine != ''
-    permissions:
-      contents: read
-      actions: read
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    # Hosted contributor setup and admission preparation take four minutes.
+    # Keep more than three times that measured runtime for the complete job.
+    timeout-minutes: 15
     outputs:
       groups: ${{ steps.sources.outputs.groups }}
     env:
@@ -97,48 +55,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.select.outputs.engine }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@v4
-        if: github.event_name == 'workflow_run'
-        with:
-          name: official-publication-inputs
-          path: .publication
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Install the engine under test on its published CPU base
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-      - name: Resolve immutable default sources for every admission group
-        id: sources
-        env:
-          CANDIDATE_BASE: ${{ github.event.pull_request.base.sha }}
-          PUBLISHED_VERSION: ${{ needs.select.outputs.version }}
+      - name: Prepare contributor admission tooling
         run: |
-          arguments=()
-          if [ -n "$CANDIDATE_BASE" ]; then
-            publication_changed=$(git diff --name-only "$CANDIDATE_BASE" HEAD -- .github/workflows/official-packs.yml)
-            if [ -n "$publication_changed" ]; then
-              CANDIDATE_BASE=0000000000000000000000000000000000000000
-            fi
-            arguments+=(--candidate-base "$CANDIDATE_BASE")
-            version=$(uv run --no-sync python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
-          else
-            arguments+=(--published-sources .publication/sources/official-packs.lock)
-            version="$PUBLISHED_VERSION"
-          fi
-          uv run --no-sync python -m scripts.prepare_admission_engine \
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
+      - name: Acquire the engine's exact published CPU base manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_id=$(jq -r '.["linux-cpu"]' scripts/base_bundles.json)
+          python scripts/develop.py run -- python -m scripts.acquire_engine_bases \
+            --tag "base-linux-cpu-$base_id" --output .run/admission-bases
+      - name: Resolve immutable published default sources for every admission group
+        id: sources
+        run: |
+          version=$(python scripts/develop.py run -- python -c 'from pathlib import Path; from scripts.build_release import development_version; print(development_version(Path.cwd()))')
+          python scripts/develop.py run -- python -m scripts.prepare_admission_engine \
             --output admission-runtime --store .run/environment-store \
-            --base-manifest .run/environment-base.json --engine-version "$version"
-          uv run --no-sync python -m scripts.check_default_pack_admission \
-            --engine-version "$version" "${arguments[@]}" \
-            --runtime admission-runtime --prepare-output admission-sources | tee admission-preparation.log
+            --base-manifest .run/admission-bases/linux-cpu/manifest.json --engine-version "$version"
+          python scripts/develop.py run -- python -m scripts.check_default_pack_admission \
+            --engine-version "$version" --runtime admission-runtime \
+            --prepare-output admission-sources | tee admission-preparation.log
           cp -r admission-runtime/engine admission-sources/engine
           cp admission-runtime/base-manifest.json admission-sources/base-manifest.json
-          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          python scripts/develop.py run -- python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           from pathlib import Path
           result = json.loads(Path("admission-preparation.log").read_text().splitlines()[-1])
@@ -157,7 +103,7 @@ jobs:
 
   admission:
     name: admission (group ${{ matrix.group }})
-    needs: [select, prepare]
+    needs: prepare
     if: needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 26
@@ -175,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.select.outputs.engine }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@v4
@@ -187,19 +133,21 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - name: Install the engine under test on its published CPU base
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+      - name: Prepare contributor admission tooling
+        run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
       - name: Provision the exact prepared engine on the verified pinned base
         run: |
           version=$(jq -j '.engineVersion' admission-sources/engine.json)
-          uv run --no-sync python -m scripts.prepare_admission_engine \
+          python scripts/develop.py run -- python -m scripts.prepare_admission_engine \
             --output admission-runtime --store .run/environment-store \
             --base-manifest admission-sources/base-manifest.json \
             --engine-source admission-sources/engine --engine-version "$version"
       - name: Install the CPU software shader renderer
         uses: ./.github/actions/torch-cpu-suite/renderer-setup
         timeout-minutes: 5
-      - name: Admit and test this group against the complete verified catalog
+      - name: Admit this group against the complete verified catalog
         env:
           TEST_PACKS: ${{ matrix.packs }}
         run: |
@@ -208,6 +156,6 @@ jobs:
             arguments+=(--pack "$name")
           done < <(jq -j '.[] + "\u0000"' <<< "$TEST_PACKS")
           version=$(jq -j '.engineVersion' admission-sources/engine.json)
-          uv run --no-sync python -m scripts.check_default_pack_admission \
+          python scripts/develop.py run -- python -m scripts.check_default_pack_admission \
             --engine-version "$version" --runtime admission-runtime \
             --prepared-sources admission-sources "${arguments[@]}"

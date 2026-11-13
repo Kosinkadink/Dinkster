@@ -28,7 +28,6 @@ jobs:
     outputs:
       docs: ${{ steps.paths.outputs.docs }}
       engine: ${{ steps.paths.outputs.engine }}
-      runtime: ${{ steps.paths.outputs.runtime }}
       packs: ${{ steps.paths.outputs.packs }}
     steps:
       - uses: actions/checkout@v4
@@ -46,42 +45,72 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
         if: steps.paths.outputs.docs != 'true'
       - run: bash scripts/ci-fast.sh checks
         if: steps.paths.outputs.docs != 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-  torch-cpu:
+  contributor-setup:
     needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
-    name: node pack tests gate (CPU, shard ${{ matrix.shard }})
+    if: ${{ needs.checks.outputs.engine == 'true' && inputs.simulate-fork != true && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: main contributor setup (${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        python: ["3.12", "/usr/bin/python3.12"]
     env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-      OMP_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
+      CUDA_VISIBLE_DEVICES: ""
+      DINKSTER_ACCELERATOR: cpu
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Install the CPU software shader renderer
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-        timeout-minutes: 5
-      - uses: ./.github/actions/torch-cpu-suite
+      - uses: ./.github/actions/prepare-validation-inputs
         with:
-          suite: comfy
-          comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
+          coverage: "false"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/prepare-contributor-generation
+        with:
+          python: ${{ matrix.python }}
+      - name: Verify the evidence fixture and generation tools
+        env:
+          REQUIRE_MANAGED_MARKER: ${{ matrix.python == '/usr/bin/python3.12' }}
+        run: |
+          python scripts/develop.py run -- python - <<'PY'
+          import os
+          import pathlib
+          import sys
+          import sysconfig
+          import dinkster_acceptance
+          import torch
+          assert sys.version_info[:2] == (3, 12)
+          assert pathlib.Path(dinkster_acceptance.__file__).is_relative_to(sys.prefix)
+          assert pathlib.Path(dinkster_acceptance.manifest_path()).is_file()
+          assert torch.__version__.endswith('+cpu') and torch.version.cuda is None
+          print('Generation fixture import and CPU torch passed')
+          marker = pathlib.Path(sysconfig.get_path('stdlib')) / 'EXTERNALLY-MANAGED'
+          if os.environ['REQUIRE_MANAGED_MARKER'] == 'true':
+              assert marker.is_file()
+          print('Externally managed:', marker.exists())
+          PY
+          python scripts/develop.py run -- ruff --version
+          python scripts/develop.py run -- python -m pytest -q -n0 \
+            tests/test_environment_runtime.py::test_run_uses_active_interpreter_and_preserves_command_io_and_exit \
+            tests/test_environment_cli.py::test_setup_plan_labels_cached_channel_without_mutating_project_or_store \
+            tests/test_environment_cli.py::test_development_plan_fingerprints_sources_and_refuses_changed_approval
 
   tests:
-    needs: [checks, torch-cpu]
+    needs: checks
     # Reusable calls retain the caller's workflow name and existing job selection.
     if: ${{ !cancelled() && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: tests
@@ -97,11 +126,6 @@ jobs:
       - name: Require successful path selection and checks
         run: |
           test '${{ needs.checks.result }}' = success
-          if [ '${{ startsWith(github.ref, 'refs/tags/v') }}' = true ]; then
-            test '${{ needs.torch-cpu.result }}' = success
-          else
-            test '${{ needs.torch-cpu.result }}' = skipped
-          fi
       - uses: actions/checkout@v4
         if: needs.checks.outputs.docs != 'true'
         with:
@@ -114,8 +138,25 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+          python scripts/develop.py stop --yes
         if: needs.checks.outputs.docs != 'true'
+      - name: Verify the Linux generation uses CPU torch
+        if: needs.checks.outputs.docs != 'true'
+        run: |
+          python scripts/develop.py run -- python - <<'PY'
+          from importlib.metadata import distributions
+          import torch
+          import torchvision
+          print(f"torch {torch.__version__}, CUDA {torch.version.cuda}; torchvision {torchvision.__version__}")
+          assert torch.__version__.endswith('+cpu') and torch.version.cuda is None
+          assert torchvision.__version__.endswith('+cpu')
+          assert not any(
+              distribution.metadata['Name'].lower().startswith(('nvidia-', 'triton'))
+              for distribution in distributions()
+          )
+          PY
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
@@ -125,11 +166,12 @@ jobs:
           for package in dinkster dinkster-api dinkster-engine; do
             uv build --package "$package" --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
           done
-          uv venv --python .venv/bin/python "$RUNNER_TEMP/fast-wheel-host"
+          execution_python=$(python scripts/develop.py run -- python -c 'import sys; print(sys.executable)')
+          uv venv --python "$execution_python" "$RUNNER_TEMP/fast-wheel-host"
           uv pip install --python "$RUNNER_TEMP/fast-wheel-host/bin/python" --no-sources "$RUNNER_TEMP/fast-build-setup/"*.whl
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python tools/verify_pinned_inference.py
+        run: python scripts/develop.py run -- python tools/verify_pinned_inference.py
       - name: Create a disposable XFS clone-test volume
         if: needs.checks.outputs.engine == 'true'
         run: |
@@ -144,35 +186,24 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$volume"
           echo "DINKSTER_CLONE_TEST_ROOT=$volume" >> "$GITHUB_ENV"
           echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
-      - name: Require real Linux clone allocation coverage
+      - name: Install the CPU software shader renderer
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:
-          DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
-      - name: Install the CPU base for selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-      - name: Install the CPU software shader renderer
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-      - name: Test selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        env:
-          PACKS: ${{ needs.checks.outputs.packs }}
+          CUDA_VISIBLE_DEVICES: ""
           DINKSTER_ACCELERATOR: cpu
-        run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
         env:
           CUDA_VISIBLE_DEVICES: ""
       - name: Read the pinned frontend revision
         if: needs.checks.outputs.engine == 'true'
         id: frontend
         run: |
-          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          python scripts/develop.py run -- python - <<'PY' >> "$GITHUB_OUTPUT"
           from pathlib import Path
           import yaml
 

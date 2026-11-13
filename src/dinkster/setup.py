@@ -204,7 +204,14 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
                     compatibility["markers"],
                 )
                 for lock in locks:
-                    selected = plan_pack(lock, facts, variant=variant, own_environment_size=0)
+                    selected = plan_pack(
+                        lock,
+                        facts,
+                        variant=variant,
+                        own_environment_size=0,
+                        wheel_store=store / "wheels",
+                        offline=True,
+                    )
                     missing.extend(f"pack {lock.pack}: {error}" for error in selected.conflicts)
                     for wheel in selected.wheels:
                         if cached_payloads[wheel.sha256 + "/" + wheel.filename] is None:

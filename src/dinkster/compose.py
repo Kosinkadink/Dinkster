@@ -301,7 +301,7 @@ _PACK_SCRATCH_ENV = "DINKSTER_PACK_SCRATCH"
 _ATTENTION_POLICY_ENV = "DINKSTER_ATTENTION_POLICY"
 
 
-_FIRST_PARTY_PACK_METADATA = first_party_pack_metadata(Path(__file__).resolve().parents[2])
+_FIRST_PARTY_PACK_METADATA = first_party_pack_metadata()
 _FIRST_PARTY_PACK_MODULES = MappingProxyType(
     {pack: module for pack, (module, _) in _FIRST_PARTY_PACK_METADATA.items()}
 )
@@ -1161,7 +1161,10 @@ class PackSpec:
 @lru_cache(maxsize=1)
 def _default_pack_lock() -> Lockfile:
     """Keep checkout development defaults separate from installed generations."""
-    if not Path(__file__).resolve().parents[2].joinpath("pyproject.toml").is_file():
+    if (
+        not Path(__file__).resolve().parents[2].joinpath("pyproject.toml").is_file()
+        or not _CHECKOUT_PACKS_LOCK.is_file()
+    ):
         return Lockfile.of([])
     try:
         lock = Lockfile.from_record_json(_CHECKOUT_PACKS_LOCK.read_text(encoding="utf-8"))

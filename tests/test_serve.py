@@ -56,11 +56,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
 ) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
 
-    from dinkster.compose import default_pack_ids
-    from dinkster.packs import first_party_pack_metadata
-
-    metadata = first_party_pack_metadata(TESTS_DIR.parent)
-    packages = sorted({metadata[pack_id][1] for pack_id in default_pack_ids()})
+    fixture_pack = TESTS_DIR / "fixtures/pack-testing"
     environment = tmp_path / "core-environment"
     requirements = subprocess.check_output(
         [
@@ -70,7 +66,6 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
             "--no-dev",
             "--package",
             "dinkster",
-            *(argument for package in packages for argument in ("--package", package)),
             "--no-emit-package",
             "dinkster-supervisor",
             "--no-hashes",
@@ -112,7 +107,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
             str(python),
             "-c",
             "import importlib.metadata as m, importlib.util as u; "
-            "import torch; assert torch.version.cuda is None; "
+            "assert u.find_spec('torch') is None; "
             "assert not any(d.metadata['Name'].lower().startswith(('nvidia-', 'triton')) "
             "for d in m.distributions()); "
             "assert u.find_spec('dinkster_collab') is not None; "
@@ -120,8 +115,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
             "('dinkster-collab', 'dinkster-supervisor', 'dinkster-nodes-std', "
             "'dinkster-nodes-dev')); "
-            "print(f'torch {torch.__version__}, CUDA {torch.version.cuda}; "
-            "no NVIDIA or triton distributions')",
+            "print('No torch, NVIDIA or triton distributions')",
         ],
         text=True,
     )
@@ -151,9 +145,11 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
             str(port),
             "--library-root",
             "",
+            "--pack",
+            str(fixture_pack),
         ],
         cwd=tmp_path,
-        env=process_environment,
+        env={**process_environment, "PYTHONPATH": str(fixture_pack / "src")},
         stdout=output,
         stderr=output,
     )
@@ -176,12 +172,12 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
                     await asyncio.sleep(0.05)
             nodes = payload["nodes"]
             assert isinstance(nodes, dict)
-            assert len(nodes) >= 100
+            assert {"example-tally.shout", "example-tally.tally"} <= nodes.keys()
             assert all(
                 isinstance(node_id, str) and isinstance(schema, dict)
                 for node_id, schema in nodes.items()
             )
-            assert "dinkster.utilities.primitive_int" in nodes
+            assert nodes["example-tally.shout"]["pack"] == "example-tally"
             for method, path in (
                 ("GET", "/api/compat/comfy/schemas"),
                 ("POST", "/api/compat/comfy/prompt"),
@@ -189,9 +185,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
             ):
                 async with session.request(method, base + path) as response:
                     assert response.status == 404, await response.text()
-            graph = Graph(
-                nodes={"integer": GraphNode("dinkster.utilities.primitive_int", {"value": 7})}
-            )
+            graph = Graph(nodes={"integer": GraphNode("example-tally.shout", {"text": "hello"})})
             async with session.post(
                 base + "/api/jobs",
                 json={
@@ -884,19 +878,8 @@ def register_types(registry):
 NODES = [Source]
 """)
     port = free_port()
-    bootstrap = """
-from dinkster import serve
-
-serve.default_pack_ids = lambda: ("dinkster-video",)
-serve.main()
-"""
     process = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            bootstrap,
-            *serve_command(port, "--pack", str(PROOF_ROOT), "--pack", str(source))[3:],
-        ],
+        serve_command(port, "--no-default-packs", "--pack", str(PROOF_ROOT), "--pack", str(source)),
         env={**os.environ, "PYTHONPATH": str(source)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -923,7 +906,8 @@ serve.main()
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/composition") as response:
                 report = await response.json()
-            assert report["packs"]["dinkster-video"]["state"] == "announced"
+            assert report["packs"][PROOF_PACK]["state"] == "announced"
+            assert report["packs"]["preview-source"]["state"] == "announced"
             async with session.get(base + PROOF_ROUTE) as response:
                 assert response.status == 200
                 assert await response.json() == {
@@ -1622,40 +1606,68 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-def test_degraded_default_ordering_composes_latent_before_conditioning(
+def test_degraded_default_ordering_composes_provider_before_consumer(
     tmp_path: Path,
 ) -> None:
     """A broken pack must not make healthy consumers compose before providers."""
+    import shutil
+
+    from dinkster_server import PackInfo
+    from test_compose import write_contract_manifest
+
     import dinkster.serve as serve
     from dinkster.compose import (
         CompositionError,
         PackSpec,
         ServingComposer,
-        default_pack_spec,
         load_manifest,
         resolve_manifest_path,
     )
 
-    broken = tmp_path / "ordering-probe"
-    broken.mkdir()
-    (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
-        'namespaces = ["probe"]\n'
-        "[pack.requirements.capabilities]\n"
-        '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
-        '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
-        encoding="utf-8",
+    provider = tmp_path / "provider"
+    shutil.copytree(TESTS_DIR / "fixtures/pack-testing", provider)
+    consumer = write_contract_manifest(
+        tmp_path / "consumer",
+        "consumer",
+        '[pack.dependencies]\nexample-tally = ">=0.0.1,<1"\n',
+        namespace="consumer",
+        nodes_entry="consumer_nodes:NODES",
     )
-    specs: list[PackSpec] = [
-        default_pack_spec("dinkster-conditioning"),
-        default_pack_spec("dinkster-latent"),
-        PackSpec(manifest=broken / "dinkster-pack.toml"),
+    (consumer.parent / "consumer_nodes.py").write_text("""
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+class Count(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(
+            node_type="consumer.count",
+            inputs=(InputSpec("counts", TypeExpr.concrete("example-tally.counts")),),
+            outputs=(OutputSpec("count", TypeExpr.concrete("INT")),),
+        )
+    @classmethod
+    def execute(cls, *, counts):
+        return cls.outputs(count=sum(counts.values()))
+NODES = [Count]
+""")
+    broken = write_contract_manifest(
+        tmp_path / "broken",
+        "ordering-probe",
+        '[pack.requirements.capabilities]\n"ordering.probe" = ">=1,<2"\n',
+    )
+    specs = [
+        PackSpec(consumer, env={"PYTHONPATH": str(consumer.parent)}),
+        PackSpec(
+            provider,
+            env={"PYTHONPATH": str(provider / "src")},
+            packs={
+                "example-tally": PackInfo(
+                    display_name="Example tally",
+                    version="0.0.1",
+                    artifact_digest="blake3:" + "a" * 64,
+                )
+            },
+        ),
+        PackSpec(broken),
     ]
-    # Load order is alphabetical, and it puts the consumer before its provider.
-    from dinkster.compose import default_pack_ids
-
-    load_order = list(default_pack_ids())
-    assert load_order.index("dinkster-conditioning") < load_order.index("dinkster-latent")
     composer = ServingComposer()
 
     async def scenario() -> None:
@@ -1672,12 +1684,11 @@ def test_degraded_default_ordering_composes_latent_before_conditioning(
                 errors[pack] = str(error)
             else:
                 deltas[pack] = set(delta.schemas)
-        assert list(errors) == ["dinkster-ordering-probe"]
-        assert "dinkster.ordering.probe" in errors["dinkster-ordering-probe"]
-        assert "dinkster-latent" in deltas
-        assert "dinkster.latent.empty_latent_image" in deltas["dinkster-latent"]
-        assert "dinkster-conditioning" in deltas, errors
-        assert "dinkster.conditioning.clip_text_encode" in deltas["dinkster-conditioning"]
+        assert list(errors) == ["ordering-probe"]
+        assert "ordering.probe" in errors["ordering-probe"]
+        assert "example-tally.shout" in deltas["example-tally"]
+        assert "consumer" in deltas, errors
+        assert "consumer.count" in deltas["consumer"]
 
     async def compose_and_close() -> None:
         try:
@@ -1688,16 +1699,46 @@ def test_degraded_default_ordering_composes_latent_before_conditioning(
     run_scenario(compose_and_close())
 
 
+def prepare_tally_manifest(directory: Path) -> Path:
+    import shutil
+
+    from dinkster_workers.doctor import prepare_catalog
+
+    root = directory / "default-pack"
+    shutil.copytree(TESTS_DIR / "fixtures/pack-testing", root)
+    manifest = root / "dinkster-pack.toml"
+    assert prepare_catalog(manifest, environment={"PYTHONPATH": str(root / "src")}).ok
+    return manifest
+
+
+def fixture_default_serve_command(port: int, directory: Path, *args: str) -> list[str]:
+    manifest = prepare_tally_manifest(directory)
+    environment = {"PYTHONPATH": str(manifest.parent / "src")}
+    bootstrap = f"""
+from pathlib import Path
+import sys
+from dinkster import serve
+from dinkster.compose import PackSpec
+
+sys.path.insert(0, {str(manifest.parent / "src")!r})
+serve.default_pack_ids = lambda: ("example-tally",)
+serve.default_pack_spec = lambda _pack_id: PackSpec(Path({str(manifest)!r}), env={environment!r})
+serve.main()
+"""
+    return [sys.executable, "-c", bootstrap, *serve_command(port, *args)[3:]]
+
+
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
     """The default and explicit packs announce after the diagnostic host binds."""
     manifest = write_iso_manifest(tmp_path / "pack")
-    default_packs = run_scenario(_default_pack_names())
+    default_packs = ("example-tally",)
     final_epoch = len(default_packs) + 2
     port = free_port()
     env = {**os.environ, "PYTHONPATH": str(TESTS_DIR)}
     process, log = start_logged_serve(
-        serve_command(
+        fixture_default_serve_command(
             port,
+            tmp_path,
             "--pack",
             str(manifest.relative_to(tmp_path)),
             "--event-loop-stall-threshold",
@@ -1740,9 +1781,8 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             async with session.get(base + "/api/composition") as resp:
                 composition = await resp.json()
             assert data["epoch"] == final_epoch, composition
-            assert data["nodes"]["dinkster.utilities.primitive_int"]["pack"] == "dinkster-utilities"
-            assert data["nodes"]["dinkster.video.load_video"]["pack"] == "dinkster-video"
-            assert data["nodes"]["dinkster.image.image_scale"]["pack"] == "dinkster-image"
+            assert data["nodes"]["example-tally.shout"]["pack"] == "example-tally"
+            assert data["nodes"]["example-tally.tally"]["pack"] == "example-tally"
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             assert "dinkster.route.switch_by_name" not in data["nodes"]
             # Fully composed, positively: the last announcement and the
@@ -1770,7 +1810,6 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
                 for index, name in enumerate(default_packs)
             }
             expected_packs["isopack"] = {"state": "announced", "epoch": final_epoch}
-            assert data["nodes"]["dinkster.text.string_length"]["pack"] == "dinkster-text"
             assert "StringLength" not in data["nodes"]
             assert "dinkster.ksampler" not in data["nodes"]
             assert report["packs"] == expected_packs
@@ -1785,49 +1824,28 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
         stop_logged_serve(process, log, pending_error)
 
 
-@pytest.mark.parametrize(
-    ("failed_pack", "surviving_pack", "present_node", "missing_node"),
-    [
-        (
-            "dinkster-utilities",
-            "dinkster-video",
-            "dinkster.video.load_video",
-            "dinkster.utilities.primitive_int",
-        ),
-        (
-            "dinkster-video",
-            "dinkster-utilities",
-            "dinkster.utilities.primitive_int",
-            "dinkster.video.load_video",
-        ),
-        (
-            "dinkster-image",
-            "dinkster-utilities",
-            "dinkster.utilities.primitive_int",
-            "dinkster.image.image_scale",
-        ),
-    ],
-)
+@pytest.mark.parametrize("failure_first", [True, False])
 @pytest.mark.timeout(360)
 def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
-    monkeypatch: pytest.MonkeyPatch,
-    failed_pack: str,
-    surviving_pack: str,
-    present_node: str,
-    missing_node: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_first: bool
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
 
     from dinkster import serve
+    from dinkster.compose import PackSpec
 
+    manifest = prepare_tally_manifest(tmp_path)
+    failed_pack, surviving_pack = "isopack", "example-tally"
+    present_node, missing_node = "example-tally.shout", "iso.chatty"
+    defaults = (failed_pack, surviving_pack) if failure_first else (surviving_pack, failed_pack)
     observed: dict[str, object] = {}
 
-    real_default_pack_spec = serve.default_pack_spec
-
-    def fail_one_default(pack_id: str) -> object:
+    def fail_one_default(pack_id: str) -> PackSpec:
         if pack_id == failed_pack:
             raise RuntimeError("default pack bytes unavailable")
-        return real_default_pack_spec(pack_id)
+        return PackSpec(manifest, env={"PYTHONPATH": str(manifest.parent / "src")})
+
+    monkeypatch.setattr(serve, "default_pack_ids", lambda: defaults)
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         async def inspect() -> None:
@@ -2040,19 +2058,13 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
 def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None:
     """A pack that cannot compose (reserved name) does NOT take the process
     down by default: the failure is cached on /api/composition with its
-    error, the utilities pack keeps serving, and composition still completes -
+    error, the healthy pack keeps serving, and composition still completes -
     positively, with the failure on the record instead of a dead server
     (the anti-ComfyUI: broken extensions were just silently absent)."""
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
     port = free_port()
-    bootstrap = """
-from dinkster import serve
-
-serve.default_pack_ids = lambda: ("dinkster-utilities",)
-serve.main()
-"""
     process = subprocess.Popen(
-        [sys.executable, "-c", bootstrap, *serve_command(port, "--pack", str(manifest))[3:]],
+        fixture_default_serve_command(port, tmp_path, "--pack", str(manifest)),
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -2081,8 +2093,8 @@ serve.main()
             # complete - the failure is on the record, not on the surface.
             async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
-            assert data["nodes"]["dinkster.utilities.make_list"]["pack"] == "dinkster-utilities"
-            assert report["packs"]["dinkster-utilities"]["state"] == "announced"
+            assert data["nodes"]["example-tally.shout"]["pack"] == "example-tally"
+            assert report["packs"]["example-tally"]["state"] == "announced"
             assert "composing" not in data
             assert process.poll() is None, "pack failure must not kill serve"
 

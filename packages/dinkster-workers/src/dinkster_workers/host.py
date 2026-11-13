@@ -822,6 +822,7 @@ async def serve_many(
 ) -> None:
     """Load every pack before opening any boundary, then serve all peers."""
     process_resource_tasks: set[asyncio.Task[None]] = set()
+    process_acknowledged_invocations: set[asyncio.Task[None]] = set()
     process_maintenance_operations: set[tuple[object, str]] = set()
     loaded: list[tuple[Any, ...]] = []
     for path in manifest_paths:
@@ -895,6 +896,7 @@ async def serve_many(
                 codec=ValueCodec(registry, shm_threshold=shm_threshold, use_shm=use_shm),
                 workgroup_handler=workgroup_handler,
                 process_resource_tasks=process_resource_tasks,
+                process_acknowledged_invocations=process_acknowledged_invocations,
                 process_maintenance_operations=process_maintenance_operations,
             )
 
@@ -937,6 +939,7 @@ async def serve_connection(
     value_store: ValueStore | None = None,
     resume: ResumableConversation | None = None,
     process_resource_tasks: set[asyncio.Task[None]] | None = None,
+    process_acknowledged_invocations: set[asyncio.Task[None]] | None = None,
     process_maintenance_operations: set[tuple[object, str]] | None = None,
 ) -> None:
     """Serve one boundary conversation on an already-established stream.
@@ -959,6 +962,7 @@ async def serve_connection(
     send_lock = asyncio.Lock()
     sent_segments: dict[str, SharedMemory] = {}
     tasks: dict[str, asyncio.Task[None]] = {}
+    terminal_invocations: set[str] = set()
     cancellation_events: dict[str, threading.Event] = {}
     run_contexts: dict[str, BoundaryRunContext] = {}
     # In-flight stageAssets requests: requestId -> (task, abort event). The
@@ -984,6 +988,9 @@ async def serve_connection(
     connection_token = object()
     resource_tasks: set[asyncio.Task[None]] = (
         process_resource_tasks if process_resource_tasks is not None else set()
+    )
+    acknowledged_invocations: set[asyncio.Task[None]] = (
+        process_acknowledged_invocations if process_acknowledged_invocations is not None else set()
     )
     maintenance_operations: set[tuple[object, str]] = (
         process_maintenance_operations if process_maintenance_operations is not None else set()
@@ -1033,6 +1040,10 @@ async def serve_connection(
         blobs: Sequence[bytes] = (),
         segments: Sequence[SharedMemory] = (),
     ) -> None:
+        if header.get("type") == "result":
+            invocation_id = str(header["invocationId"])
+            if tasks.get(invocation_id) is asyncio.current_task():
+                terminal_invocations.add(invocation_id)
         async with send_lock:
             for segment in segments:
                 # Handle stays open until the parent acks: Windows frees a
@@ -1755,6 +1766,7 @@ async def serve_connection(
             # drain may suspend while the parent requests full release.
             await send_report()
             tasks.pop(invocation_id, None)
+            terminal_invocations.discard(invocation_id)
             if resume is not None and cancellation.is_set():
                 finish_resumable_cancellation(invocation_id)
 
@@ -2268,6 +2280,13 @@ async def serve_connection(
                 maintenance_operations.discard((connection_token, operation_id))
             await send(reply)
             return
+        pending = {task for task in resource_tasks if not task.done()}
+        if pending and pending <= acknowledged_invocations:
+            # The parent has adopted these terminal results. Only cleanup
+            # remains, and it must settle before snapshotting releasable storage.
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in pending), return_exceptions=True
+            )
         active_work = bool(
             cancellation_events
             or workgroup_tasks
@@ -3027,8 +3046,17 @@ async def serve_connection(
                 # its gate can see them now, so this side's hold ends.
                 invocation_id = str(header.get("invocationId"))
                 if resume is not None:
-                    key = InvocationKey.from_header(header)
                     resume.acknowledge_result(header)
+                task = tasks.get(invocation_id)
+                if (
+                    invocation_id in terminal_invocations
+                    and task is not None
+                    and task not in acknowledged_invocations
+                ):
+                    acknowledged_invocations.add(task)
+                    task.add_done_callback(acknowledged_invocations.discard)
+                if resume is not None:
+                    key = InvocationKey.from_header(header)
                     inflight_result_refs.pop(invocation_id, None)
                     await send({"type": "resultAcked", **key.to_wire()})
                 else:

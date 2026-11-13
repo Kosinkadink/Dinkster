@@ -2041,12 +2041,13 @@ def test_cli_publishes_exact_archive_with_optional_published_locks(
 # ---------------------------------------------------------------------------
 
 
-def make_git_repo(directory: Path, name: str = "demo") -> Path:
-    """A throwaway fixture repository with one committed pack."""
-    write_pack(directory, name)
+@pytest.fixture
+def git_pack(tmp_path: Path, git_server) -> tuple[Path, str]:
+    directory = git_server["root"] / tmp_path.name
+    write_pack(directory, "demo")
     _git(directory, "init", "-q")
     _commit(directory, "init")
-    return directory
+    return directory, git_server["url"].replace("source.git", f"{directory.name}/.git")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -2073,15 +2074,8 @@ def _commit(repo: Path, message: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-@pytest.fixture
-def public_git_pack(tmp_path: Path, git_server):
-    repo = make_git_repo(git_server["root"] / tmp_path.name)
-    git_server["config"].write_text("")
-    return repo, git_server["url"].replace("source.git", f"{repo.name}/.git")
-
-
-def test_lock_git_pack_pins_the_commit(tmp_path: Path, public_git_pack) -> None:
-    repo, url = public_git_pack
+def test_lock_git_pack_pins_the_commit(tmp_path: Path, git_pack: tuple[Path, str]) -> None:
+    repo, url = git_pack
     head = _git(repo, "rev-parse", "HEAD")
     entry, archive = lock_git_pack(url, tmp_path / "artifacts")
     assert entry.pack == "demo"
@@ -2094,8 +2088,8 @@ def test_lock_git_pack_pins_the_commit(tmp_path: Path, public_git_pack) -> None:
     assert rebuilt == entry.artifact_digest
 
 
-def test_lock_git_pack_ref_selects_history(tmp_path: Path, public_git_pack) -> None:
-    repo, url = public_git_pack
+def test_lock_git_pack_ref_selects_history(tmp_path: Path, git_pack: tuple[Path, str]) -> None:
+    repo, url = git_pack
     _git(repo, "tag", "v1")
     (repo / "demo_nodes.py").write_text("NODES = [2]\n")
     _commit(repo, "change")
@@ -2105,11 +2099,11 @@ def test_lock_git_pack_ref_selects_history(tmp_path: Path, public_git_pack) -> N
     assert at_tag.source.endswith(_git(repo, "rev-parse", "v1"))
 
 
-def test_lock_git_pack_fails_loudly(tmp_path: Path, public_git_pack) -> None:
-    _repo, url = public_git_pack
-    with pytest.raises(InstallError, match="public HTTPS URL"):
-        lock_git_pack(f"file://{tmp_path}/nowhere", tmp_path / "artifacts")
-    with pytest.raises(InstallError, match="cannot fetch"):
+def test_lock_git_pack_fails_loudly(tmp_path: Path, git_pack: tuple[Path, str]) -> None:
+    _, url = git_pack
+    with pytest.raises(InstallError, match="cannot fetch public git source"):
+        lock_git_pack(url.replace("/.git", "/nowhere.git"), tmp_path / "artifacts")
+    with pytest.raises(InstallError, match="cannot fetch public git source"):
         lock_git_pack(url, tmp_path / "artifacts", ref="no-such-ref")
 
 
@@ -2152,13 +2146,13 @@ def test_acquire_refuses_changed_or_vanished_local_source(tmp_path: Path) -> Non
 
 
 def test_acquire_refetches_git_source_at_the_recorded_commit(
-    tmp_path: Path, public_git_pack
+    tmp_path: Path, git_pack: tuple[Path, str]
 ) -> None:
     """git: provenance pins the exact commit, so re-acquisition succeeds
     even after the branch moves on - the recorded commit is checked out,
     not HEAD."""
     installer = make_installer(tmp_path)
-    repo, url = public_git_pack
+    repo, url = git_pack
     entry, archive = lock_git_pack(url, installer.artifacts_dir)
     (repo / "demo_nodes.py").write_text("NODES = [2]\n")
     _commit(repo, "moved on")
@@ -2617,10 +2611,10 @@ def test_cli_published_restore_routes_require_managed_generation(
 
 
 def test_cli_git_install_and_update(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], public_git_pack
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], git_pack: tuple[Path, str]
 ) -> None:
     root = str(tmp_path / "root")
-    repo, url = public_git_pack
+    repo, url = git_pack
 
     run_cli("--root", root, "install", "--no-venv", "--yes", f"git+{url}")
     out = capsys.readouterr().out

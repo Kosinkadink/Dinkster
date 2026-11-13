@@ -39,6 +39,7 @@ from dinkster_workers.provision import ProvisionError
 from . import __version__ as engine_version
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
+from .registries import RegistryConfig
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
@@ -105,7 +106,11 @@ def prepare_pack_locks(
                 artifacts[entry.pack], Path(directory) / entry.pack, entry.artifact_digest
             )
             manifests.append(_manifest(source, entry))
-        for manifest in manifests:
+        for entry, manifest in zip(lock.packs, manifests, strict=True):
+            pack_indexes = tuple(indexes)
+            if entry.source.startswith("registry:"):
+                registry = RegistryConfig().registry_for(entry)
+                pack_indexes += (registry.endpoint + f"/static/{variant}/simple/",)
             dependency_lock = resolve_pack_lock(
                 pack=manifest.name,
                 variant=variant,
@@ -114,7 +119,7 @@ def prepare_pack_locks(
                 ),
                 python=Path(sys.executable),
                 constraints=constraints,
-                indexes=indexes,
+                indexes=pack_indexes,
                 find_links=find_links,
                 engine=manifest.compatibility.engine if manifest.compatibility else None,
                 uv=uv,
