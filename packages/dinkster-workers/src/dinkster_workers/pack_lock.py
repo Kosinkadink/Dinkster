@@ -347,7 +347,7 @@ def plan_pack(
             version is None
             or not requirement.specifier.contains(version, prereleases=True)
             or requirement.url is not None
-            and name in shared_changes
+            and name in generation.versions
         ):
             conflicts.append(
                 f"{text}: {name}=={version or 'absent'} does not satisfy the requirement"

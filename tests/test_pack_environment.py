@@ -1063,6 +1063,13 @@ def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path
     path = tmp_path / "pack-lock.json"
     lock.write(path)
     assert PackLock.read(path) == lock
+    parent = _generation(tmp_path / "generation", [stale])
+    plan = plan_pack(
+        lock, GenerationPackages.inspect(parent), variant="linux-cpu", own_environment_size=9
+    )
+    assert plan.conflicts
+    with pytest.raises(ProvisionError, match="does not satisfy the requirement"):
+        plan.require_layering()
 
 
 def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> None:
