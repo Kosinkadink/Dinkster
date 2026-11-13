@@ -324,7 +324,8 @@ def plan_pack(
     selected = {
         canonicalize_name(parse_wheel_filename(wheel.filename)[0]): wheel for wheel in wheels
     }
-    pending = [(text, "") for text in lock.requirements]
+    pending: list[tuple[str, str]] = [(name, "") for name in selected] if shared_changes else []
+    pending.extend((text, "") for text in lock.requirements)
     visited: set[tuple[str, str]] = set()
     while pending:
         text, extra = pending.pop()
