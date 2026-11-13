@@ -114,7 +114,12 @@ those jobs. Other changes run Ruff format, Ruff lint and both platform
 Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
 only these checks. Ready pull requests run the whole configured kept Linux
 suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
-pack-only changes. There is no hand-picked file list, network-marker exclusion
+pack-only changes. Frontend decoding reads the live catalog of an isolated
+CPU generation created by supervisor setup from the current engine checkout.
+Setup prepares its catalogs before sealing; serving uses that generation's
+interpreter and admitted packs, not the test environment or checkout defaults.
+An unavailable default pack or an empty default catalog fails the export.
+There is no hand-picked file list, network-marker exclusion
 or changed-path runtime deselection. The four audited environment suites retain
 their existing nonblocking policy under #867.
 
