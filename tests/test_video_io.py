@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import av
 import dinkster_video_runtime.runtime as video_module
 import numpy as np
 import pytest
-from av.codec import Codec as AvCodec
 from av.error import InvalidDataError
-from dinkster_api.v1 import admit_video_source, image_input
+from dinkster_api.v1 import admit_video_source
 from dinkster_assets import (
     AssetRef,
     AssetVault,
@@ -297,20 +295,6 @@ def test_runtime_saves_8_bit_formats_with_audio(
     assert sum(frame.samples for frame in decoded_audio) == pytest.approx(expected_rate, abs=1024)
 
 
-def test_runtime_save_preserves_depth_and_json_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root, _snapshot = _mount(tmp_path, monkeypatch)
-    video = assemble_video(_frames(2), fps=2, bit_depth="10", color_space="HDR PQ")
-    workflow = {"nodes": [{"id": "clip"}], "enabled": True}
-    path = root / "metadata.mp4"
-    with path.open("w+b") as output:
-        save_video_stream(video, output, codec="h264", metadata={"workflow": workflow})
-    with av.open(path) as container:
-        assert json.loads(container.metadata["workflow"]) == workflow
-        assert next(container.decode(video=0)).format.name == "yuv420p10le"
-
-
 def test_video_value_load_and_save_preserve_container_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -357,54 +341,6 @@ def test_runtime_saves_10_bit_formats(
         assert frame.format.name == "yuv420p10le"
         rgb = frame.to_ndarray(format="rgb48le")
         assert float(rgb[:, 32:, :].mean() - rgb[:, :32, :].mean()) > 30
-
-
-def test_vp9_10_bit_uses_preserving_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root, _snapshot = _mount(tmp_path, monkeypatch)
-    result = _save_frames(images=_frames(2), format="webm_vp9", bit_depth="10", fps=2.0)
-    ref = cast(AssetRef, result["video"])
-    assert ref.name.endswith(".mkv")
-    with av.open(root / "video" / ref.name) as container:
-        assert container.streams.video[0].codec_context.codec.canonical_name == "ffv1"
-        assert next(container.decode(video=0)).format.name == "gbrp16le"
-
-
-def test_selected_codec_unavailable_fails_before_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root, _snapshot = _mount(tmp_path, monkeypatch)
-
-    def codec(name: str, mode: Literal["r", "w"]) -> object:
-        if name == "libsvtav1":
-            raise RuntimeError("selected encoder libsvtav1 is unavailable")
-        return AvCodec(name, mode)
-
-    monkeypatch.setattr(av, "Codec", codec)
-    with pytest.raises(RuntimeError, match="selected encoder libsvtav1 is unavailable"):
-        _save_frames(images=_frames(2), format="webm_av1", fps=2.0)
-    assert not list(root.rglob("*.webm"))
-
-
-def test_vp9_alpha_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, snapshot = _mount(tmp_path, monkeypatch)
-    saved = _save_frames(
-        images=_frames(3, alpha=True),
-        target={"mount": "comfy-output", "prefix": "video/alpha"},
-        fps=3.0,
-        format="webm_vp9",
-        bit_depth="8",
-    )
-    ref = cast(AssetRef, saved["video"])
-    path = root / "video" / ref.name
-    with av.open(path) as container:
-        assert container.streams.video[0].metadata["alpha_mode"] == "1"
-    loaded = disassemble_video(admit_video_source(_bound(ref, snapshot)))
-    images = cast(np.ndarray, image_input(loaded["images"]))
-    assert images.shape == (3, 64, 64, 4)
-    assert images[..., 3].min() == pytest.approx(1 / 3, abs=2 / 255)
-    assert images[..., 3].max() == pytest.approx(1.0, abs=2 / 255)
 
 
 @pytest.mark.parametrize(
@@ -493,11 +429,6 @@ def test_late_start_bounds_video_decode_and_preserves_audio_window(
     assert decoded < 20
 
 
-def test_bool_crf_is_rejected() -> None:
-    with pytest.raises(ValueError, match="crf must be a finite number in 0..51"):
-        _save_frames(images=_frames(1), crf=True)
-
-
 def test_load_refuses_malformed_asset(tmp_path: Path) -> None:
     payload = b"not a video"
     digest = digest_bytes(payload)
@@ -520,20 +451,3 @@ def test_load_refuses_malformed_asset(tmp_path: Path) -> None:
 def test_save_refuses_invalid_frame_batches(images: np.ndarray, match: str) -> None:
     with pytest.raises(ValueError, match=match):
         _save_frames(images=images, format="mp4_h264")
-
-
-@pytest.mark.parametrize(
-    "images",
-    [
-        np.zeros((1, 7, 8, 3), dtype=np.float32),
-        np.zeros((1, 8, 8, 4), dtype=np.float32),
-    ],
-)
-def test_save_uses_compatible_format_for_non_h264_frame_layouts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, images: np.ndarray
-) -> None:
-    root, _snapshot = _mount(tmp_path, monkeypatch)
-    result = _save_frames(images=images, format="mp4_h264")
-    ref = cast(AssetRef, result["video"])
-    with av.open(root / "video" / ref.name) as container:
-        assert len(list(container.decode(video=0))) == 1

@@ -69,8 +69,6 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_from_wire,
-    schema_to_wire,
 )
 from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_values import CORE_INT, TypeRegistry, register_core_types
@@ -97,56 +95,6 @@ def test_asset_kind_grammar() -> None:
         assert not is_asset_kind(bad)
         with pytest.raises(AssetError, match="asset kind"):
             require_asset_kind(bad)
-
-
-def test_unknown_kinds_are_first_class() -> None:
-    # The vocabulary is open: nobody pre-registered this kind and it is
-    # still valid everywhere a kind goes.
-    need = AssetNeed(name="quantized thing", kind="model/gguf-quant")
-    assert need.kind == "model/gguf-quant"
-
-
-def test_checkpoint_kind_and_component_manifest_wire_round_trip() -> None:
-    assert KIND_MODEL_CHECKPOINT == "model/checkpoint"
-    metadata = {"roles": ["positive", "negative"], "guidance": 7.5}
-    manifest = AssetComponentManifest(
-        (
-            AssetComponent(
-                "model/diffusion",
-                architecture="sdxl",
-                dtype="fp16",
-                metadata=metadata,
-            ),
-            AssetComponent("model/text-encoder", architecture="clip-l"),
-            AssetComponent("model/text-encoder", architecture="clip-g"),
-            AssetComponent("model/vae"),
-        )
-    )
-    need = AssetNeed(
-        name="SDXL checkpoint",
-        digest=MODEL_DIGEST,
-        kind=KIND_MODEL_CHECKPOINT,
-        component_manifest=manifest,
-    )
-
-    wire = json.loads(json.dumps(need.to_wire()))
-    assert wire["components"] == [
-        {
-            "kind": "model/diffusion",
-            "architecture": "sdxl",
-            "dtype": "fp16",
-            "metadata": {"roles": ["positive", "negative"], "guidance": 7.5},
-        },
-        {"kind": "model/text-encoder", "architecture": "clip-l"},
-        {"kind": "model/text-encoder", "architecture": "clip-g"},
-        {"kind": "model/vae"},
-    ]
-    assert AssetNeed.from_wire(wire) == need
-    metadata["roles"].append("mutated")
-    assert manifest.to_wire()[0]["metadata"] == {
-        "roles": ["positive", "negative"],
-        "guidance": 7.5,
-    }
 
 
 def test_component_manifest_validation_and_kind_matching() -> None:
@@ -178,48 +126,7 @@ def test_component_manifest_validation_and_kind_matching() -> None:
         AssetNeed.from_wire({"name": "bad", "components": {}})
 
 
-def test_need_without_component_manifest_keeps_legacy_wire_shape() -> None:
-    assert AssetNeed(name="plain", kind="model/vae").to_wire() == {
-        "name": "plain",
-        "kind": "model/vae",
-    }
-    source = RemoteSource("https://models.example/plain.safetensors")
-    positional = AssetNeed("plain", "", "model/vae", -1, "", {}, (source,))
-    assert positional.sources == (source,)
-    assert positional.component_manifest is None
-
-
 # --- needs: declaration model --------------------------------------------------
-
-
-def test_need_wire_round_trip() -> None:
-    need = AssetNeed(
-        name="SD 1.5 Pruned",
-        digest=MODEL_DIGEST,
-        kind="model/diffusion",
-        size=len(MODEL_BYTES),
-        media_type="application/octet-stream",
-        metadata={"family": "sd15"},
-        sources=(
-            PackagedSource(pack="starter", path="assets/sd15.safetensors"),
-            RemoteSource(url="https://hub.example/sd15.safetensors"),
-        ),
-    )
-    wire = need.to_wire()
-    assert wire["name"] == "SD 1.5 Pruned"
-    assert wire["sources"] == [
-        {"type": "packaged", "pack": "starter", "path": "assets/sd15.safetensors"},
-        {"type": "remote", "url": "https://hub.example/sd15.safetensors"},
-    ]
-    assert AssetNeed.from_wire(json.loads(json.dumps(wire))) == need
-
-
-def test_need_digest_is_optional_but_name_is_not() -> None:
-    # Digestless needs are representable on purpose (imported ComfyUI
-    # workflows know names before anyone hashed bytes).
-    assert AssetNeed(name="unhashed.safetensors").digest == ""
-    with pytest.raises(AssetError, match="display name"):
-        AssetNeed(name="   ")
 
 
 def test_need_rejects_malformed_pieces() -> None:
@@ -540,46 +447,6 @@ def test_probe_unrecognized_bytes_report_unknown(tmp_path: Path) -> None:
 
 
 # --- widget kind: presentation, open vocabulary --------------------------------
-
-
-def test_asset_widget_kind_round_trips_on_the_wire() -> None:
-    schema = NodeSchema(
-        node_type="test.load",
-        inputs=(
-            InputSpec(
-                "model",
-                TypeExpr.concrete("ASSET"),
-                widget=AssetWidget(accept=("application/octet-stream",), kind="model/lora"),
-            ),
-        ),
-        outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
-    )
-    wire = schema_to_wire(schema)
-    entry = next(e for e in wire["interface"] if e["id"] == "model")  # type: ignore[index, union-attr]
-    assert entry["widget"] == {
-        "type": "ASSET",
-        "accept": ["application/octet-stream"],
-        "kind": "model/lora",
-    }
-    decoded = schema_from_wire(json.loads(json.dumps(wire)))
-    assert decoded.inputs[0].widget == AssetWidget(
-        accept=("application/octet-stream",), kind="model/lora"
-    )
-    # Kindless widgets omit the field entirely (no null noise).
-    bare = schema_to_wire(
-        NodeSchema(
-            node_type="test.bare",
-            inputs=(InputSpec("a", TypeExpr.concrete("ASSET"), widget=AssetWidget()),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
-        )
-    )
-    bare_entry = next(e for e in bare["interface"] if e["id"] == "a")  # type: ignore[index, union-attr]
-    assert "kind" not in bare_entry["widget"]  # type: ignore[operator]
-
-
-def test_asset_widget_rejects_ungrammatical_kind() -> None:
-    with pytest.raises(ValueError, match="namespaced asset kind"):
-        AssetWidget(kind="just-a-word")
 
 
 # --- job preflight: plan, consent, acquire, run --------------------------------

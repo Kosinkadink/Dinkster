@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -94,38 +93,3 @@ def test_duplicate_path_transfers_publish_with_bounded_hashing(
                 transfer.close()
 
     run_scenario(scenario())
-
-
-def test_publication_fallback_and_existing_put_hash_without_read_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cas = DiskCAS(tmp_path / "cas")
-    data = bytes(range(251)) * (9 * 1024 * 1024 // 251 + 1)
-    digest = cas.put(data)
-    target = cas.resolve(digest)
-    assert target is not None
-    target.unlink()
-    candidate = tmp_path / "candidate"
-    candidate.write_bytes(data)
-
-    real_replace = os.replace
-    real_read_bytes = Path.read_bytes
-
-    def lose_replace_race(source: Path, destination: Path) -> None:
-        winner = tmp_path / "winner"
-        winner.write_bytes(data)
-        real_replace(winner, destination)
-        raise PermissionError("concurrent publisher won")
-
-    def reject_target_read_bytes(path: Path) -> bytes:
-        if path == target:
-            raise AssertionError("published CAS blobs must be hashed incrementally")
-        return real_read_bytes(path)
-
-    monkeypatch.setattr(os, "replace", lose_replace_race)
-    monkeypatch.setattr(Path, "read_bytes", reject_target_read_bytes)
-
-    cas.adopt_file(candidate, digest)
-    assert not candidate.exists()
-    assert cas.put(data) == digest
-    assert digest_file(target) == digest

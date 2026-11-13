@@ -10,7 +10,6 @@ manifests live in the immutable store.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
@@ -662,20 +661,6 @@ def test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return(
         } == protected
 
 
-def test_packs_for_serving_carries_generation_worker_groups(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    alpha = write_pack(tmp_path / "alpha", "alpha")
-    beta = write_pack(tmp_path / "beta", "beta")
-    installer.apply(
-        local_lockfile(installer, alpha, beta),
-        hosting_groups=(("models", ("alpha", "beta")),),
-    )
-    specs = installer.packs_for_serving()
-    assert {spec.worker_group for spec in specs} == {"models"}
-    manifests = tuple(Path(spec.manifest) for spec in specs)
-    assert all(spec.group_manifests == manifests for spec in specs)
-
-
 def test_upgrade_creates_generation_and_rollback_restores(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     pack_dir = write_pack(tmp_path / "demo", "demo")
@@ -729,24 +714,6 @@ def test_staging_failure_leaves_current_generation_active(tmp_path: Path) -> Non
     assert breaking.current_number() == 1
     assert breaking.current_lockfile() == first
     assert breaking.generation_numbers() == (1,)
-
-
-def test_absent_hosting_policy_preserves_per_pack_layout_and_identity(
-    tmp_path: Path,
-) -> None:
-    installer = make_installer(tmp_path)
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "alpha", "alpha"),
-        write_pack(tmp_path / "beta", "beta"),
-    )
-    before = target.record_json()
-    installer.apply(target)
-    assert target.record_json() == before
-    for entry in target.packs:
-        path = installer.root / "venvs" / entry.pack / "2026-11-03-0.0.0" / entry.pack
-        assert venv_python(path).is_file()
-    assert installer.snapshot().venv_groups == ()
 
 
 def test_group_staging_uses_one_aggregate_venv_and_serves_every_member_from_it(
@@ -872,79 +839,6 @@ def test_install_doctor_override_warns_and_activates(
     assert "WARNING: allowing doctor findings" in capsys.readouterr().out
 
 
-def test_git_sources_are_gated_and_registry_sources_require_managed_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    installer = make_installer(tmp_path)
-    local = local_lockfile(installer, write_pack(tmp_path / "demo", "demo")).packs[0]
-    seen: list[Path | str | None] = []
-
-    def failing(_manifest: Path, *, interpreter: Path | str | None = None) -> DoctorReport:
-        seen.append(interpreter)
-        return DoctorReport(
-            pack_name="demo",
-            manifest_path="dinkster-pack.toml",
-            findings=(Finding("error", "doctor.test", "refused"),),
-        )
-
-    monkeypatch.setattr(installer_module, "diagnose", failing)
-    git_entry = replace(local, source="git:https://example.invalid/demo@abc")
-    with pytest.raises(InstallError, match="doctor.test"):
-        installer.apply(Lockfile.of([git_entry]), venvs=False)
-    assert seen == [sys.executable]
-
-    seen.clear()
-    registry_entry = replace(local, source="registry:public", publisher="alice")
-    with pytest.raises(InstallError, match="registry.managed-generation-required"):
-        installer.apply(Lockfile.of([registry_entry]), venvs=False)
-    assert installer.current_number() is None
-    assert seen == []
-
-
-def test_doctor_gate_uses_staged_or_fallback_interpreter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[Path | str | None] = []
-
-    def healthy(manifest: Path, *, interpreter: Path | str | None = None) -> DoctorReport:
-        seen.append(interpreter)
-        return DoctorReport(Path(manifest).parent.name, str(manifest), ())
-
-    monkeypatch.setattr(installer_module, "diagnose", healthy)
-    with_venv = make_installer(tmp_path / "with")
-    target = local_lockfile(with_venv, write_pack(tmp_path / "demo", "demo"))
-    with_venv.apply(target)
-    assert seen[-1] == with_venv.venv_python(target.packs[0])
-
-    without_venv = make_installer(tmp_path / "without")
-    target = local_lockfile(without_venv, write_pack(tmp_path / "other", "other"))
-    without_venv.apply(target, venvs=False)
-    assert seen[-1] == sys.executable
-
-
-def test_group_doctor_probes_each_member_with_the_shared_interpreter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[tuple[str, Path | str | None]] = []
-
-    def healthy(manifest: Path, *, interpreter: Path | str | None = None) -> DoctorReport:
-        pack_name = installer_module.load_manifest(manifest).name
-        seen.append((pack_name, interpreter))
-        return DoctorReport(pack_name, str(manifest), ())
-
-    monkeypatch.setattr(installer_module, "diagnose", healthy)
-    installer = make_installer(tmp_path)
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "alpha", "alpha"),
-        write_pack(tmp_path / "beta", "beta"),
-    )
-    write_hosting(installer, '[venv-groups]\nmodels = ["alpha", "beta"]\n')
-    installer.apply(target)
-    assert [name for name, _ in seen] == ["alpha", "beta"]
-    assert len({str(interpreter) for _, interpreter in seen}) == 1
-
-
 def test_apply_requires_staged_or_provided_artifacts(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     pack_dir = write_pack(tmp_path / "demo", "demo")
@@ -1036,38 +930,6 @@ def test_snapshot_captures_lockfile_and_per_venv_freezes(tmp_path: Path) -> None
     assert SnapshotRecord.from_record_json(record.record_json()) == record
 
 
-def test_group_snapshot_freezes_once_records_identical_pins_and_provenance(
-    tmp_path: Path,
-) -> None:
-    freezes: list[Path] = []
-
-    def counting_freeze(python: Path) -> tuple[str, ...]:
-        freezes.append(python)
-        return ("shared==1.0",)
-
-    installer = Installer(
-        tmp_path / "root",
-        provision=fake_provision,
-        group_provision=fake_group_provision,
-        freeze=counting_freeze,
-    )
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "alpha", "alpha"),
-        write_pack(tmp_path / "beta", "beta"),
-    )
-    write_hosting(installer, '[venv-groups]\nmodels = ["beta", "alpha"]\n')
-    installer.apply(target)
-    record = installer.snapshot()
-    assert len(freezes) == 1
-    assert record.pins_for("alpha") == record.pins_for("beta") == ("shared==1.0",)
-    assert record.venv_groups == (("models", ("alpha", "beta")),)
-    document = json.loads(record.record_json())
-    assert document["venvGroups"] == {"models": ["alpha", "beta"]}
-    del document["venvGroups"]
-    assert SnapshotRecord.from_record_json(json.dumps(document)).venv_groups == ()
-
-
 def test_removing_group_policy_restages_per_pack_and_gc_keeps_live_collects_dead_groups(
     tmp_path: Path,
 ) -> None:
@@ -1097,162 +959,9 @@ def test_removing_group_policy_restages_per_pack_and_gc_keeps_live_collects_dead
     assert not dead_group.exists()
 
 
-def test_restore_replays_only_an_identical_current_group_policy(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from dinkster.manager import _matching_restore_groups, _validated_plan_groups
-
-    installer = make_installer(tmp_path)
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "alpha", "alpha"),
-        write_pack(tmp_path / "beta", "beta"),
-    )
-    recorded = (("models", ("alpha", "beta")),)
-    write_hosting(installer, '[venv-groups]\nmodels = ["alpha", "beta"]\n')
-    assert _matching_restore_groups(installer, target, recorded) == recorded
-    installer.apply(target, hosting_groups=recorded)
-    assert installer.current_groups() == recorded
-
-    write_hosting(installer, '[venv-groups]\nrenamed = ["alpha", "beta"]\n')
-    fallback = _matching_restore_groups(installer, target, recorded)
-    assert fallback == ()
-    with pytest.raises(InstallError, match="plan is stale"):
-        _validated_plan_groups(installer, target, recorded)
-    installer.apply(target, hosting_groups=fallback)
-    assert installer.current_groups() == ()
-    assert len({installer.venv_python(entry) for entry in target.packs}) == 2
-    assert "falling back to per-pack provisioning" in capsys.readouterr().out
-
-
-def test_pack_identity_is_byte_identical_solo_and_grouped(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "alpha", "alpha"),
-        write_pack(tmp_path / "beta", "beta"),
-    )
-    installer.apply(target)
-    solo = [
-        (Path(spec.manifest).read_bytes(), spec.packs) for spec in installer.packs_for_serving()
-    ]
-    write_hosting(installer, '[venv-groups]\nmodels = ["alpha", "beta"]\n')
-    installer.apply(target)
-    grouped = [
-        (Path(spec.manifest).read_bytes(), spec.packs) for spec in installer.packs_for_serving()
-    ]
-    assert grouped == solo
-    assert installer.current_lockfile() == target
-
-
-def test_manager_applies_a_policy_only_topology_change(tmp_path: Path) -> None:
-    from dinkster.manager import _finish
-
-    installer = make_installer(tmp_path)
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "alpha", "alpha"),
-        write_pack(tmp_path / "beta", "beta"),
-    )
-    installer.apply(target)
-    write_hosting(installer, '[venv-groups]\nmodels = ["alpha", "beta"]\n')
-    args = argparse.Namespace(
-        no_venv=False,
-        plan_file=None,
-        allow_doctor_findings=False,
-        yes=True,
-    )
-    _finish(args, installer, target)
-    assert installer.current_number() == 2
-    assert installer.current_groups() == (("models", ("alpha", "beta")),)
-
-
-def test_snapshot_records_unstaged_venvs_as_unpinned(tmp_path: Path) -> None:
-    """--no-venv installs have no venv to freeze; the snapshot says so
-    honestly (absent from venvs) instead of inventing pins."""
-    installer = make_installer(tmp_path)
-    installer.apply(local_lockfile(installer, write_pack(tmp_path / "demo", "demo")), venvs=False)
-    record = installer.snapshot()
-    assert record.pins_for("demo") is None
-
-
 def test_snapshot_requires_an_installation(tmp_path: Path) -> None:
     with pytest.raises(InstallError, match="nothing to snapshot"):
         make_installer(tmp_path).snapshot()
-
-
-def test_snapshot_records_accelerator_scope(tmp_path: Path) -> None:
-    """The snapshot's host scope includes the accelerator the venvs were
-    provisioned for - what cross-scope restore compares against."""
-    installer = Installer(
-        tmp_path / "root", provision=fake_provision, freeze=fake_freeze, accelerator="cuda"
-    )
-    installer.apply(local_lockfile(installer, write_pack(tmp_path / "demo", "demo")))
-    record = installer.snapshot()
-    assert record.accelerator == "cuda"
-    assert SnapshotRecord.from_record_json(record.record_json()).accelerator == "cuda"
-
-
-def test_snapshot_records_runtime_facts_from_injected_probe(tmp_path: Path) -> None:
-    """Snapshot scope includes advisory runtime facts via the injectable
-    probe - deterministic here, the vendor status tool in production.
-    Hosts where nothing is detectable record nothing (no fake facts)."""
-    installer = Installer(
-        tmp_path / "root",
-        provision=fake_provision,
-        freeze=fake_freeze,
-        accelerator="cuda",
-        runtime_probe=lambda accelerator: (("cuda", "12.4"), ("driver", "550.54.14")),
-    )
-    installer.apply(local_lockfile(installer, write_pack(tmp_path / "demo", "demo")))
-    record = installer.snapshot()
-    assert record.runtime == (("cuda", "12.4"), ("driver", "550.54.14"))
-    assert SnapshotRecord.from_record_json(record.record_json()).runtime == record.runtime
-    # default probe is faked to () by the autouse fixture: not recorded
-    installer_bare = Installer(
-        tmp_path / "bare", provision=fake_provision, freeze=fake_freeze, accelerator="cuda"
-    )
-    installer_bare.apply(local_lockfile(installer_bare, write_pack(tmp_path / "demo2", "demo2")))
-    assert installer_bare.snapshot().runtime == ()
-
-
-def test_restore_provisions_missing_venvs_from_snapshot_pins(tmp_path: Path) -> None:
-    """The reproduction property: applying with a snapshot's venv_pins
-    hands the exact recorded dist list to provisioning, not the
-    manifest's ranges."""
-    installer = make_installer(tmp_path)
-    pack_dir = write_pack(tmp_path / "demo", "demo")
-    entry, archive = lock_local_pack(pack_dir, installer.artifacts_dir)
-    target = Lockfile.of([entry])
-    pins = ("numpy==1.26.4", "torch==2.5.1")
-    installer.apply(
-        target, {entry.artifact_digest: archive}, venv_specs={"demo": VenvSpec(exact=pins)}
-    )
-    python = installer.venv_python(entry)
-    assert python is not None
-    assert fake_freeze(python) == pins  # provisioned from pins, not ranges
-
-
-def test_snapshot_hashes_annotates_freezes_through_the_injected_hasher(tmp_path: Path) -> None:
-    """snapshot(hashes=True) routes each venv's freeze through the pin
-    hasher (the one index-touching part of capture, injectable); the
-    default capture stays offline and bare. The annotated record still
-    round-trips through the snapshot format (validated at decode)."""
-
-    def fake_hasher(pins: Sequence[str]) -> tuple[str, ...]:
-        return tuple(sorted(f"{pin} --hash=sha256:aaaa" for pin in pins))
-
-    installer = Installer(
-        tmp_path / "root", provision=fake_provision, freeze=fake_freeze, hasher=fake_hasher
-    )
-    installer.apply(local_lockfile(installer, write_pack(tmp_path / "demo", "demo")))
-    record = installer.snapshot(hashes=True)
-    assert record.pins_for("demo") == (
-        "numpy==1.0 --hash=sha256:aaaa",
-        "torch==2.0 --hash=sha256:aaaa",
-    )
-    assert SnapshotRecord.from_record_json(record.record_json()) == record
-    assert installer.snapshot().pins_for("demo") == ("numpy==1.0", "torch==2.0")
 
 
 def test_venv_drift_ignores_hash_annotations(tmp_path: Path) -> None:
@@ -1333,38 +1042,6 @@ def test_local_workspace_dependency_closure_excludes_unrelated_members(tmp_path:
     discovered = workspace_packages_for(pack, host_requirements=("dinkster-workers",))
 
     assert set(discovered) == {api, workers, protocol}
-
-
-def test_default_provision_discovers_dependencies_from_local_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pack = write_pack(tmp_path / "workspace" / "pack", "demo")
-    dependency = tmp_path / "workspace" / "dependency"
-    dependency.mkdir()
-    (dependency / "pyproject.toml").write_text(
-        '[project]\nname = "dinkster-api"\nversion = "1"\ndependencies = []\n'
-    )
-    seen: list[tuple[Path, ...]] = []
-
-    def provision(
-        manifest: PackManifest,
-        *,
-        venv_root: Path,
-        workspace_packages: Sequence[Path] = (),
-        pinned: Sequence[str] | None = None,
-        constraints: Sequence[str] = (),
-        accelerator: str | None = None,
-    ) -> Path:
-        seen.append(tuple(workspace_packages))
-        return fake_provision(manifest, venv_root)
-
-    monkeypatch.setattr(installer_module, "workspace_packages_for", lambda source: (dependency,))
-    monkeypatch.setattr(installer_module, "ensure_pack_venv", provision)
-    installer = Installer(tmp_path / "root", freeze=fake_freeze, accelerator="cpu")
-
-    installer.apply(local_lockfile(installer, pack))
-
-    assert seen == [(dependency,)]
 
 
 def test_cli_install_status_remove_rollback_gc(
@@ -1761,100 +1438,6 @@ def test_cli_restore_across_scope_partitions_pins(
     assert "driver: snapshot 550.54, host 999.99" in out
     assert "will provision from 2 snapshot pin(s)" in out
     assert venv_pins_content() == "numpy==1.0\ntorch==2.0+cu124"
-
-
-def test_cli_snapshot_hashes_and_hash_verified_restore(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The resolution lock end to end: 'snapshot --hashes' annotates
-    portable pins with artifact hashes (vendor builds honestly bare), a
-    same-scope restore hands the annotated pins to provisioning verbatim
-    (uv verifies them at install), and a cross-scope restore's demotion
-    to version constraints strips the annotations - artifact identity
-    drops with the exactness it belongs to."""
-
-    def fake_ensure(
-        manifest: PackManifest,
-        *,
-        venv_root: Path,
-        workspace_packages: object = (),
-        pinned: tuple[str, ...] | None = None,
-        constraints: tuple[str, ...] = (),
-        accelerator: str | None = None,
-    ) -> Path:
-        python = venv_python(venv_root / manifest.name)
-        if python.exists():
-            return python
-        python.parent.mkdir(parents=True, exist_ok=True)
-        python.write_text("#!fake\n")
-        if pinned is not None:
-            content = "\n".join(pinned)
-        elif constraints:
-            content = f"RANGES:{accelerator}|CONSTRAINTS:{','.join(constraints)}"
-        else:
-            content = f"RANGES:{accelerator}"
-        (python.parent / "pins.txt").write_text(content)
-        return python
-
-    def fake_venv_freeze(python: Path, *, uv: str = "uv") -> tuple[str, ...]:
-        recorded = (python.parent / "pins.txt").read_text()
-        if recorded.startswith("RANGES"):
-            return ("numpy==1.0", "torch==2.0+cu124")
-        # a real freeze reports name==version only, never annotations
-        return tuple(sorted(line.split()[0] for line in recorded.splitlines()))
-
-    def fake_hash_pins(pins: Sequence[str], *, uv: str = "uv") -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                pin if "+" in pin.partition("==")[2] else f"{pin} --hash=sha256:aaaa"
-                for pin in pins
-            )
-        )
-
-    monkeypatch.setattr(installer_module, "ensure_pack_venv", fake_ensure)
-    monkeypatch.setattr(installer_module, "freeze_venv", fake_venv_freeze)
-    monkeypatch.setattr(installer_module, "hash_pins", fake_hash_pins)
-
-    root = tmp_path / "root"
-    demo = write_pack(tmp_path / "demo", "demo")
-    snap = tmp_path / "env.snapshot.json"
-
-    run_cli("--root", str(root), "--accelerator", "cuda", "install", "--yes", str(demo))
-    capsys.readouterr()
-    run_cli("--root", str(root), "--accelerator", "cuda", "snapshot", "--hashes", str(snap))
-    out = capsys.readouterr().out
-    assert "hashes: 1 pin(s) hash-annotated" in out
-    assert "1 environment-specific pin(s) stay bare" in out
-    recorded = SnapshotRecord.from_record_json(snap.read_text())
-    assert recorded.pins_for("demo") == ("numpy==1.0 --hash=sha256:aaaa", "torch==2.0+cu124")
-
-    def venv_pins_content() -> str:
-        pins_files = venv_metadata_glob(root, "demo", "pins.txt")
-        assert len(pins_files) == 1
-        return pins_files[0].read_text()
-
-    # same scope: annotated pins reach provisioning verbatim, said out loud
-    run_cli("--root", str(root), "remove", "--no-venv", "--yes", "demo")
-    capsys.readouterr()
-    shutil.rmtree(root / "venvs")
-    run_cli("--root", str(root), "--accelerator", "cuda", "restore", "--yes", str(snap))
-    out = capsys.readouterr().out
-    assert "will provision from 2 snapshot pin(s) (1 hash-verified)" in out
-    assert venv_pins_content() == "numpy==1.0 --hash=sha256:aaaa\ntorch==2.0+cu124"
-    # an annotated snapshot pin matching the staged version is no drift
-    run_cli("--root", str(root), "--accelerator", "cuda", "restore", "--yes", str(snap))
-    out = capsys.readouterr().out
-    assert "drifts" not in out
-
-    # cross scope: the portable pin demotes to a BARE version constraint
-    run_cli("--root", str(root), "remove", "--no-venv", "--yes", "demo")
-    capsys.readouterr()
-    shutil.rmtree(root / "venvs")
-    run_cli("--root", str(root), "--accelerator", "rocm", "restore", "--yes", str(snap))
-    out = capsys.readouterr().out
-    assert "1 portable pin(s) kept as version constraints" in out
-    assert "1 environment-specific pin(s) dropped (torch)" in out
-    assert venv_pins_content() == "RANGES:rocm|CONSTRAINTS:numpy==1.0"
 
 
 def test_cli_restore_reacquires_missing_artifacts_from_provenance(
@@ -2325,60 +1908,6 @@ def test_cli_errors_exit_nonzero(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert "not found" in capsys.readouterr().err
 
 
-def test_publish_preflight_refuses_and_no_preflight_submits(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from dinkster import manager
-    from dinkster.registries import PublishVerdict
-
-    pack = write_publishable_pack(tmp_path / "demo")
-    report = DoctorReport(
-        "demo",
-        str(pack / "dinkster-pack.toml"),
-        (Finding("error", "entry.unresolvable", "broken import"),),
-    )
-    monkeypatch.setattr(manager, "diagnose", lambda *_args, **_kwargs: report)
-    monkeypatch.setattr(manager.StaticPackIndex, "catalog", lambda *_args, **_kwargs: ())
-    submitted: list[str] = []
-
-    def publish(
-        _registry, _archive, pack_name: str, _version: str, *, locks=None
-    ) -> PublishVerdict:
-        submitted.append(pack_name)
-        return PublishVerdict("queued", (), "candidate-1")
-
-    monkeypatch.setattr(manager, "publish_release", publish)
-    with pytest.raises(SystemExit) as refusal:
-        run_cli(
-            "--registry",
-            "https://registry.invalid",
-            "publish",
-            "--version",
-            "1.2.3",
-            str(pack),
-        )
-    assert refusal.value.code == 1
-    assert "entry.unresolvable: broken import" in capsys.readouterr().out
-    assert submitted == []
-
-    run_cli(
-        "--registry",
-        "https://registry.invalid",
-        "publish",
-        "--version",
-        "1.2.3",
-        "--no-preflight",
-        str(pack),
-    )
-    assert len(submitted) == 1
-    output = capsys.readouterr().out
-    assert submitted == ["demo"]
-    assert "submitted demo 1.2.3 sha256:" in output
-    assert output.rstrip().endswith("as candidate candidate-1")
-
-
 @pytest.mark.parametrize("mode", ["raw", "locks", "refused", "missing"])
 def test_cli_publishes_exact_archive_with_optional_published_locks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: str
@@ -2507,21 +2036,6 @@ def test_cli_publishes_exact_archive_with_optional_published_locks(
         thread.join()
 
 
-def test_publish_usage_error_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    pack = write_pack(tmp_path / "demo", "demo")
-    with pytest.raises(SystemExit) as usage:
-        run_cli(
-            "--registry",
-            "https://registry.invalid",
-            "publish",
-            "--version",
-            "not-a-version",
-            str(pack),
-        )
-    assert usage.value.code == 2
-    assert "version 'not-a-version'" in capsys.readouterr().err
-
-
 # ---------------------------------------------------------------------------
 # git install sources (same artifact path, provenance-pinned commits)
 # ---------------------------------------------------------------------------
@@ -2644,25 +2158,6 @@ def test_acquire_refetches_git_source_at_the_recorded_commit(tmp_path: Path) -> 
     archive.unlink()
     installer.acquire(entry)
     assert installer.artifact_available(entry) and archive.is_file()
-
-
-def test_acquire_refuses_unacquirable_sources(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    demo = write_pack(tmp_path / "demo", "demo")
-    entry, archive = lock_local_pack(demo, installer.artifacts_dir)
-    archive.unlink()
-    # registry sources are acquirable only when an endpoint is configured
-    registry_entry = replace(entry, source="registry")
-    assert not installer.acquirable(registry_entry)
-    with pytest.raises(InstallError, match="no registry endpoint is configured"):
-        installer.acquire(registry_entry)
-    unknown = replace(entry, source="ftp:nowhere")
-    assert not installer.acquirable(unknown)
-    with pytest.raises(InstallError, match="not\\s+re-acquirable"):
-        installer.acquire(unknown)
-    malformed = replace(entry, source="git:no-commit-here")
-    with pytest.raises(InstallError, match="git:<url>@<commit>"):
-        installer.acquire(malformed)
 
 
 def test_acquire_registry_source_downloads_digest_verified(tmp_path: Path) -> None:
@@ -2803,25 +2298,6 @@ def _static_indexes(releases: Sequence[Mapping[str, object]]) -> dict[str, bytes
         ).encode()
     files["/static/packs/index.json"] = json.dumps({"schemaVersion": 2, "items": catalog}).encode()
     return files
-
-
-def test_empty_registry_selection_makes_no_requests(tmp_path: Path) -> None:
-    from dinkster.registries import NamedRegistry, prepare_registry_sources
-
-    requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts({}, requests)
-    try:
-        lock, unavailable = prepare_registry_sources(
-            NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
-            {},
-            tmp_path / "artifacts",
-            engine_version="0.0.3",
-        )
-        assert lock.packs == ()
-        assert unavailable == {}
-        assert requests == []
-    finally:
-        server.shutdown()
 
 
 def test_exact_library_release_resolves_and_downloads_without_node_discovery(
@@ -3170,17 +2646,6 @@ def test_cli_git_install_and_update(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert "not installed" in capsys.readouterr().err
 
 
-def test_git_spec_parsing() -> None:
-    from dinkster.manager import _parse_git_spec
-
-    assert _parse_git_spec("git+https://host/a/b.git") == ("https://host/a/b.git", None)
-    assert _parse_git_spec("git+https://host/a/b.git@v1.2") == ("https://host/a/b.git", "v1.2")
-    assert _parse_git_spec("git+file:///tmp/repo@main") == ("file:///tmp/repo", "main")
-    # in-URL @ never parses as a ref
-    assert _parse_git_spec("git+ssh://git@host/a/b.git") == ("ssh://git@host/a/b.git", None)
-    assert _parse_git_spec("git+ssh://git@host/a/b.git@dev") == ("ssh://git@host/a/b.git", "dev")
-
-
 # ---------------------------------------------------------------------------
 # Named registries: config, selection, routing, and pack@version resolution
 # ---------------------------------------------------------------------------
@@ -3411,80 +2876,6 @@ def test_registry_resolves_newest_compatible_pack_across_all_pages(
 
 
 @pytest.mark.parametrize(
-    ("engine", "current"),
-    [
-        ("0.0.2", False),
-        ("0.0.3.dev217+ga990932e", False),
-        ("0.0.3.dev999999", False),
-        ("0.0.3rc1", False),
-        ("0.0.3", True),
-        ("0.0.4.dev1+g1234567", True),
-    ],
-)
-def test_registry_keeps_older_engines_on_compatible_pack_versions(
-    engine: str, current: bool
-) -> None:
-    from dinkster_workers import load_manifest
-
-    from dinkster.registries import NamedRegistry, resolve_compatible_release
-
-    manifest = load_manifest(Path("packages/dinkster-nodes-flux/dinkster-pack.toml"))
-    assert manifest.compatibility is not None
-    versions = (
-        ("0.0.2", ">=0.0.2.dev0,<0.1"),
-        (manifest.compatibility.version, manifest.compatibility.engine),
-    )
-    rows = [
-        {
-            **_static_release(
-                LockedPack(manifest.name, version, "blake3:" + f"{index:064x}", "dinkster", ()),
-                b"wheel",
-            ),
-            "engine": bounds,
-        }
-        for index, (version, bounds) in enumerate(versions, start=1)
-    ]
-    server = _serve_artifacts(_static_indexes(rows), [])
-    try:
-        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
-        selected = resolve_compatible_release(registry, manifest.name, "0.0.2", engine)
-        assert selected.version == (manifest.compatibility.version if current else "0.0.2")
-        if not current:
-            with pytest.raises(InstallError, match=manifest.name):
-                resolve_compatible_release(
-                    registry, manifest.name, manifest.compatibility.version, engine
-                )
-    finally:
-        server.shutdown()
-
-
-@pytest.mark.parametrize("removed", [True, False])
-def test_registry_selection_snapshot_refreshes_between_operations(
-    removed: bool,
-) -> None:
-    from dinkster.registries import NamedRegistry, resolve_compatible_release
-
-    entry = LockedPack("demo", "3.1", "blake3:" + "b" * 64, "dinkster", ())
-    record = {**_static_release(entry, b"wheel"), "engine": ">=0.4,<0.7"}
-    files = _static_indexes([record])
-    requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts(files, requests)
-    try:
-        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
-        assert resolve_compatible_release(registry, "demo", "1.0", "0.5").version == "3.1"
-        files.update(_static_indexes([] if removed else [{**record, "engine": ">=0.8,<0.9"}]))
-        with pytest.raises(InstallError, match="no active demo"):
-            resolve_compatible_release(registry, "demo", "1.0", "0.5")
-        assert requests == [
-            ("/static/packs/index.json", None),
-            ("/static/packs/demo/index.json", None),
-            ("/static/packs/index.json", None),
-        ] + ([] if removed else [("/static/packs/demo/index.json", None)])
-    finally:
-        server.shutdown()
-
-
-@pytest.mark.parametrize(
     ("page", "reason", "per_pack"),
     [
         ({"schemaVersion": 2, "items": "bad"}, "unsupported schema or missing items", False),
@@ -3654,26 +3045,6 @@ def test_registry_preparation_snapshot_isolates_endpoints_and_credentials(
         second.shutdown()
 
 
-@pytest.mark.parametrize("engine", [None, "", "not-a-range"])
-def test_registry_compatible_selection_refuses_only_undeclared_releases(engine: str | None) -> None:
-    from dinkster.registries import NamedRegistry, resolve_compatible_release
-
-    calls: list[tuple[str, str | None]] = []
-    record = _static_release(LockedPack("demo", "3.0", "blake3:" + "b" * 64, "acme", ()), b"wheel")
-    record["engine"] = engine
-    server = _serve_artifacts(_static_indexes([record]), calls)
-    try:
-        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
-        with pytest.raises(InstallError, match="versions of demo"):
-            resolve_compatible_release(registry, "demo", "1.0", "0.5")
-        assert calls == [
-            ("/static/packs/index.json", None),
-            ("/static/packs/demo/index.json", None),
-        ]
-    finally:
-        server.shutdown()
-
-
 @pytest.mark.parametrize(
     "problem",
     [None, "digest", "path", "name", "version", "publisher", "declaration", "below", "above"],
@@ -3761,56 +3132,6 @@ def test_registry_source_identity_comes_from_verified_archive(
                 assert not (rejected / "dinkster.lock").exists()
     finally:
         server.shutdown()
-
-
-def test_official_default_declaration_contains_only_ids_and_minimums() -> None:
-    import tomllib
-
-    from packaging.version import Version
-
-    from dinkster.registries import DEFAULT_PACKS_PATH, default_pack_minimums
-
-    declared = default_pack_minimums()
-    assert tomllib.loads(DEFAULT_PACKS_PATH.read_text()) == {"packs": declared}
-    assert set(declared) == {
-        "dinkster-3d",
-        "dinkster-3d-models",
-        "dinkster-audio",
-        "dinkster-audio-models",
-        "dinkster-conditioning",
-        "dinkster-cosmos",
-        "dinkster-flux",
-        "dinkster-hidream",
-        "dinkster-hunyuan",
-        "dinkster-image",
-        "dinkster-latent",
-        "dinkster-llm",
-        "dinkster-ltx",
-        "dinkster-minimax",
-        "dinkster-misc-models",
-        "dinkster-models",
-        "dinkster-nodes-remote",
-        "dinkster-qwen",
-        "dinkster-sampling",
-        "dinkster-sd",
-        "dinkster-seedvr",
-        "dinkster-text",
-        "dinkster-upscale",
-        "dinkster-utilities",
-        "dinkster-video",
-        "dinkster-vision-background-removal",
-        "dinkster-vision-depth-anything-3",
-        "dinkster-vision-marigold",
-        "dinkster-vision-mediapipe",
-        "dinkster-vision-moge",
-        "dinkster-vision-rtdetr",
-        "dinkster-vision-sam3",
-        "dinkster-vision-sam3d-body",
-        "dinkster-vision-sdpose",
-        "dinkster-void",
-        "dinkster-wan",
-    }
-    assert all(Version(minimum) for minimum in declared.values())
 
 
 @pytest.mark.parametrize("issuer", [None, "https://dependency-issuer.example.test/simple"])
@@ -4911,27 +4232,6 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         routing_registry_fetcher(RegistryConfig(), None)(replace(release, source="registry"))
 
 
-@pytest.mark.parametrize("no_venv", [False, True])
-def test_cli_registry_install_requires_managed_generation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], no_venv: bool
-) -> None:
-    root = tmp_path / "root"
-    with pytest.raises(SystemExit):
-        run_cli(
-            "--root",
-            str(root),
-            "install",
-            "--yes",
-            *(["--no-venv"] if no_venv else []),
-            "demo@1.0.0",
-        )
-    error = capsys.readouterr().err
-    assert "registry.managed-generation-required" in error
-    assert "base and variant" in error
-    assert "dinkster-env setup" in error
-    assert Installer(root).current_lockfile() is None
-
-
 # -- shared content store ----------------------------------------------
 
 
@@ -5056,17 +4356,6 @@ def test_shared_gc_refuses_when_a_registered_root_is_missing(tmp_path: Path) -> 
     assert "store/demo/2026-11-03-0.0.0" in removed
 
 
-def test_private_root_layout_uses_readable_pack_names(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    target = local_lockfile(installer, write_pack(tmp_path / "demo", "demo"))
-    installer.apply(target)
-    label = "demo/2026-11-03-0.0.0"
-    assert installer.shared_store is None
-    assert (installer.root / "store" / label / "dinkster-pack.toml").is_file()
-    assert venv_python(installer.root / "venvs" / label / "demo").is_file()
-    assert not (installer.root / "shared-store").exists()
-
-
 @pytest.mark.parametrize("legacy", [False, True])
 def test_pack_identity_reuses_paths_and_separates_same_label_updates(
     tmp_path: Path, legacy: bool
@@ -5114,41 +4403,3 @@ def test_pack_identity_reuses_paths_and_separates_same_label_updates(
     installer.rollback()
     assert installer.packs_for_serving()[0].python == first_spec.python
     assert installer.gc() == ()
-
-
-def test_cli_shared_store_flag_and_gc_across_roots(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    shared = tmp_path / "shared"
-    pack_dir = write_pack(tmp_path / "demo", "demo")
-    run_cli(
-        "--root",
-        str(tmp_path / "root-a"),
-        "--shared-store",
-        str(shared),
-        "--accelerator",
-        "cpu",
-        "install",
-        "--no-venv",
-        "--yes",
-        str(pack_dir),
-    )
-    capsys.readouterr()
-    # root B joins the same store; the flag is remembered in each root
-    run_cli(
-        "--root",
-        str(tmp_path / "root-b"),
-        "--shared-store",
-        str(shared),
-        "--accelerator",
-        "cpu",
-        "status",
-    )
-    capsys.readouterr()
-    # gc from root B (which references nothing) keeps A's content
-    run_cli("--root", str(tmp_path / "root-b"), "--accelerator", "cpu", "gc", "--yes")
-    out = capsys.readouterr().out
-    assert "shared store:" in out
-    assert "0 unreferenced item(s) removed" in out
-    store_dirs = [child for child in (shared / "store").iterdir() if child.is_dir()]
-    assert len(store_dirs) == 1

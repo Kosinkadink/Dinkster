@@ -8,15 +8,16 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
 from .environment_state import EnvironmentError, content_digest
 
 DEVELOPMENT_DESCRIPTION = (
-    "development: built from local folders, not reviewed by the registry; "
+    "development: built from explicitly selected sources, not reviewed by the registry; "
     "dependency ranges resolved at build time, not reproducible from ranges; "
     "captured runtime artifacts remain restorable"
 )
@@ -95,18 +96,77 @@ def _git_state(root: Path) -> dict[str, object]:
     return {"commit": commit.stdout.strip(), "dirty": bool(status.stdout)}
 
 
+@contextmanager
+def acquired_development_sources(args: Any) -> Generator[Any]:
+    """Keep fetched folders alive only for this explicit development operation."""
+    import copy
+
+    from .git_sources import fetched_git_source
+
+    selected = copy.copy(args)
+    selected.git_origins = {}
+    with ExitStack() as stack:
+
+        def acquire(value: str | Path) -> Path:
+            text = str(value)
+            if "://" not in text and not text.startswith("git+"):
+                return Path(value)
+            folder, origin = stack.enter_context(fetched_git_source(text))
+            selected.git_origins[str(folder.resolve())] = origin
+            return folder
+
+        selected.source = acquire(args.source)
+        selected.pack_source = [acquire(value) for value in args.pack_source]
+        selected.library_source = [acquire(value) for value in args.library_source]
+        yield selected
+
+
+def development_description(selection: dict[str, Any]) -> str:
+    live = [row["path"] for row in selection["sources"] if row.get("live")]
+    if live:
+        return (
+            "development: runs from these folders, changes with them, cannot be restored exactly: "
+            + ", ".join(live)
+        )
+    return DEVELOPMENT_DESCRIPTION
+
+
 def development_selection(
-    source: Path, packs: tuple[Path, ...], libraries: tuple[Path, ...]
+    source: Path,
+    packs: tuple[Path, ...],
+    libraries: tuple[Path, ...],
+    *,
+    git_origins: dict[str, dict[str, object]] | None = None,
+    live_engine: bool = False,
+    live_packs: tuple[Path, ...] = (),
+    live_libraries: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
     if not packs:
         raise EnvironmentError("development requires at least one explicit --pack-source")
+    live_paths: dict[str, set[Path]] = {
+        "engine": {source.resolve()} if live_engine else set(),
+        "pack": {path.resolve() for path in live_packs},
+        "library": {path.resolve() for path in live_libraries},
+    }
+    for kind, selected, live in (
+        ("pack", packs, live_packs),
+        ("library", libraries, live_libraries),
+    ):
+        if any(path.is_symlink() for path in live):
+            raise EnvironmentError(f"live {kind} must not be a symlink")
+        if not live_paths[kind] <= {path.resolve() for path in selected}:
+            raise EnvironmentError(f"live {kind} must also be an explicitly selected source")
+        if any(not path.is_dir() for path in live):
+            raise EnvironmentError(f"live {kind} requires a local folder, not a wheel")
     rows: list[dict[str, Any]] = []
     for kind, paths in (("engine", (source,)), ("pack", packs), ("library", libraries)):
         for path in paths:
             if path.is_symlink():
                 raise EnvironmentError(f"development source must not be a symlink: {path}")
             root = path.resolve()
+            if git_origins and str(root) in git_origins and root in live_paths[kind]:
+                raise EnvironmentError(f"live {kind} requires a local folder, not a git source")
             files = _files(root)
             required = "dinkster-pack.toml" if kind == "pack" else "pyproject.toml"
             if not root.is_file() and required not in files:
@@ -119,12 +179,26 @@ def development_selection(
                 {
                     "kind": kind,
                     "path": str(root),
-                    "packageRoots": [".", "packages/dinkster-api", "packages/dinkster-supervisor"]
+                    "live": root in live_paths[kind],
+                    "packageRoots": [
+                        ".",
+                        "packages/dinkster-api",
+                        "packages/dinkster-engine",
+                        "packages/dinkster-supervisor",
+                    ]
                     if kind == "engine"
                     else ["."],
                     "contentDigest": _identity(files),
                     "files": files,
-                    **_git_state(root),
+                    **(
+                        {
+                            "commit": git_origins[str(root)]["commit"],
+                            "dirty": False,
+                            "git": {**git_origins[str(root)], "contentDigest": _identity(files)},
+                        }
+                        if git_origins and str(root) in git_origins
+                        else _git_state(root)
+                    ),
                 }
             )
     return {"format": "dinkster.development-sources/1", "sources": rows}
@@ -184,6 +258,60 @@ def captured_development_sources(
         yield roots["engine"][0], tuple(roots["pack"]), tuple(libraries)
 
 
+def live_source_status(selection: dict[str, Any]) -> list[dict[str, Any]]:
+    """Observe author folders now, not the identities captured at build time."""
+    rows: list[dict[str, Any]] = []
+    for row in selection["sources"]:
+        if not row.get("live"):
+            continue
+        root = Path(row["path"])
+        observed = {"kind": row["kind"], "path": str(root), **_git_state(root)}
+        if row["kind"] != "pack":
+            project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+            observed.update(
+                name=project["project"]["name"], version=project["project"].get("version")
+            )
+        rows.append(observed)
+    return rows
+
+
+def install_live_sources(generation: Path, selection: dict[str, Any]) -> None:
+    """Replace only explicitly marked distributions; never re-resolve dependencies."""
+    from .environment_local import run_local_command
+    from .environment_state import interpreter
+
+    paths = [
+        Path(row["path"]) / relative
+        for row in selection["sources"]
+        if row.get("live") and row["kind"] != "pack"
+        for relative in row["packageRoots"]
+    ]
+    if paths:
+        suffix = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        interpreters = [interpreter(generation)]
+        if (generation / "packs").is_dir():
+            interpreters.extend(
+                root / suffix
+                for root in sorted((generation / "packs").iterdir())
+                if (root / suffix).is_file()
+            )
+        for python in interpreters:
+            run_local_command(
+                [
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    str(python),
+                    "--break-system-packages",
+                    "--no-deps",
+                    "--no-sources",
+                    *[argument for path in paths for argument in ("--editable", str(path))],
+                ],
+                cwd=generation,
+            )
+
+
 def prepare_development_packs(
     generation: Path,
     *,
@@ -200,6 +328,16 @@ def prepare_development_packs(
     from .environment_generations import pack_operation, prepare_pack_catalogs, stage_pack_sources
     from .environment_local import run_local_command
     from .environment_state import interpreter, write_document
+
+    for row in selection["development"]["sources"]:
+        if row["kind"] == "pack" and row.get("live"):
+            manifest = tomllib.loads(
+                (Path(row["path"]) / "dinkster-pack.toml").read_text(encoding="utf-8")
+            )
+            if manifest["pack"]["name"] in in_process:
+                raise EnvironmentError(
+                    "live packs require isolated hosting; omit --in-process-pack"
+                )
 
     artifacts = object_path(store / "engines", release) / "artifacts"
     result = json.loads(
@@ -256,4 +394,5 @@ def prepare_development_packs(
         generation / "development-sources.json",
         {**selection["development"], "builtWheels": result["builtWheels"]},
     )
+    install_live_sources(generation, selection["development"])
     prepare_pack_catalogs(generation, in_process)

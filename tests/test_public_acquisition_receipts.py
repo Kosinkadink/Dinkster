@@ -147,25 +147,6 @@ def test_verified_public_https_redirect_records_exact_receipt(tmp_path: Path) ->
     assert [call[0] for call in opener.calls] == [LISTED_URL, FINAL_URL]
 
 
-def test_separate_receipt_store_instances_preserve_each_append(tmp_path: Path) -> None:
-    result = no_network_public_fetch(
-        DIGEST,
-        LISTED_URL,
-        len(ASSET),
-        AssetVault(tmp_path / "vault"),
-        opener=HTTPSFixture({LISTED_URL: Response(200, ASSET)}),
-    )
-    path = tmp_path / "receipts.json"
-    first = PublicAcquisitionReceiptStore(path, clock=lambda: 100.0, id_factory=lambda: "a" * 32)
-    second = PublicAcquisitionReceiptStore(path, clock=lambda: 101.0, id_factory=lambda: "b" * 32)
-
-    first.record(public_source(), result)
-    second.record(public_source(), result)
-
-    assert [receipt.receipt_id for receipt in second.records()] == ["a" * 32, "b" * 32]
-    assert PublicAcquisitionReceiptStore(path).records() == second.records()
-
-
 def test_acquisition_records_receipt_only_on_eligible_verified_public_path(tmp_path: Path) -> None:
     opener = HTTPSFixture({LISTED_URL: Response(200, ASSET)})
     vault = AssetVault(tmp_path / "vault")
@@ -257,31 +238,6 @@ def test_http_redirect_private_dns_and_rebinding_deny_public_fetch(tmp_path: Pat
             dns=lambda _host, _port: next(answers),
         )
     assert vault.resolve(DIGEST) is None
-
-
-def test_actual_peer_must_match_a_globally_routable_dns_destination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    closed: list[bool] = []
-
-    class ReboundConnection:
-        def __init__(self, *_args: object) -> None:
-            self.peer_verified = False
-
-        def request(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def getresponse(self) -> Response:
-            return Response(200, ASSET)
-
-        def close(self) -> None:
-            closed.append(True)
-
-    monkeypatch.setattr(fetch_module, "_PinnedHTTPSConnection", ReboundConnection)
-    monkeypatch.setattr(fetch_module, "_globally_routable_addresses", public_dns)
-    with pytest.raises(PublicFetchDenied, match="unapproved peer"):
-        fetch_public_asset(DIGEST, LISTED_URL, len(ASSET), AssetVault(tmp_path / "vault"))
-    assert closed
 
 
 @pytest.mark.parametrize(

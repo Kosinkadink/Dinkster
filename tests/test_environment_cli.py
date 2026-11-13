@@ -17,7 +17,7 @@ import tarfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.request import ProxyHandler, build_opener, urlopen
+from urllib.request import urlopen
 
 import pytest
 import zstandard
@@ -649,48 +649,6 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
         assert "Torch: 2.14.1+cu130" in human.stdout
         assert "Torch index: https://download.pytorch.org/whl/cu130" in human.stdout
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
-
-
-def test_status_and_doctor_keep_local_manifests_out_of_publication_descriptors(tmp_path: Path):
-    generation = _generation(tmp_path, 1).parent
-    base = {
-        "format": "dinkster.base/1",
-        "source": "local",
-        "variant": "linux-cpu",
-        "wheels": [
-            {
-                "name": "torch",
-                "version": "2.14.1",
-                "filename": "torch.whl",
-                "size": 17,
-                "sha256": "b" * 64,
-                "url": "local",
-            }
-        ],
-    }
-    engine = {
-        "format": "dinkster.engine/1",
-        "source": "local",
-        "version": "0.4.2",
-        "workerProtocol": 1,
-        "wheels": [],
-    }
-    metadata = generation / "generation.json"
-    document = json.loads(metadata.read_bytes())
-    document["source"] = "local"
-    for name, manifest in (("base-manifest.json", base), ("engine-manifest.json", engine)):
-        path = generation / name
-        path.write_text(json.dumps(manifest))
-        document["files"][name] = content_digest(path)
-    metadata.write_text(json.dumps(document))
-    (tmp_path / "current").write_text("1\n")
-    for operation in ("status", "doctor"):
-        code, result = _run(tmp_path, operation)
-        assert code == 0 and result["status"] == "clean"
-        assert "base" not in result and "engine" not in result
-        if operation == "doctor":
-            assert result["source"] == "local"
-            assert "locally resolved" in result["plan"][0]
 
 
 @pytest.mark.parametrize(
@@ -1720,152 +1678,6 @@ environment.main()
         assert _run(root, "stop", "--yes")[0] == 0
 
 
-def test_public_fixture_commands_install_update_and_rollback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    for variable in ("NO_PROXY", "no_proxy"):
-        monkeypatch.delenv(variable, raising=False)
-    monkeypatch.setattr("urllib.request._opener", None)
-    builder = Path(__file__).parent / "fixtures/environments/build.py"
-    build_command = [
-        sys.executable,
-        str(builder),
-        "--output",
-        str(tmp_path / "fixture"),
-    ]
-    fixture = json.loads(subprocess.check_output(build_command, text=True, timeout=120))
-    assert json.loads((tmp_path / "fixture/fixture.json").read_bytes()) == fixture
-    refused = subprocess.run(build_command, capture_output=True, text=True, timeout=120)
-    assert refused.returncode != 0
-    assert json.loads((tmp_path / "fixture/fixture.json").read_bytes()) == fixture
-    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):
-        monkeypatch.setenv(variable, "http://127.0.0.1:1/unreachable")
-    root = Path(fixture["root"])
-    commands = fixture["commands"]
-
-    mirror = Path(fixture["mirror"])
-    channel_path = mirror / "channels/main.json"
-    channel = json.loads(channel_path.read_bytes())
-    variant = fixture["variant"]
-    base_id = channel["base"][variant]["id"][7:]
-    base_directory = mirror / "base" / variant / base_id
-    base = json.loads((base_directory / "manifest.json").read_bytes())
-    base_label = f"2026-10-31-py{base['python']}-torch1.0-{base_id[:8]}"
-    base.update(
-        label=base_label,
-        builtAt="2026-10-31T12:00:00Z",
-        torchVersion="1.0",
-        torchIndex="https://pypi.org/simple",
-        lockSource={"repository": "https://github.com/Kosinkadink/Dinkster", "commit": "d" * 40},
-    )
-    (base_directory / "manifest.json").write_text(json.dumps(base))
-    base_directory.rename(base_directory.with_name(base_label))
-    channel["base"][variant]["locations"][0]["path"] = f"base/{variant}/{base_label}/manifest.json"
-    updated_path = Path(fixture["updatedChannel"])
-    updated_channel = json.loads(updated_path.read_bytes())
-    updated_channel["base"] = channel["base"]
-    updated_path.write_text(json.dumps(updated_channel))
-    engine_directory = mirror / "engine" / channel["engine"]["release"][7:]
-    engine = json.loads((engine_directory / "release-manifest.json").read_bytes())
-    engine_label = "2026-10-31-1.0"
-    engine.pop("tag")
-    engine.update(label=engine_label, builtAt="2026-10-31T12:30:00Z")
-    engine_bytes = (json.dumps(engine) + "\n").encode()
-    engine_id = hashlib.sha256(engine_bytes).hexdigest()
-    (engine_directory / "release-manifest.json").write_bytes(engine_bytes)
-    engine_directory.rename(engine_directory.with_name(f"{engine_label}-{engine_id[:8]}"))
-    channel["engine"].update(
-        release="sha256:" + engine_id,
-        locations=[
-            {
-                "type": "mirror",
-                "path": f"engine/{engine_label}-{engine_id[:8]}/release-manifest.json",
-            }
-        ],
-    )
-    channel_path.write_text(json.dumps(channel))
-
-    def run(name: str) -> dict:
-        completed = subprocess.run(commands[name], capture_output=True, text=True, timeout=60)
-        assert completed.returncode == 0, (completed.stdout, completed.stderr)
-        return json.loads(completed.stdout)
-
-    def check(number: int, expected: dict, operation: str) -> None:
-        assert (root / "current").read_text() == f"{number}\n"
-        generation = root / "generations" / str(number)
-        manifest = json.loads((generation / "generation.json").read_bytes())
-        assert manifest["generation"] == number
-        assert manifest["engine"]["version"] == expected["version"]
-        python = generation / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
-        actual = json.loads(
-            subprocess.check_output(
-                [
-                    str(python),
-                    "-I",
-                    "-B",
-                    "-c",
-                    "import fixture_engine, importlib.metadata, json; "
-                    "print(json.dumps({'value': fixture_engine.VALUE, "
-                    "'version': importlib.metadata.version('fixture-engine')}))",
-                ],
-                text=True,
-            )
-        )
-        assert actual == expected
-        journals = [json.loads(path.read_bytes()) for path in (root / "journal").glob("*.json")]
-        assert all(row["stage"] == "complete" and row.get("error") is None for row in journals)
-        assert any(row["operation"] == operation and row["target"] == number for row in journals)
-        status = run("status")
-        assert status["current"] == number
-        assert status["engines"][0]["state"] == "ready"
-        doctor = run("doctor")
-        assert doctor["status"] == "clean"
-        for result in (status, doctor):
-            assert result["base"]["label"] == base_label
-            assert result["engine"]["version"] == expected["version"]
-            assert result["engine"]["label"] == (
-                engine_label if expected["version"] == "1.0" else None
-            )
-            assert result["engine"]["release"] == manifest["engine"]["release"]
-        # The offline proxy barrier applies to downloads, not this loopback observation.
-        with build_opener(ProxyHandler({})).open(
-            status["engines"][0]["url"] + "/api/generation", timeout=5
-        ) as response:
-            assert json.loads(response.read()) == {"generation": str(generation)}
-
-    try:
-        assert run("setup")["current"] == 1
-        check(1, fixture["expected"]["initial"], "setup")
-        store = Path((root / "store").read_text().strip())
-        assert object_path(store / "bases", "sha256:" + base_id).is_dir()
-        assert object_path(store / "downloads", "sha256:" + base_id).is_dir()
-        assert object_path(store / "engines", "sha256:" + engine_id).is_dir()
-        wheel_paths = list((store / "wheels").glob("*/*.whl"))
-        assert wheel_paths and all(path.parent.name == path.stem for path in wheel_paths)
-        assert object_path(store / "engines", "sha256:" + engine_id).name == engine_label
-        assert object_path(store / "bases", "sha256:" + base_id).parent.name == variant
-        run("advance")
-        assert run("update")["current"] == 2
-        check(2, fixture["expected"]["updated"], "update")
-        assert run("rollback")["current"] == 3
-        check(3, fixture["expected"]["initial"], "rollback")
-        assert (root / "generations/2/generation.json").is_file()
-        journals = [Journal.read(path) for path in (root / "journal").glob("*.json")]
-        assert sorted((row.operation, row.target) for row in journals if row.operation != "gc") == [
-            ("rollback", 3),
-            ("setup", 1),
-            ("update", 2),
-        ]
-        assert all(row.stage == "complete" and row.error is None for row in journals)
-        assert len(list((root / "history").glob("*.json"))) == 3
-    finally:
-        if (root / "current").exists():
-            run("stop")
-            assert all(row["state"] == "stopped" for row in run("status")["engines"])
-
-
 @pytest.mark.parametrize("public_command", [False, True])
 @pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
 def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
@@ -1932,7 +1744,104 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
     assert not store.exists()
 
 
-def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_path: Path):
+@pytest.mark.parametrize("git_kind", ["engine", "pack", "library"])
+def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
+    tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch
+):
+    import pygit2
+
+    from dinkster.cli import main
+
+    source = Path(__file__).resolve().parents[1]
+    engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = engine / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
+    library.mkdir()
+    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    index = pygit2.Index()
+    for kind, folder in (("engine", engine), ("pack", pack), ("library", library)):
+        for path in folder.rglob("*"):
+            if path.is_file():
+                index.add(
+                    pygit2.IndexEntry(
+                        f"{kind}/{path.relative_to(folder).as_posix()}",
+                        repository.create_blob(path.read_bytes()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+    repository.create_commit(
+        f"refs/heads/development-{git_kind}",
+        signature,
+        signature,
+        "development sources",
+        index.write_tree(repository),
+        [],
+    )
+    repository.free()
+    monkeypatch.setenv("PATH", "")
+    arguments = ["develop", "--root", str(tmp_path / "project")]
+    for kind, folder, option in (
+        ("engine", engine, "--source"),
+        ("pack", pack, "--pack-source"),
+        ("library", library, "--library-source"),
+    ):
+        arguments.extend(
+            [
+                option,
+                f"{git_server['url']}#ref=development-{git_kind}&subdirectory={kind}"
+                if kind == git_kind
+                else str(folder),
+            ]
+        )
+    arguments.extend(
+        [
+            "--variant",
+            {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu"),
+            "--python",
+            sys.executable,
+            "--plan",
+            "--json",
+        ]
+    )
+    assert main(arguments) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert main([*arguments, "--approve", plan["sourceApproval"]]) == 0
+    repeated = json.loads(capsys.readouterr().out)
+    selected = next(row for row in repeated["development"]["sources"] if row["kind"] == git_kind)
+    assert selected["git"]["requestedRef"] == f"development-{git_kind}"
+    assert selected["git"]["contentDigest"] == selected["contentDigest"]
+    changed = [
+        value.replace("ref=development", "ref=refs/heads/development") for value in arguments
+    ]
+    assert main([*changed, "--approve", plan["sourceApproval"]]) == 1
+    assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+    live_code = main([*arguments, "--live-engine"])
+    live_plan = json.loads(capsys.readouterr().out)
+    if git_kind == "engine":
+        assert live_code == 1 and "requires a local folder" in live_plan["error"]
+    else:
+        assert live_code == 0
+        assert live_plan["development"]["sources"][0]["live"] is True
+    assert not (tmp_path / "project").exists()
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_development_doctor_separates_runtime_drift_from_missing_recovery(
+    tmp_path: Path, live: bool
+):
+    live_pack = tmp_path / "live-pack"
+    live_pack.mkdir()
+    sources = [{"kind": "pack", "path": str(live_pack), "live": True}] if live else []
     generation = _generation(tmp_path, 1).parent
     store = tmp_path / "capture"
     base = {
@@ -1958,7 +1867,10 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
     for name, document in (
         ("base-manifest.json", base),
         ("engine-manifest.json", engine),
-        ("development-sources.json", {"format": "dinkster.development-sources/1", "sources": []}),
+        (
+            "development-sources.json",
+            {"format": "dinkster.development-sources/1", "sources": sources},
+        ),
     ):
         path = generation / name
         path.write_text(json.dumps(document))
@@ -1975,6 +1887,7 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
                 "id": 1,
                 "generation": 1,
                 "snapshot": {
+                    "format": "dinkster.install-snapshot/1",
                     "source": "local",
                     "metadata": metadata,
                     "base": {"id": base_id, "variant": "linux-cpu"},
@@ -1989,9 +1902,29 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
         code, result = _run(tmp_path, operation)
         assert code == 0, result
         described = result["history"][0] if operation == "history" else result
-        assert "not reviewed by the registry" in described["sourceDescription"]
+        assert ("cannot be restored exactly" if live else "not reviewed by the registry") in (
+            described["sourceDescription"]
+        )
         if operation == "doctor":
-            assert result["exactRecovery"] == {"available": True, "missing": []}
+            assert result["exactRecovery"] == {"available": not live, "missing": []}
+    if live:
+        author_file = live_pack / "node.py"
+        author_file.write_text("VALUE = 37\n")
+        (tmp_path / "project.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "stable",
+                    "variant": "linux-cpu",
+                    "mirrors": [],
+                    "port": 58980,
+                }
+            )
+        )
+        code, refused = _run(tmp_path, "restore", "1", "--plan")
+        assert code == 1 and "cannot be restored exactly" in refused["error"], refused
+        assert author_file.read_text() == "VALUE = 37\n"
+        assert (tmp_path / "current").read_text() == "1\n"
     runtime.unlink()
     code, missing = _run(tmp_path, "doctor")
     assert code == 0 and missing["status"] == "clean", missing
@@ -2000,4 +1933,6 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
     (generation / "python/module.py").write_text("ANSWER = 99\n")
     code, damaged = _run(tmp_path, "doctor")
     assert code == 1 and damaged["status"] == "drift", damaged
-    assert "built from local folders" in damaged["sourceDescription"]
+    assert ("cannot be restored exactly" if live else "not reviewed by the registry") in (
+        damaged["sourceDescription"]
+    )

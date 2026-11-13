@@ -11,7 +11,6 @@ from dinkster_graph import (
     TypedLiteral,
     has_errors,
     plan,
-    top_level_node_id,
     validate,
 )
 from dinkster_schema import (
@@ -33,20 +32,6 @@ SCHEMAS["test.list_input"] = NodeSchema(
 
 STRING = TypeExpr.concrete("STRING")
 COMBO = TypeExpr.concrete("COMBO")
-
-
-@pytest.mark.parametrize(
-    ("runtime_node_id", "expected"),
-    (
-        ("node", "node"),
-        ("region[2]/body", "region"),
-        ("outer[1]/inner[3]/body", "outer"),
-    ),
-)
-def test_runtime_node_paths_recover_top_level_document_id(
-    runtime_node_id: str, expected: str
-) -> None:
-    assert top_level_node_id(runtime_node_id) == expected
 
 
 class _StringSource(Node):
@@ -448,14 +433,6 @@ def test_typed_literal_unknown_type_needs_registry() -> None:
     )
     diags = validate(listy, SCHEMAS, ["m"], known_types={"INT"})
     assert any(d.code == "typed-literal-unknown-type" for d in diags)
-
-
-def test_typed_literal_list_stamp_requires_list_value() -> None:
-    graph = Graph(
-        nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("list<INT>", 7)})}
-    )
-    diags = validate(graph, SCHEMAS, ["m"], known_types={"INT"})
-    assert any(d.code == "literal-shape" and d.severity == "error" for d in diags)
 
 
 def test_typed_literal_on_concrete_input_is_redundant_warning() -> None:

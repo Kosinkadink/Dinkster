@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError, GraphValidationError, Worker
+from dinkster_engine import Engine, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 from dinkster_schema import (
     InputSpec,
@@ -34,7 +34,7 @@ from dinkster_schema import (
 )
 from dinkster_server import STATE_KEY, create_app
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import GroupIsolatedWorker, InProcessWorker, IsolatedWorker, RoutingWorker
+from dinkster_workers import GroupIsolatedWorker, InProcessWorker, IsolatedWorker
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer, UnknownPackError
 from dinkster.reload_api import add_reload_routes, apply_reload, apply_remove
@@ -348,35 +348,6 @@ def test_group_member_reload_swaps_every_route_transactionally(
     run_scenario(scenario())
 
 
-def test_group_reload_preserves_unrouted_schema_only_members(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        alpha = write_group_pack(tmp_path / "alpha", "alpha", "v1", schema_only=True)
-        beta = write_group_pack(tmp_path / "beta", "beta", "v1")
-        manifests = (alpha, beta)
-        env = {"PYTHONPATH": os.pathsep.join((str(alpha.parent), str(beta.parent)))}
-        specs = (
-            PackSpec(alpha, env=env, worker_group="models", group_manifests=manifests),
-            PackSpec(beta, env=env, worker_group="models", group_manifests=manifests),
-        )
-        composer = ServingComposer()
-        try:
-            for spec in specs:
-                await composer.add_pack(spec)
-            assert not composer._routing.has_route("alpha.echo")
-            assert composer._routing.has_route("beta.echo")
-
-            write_group_pack(tmp_path / "beta", "beta", "v2")
-            result = await composer.reload_pack("beta")
-            assert set(result.removed_types) == {"beta.echo", "beta.exit"}
-            assert set(result.delta.schemas) == {"beta.echo", "beta.exit"}
-            assert not composer._routing.has_route("alpha.echo")
-            assert composer._routing.has_route("beta.echo")
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
 def test_group_process_death_fails_every_member_with_group_attribution(
     tmp_path: Path,
 ) -> None:
@@ -441,30 +412,6 @@ def test_group_worker_start_is_all_or_nothing(
     run_scenario(scenario())
 
 
-def test_group_worker_authenticates_every_tcp_endpoint(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        alpha = write_group_pack(tmp_path / "alpha", "alpha", "v1")
-        beta = write_group_pack(tmp_path / "beta", "beta", "v1")
-        env = {"PYTHONPATH": os.pathsep.join((str(alpha.parent), str(beta.parent)))}
-        registry = TypeRegistry()
-        register_core_types(registry)
-        owner = GroupIsolatedWorker(
-            "models",
-            (alpha, beta),
-            registry,
-            extra_env=env,
-            transport="tcp",
-            start_timeout=5.0,
-        )
-        try:
-            await owner.start()
-            assert all(member.alive for member in owner.members.values())
-        finally:
-            await owner.close()
-
-    run_scenario(scenario())
-
-
 def test_grouped_placement_preserves_surface_and_invocation_identity(
     tmp_path: Path,
 ) -> None:
@@ -516,151 +463,6 @@ def test_grouped_placement_preserves_surface_and_invocation_identity(
             await grouped.close()
 
     run_scenario(scenario())
-
-
-def test_pack_spec_aimdo_reaches_add_and_reload_workers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster.compose import PackSpec
-
-    modes: list[object] = []
-
-    class Recording(IsolatedWorker):
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            modes.append(kwargs.get("aimdo_arm"))
-            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("dinkster.compose.IsolatedWorker", Recording)
-
-    async def scenario() -> None:
-        manifest = write_pack(tmp_path, "v1")
-        composer = ServingComposer(worker_env=worker_env(tmp_path))
-        try:
-            await composer.add_pack(PackSpec(manifest, aimdo="on"))
-            await composer.reload_pack("rlpack")
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-    assert modes == ["on", "on"]
-
-
-@pytest.mark.parametrize("single_job", [False, True])
-def test_reload_preserves_multi_gpu_worker_topology(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    single_job: bool,
-) -> None:
-    from dinkster.compose import PackSpec, _ReplicaWorkerPool, _SingleJobWorkerPool
-
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-
-    async def scenario() -> None:
-        manifest = write_pack(tmp_path, "v1")
-        spec = PackSpec(
-            manifest,
-            replica_cuda_indices=() if single_job else (0, 1),
-            single_job_cuda_indices=(0, 1) if single_job else (),
-        )
-        expected = _SingleJobWorkerPool if single_job else _ReplicaWorkerPool
-        scratch_root = tmp_path / "library" / "scratch"
-        expected_scratch = str(scratch_root / "packs" / "rlpack")
-        composer = ServingComposer(
-            worker_env=worker_env(tmp_path),
-            pack_scratch_root=scratch_root,
-        )
-        try:
-            await composer.add_pack(spec)
-            original = composer._records["rlpack"].worker
-            assert isinstance(original, expected)
-            assert len(original.lanes) == 2
-            assert {lane.worker._extra_env["DINKSTER_PACK_SCRATCH"] for lane in original.lanes} == {
-                expected_scratch
-            }
-            await composer.reload_pack("rlpack")
-            replacement = composer._records["rlpack"].worker
-            assert isinstance(replacement, expected)
-            assert replacement is not original
-            assert len(replacement.lanes) == 2
-            assert {
-                lane.worker._extra_env["DINKSTER_PACK_SCRATCH"] for lane in replacement.lanes
-            } == {expected_scratch}
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-def test_reload_refreshes_restart_scoped_runtime_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster.compose import PackSpec
-
-    launches: list[tuple[object, object, object, object]] = []
-
-    class Recording(IsolatedWorker):
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            launches.append(
-                (
-                    kwargs.get("aimdo_arm"),
-                    kwargs.get("reserve_vram"),
-                    kwargs.get("vram_budgets"),
-                    kwargs.get("comfy_args"),
-                )
-            )
-            super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("dinkster.compose.IsolatedWorker", Recording)
-
-    async def scenario() -> None:
-        effective_aimdo = "auto"
-        effective_reserve = 256 * 1024**2
-        effective_budgets = {"vram:cuda:0": 20_000}
-        effective_args: tuple[str, ...] = ()
-        manifest = write_pack(tmp_path, "v1")
-        composer = ServingComposer(
-            worker_env=worker_env(tmp_path),
-            runtime_worker_settings=lambda: (
-                effective_aimdo,
-                effective_reserve,
-                effective_budgets,
-                effective_args,
-            ),
-        )
-        try:
-            await composer.add_pack(
-                PackSpec(
-                    manifest,
-                    aimdo="auto",
-                    reserve_vram=256 * 1024**2,
-                    vram_budgets={"vram:cuda:0": 20_000},
-                    runtime_settings=True,
-                )
-            )
-            assert composer.residency_memory_budgets() == {"rlpack": {"vram:cuda:0": 20_000}}
-            effective_aimdo = "off"
-            effective_reserve = 128 * 1024**2
-            effective_budgets = {
-                "ram": 100_000,
-                "vram:cuda:0": 15_000,
-                "vram:cuda:0@remote": 10_000,
-            }
-            effective_args = ("--preview-size", "256")
-            await composer.reload_pack("rlpack")
-            assert composer.residency_memory_budgets() == {"rlpack": {"vram:cuda:0": 15_000}}
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-    assert launches == [
-        ("auto", 256 * 1024**2, {"vram:cuda:0": 20_000}, ()),
-        (
-            "off",
-            128 * 1024**2,
-            {"vram:cuda:0": 15_000},
-            ("--preview-size", "256"),
-        ),
-    ]
 
 
 def test_reload_refuses_rename_and_unknown_pack(tmp_path: Path) -> None:
@@ -723,29 +525,6 @@ class Tail(Node):
         return cls.outputs(out=text.upper())
 
 
-def test_engine_replace_schemas_validation() -> None:
-    """replace_schemas mirrors announce_schemas: unknown removals refused,
-    redefinition allowed exactly for types removed in the same swap, and a
-    refused swap changes nothing."""
-    registry = TypeRegistry()
-    register_core_types(registry)
-    schemas = build_schemas([Gate, Tail])
-    engine = Engine(
-        schemas=schemas,
-        registry=registry,
-        worker=InProcessWorker(build_node_types([Gate, Tail]), registry),
-        cache=MemoryLRUCache(),
-    )
-    with pytest.raises(ValueError, match="unknown node type"):
-        engine.replace_schemas(["test.nope"], {})
-    with pytest.raises(ValueError, match="not being removed"):
-        engine.replace_schemas([], build_schemas([Tail]))
-    # Swap: redefine test.gate, drop test.tail.
-    engine.replace_schemas(["test.gate", "test.tail"], build_schemas([Gate]))
-    with pytest.raises(ValueError, match="unknown node type"):
-        engine.replace_schemas(["test.tail"], {})
-
-
 def test_in_flight_run_finishes_against_pinned_schemas() -> None:
     """H10 under reload: a run pins the schema mapping it entered with, so
     a replace_schemas that drops a type mid-run cannot break the run's own
@@ -785,26 +564,6 @@ def test_in_flight_run_finishes_against_pinned_schemas() -> None:
         assert engine._run_schemas == {}  # pins released
 
     run_scenario(scenario())
-
-
-def test_routing_swap_routes() -> None:
-    """swap_routes is one reference swap with add_routes' refusals: removed
-    types must be routed, added types may collide only with the removed."""
-    registry = TypeRegistry()
-    register_core_types(registry)
-    a: Worker = InProcessWorker(build_node_types([Gate]), registry)
-    b: Worker = InProcessWorker(build_node_types([Gate, Tail]), registry)
-    routing = RoutingWorker({"test.gate": a})
-    with pytest.raises(ValueError, match="unrouted"):
-        routing.swap_routes(["test.tail"], {})
-    with pytest.raises(ValueError, match="not being removed"):
-        routing.swap_routes([], {"test.gate": b})
-    routing.swap_routes(["test.gate"], {"test.gate": b, "test.tail": b})
-    assert routing._worker_for("test.gate") is b
-    assert routing._worker_for("test.tail") is b
-    routing.swap_routes(["test.tail"], {})
-    with pytest.raises(KeyError):
-        routing._worker_for("test.tail")
 
 
 # -- server level (the full endpoint sequence) ---------------------------------

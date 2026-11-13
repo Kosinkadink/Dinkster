@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+pytest_plugins = ["tests.fixtures.git_sources"]
+
 if TYPE_CHECKING:
     from dinkster.compose import Composition
 

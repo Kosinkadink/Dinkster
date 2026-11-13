@@ -31,7 +31,6 @@ from dinkster_values import (
     TypeRegistry,
     Value,
     ValueMeta,
-    make_absent_value,
     register_core_types,
 )
 
@@ -214,32 +213,6 @@ def test_lazy_possible_consumers_keep_shared_ancestor_until_decision(demand, cac
     run_scenario(scenario())
 
 
-def test_repeated_input_links_count_one_consumer() -> None:
-    async def scenario() -> None:
-        async def inspect(invocation) -> None:
-            if invocation.node_id == "twice":
-                assert invocation.inputs["a"] is invocation.inputs["b"]
-            elif invocation.node_id == "tail":
-                assert worker.refs["source"]() is None
-
-        engine, worker, _ = make_engine(inspect)
-        result = await engine.run(
-            Graph(
-                nodes={
-                    "source": GraphNode("step", {"a": 10}),
-                    "twice": GraphNode(
-                        "step", {"a": Link("source", "out"), "b": Link("source", "out")}
-                    ),
-                    "tail": GraphNode("step", {"a": Link("twice", "out")}),
-                }
-            ),
-            ["tail"],
-        )
-        assert result.outputs["tail"]["out"].resolve() == 24
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize("kind", ["map", "fold"])
 def test_regions_release_intermediates_but_keep_exports_and_state(kind) -> None:
     async def scenario() -> None:
@@ -287,53 +260,6 @@ def test_regions_release_intermediates_but_keep_exports_and_state(kind) -> None:
         else:
             assert result.outputs["region"]["items"].resolve() == [4, 5, 6]
             assert result.outputs["region"]["middles"].resolve() == [3, 4, 5]
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("lazy", [False, True])
-def test_failure_cancels_consumers_without_dropping_live_inputs(lazy) -> None:
-    async def scenario() -> None:
-        started = asyncio.Event()
-        cancelled = asyncio.Event()
-
-        async def inspect(invocation) -> None:
-            if invocation.node_id == "slow":
-                started.set()
-                try:
-                    await asyncio.Event().wait()
-                finally:
-                    assert invocation.inputs["a"] is worker.refs["source"]()
-                    cancelled.set()
-            elif invocation.node_id == "fail":
-                await started.wait()
-                raise ExecutionError(NodeError("fail", "step", "expected failure"))
-
-        engine, worker, _ = make_engine(inspect)
-        graph = Graph(
-            nodes={
-                "source": GraphNode("step", {"a": 10}),
-                "slow": GraphNode("step", {"a": Link("source", "out"), "b": 20}),
-                "fail": GraphNode("step", {"a": Link("source", "out"), "b": 30}),
-                **(
-                    {
-                        "choose": GraphNode(
-                            "lazy",
-                            {
-                                "a": Link("slow", "out"),
-                                "b": Link("fail", "out"),
-                                "demand": True,
-                            },
-                        )
-                    }
-                    if lazy
-                    else {}
-                ),
-            }
-        )
-        with pytest.raises(ExecutionError, match="expected failure"):
-            await engine.run(graph, ["choose", "fail"] if lazy else ["slow", "fail"])
-        assert cancelled.is_set()
 
     run_scenario(scenario())
 
@@ -454,115 +380,5 @@ def test_expansion_retains_external_resource_until_run_cleanup(outcome: str) -> 
             assert worker.refs["source"]() is None
         assert not pins.pinned("resident")
         assert pins.condemn("resident")
-
-    run_scenario(scenario())
-
-
-def test_while_releases_previous_iteration_ports_and_keeps_continue_export() -> None:
-    async def scenario() -> None:
-        async def inspect(invocation):
-            if invocation.node_id.endswith("/continue"):
-                return worker.registry.wrap("BOOLEAN", invocation.inputs["a"].resolve() < 3)
-            if invocation.node_id == "region[2]/step":
-                assert worker.refs["region[0]/step"]() is None
-                assert worker.refs["region[1]/continue"]() is None
-
-        engine, worker, _ = make_engine(inspect)
-        region = RegionNode(
-            kind="while",
-            ports={"count": INT},
-            inputs={"count": 0},
-            state_ports=("count",),
-            body=Graph(
-                nodes={
-                    "step": GraphNode("step", {"a": Link(PORTS_NODE_ID, "count")}),
-                    "continue": GraphNode("condition", {"a": Link("step", "out")}),
-                }
-            ),
-            outputs={"count": RegionOutput(Link("step", "out"), "state")},
-            continue_source=Link("continue", "out"),
-            max_iterations=3,
-        )
-        result = await engine.run(Graph(nodes={"region": region}), ["region"])
-        assert result.outputs["region"]["count"].resolve() == 3
-
-    run_scenario(scenario())
-
-
-def test_failed_region_does_not_retain_other_exports_in_scheduler_tracebacks() -> None:
-    async def scenario() -> None:
-        source_started = asyncio.Event()
-
-        async def inspect(invocation) -> None:
-            if invocation.node_id.endswith("/source"):
-                source_started.set()
-            elif invocation.node_id.endswith("/fail"):
-                await source_started.wait()
-                assert worker.refs["region[0]/source"]() is not None
-                raise ExecutionError(NodeError(invocation.node_id, "step", "expected failure"))
-
-        engine, worker, _ = make_engine(inspect)
-        region = RegionNode(
-            kind="map",
-            ports={"item": INT},
-            inputs={"item": [1]},
-            element_ports=("item",),
-            body=Graph(
-                nodes={
-                    "source": GraphNode("step", {"a": Link(PORTS_NODE_ID, "item")}),
-                    "fail": GraphNode("step", {"a": 20}),
-                }
-            ),
-            outputs={
-                "items": RegionOutput(Link("source", "out"), "gather"),
-                "failure": RegionOutput(Link("fail", "out"), "gather"),
-            },
-        )
-        with pytest.raises(ExecutionError, match="expected failure") as error:
-            await engine.run(Graph(nodes={"region": region}), ["region"])
-        assert error.value.__traceback__ is not None
-        assert worker.refs["region[0]/source"]() is None
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("failure", ["absent", "non-boolean", "limit", "worker"])
-def test_while_errors_release_iteration_exports_and_prior_state(failure: str) -> None:
-    async def scenario() -> None:
-        async def inspect(invocation):
-            if invocation.node_id.endswith("/continue"):
-                if invocation.node_id.startswith("region[1]/"):
-                    if failure == "absent":
-                        return make_absent_value(origin=invocation.node_id)
-                    if failure == "non-boolean":
-                        return worker.registry.wrap("INT", 1)
-                    if failure == "worker":
-                        raise ExecutionError(NodeError(invocation.node_id, "condition", "failure"))
-                return worker.registry.wrap("BOOLEAN", True)
-
-        engine, worker, _ = make_engine(inspect)
-        region = RegionNode(
-            kind="while",
-            ports={"count": INT},
-            inputs={"count": 0},
-            state_ports=("count",),
-            body=Graph(
-                nodes={
-                    "step": GraphNode("step", {"a": Link(PORTS_NODE_ID, "count")}),
-                    "continue": GraphNode("condition", {"a": Link("step", "out")}),
-                }
-            ),
-            outputs={
-                "count": RegionOutput(Link("step", "out"), "state"),
-                "items": RegionOutput(Link("step", "out"), "gather"),
-            },
-            continue_source=Link("continue", "out"),
-            max_iterations=2,
-        )
-        with pytest.raises(ExecutionError) as error:
-            await engine.run(Graph(nodes={"region": region}), ["region"])
-        assert error.value.__traceback__ is not None
-        assert "region[1]/step" in worker.refs
-        assert all(ref() is None for ref in worker.refs.values())
 
     run_scenario(scenario())

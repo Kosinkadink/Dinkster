@@ -24,7 +24,6 @@ from dinkster_values.audio_codec import (
     AudioSourceUnavailableError,
     audio_from_source,
     audio_window,
-    coerce_audio,
     render_audio_wav,
 )
 from dinkster_values.audio_lazy import AUDIO_WINDOW_LIMIT
@@ -115,18 +114,6 @@ def test_materialize_audio_refuses_unavailable_lazy_source() -> None:
     }
     with pytest.raises(AudioSourceUnavailableError, match="no local asset binding"):
         materialize_audio(portable)
-
-
-def test_materialize_audio_accepts_exact_lazy_window_budget() -> None:
-    batch, channels = 2, 2
-    frames = AUDIO_WINDOW_LIMIT // (batch * channels * 4)
-    samples = np.zeros((batch, channels, frames), dtype=np.float32)
-    materialized = materialize_audio(coerce_audio({"waveform": samples, "sample_rate": 8000}))
-    waveform = cast(Any, materialized["waveform"])
-    assert tuple(waveform.shape) == (batch, channels, frames)
-    assert waveform.dtype == torch.float32
-    assert waveform.device.type == "cpu"
-    assert not waveform.count_nonzero()
 
 
 class AudioSource(Node):

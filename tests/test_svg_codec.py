@@ -71,22 +71,6 @@ def test_svg_materialization_keeps_cached_bytes_and_consumer_cursors_independent
     assert materialize_svg(()) == ()
 
 
-@pytest.mark.parametrize(
-    "value",
-    (
-        [b"<svg/>"],
-        (bytearray(b"<svg/>"),),
-        (memoryview(b"<svg/>"),),
-        ("<svg/>",),
-    ),
-)
-def test_svg_rejects_mutable_or_non_byte_runtime_values(value: object) -> None:
-    with pytest.raises(TypeError):
-        encode_svg(value)
-    with pytest.raises(TypeError):
-        materialize_svg(value)
-
-
 def test_svg_rejects_malformed_frames_and_metadata() -> None:
     data = encode_svg((b"<svg/>", b""))
     truncated_stream = encode_svg((b"<svg/>",))

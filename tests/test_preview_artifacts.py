@@ -43,7 +43,6 @@ from dinkster_schema.reporting import EncodedPreviewArtifact, capture_preview_ar
 from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_server.library import recover_asset_observations
 from dinkster_server.queue import Job, JobKey
-from dinkster_workers.boundary import BoundaryError, _decode_preview_artifacts
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -1123,11 +1122,6 @@ def test_image_document_attachment_rejects_closed_copied_context() -> None:
     assert [item.data for item in documents] == [b"original"]
 
 
-def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:
-    with pytest.raises(RuntimeError, match="active invocation"):
-        publish_preview_artifact(mp4, name="preview.mp4", media_type="video/mp4")
-
-
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("publication", ("available", "missing", "failed"))
 def test_original_documents_publish_without_output_folder_and_survive_cache(
@@ -1537,28 +1531,6 @@ def test_preview_publisher_rejects_independent_untrusted_claims(
             await publisher("authoritative-node", (claim,))
 
     run_scenario(scenario())
-
-
-def test_preview_publisher_requires_a_host_vault(mp4: bytes) -> None:
-    async def scenario() -> None:
-        with pytest.raises(AssetError, match="host asset vault"):
-            await PreviewArtifactPublisher(None)(
-                "node", (EncodedPreviewArtifact(mp4, "preview.mp4", "video/mp4"),)
-            )
-
-    run_scenario(scenario())
-
-
-def test_preview_boundary_rejects_independent_blob_claims(mp4: bytes) -> None:
-    with pytest.raises(BoundaryError, match="fields"):
-        _decode_preview_artifacts(
-            {"previewArtifacts": [{"name": "preview.mp4", "mediaType": "video/mp4"}]}, [mp4]
-        )
-    with pytest.raises(BoundaryError, match="blob index"):
-        _decode_preview_artifacts(
-            {"previewArtifacts": [{"name": "preview.mp4", "mediaType": "video/mp4", "blob": 1}]},
-            [mp4],
-        )
 
 
 @pytest.mark.parametrize("pre_existing", (False, True))

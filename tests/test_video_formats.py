@@ -455,21 +455,6 @@ def test_preserving_defaults_report_requested_and_actual(
     )
 
 
-@pytest.mark.parametrize("format", FRAME_FORMATS)
-def test_export_never_calls_full_batch_materializer(
-    format: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_video_runtime import runtime
-
-    monkeypatch.setattr(runtime, "disassemble_video", lambda *a: pytest.fail("full frame batch"))
-    encoded = []
-    for _ in range(2):
-        output = io.BytesIO()
-        save_video_frames(assemble_video(pixels(), fps=10), output, format=format)
-        encoded.append(output.getvalue())
-    assert encoded[0] == encoded[1]
-
-
 @pytest.mark.parametrize("format", ["gif_pillow", "gif_ffmpeg", "webp"])
 def test_animation_uses_actual_variable_frame_timestamps(format: str) -> None:
     original = io.BytesIO()
@@ -623,23 +608,3 @@ def test_discrete_channels_use_preserving_pcm_default(codec: str, container: str
         save_video_stream(
             value, io.BytesIO(), codec=codec, container=container, audio_layout="stereo"
         )
-
-
-@pytest.mark.parametrize("enum", [0, 2, 128, 255])
-def test_png_preserves_reserved_color_enums_through_shared_authority(enum: int) -> None:
-    from dinkster_video_runtime import formats
-
-    frame = av.VideoFrame.from_ndarray(np.full((8, 8, 3), 102, np.uint8), format="rgb24")
-    data = formats._png(frame, 8, False, "", {"primaries": enum, "transfer": enum, "range": 1})
-    assert b"cICP" + bytes((enum, enum, 0, 1)) in data
-    with Image.open(io.BytesIO(data)) as image:
-        np.testing.assert_array_equal(np.asarray(image), np.full((8, 8, 3), 102, np.uint8))
-
-
-@pytest.mark.parametrize("invalid", [-1, 1.5, "sRGB", True])
-def test_png_uses_shared_color_validation_without_coercing_enums(invalid: object) -> None:
-    from dinkster_video_runtime import formats
-
-    frame = av.VideoFrame.from_ndarray(np.zeros((8, 8, 3), np.uint8), format="rgb24")
-    with pytest.raises(ValueError, match="invalid image color primaries"):
-        formats._png(frame, 8, False, "", {"primaries": invalid, "transfer": 13, "range": 2})

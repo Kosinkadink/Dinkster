@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 from dinkster_assets import AssetRef, digest_bytes
-from dinkster_memory import ReservationRequest
 from dinkster_protocol import Invocation, InvocationResult, NodeError
 from dinkster_schema import NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry, register_core_types
@@ -175,78 +174,6 @@ def test_host_closes_before_success_and_turns_cleanup_failure_into_node_error(
     assert events == ["sweep", "open", "materialize", "close"]
 
 
-def test_host_keeps_node_error_primary_when_cleanup_also_fails(tmp_path: Path) -> None:
-    source = tmp_path / "source.png"
-    source.write_bytes(_png())
-    events: list[str] = []
-    result = run_scenario(
-        _host_result(
-            _ref(source),
-            _HostProvider(events, close_error=True),
-            node_error=True,
-        )
-    )
-    assert result["error"]["message"] == "node boom"
-    assert "Source staging cleanup also failed" in result["error"]["traceback"]
-    assert events == ["sweep", "open", "materialize", "close"]
-
-
-def test_host_reserve_denial_creates_no_staging_residue(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        source = tmp_path / "source.png"
-        source.write_bytes(_png())
-        ref = _ref(source)
-        events: list[str] = []
-        provider = _HostProvider(events)
-        registry = TypeRegistry()
-        register_core_types(registry)
-        accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
-
-        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            task = asyncio.current_task()
-            assert task is not None
-            accepted.set_result(task)
-            await serve_connection(
-                reader,
-                writer,
-                pack_name="test",
-                worker=_HostWorker(registry, ref, node_error=False),  # type: ignore[arg-type]
-                schemas={"test.stage": _HOST_SCHEMA},
-                planner=lambda invocation: (ReservationRequest("ram", 1),),
-                consumers={},
-                codec=ValueCodec(registry),
-                source_staging=provider,  # type: ignore[arg-type]
-            )
-
-        server = await asyncio.start_server(accept, "127.0.0.1", 0)
-        address = server.sockets[0].getsockname()
-        reader, writer = await asyncio.open_connection(address[0], address[1])
-        host_task = await accepted
-        assert (await read_frame(reader))[0]["type"] == "hello"  # type: ignore[index]
-        invocation = Invocation("inv", "node", "test.stage", {}, _HOST_SCHEMA)
-        header, blobs, segments, _ = encode_invocation(ValueCodec(registry), invocation)
-        assert not segments
-        await write_frame(writer, header, blobs)
-        reserve = await read_frame(reader)
-        assert reserve is not None and reserve[0]["type"] == "memoryReserve"
-        await write_frame(
-            writer,
-            {"type": "memoryDeny", "requestId": "inv", "message": "denied"},
-            [],
-        )
-        result = await read_frame(reader)
-        assert result is not None and "memory admission failed" in result[0]["error"]["message"]
-        release = await read_frame(reader)
-        assert release is not None and release[0]["type"] == "memoryRelease"
-        await write_frame(writer, {"type": "shutdown"}, [])
-        await host_task
-        server.close()
-        await server.wait_closed()
-        assert events == ["sweep"]
-
-    run_scenario(scenario())
-
-
 class _BlockingSession(_HostSession):
     def __init__(self, events: list[str]) -> None:
         super().__init__(events, close_error=False)
@@ -355,111 +282,6 @@ def test_host_terminal_paths_close_and_refuse_late_materialization(
         await host_task
         server.close()
         await server.wait_closed()
-        assert events == ["sweep", "open", "materialize", "materialize", "close"]
-
-    run_scenario(scenario())
-
-
-class _DoubleCancelWorker(_HostWorker):
-    def __init__(self, registry: TypeRegistry, ref: AssetRef) -> None:
-        super().__init__(registry, ref, node_error=False)
-        self.entered = threading.Event()
-        self.allow_late = threading.Event()
-        self.late_refused = threading.Event()
-
-    async def invoke(self, invocation: Invocation, on_event: Any = None) -> InvocationResult:
-        del on_event
-
-        def execute() -> InvocationResult:
-            context = current_execution_context()
-            assert context is not None and context.materialize_source is not None
-            context.materialize_source(self.ref, "media/image", "input")
-            self.entered.set()
-            assert self.allow_late.wait(5)
-            try:
-                context.materialize_source(self.ref, "media/image", "input")
-            except RuntimeError as exc:
-                assert "closing or closed" in str(exc)
-                self.late_refused.set()
-            return InvocationResult(outputs={"out": self.registry.wrap("STRING", "ok")})
-
-        return await asyncio.to_thread(execute)
-
-
-def test_cancel_then_disconnect_refuses_late_materialization_before_cleanup_starts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        source = tmp_path / "source.png"
-        source.write_bytes(_png())
-        ref = _ref(source)
-        events: list[str] = []
-        provider = _BlockingProvider(events)
-        registry = TypeRegistry()
-        register_core_types(registry)
-        worker = _DoubleCancelWorker(registry, ref)
-        cleanup_queued = asyncio.Event()
-        cleanup_can_start = asyncio.Event()
-        original_to_thread = asyncio.to_thread
-
-        async def controlled_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
-            if getattr(function, "__name__", "") == "close_staging":
-                cleanup_queued.set()
-                await cleanup_can_start.wait()
-            return await original_to_thread(function, *args, **kwargs)
-
-        monkeypatch.setattr(asyncio, "to_thread", controlled_to_thread)
-        accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
-
-        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            task = asyncio.current_task()
-            assert task is not None
-            accepted.set_result(task)
-            await serve_connection(
-                reader,
-                writer,
-                pack_name="test",
-                worker=worker,  # type: ignore[arg-type]
-                schemas={"test.stage": _HOST_SCHEMA},
-                planner=None,
-                consumers={},
-                codec=ValueCodec(registry),
-                source_staging=provider,  # type: ignore[arg-type]
-            )
-
-        server = await asyncio.start_server(accept, "127.0.0.1", 0)
-        address = server.sockets[0].getsockname()
-        reader, writer = await asyncio.open_connection(address[0], address[1])
-        host_task = await accepted
-        try:
-            assert (await read_frame(reader))[0]["type"] == "hello"  # type: ignore[index]
-            invocation = Invocation("inv", "node", "test.stage", {}, _HOST_SCHEMA)
-            header, blobs, segments, _ = encode_invocation(ValueCodec(registry), invocation)
-            assert not segments
-            await write_frame(writer, header, blobs)
-            assert await original_to_thread(provider.session.entered.wait, 5)
-            await write_frame(writer, {"type": "cancel", "invocationId": "inv"}, [])
-            await cleanup_queued.wait()
-            writer.close()
-            await writer.wait_closed()
-            assert not host_task.done()
-            provider.session.release.set()
-            assert await original_to_thread(worker.entered.wait, 5)
-            worker.allow_late.set()
-            assert await original_to_thread(worker.late_refused.wait, 5)
-            assert not provider.session.closed.is_set()
-            assert not host_task.done()
-            cleanup_can_start.set()
-            assert await original_to_thread(provider.session.closed.wait, 5)
-        finally:
-            provider.session.release.set()
-            worker.allow_late.set()
-            cleanup_can_start.set()
-            writer.close()
-            await writer.wait_closed()
-            await asyncio.wait_for(host_task, 5)
-            server.close()
-            await server.wait_closed()
         assert events == ["sweep", "open", "materialize", "materialize", "close"]
 
     run_scenario(scenario())

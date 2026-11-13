@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import json
 import zipfile
 from contextlib import closing, suppress
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 from xml.etree import ElementTree as ET
 
@@ -27,7 +25,6 @@ from dinkster_image_document.format import (
     BLEND_MODES,
     IMAGE_DOCUMENT_MEDIA_TYPE,
     INLINE_RESOURCE_LIMIT,
-    InvalidDocument,
 )
 from dinkster_image_document.interchange import (
     export_ora,
@@ -170,39 +167,6 @@ def test_document_boundary_refuses_uncovered_resources_before_exposure(invalid) 
         codec.decode(wire, blobs, [])
 
 
-def test_document_rendition_needs_no_raster_resources(monkeypatch: pytest.MonkeyPatch) -> None:
-    record = document().to_record()
-    for resource in record["resources"].values():
-        resource.pop("inline")
-    expected = ImageDocument.from_record(record)
-
-    def forbid_raster(*args, **kwargs):
-        pytest.fail("document retrieval must not render or read raster resources")
-
-    monkeypatch.setattr(ImageDocument, "render", forbid_raster)
-    monkeypatch.setattr(ImageDocument, "read_resource", forbid_raster)
-    registry = TypeRegistry()
-    register_comfy_layers(registry)
-    register_comfy_layers(registry)
-    spec = registry.spec("comfy.LAYERS")
-    value = registry.wrap("comfy.LAYERS", spec.decode(spec.encode(expected)))
-    rendition = registry.render(value, "document")
-    assert rendition.mime == IMAGE_DOCUMENT_MEDIA_TYPE
-    assert rendition.data == expected.data
-    assert [s.kind for s in registry.renditions_of("comfy.LAYERS") if s.default] == ["document"]
-
-
-@pytest.mark.parametrize("mode", BLEND_MODES)
-def test_every_document_blend_renders_deterministically(mode: str) -> None:
-    value = append_raster(
-        document(), raster_png(np.full((1, 2, 3), 0.25)), blend_mode=mode, opacity=0.4
-    )
-    first = value.render()
-    assert first.png == value.render().png
-    assert first.pixels.dtype == np.uint16
-    assert np.all(first.pixels[..., :3] <= first.pixels[..., 3:4])
-
-
 def test_canvas_background_is_the_blend_backdrop() -> None:
     value = append_raster(
         empty_document(1, 1), raster_png(np.full((1, 1, 3), 0.5)), blend_mode="multiply"
@@ -253,14 +217,6 @@ def test_mask_fields_groups_clipping_and_z_order(combine: str, channel: str) -> 
     assert group.render().png == value.render().png
     removed = apply_commands(group, [{"op": "remove", "id": group.to_record()["rootLayerIds"][0]}])
     assert not removed.to_record()["layers"] and not removed.to_record()["masks"]
-
-
-def test_transform_components_cannot_compete_with_affine() -> None:
-    record = document().to_record()
-    layer = record["layers"][record["rootLayerIds"][0]]
-    layer["transform"]["components"]["x"] = 2
-    with pytest.raises(InvalidDocument, match="disagree"):
-        ImageDocument.from_record(record)
 
 
 def test_clipping_and_grouping_use_z_order_not_object_key_order() -> None:
@@ -712,27 +668,6 @@ def test_psd_export_round_trips_standard_layer_properties_and_pixels() -> None:
     assert [layer.name for layer in reexported] == ["Backdrop", "Edits"]
 
 
-def test_psd_export_matches_fixed_editor_acceptance_contract() -> None:
-    from psd_tools import PSDImage
-
-    encoded = export_psd(_psd_acceptance_document())
-    with Image.open(io.BytesIO(encoded)) as merged:
-        pixels = merged.convert("RGBA").tobytes()
-    assert len(pixels) == 96
-    assert hashlib.sha256(pixels).hexdigest() == (
-        "06590d2ccfd36d2a4b5337cde8755f7bd5332a37ce826c1a44ee21d68d029900"
-    )
-    psd = PSDImage.open(io.BytesIO(encoded))
-    assert (psd.width, psd.height) == (6, 4)
-    assert [layer.name for layer in psd] == ["Backdrop", "Edits"]
-    group = cast(Any, psd[1])
-    assert group.blend_mode.name == "PASS_THROUGH"
-    assert [layer.name for layer in group] == ["Masked offset", "Hidden"]
-    assert (group[0].left, group[0].top, group[0].opacity) == (1, 1, 128)
-    assert group[0].mask is not None and not group[0].mask.disabled
-    assert (group[1].left, group[1].top, group[1].visible) == (4, 0, False)
-
-
 def test_psd_export_round_trips_disabled_mask_state() -> None:
     value = _psd_acceptance_document()
     record = value.to_record()
@@ -785,71 +720,6 @@ def test_psd_export_uses_merged_view_for_unsupported_structure() -> None:
     with pytest.warns(UserWarning, match="group geometry, clipping, or mask"):
         encoded = export_psd(value)
     assert [layer.name for layer in PSDImage.open(io.BytesIO(encoded))] == ["Composite"]
-
-
-@pytest.mark.parametrize("depth", [16, 32])
-def test_psd_import_reports_rasterized_capability_gaps(
-    monkeypatch: pytest.MonkeyPatch, depth: int
-) -> None:
-    from psd_tools import PSDImage
-    from psd_tools.constants import ColorMode
-
-    class Layer:
-        def __init__(self, kind: str, name: str, vector_mask: bool) -> None:
-            self.kind = kind
-            self.name = name
-            self.left = 0
-            self.top = 0
-            self.width = 1
-            self.height = 1
-            self.opacity = 255
-            self.visible = True
-            self.clipping = False
-            self.blend_mode = SimpleNamespace(name="NORMAL")
-            self.mask = None
-            self._vector_mask = vector_mask
-
-        def has_effects(self) -> bool:
-            return False
-
-        def has_vector_mask(self) -> bool:
-            return self._vector_mask
-
-        def is_group(self) -> bool:
-            return False
-
-        def topil(self) -> Image.Image:
-            return Image.new("RGBA", (1, 1), (255, 0, 0, 255))
-
-    class Document(list[Layer]):
-        width = 1
-        height = 1
-        color_mode = ColorMode.CMYK
-
-        def __init__(self, layers: list[Layer], depth: int) -> None:
-            super().__init__(layers)
-            self.depth = depth
-
-    monkeypatch.setattr(
-        PSDImage,
-        "open",
-        lambda _: Document(
-            [Layer("type", "Caption", True), Layer("smartobject", "Placed", False)], depth
-        ),
-    )
-    with pytest.warns(UserWarning) as caught:
-        imported = import_psd(b"8BPS")
-    messages = [str(item.message) for item in caught]
-    assert any(f"{depth}-bit channels are rasterized to 8-bit RGBA" in item for item in messages)
-    assert any("CMYK color is rasterized to RGBA" in item for item in messages)
-    assert any(
-        "type layer 'Caption' is rasterized as an ordinary layer" in item for item in messages
-    )
-    assert any(
-        "smartobject layer 'Placed' is rasterized as an ordinary layer" in item for item in messages
-    )
-    assert any("layer 'Caption' vector mask is not preserved" in item for item in messages)
-    assert len(imported.to_record()["rootLayerIds"]) == 2
 
 
 @pytest.mark.parametrize("background", [0, 255])

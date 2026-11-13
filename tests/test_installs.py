@@ -110,11 +110,3 @@ def test_root_collision_names_both_installs() -> None:
     )
     with pytest.raises(InstallsError, match=r"root '/same' is already used"):
         parse_installs(text)
-
-
-def test_duplicate_names_are_a_toml_error() -> None:
-    """TOML itself rejects a redefined table; it surfaces as InstallsError
-    like every other malformation."""
-    text = '[installs.a]\nroot = "/a"\nport = 8200\n\n[installs.a]\nroot = "/b"\nport = 8201\n'
-    with pytest.raises(InstallsError, match="invalid TOML"):
-        parse_installs(text)

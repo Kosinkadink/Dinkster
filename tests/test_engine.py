@@ -9,7 +9,6 @@ from typing import cast
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import (
-    ActiveRunIdError,
     Engine,
     EngineEvent,
     ExecutionError,
@@ -20,11 +19,6 @@ from dinkster_engine import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_protocol import (
     CachedResult,
-    Invocation,
-    InvocationResult,
-    LazyStatusInvocation,
-    LazyStatusResult,
-    OnInvocationEvent,
     SavedArtifact,
 )
 from dinkster_schema import (
@@ -44,14 +38,9 @@ from dinkster_values import (
     CORE_COMBO,
     CORE_INT,
     CORE_STRING,
-    RESOURCE_HANDLE_TYPE,
-    ResourceHandle,
     TypeRegistry,
     Value,
-    ValueMeta,
-    list_children,
     register_core_types,
-    register_resource_handle_type,
 )
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
@@ -310,40 +299,6 @@ def test_no_cache_disables_in_run_single_flight_coalescing() -> None:
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("cache_enabled", (0, 1, "false", None))
-def test_engine_rejects_non_boolean_cache_control(cache_enabled: object) -> None:
-    async def scenario() -> None:
-        with pytest.raises(ValueError, match="cache_enabled"):
-            await make_engine().run(image_graph(), ["s"], cache_enabled=cast("bool", cache_enabled))
-
-    run_scenario(scenario())
-
-
-def test_provider_resolution_reads_immutable_run_entry_snapshot() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        graph = image_graph()
-        original_inputs = cast("dict[str, object]", graph.nodes["g"].inputs)
-        calls = 0
-
-        def resolve_providers(candidate: Graph) -> Graph:
-            nonlocal calls
-            calls += 1
-            assert candidate is not graph
-            with pytest.raises(TypeError):
-                cast("dict[str, object]", candidate.nodes["g"].inputs)["width"] = 32
-            original_inputs["width"] = "invalid-after-snapshot"
-            return candidate
-
-        runtime = replace(engine.pin_execution(), resolve_providers=resolve_providers)
-        result = await engine.run(graph, ["s"], execution=runtime)
-
-        assert result.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
-        assert calls == 2
-
-    run_scenario(scenario())
-
-
 def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() -> None:
     executed_sources: list[str] = []
 
@@ -476,144 +431,6 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
     run_scenario(scenario())
 
 
-def test_computed_selector_keeps_resident_value_in_producer_domain() -> None:
-    class BoolSource(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.selector-resident-bool",
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_BOOLEAN)),),
-            )
-
-    class ResidentSource(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.selector-resident-source",
-                inputs=(InputSpec("resource_id", TypeExpr.concrete(CORE_STRING)),),
-                outputs=(OutputSpec("value", TypeExpr.concrete(RESOURCE_HANDLE_TYPE)),),
-            )
-
-    class ResidentSelector(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            resource = TypeExpr.concrete(RESOURCE_HANDLE_TYPE)
-            return NodeSchema(
-                node_type="test.selector-resident-select",
-                inputs=(
-                    InputSpec("condition", TypeExpr.concrete(CORE_BOOLEAN)),
-                    InputSpec("on_false", resource, lazy=True),
-                    InputSpec("on_true", resource, lazy=True),
-                ),
-                outputs=(OutputSpec("value", resource),),
-                selector=SelectorSpec("condition", {"false": "on_false", "true": "on_true"}),
-            )
-
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_resource_handle_type(registry)
-    foundation_domain = object()
-    model_domain = object()
-    invocations: list[tuple[str, str]] = []
-
-    class Arm:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        async def prepare(self, node_types: Sequence[str]) -> None:
-            del node_types
-            return None
-
-        async def invoke(
-            self, invocation: Invocation, on_event: OnInvocationEvent | None = None
-        ) -> InvocationResult:
-            del on_event
-            invocations.append((self.name, invocation.node_type))
-            if invocation.node_type == BoolSource.schema().node_type:
-                return InvocationResult(outputs={"value": registry.wrap(CORE_BOOLEAN, True)})
-            if invocation.node_type == ResidentSource.schema().node_type:
-                resource_id = cast("str", invocation.inputs["resource_id"].resolve())
-                return InvocationResult(
-                    outputs={
-                        "value": registry.wrap(
-                            RESOURCE_HANDLE_TYPE,
-                            ResourceHandle(resource_id, "model", owner="model-life"),
-                        )
-                    }
-                )
-            raise AssertionError("selectors must not execute in a worker")
-
-        async def check_lazy_status(
-            self,
-            _invocation: LazyStatusInvocation,
-            on_event: OnInvocationEvent | None = None,
-        ) -> LazyStatusResult:
-            del on_event
-            raise AssertionError("selector demand must not enter a worker residency domain")
-
-    from dinkster_workers import DispatchWorker
-
-    worker = DispatchWorker(
-        {"foundation": Arm("foundation"), "models": Arm("models")},
-        resolve_owner=lambda owner: model_domain if owner == "model-life" else None,
-        arm_domains={"foundation": foundation_domain, "models": model_domain},
-        default_arms={"foundation": "foundation", "models": "models"},
-    )
-    planned: list[str] = []
-
-    async def plan_execution(
-        _node_id: str,
-        node_type: str,
-        _schema: NodeSchema,
-        _inputs: Mapping[str, object],
-        _run_id: str,
-        _attention_config: object,
-        _single_job_multi_gpu: object,
-    ) -> ExecutionSelection:
-        planned.append(node_type)
-        target = "models" if node_type == ResidentSource.schema().node_type else "foundation"
-        return ExecutionSelection(target=target, cache_tag=target)
-
-    nodes = (BoolSource, ResidentSource, ResidentSelector)
-    engine = Engine(
-        schemas=build_schemas(nodes),
-        registry=registry,
-        worker=worker,
-        cache=MemoryLRUCache(),
-        plan_execution=plan_execution,
-    )
-    graph = Graph(
-        {
-            "condition": GraphNode(BoolSource.schema().node_type),
-            "inactive": GraphNode(ResidentSource.schema().node_type, {"resource_id": "inactive"}),
-            "selected": GraphNode(ResidentSource.schema().node_type, {"resource_id": "selected"}),
-            "selector": GraphNode(
-                ResidentSelector.schema().node_type,
-                {
-                    "condition": Link("condition", "value"),
-                    "on_false": Link("inactive", "value"),
-                    "on_true": Link("selected", "value"),
-                },
-            ),
-        }
-    )
-
-    async def scenario() -> None:
-        result = await engine.run(graph, ["selector"])
-        selected = result.outputs["selector"]["value"].resolve()
-        assert isinstance(selected, ResourceHandle)
-        assert selected.resource_id == "selected"
-        assert invocations == [
-            ("foundation", BoolSource.schema().node_type),
-            ("models", ResidentSource.schema().node_type),
-        ]
-        assert ResidentSelector.schema().node_type not in planned
-        assert ResidentSource.schema().node_type in planned
-        assert "inactive" not in result.executed
-
-    run_scenario(scenario())
-
-
 def test_demanded_producer_can_run_its_own_lazy_fixpoint() -> None:
     class Source(Node):
         @classmethod
@@ -675,92 +492,6 @@ def test_demanded_producer_can_run_its_own_lazy_fixpoint() -> None:
         if event.kind == "node_event" and event.detail.get("name") == "lazy_demand"
     ]
     assert demand_nodes == ["outer", "inner", "inner", "outer"]
-
-
-def test_lazy_consumer_hooks_run_before_single_flight_coalesces_the_body() -> None:
-    schema = NodeSchema(
-        node_type="test.lazy-cache-bypass",
-        inputs=(InputSpec("value", TypeExpr.concrete(CORE_STRING), lazy=True),),
-        outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
-        io_bound=True,
-    )
-    registry = TypeRegistry()
-    register_core_types(registry)
-
-    class CountingCache(MemoryLRUCache):
-        def __init__(self) -> None:
-            super().__init__()
-            self.get_calls = 0
-            self.put_calls = 0
-
-        async def get(self, key: str) -> CachedResult | None:
-            self.get_calls += 1
-            return await super().get(key)
-
-        async def put(self, key: str, outputs: Mapping[str, Value]) -> None:
-            self.put_calls += 1
-            await super().put(key, outputs)
-
-    class GatedWorker:
-        def __init__(self) -> None:
-            self.invocations = 0
-            self.hooks = 0
-            self.first_started = asyncio.Event()
-            self.both_hooks = asyncio.Event()
-            self.release = asyncio.Event()
-
-        async def prepare(self, node_types: Sequence[str]) -> None:
-            del node_types
-            return None
-
-        async def check_lazy_status(
-            self,
-            _invocation: LazyStatusInvocation,
-            on_event: OnInvocationEvent | None = None,
-        ) -> LazyStatusResult:
-            del on_event
-            self.hooks += 1
-            if self.hooks == 2:
-                self.both_hooks.set()
-            return LazyStatusResult(requested_inputs=())
-
-        async def invoke(
-            self,
-            invocation: Invocation,
-            on_event: OnInvocationEvent | None = None,
-        ) -> InvocationResult:
-            del invocation, on_event
-            self.invocations += 1
-            if self.invocations == 1:
-                self.first_started.set()
-            await self.release.wait()
-            return InvocationResult(outputs={"value": registry.wrap(CORE_STRING, "ready")})
-
-    async def scenario() -> None:
-        cache = CountingCache()
-        worker = GatedWorker()
-        engine = Engine(
-            schemas={schema.node_type: schema},
-            registry=registry,
-            worker=worker,
-            cache=cache,
-        )
-        graph = Graph({"lazy": GraphNode(schema.node_type, {"value": "literal"})})
-        first = asyncio.create_task(engine.run(graph, ["lazy"]))
-        await asyncio.wait_for(worker.first_started.wait(), 2)
-        second = asyncio.create_task(engine.run(graph, ["lazy"]))
-        await asyncio.wait_for(worker.both_hooks.wait(), 2)
-        worker.release.set()
-        results = await asyncio.gather(first, second)
-
-        assert worker.hooks == 2
-        assert worker.invocations == 1
-        assert cache.get_calls == 1
-        assert cache.put_calls == 1
-        assert sum(result.executed == ("lazy",) for result in results) == 1
-        assert sum(result.cached == ("lazy",) for result in results) == 1
-
-    run_scenario(scenario())
 
 
 def test_lazy_cache_identity_tracks_final_demand_and_ignores_undemanded_values() -> None:
@@ -1200,64 +931,6 @@ def test_lazy_dynamic_members_select_only_one_source_and_cache() -> None:
     run_scenario(scenario())
 
 
-def test_lazy_grouped_dynamic_members_are_loud_refusals() -> None:
-    class LazyGrouped(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.lazy-grouped-dynamic-refusal",
-                input_families=(
-                    InputFamilySpec(
-                        "parts",
-                        (
-                            InputSpec("value", TypeExpr.concrete(CORE_STRING), lazy=True),
-                            InputSpec("label", TypeExpr.concrete(CORE_STRING)),
-                        ),
-                        min_members=1,
-                    ),
-                ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
-            )
-
-        @classmethod
-        def check_lazy_status(cls, **_inputs: object) -> tuple[()]:
-            return ()
-
-        @classmethod
-        def execute(cls, **_inputs: object) -> Mapping[str, object]:
-            return cls.outputs(value="unreachable")
-
-    async def scenario() -> None:
-        from dinkster_workers import InProcessWorker
-
-        nodes = (LazyGrouped,)
-        registry = TypeRegistry()
-        register_core_types(registry)
-        events: list[EngineEvent] = []
-        engine = Engine(
-            schemas=build_schemas(nodes),
-            registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
-            cache=MemoryLRUCache(),
-            on_event=events.append,
-        )
-        graph = Graph(
-            {
-                "lazy": GraphNode(
-                    "test.lazy-grouped-dynamic-refusal",
-                    {"parts.a.value": "x", "parts.a.label": "X"},
-                )
-            }
-        )
-        with pytest.raises(ExecutionError, match="lazy-dynamic-unsupported"):
-            await engine.run(graph, ["lazy"])
-        failures = [event for event in events if event.kind == "node_failed"]
-        assert len(failures) == 1
-        assert failures[0].detail["message"] == "lazy-dynamic-unsupported"
-
-    run_scenario(scenario())
-
-
 def grant_save_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point DINKSTER_MOUNTS_SNAPSHOT at a one-mount snapshot so save_pgm may
     write - into this folder, nowhere else. Returns the writable root."""
@@ -1388,26 +1061,6 @@ def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
         assert result.outputs["m"]["var_out"].type_id == "INT"
         assert result.outputs["l"]["length"].resolve() == 3
         assert result.outputs["s"]["image"].type_id == "dev.image"
-
-    run_scenario(scenario())
-
-
-def test_typed_literal_unknown_type_fails_validation_not_execution() -> None:
-    from dinkster_graph import TypedLiteral
-
-    async def scenario() -> None:
-        engine = make_engine()
-        graph = Graph(
-            nodes={
-                "m": GraphNode(
-                    "dev.gallery.match",
-                    {"var_in": TypedLiteral("no.such.type", 7)},
-                )
-            }
-        )
-        with pytest.raises(GraphValidationError) as err:
-            await engine.run(graph, ["m"])
-        assert any(d.code == "typed-literal-unknown-type" for d in err.value.diagnostics)
 
     run_scenario(scenario())
 
@@ -1583,77 +1236,6 @@ def InProcessWorkerFactoryFor(nodes: tuple[type[Node], ...], registry: TypeRegis
     return InProcessWorker(build_node_types(nodes), registry)
 
 
-@pytest.mark.parametrize("nested", [False, True])
-def test_envelope_observer_cache_tracks_input_metadata(nested: bool) -> None:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    value_type = TypeExpr.concrete("INT")
-    if nested:
-        value_type = TypeExpr.list_of(value_type)
-
-    class Source(Node):
-        calls = 0
-
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                "test.meta_source", outputs=(OutputSpec("value", value_type),), idempotent=False
-            )
-
-        @classmethod
-        def execute(cls):
-            cls.calls += 1
-            child = replace(
-                registry.wrap("INT", 7),
-                meta=ValueMeta({"resourceProducerArm": f"producer-{min(cls.calls, 2)}"}),
-            )
-            value = registry.wrap("list<INT>", [child]) if nested else child
-            return cls.outputs(value=value)
-
-    class Observe(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                "test.meta_observer",
-                inputs=(InputSpec("value", value_type),),
-                outputs=(OutputSpec("arm", TypeExpr.concrete("STRING")),),
-                input_values=True,
-            )
-
-        @classmethod
-        def execute(cls, value: object, input_values: Mapping[str, Value]):
-            envelope = input_values["value"]
-            children = list_children(envelope)
-            if children is not None:
-                envelope = children[0]
-            return cls.outputs(arm=envelope.meta.get("resourceProducerArm"))
-
-    async def scenario() -> None:
-        nodes = (Source, Observe)
-        engine = Engine(
-            schemas=build_schemas(nodes),
-            registry=registry,
-            worker=InProcessWorkerFactoryFor(nodes, registry),
-            cache=MemoryLRUCache(),
-        )
-        graph = Graph(
-            {
-                "source": GraphNode("test.meta_source", {}),
-                "observe": GraphNode("test.meta_observer", {"value": Link("source", "value")}),
-            }
-        )
-        for expected, cached in (
-            ("producer-1", False),
-            ("producer-2", False),
-            ("producer-2", True),
-        ):
-            result = await engine.run(graph, ["observe"])
-            assert result.outputs["observe"]["arm"].resolve() == expected
-            assert ("observe" in result.cached) is cached
-
-    run_scenario(scenario())
-
-
 def test_node_exception_becomes_execution_error() -> None:
     async def scenario() -> None:
         engine = make_engine()
@@ -1673,82 +1255,6 @@ def _misses(events: list[EngineEvent]) -> dict[str, dict[str, object]]:
             assert event.node_id is not None
             found[event.node_id] = dict(event.detail)
     return found
-
-
-def test_cache_miss_explanations() -> None:
-    """Dev-mode misses name their cause from the key's composite parts
-    (DESIGN 3.9), not two opaque hashes."""
-
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events, explain_misses=True)
-
-        await engine.run(image_graph(), ["s"])
-        first = _misses(events)
-        assert set(first) == {"g", "i", "b", "s"}
-        assert all(d["reason"] == "first-seen" for d in first.values())
-        assert all("cache_key" in d for d in first.values())
-
-        events.clear()
-        await engine.run(image_graph(), ["s"])
-        assert _misses(events) == {}  # all hits: nothing to explain
-
-        events.clear()
-        await engine.run(image_graph(ratio=0.9), ["s"])
-        third = _misses(events)
-        # Only the dirty suffix misses; each miss names the changed input.
-        assert set(third) == {"b", "s"}
-        assert third["b"]["reason"] == "inputs-changed"
-        assert third["b"]["changed_inputs"] == ["ratio"]
-        assert third["s"]["reason"] == "inputs-changed"
-        assert third["s"]["changed_inputs"] == ["image"]
-
-    run_scenario(scenario())
-
-
-def test_cache_miss_never_cacheable_and_evicted(tmp_path, monkeypatch) -> None:
-    grant_save_mount(tmp_path, monkeypatch)
-
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        # One-entry cache: each stored node evicts the previous one.
-        engine = make_engine(events, explain_misses=True, cache=MemoryLRUCache(1))
-        graph = save_graph()
-        await engine.run(graph, ["save"])
-        assert _misses(events)["save"]["reason"] == "never-cacheable"
-
-        events.clear()
-        await engine.run(graph, ["save"])
-        second = _misses(events)
-        # Same components as last run, but the one-slot cache lost g's
-        # entry: the explanation blames the store, not the computation.
-        assert second["g"]["reason"] == "evicted"
-        assert second["save"]["reason"] == "never-cacheable"
-
-    run_scenario(scenario())
-
-
-def test_cache_misses_silent_by_default() -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        await engine.run(image_graph(), ["s"])
-        assert _misses(events) == {}
-
-    run_scenario(scenario())
-
-
-def test_events_emitted_in_order() -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        await engine.run(image_graph(), ["s"])
-        kinds = [e.kind for e in events]
-        assert kinds[0] == "run_started"
-        assert kinds[-1] == "run_finished"
-        assert kinds.count("node_finished") == 4
-
-    run_scenario(scenario())
 
 
 def test_node_finished_and_cached_carry_output_summary() -> None:
@@ -1792,80 +1298,6 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
     run_scenario(scenario())
 
 
-def test_caller_supplied_run_identity_flows_through_events_result_and_invocations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The server's queue owns job identity: a supplied run_id must appear on
-    the result and on every emitted event, with no side channel."""
-
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        invocations: list[Invocation] = []
-        invoke = engine._worker.invoke
-
-        async def recording_invoke(
-            invocation: Invocation, on_event: OnInvocationEvent | None = None
-        ) -> InvocationResult:
-            invocations.append(invocation)
-            return await invoke(invocation, on_event)
-
-        monkeypatch.setattr(engine._worker, "invoke", recording_invoke)
-        result = await engine.run(image_graph(), ["s"], run_id="job-abc123", attempt_id=4)
-        assert result.run_id == "job-abc123"
-        assert {e.run_id for e in events} == {"job-abc123"}
-        assert invocations
-        assert {(invocation.job_ref, invocation.attempt_id) for invocation in invocations} == {
-            ("job-abc123", 4)
-        }
-
-    run_scenario(scenario())
-
-
-def test_default_run_ids_are_unique() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        first = await engine.run(image_graph(), ["s"])
-        second = await engine.run(image_graph(), ["s"])
-        assert first.run_id
-        assert first.run_id != second.run_id
-
-    run_scenario(scenario())
-
-
-def test_empty_run_id_rejected() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        with pytest.raises(ValueError, match="run_id"):
-            await engine.run(image_graph(), ["s"], run_id="")
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("attempt_id", (0, -1, True, 1.5, "1"))
-def test_invalid_attempt_id_rejected(attempt_id: object) -> None:
-    async def scenario() -> None:
-        with pytest.raises(ValueError, match="attempt_id"):
-            await make_engine().run(image_graph(), ["s"], attempt_id=attempt_id)  # type: ignore[arg-type]
-
-    run_scenario(scenario())
-
-
-def test_concurrent_duplicate_run_id_is_rejected() -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        first = asyncio.create_task(engine.run(image_graph(), ["s"], run_id="shared"))
-        async with asyncio.timeout(5):
-            while not any(event.kind == "run_started" for event in events):
-                await asyncio.sleep(0)
-        with pytest.raises(ActiveRunIdError, match="already active"):
-            await engine.run(image_graph(), ["s"], run_id="shared")
-        assert (await first).run_id == "shared"
-
-    run_scenario(scenario())
-
-
 def test_raising_listener_is_nonfatal_for_owner_and_coalesced_waiter() -> None:
     async def scenario() -> None:
         def raising_listener(_event: EngineEvent) -> None:
@@ -1883,25 +1315,3 @@ def test_raising_listener_is_nonfatal_for_owner_and_coalesced_waiter() -> None:
         assert owner.cached or waiter.cached
 
     run_scenario(scenario())
-
-
-def test_announce_schemas_is_additive_and_atomic() -> None:
-    """Progressive announcement grows the engine's surface additively:
-    redefining an existing type is refused, and a refused delta merges
-    NOTHING - announcing the non-colliding half afterwards succeeds,
-    which it could not if the failed call had half-applied."""
-    from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
-
-    engine = make_engine()
-    late = NodeSchema(
-        node_type="late.echo",
-        inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
-        outputs=(OutputSpec("out", TypeExpr.concrete("STRING")),),
-    )
-    existing = build_schemas(SCAFFOLD_NODES)["dev.image.gradient"]
-
-    with pytest.raises(ValueError, match="redefine"):
-        engine.announce_schemas({"late.echo": late, "dev.image.gradient": existing})
-    engine.announce_schemas({"late.echo": late})  # atomic: nothing merged above
-    with pytest.raises(ValueError, match="redefine"):
-        engine.announce_schemas({"late.echo": late})

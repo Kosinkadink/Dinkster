@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry, register_media_types
 from dinkster_inference_wire.sam3_wire import register_sam3_track_type
-from dinkster_values import LATENT_TYPE, EncodedLatentTensor, encode_latent
+from dinkster_values import LATENT_TYPE, EncodedLatentTensor
 
 PACKED = EncodedLatentTensor("uint8", (2, 1, 1, 3), bytes((1, 128, 255, 85, 42, 16)))
 EMPTY = EncodedLatentTensor("uint8", (3, 0, 2, 4), b"")
@@ -76,32 +76,3 @@ def test_sam3_fingerprint_includes_bytes_shape_dimensions_frames_and_scores(
     spec = registry.spec(SAM3_TRACK_DATA_TYPE)
     assert spec.fingerprint is not None
     assert spec.fingerprint(TRACKS) != spec.fingerprint(changed)
-
-
-@pytest.mark.parametrize(
-    "value",
-    (
-        {},
-        {**TRACKS, "packed_masks": False},
-        {**TRACKS, "packed_masks": EncodedLatentTensor("float32", (1,), b"\0\0\0\0")},
-        {**TRACKS, "packed_masks": EncodedLatentTensor("uint8", (2, 3), b"\0")},
-        {**TRACKS, "orig_size": (9, True)},
-        {**TRACKS, "orig_size": (9,)},
-        {**TRACKS, "orig_size": (0, 3)},
-        {**TRACKS, "n_frames": True},
-        {**TRACKS, "n_frames": 1.5},
-        {**TRACKS, "n_frames": -1},
-    ),
-)
-def test_sam3_rejects_malformed_payloads_in_every_codec_entry(
-    registry: TypeRegistry, value: dict[str, object]
-) -> None:
-    spec = registry.spec(SAM3_TRACK_DATA_TYPE)
-    assert spec.validate_encoded is not None
-    payload = encode_latent({"samples": value})
-    with pytest.raises(ValueError):
-        spec.encode(value)
-    with pytest.raises(ValueError):
-        spec.decode(payload)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(payload, {})

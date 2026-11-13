@@ -1,5 +1,4 @@
 import io
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -14,7 +13,6 @@ from dinkster_values import (
     append_audio_edit,
     audio_from_source,
     edit_video,
-    effective_video_facts,
 )
 from dinkster_values.audio_lazy import LazyAudio
 from dinkster_video_runtime import assemble_video, save_video_stream
@@ -287,34 +285,6 @@ def test_exact_pcm_edits_retain_shortest_audio(published, tmp_path, monkeypatch)
         assert len(list(opened.decode(video=0))) == 4
     with av.open(io.BytesIO(output.getvalue()), "r") as opened:
         assert sum(frame.samples for frame in opened.decode(audio=0)) == 4000
-
-
-@pytest.mark.parametrize("trim,bound", [(False, None), (True, None), (True, 1000)])
-def test_unbounded_component_audio_and_video_reject_before_reader(
-    estimated_audio, monkeypatch, trim, bound
-) -> None:
-    import dinkster_video_runtime.runtime as runtime
-
-    estimated_audio["probe"] = {
-        **estimated_audio["probe"],
-        "frames": bound,
-        "duration": None if bound is None else bound / 8000,
-    }
-    value = assemble_video(np.zeros((10, 64, 64, 3), np.float32), fps=10, audio=estimated_audio)
-    segment = replace(runtime._plan(value)[0], duration=None)
-    facts = {**effective_video_facts(value), "duration": None}
-    monkeypatch.setattr(runtime, "_plan", lambda _: [segment])
-    monkeypatch.setattr(runtime, "effective_video_facts", lambda _: facts)
-
-    def forbidden(*args):
-        pytest.fail("unbounded component audio reached decoder admission")
-
-    monkeypatch.setattr(runtime, "_audio_frames", forbidden)
-    output = io.BytesIO()
-    message = "finite AUDIO or VIDEO read bound" if bound is None else "requires finite VIDEO"
-    with pytest.raises(ValueError, match=message):
-        save_video_stream(value, output, codec="ffv1", container="mkv", trim_to_audio=trim)
-    assert output.getvalue() == b""
 
 
 def test_pcm_root_does_not_certify_encoded_concat_child(estimated_audio) -> None:

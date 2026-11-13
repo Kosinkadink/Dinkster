@@ -165,12 +165,18 @@ def generation_pack_specs(
         raise CompositionError("generation hosting names packs absent from dinkster.lock")
     development = generation / "development-sources.json"
     selected_sources: set[str] = set()
+    live_sources: dict[str, Path] = {}
     if development.is_file():
         capture = json.loads(development.read_text(encoding="utf-8"))
         if capture.get("format") != "dinkster.development-sources/1":
             raise CompositionError("unsupported development source capture")
         selected_sources = {
             "local-build:" + row["path"] for row in capture["sources"] if row["kind"] == "pack"
+        }
+        live_sources = {
+            "local-build:" + row["path"]: Path(row["path"])
+            for row in capture["sources"]
+            if row["kind"] == "pack" and row.get("live")
         }
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
@@ -209,6 +215,14 @@ def generation_pack_specs(
             raise CompositionError(
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
+        live_root = live_sources.get(entry.source)
+        if live_root is not None:
+            if entry.pack in in_process_packs:
+                raise CompositionError("live packs require isolated hosting")
+            if not live_root.is_absolute() or not live_root.is_dir() or live_root.is_symlink():
+                raise CompositionError(f"live pack folder is unavailable: {live_root}")
+            root = live_root
+            manifest = _manifest(root, entry)
         manifests[entry.pack] = manifest
         in_process = entry.pack in in_process_packs
         python = (
@@ -248,7 +262,7 @@ def generation_pack_specs(
                         is not None
                     )
                 ),
-                require_catalog=True,
+                require_catalog=live_root is None,
                 asset_vault_write=(
                     entry.pack == "dinkster-nodes-remote"
                     and entry.publisher == "dinkster"
@@ -273,7 +287,8 @@ def generation_pack_specs(
             specs[index],
             env={
                 "PYTHONPATH": os.pathsep.join(
-                    str(generation / "pack-sources" / name) for name in reachable
+                    str(live_sources.get(entries[name].source, generation / "pack-sources" / name))
+                    for name in reachable
                 )
             },
         )

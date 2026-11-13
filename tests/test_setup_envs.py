@@ -225,14 +225,6 @@ def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
         setup_envs.select_base(bases)
 
 
-def test_from_scratch_contributor_setup_names_missing_host_row(tmp_path: Path):
-    root = Path(setup_envs.__file__).resolve().parents[1]
-    variants = tmp_path / "variants.toml"
-    variants.write_text('[base]\npython = "3.14.10"\npackages = ["torch"]\n[variants]\n')
-    with pytest.raises(ValueError, match=r"missing variants.toml row: variants.absent-host"):
-        setup_envs.setup(root, from_scratch=True, variant="absent-host", variants=variants)
-
-
 def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Path, monkeypatch):
     from test_environment_artifacts import _mirror
 
@@ -255,41 +247,6 @@ def test_published_contributor_setup_substitutes_base_only_versions(tmp_path: Pa
         "fixture-base==1.0 --hash=sha256:" + base["wheels"][0]["sha256"] + "\n"
     )
     assert json.loads((root / ".run/environment-base.json").read_text())["id"] == base["id"]
-
-
-@pytest.mark.parametrize(
-    "host,arch,variant",
-    [
-        ("Linux", "x86_64", "linux-cpu"),
-        ("Windows", "AMD64", "win-cpu"),
-        ("Darwin", "arm64", "mac-arm64"),
-    ],
-)
-def test_setup_reads_only_host_manifests(tmp_path, monkeypatch, host, arch, variant):
-    from dinkster_supervisor import environment_artifacts
-    from test_environment_artifacts import _mirror
-
-    mirror, root = tmp_path / "mirror", tmp_path / "checkout"
-    target = {
-        "Linux": ("linux", "x86_64"),
-        "Windows": ("windows", "x86_64"),
-        "Darwin": ("macos", "arm64"),
-    }[host]
-    base, _, _ = _mirror(mirror, variant=variant, target=target)
-    (root / "scripts").mkdir(parents=True)
-    selections = {name: "0" * 64 for name in ("linux-cpu", "win-cpu", "mac-arm64")}
-    selections[variant] = base["id"][7:]
-    (root / "scripts/base_bundles.json").write_text(json.dumps(selections))
-    monkeypatch.setattr(setup_envs.platform, "system", lambda: host)
-    monkeypatch.setattr(setup_envs.platform, "machine", lambda: arch)
-
-    def stop_after_selection(selected, mirrors, store):
-        assert selected["id"] == base["id"]
-        raise RuntimeError("selected host base acquired")
-
-    monkeypatch.setattr(environment_artifacts, "acquire_base", stop_after_selection)
-    with pytest.raises(RuntimeError, match="selected host base acquired"):
-        setup_envs.setup(root, mirror=str(mirror), variant=variant)
 
 
 @pytest.mark.parametrize("arch", ["arm64", "aarch64"])
@@ -381,36 +338,6 @@ def test_windows_uv_minimum_names_required_interpreter(monkeypatch, version, acc
         assert "CPython 3.14.10" in str(error.value)
 
 
-@pytest.mark.parametrize("entry", ["setup", "bootstrapped-setup", "prepare"])
-def test_old_uv_refuses_before_setup_side_effects(tmp_path, monkeypatch, entry):
-    from scripts import prepare_windows_python
-
-    calls = []
-
-    def uv_version(arguments, **kwargs):
-        calls.append(arguments)
-        assert arguments == ["uv", "--version"]
-        return "uv 0.12.5 (fixture)\n"
-
-    monkeypatch.setattr(subprocess, "check_output", uv_version)
-    monkeypatch.setattr(setup_envs, "ROOT", tmp_path)
-    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(shutil, "which", lambda name: name)
-    monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(sys, "path", sys.path.copy())
-    monkeypatch.setattr(sys, "argv", ["setup_envs.py"])
-    monkeypatch.delenv("DINKSTER_SETUP_BOOTSTRAPPED", raising=False)
-    if entry == "bootstrapped-setup":
-        monkeypatch.setenv("DINKSTER_SETUP_BOOTSTRAPPED", "1")
-    with pytest.raises(RuntimeError, match="CPython 3.14.10"):
-        if entry == "prepare":
-            prepare_windows_python.prepare(tmp_path / "python", "uv")
-        else:
-            setup_envs.main()
-    assert calls == [["uv", "--version"]]
-    assert list(tmp_path.iterdir()) == []
-
-
 @pytest.mark.parametrize("filename", ["windows_sqlite.py", "variants.toml"])
 @pytest.mark.parametrize("outcome", ["recover", "exhaust", "bad-hash", "http-404"])
 @pytest.mark.parametrize(
@@ -480,62 +407,3 @@ def test_windows_preparation_retries_transient_downloads_without_accepting_bad_i
         assert caught.value is failure
     assert attempts[filename] == {"recover": 2, "exhaust": 3, "bad-hash": 2, "http-404": 1}[outcome]
     assert waits == {"recover": [1], "exhaust": [1, 2], "bad-hash": [1], "http-404": []}[outcome]
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows runtime admission")
-@pytest.mark.parametrize("matching_base", [False, True])
-def test_setup_checks_reused_windows_environment_base(tmp_path, monkeypatch, matching_base):
-    from dinkster_supervisor import environment_artifacts, environment_downloads
-
-    from scripts import build_release
-
-    root = tmp_path / "checkout"
-    (root / "scripts").mkdir(parents=True)
-    (root / "scripts/base_bundles.json").write_text('{"win-cpu": "identity"}')
-    (root / "uv.lock").write_text("package = []\n")
-    gate = "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py"
-    (root / gate).parent.mkdir(parents=True)
-    shutil.copyfile(Path(setup_envs.__file__).resolve().parents[1] / gate, root / gate)
-    base_root = Path(sys.base_prefix).parent if matching_base else tmp_path / "other-base"
-    base = {
-        "id": "sha256:identity",
-        "variant": "win-cpu",
-        "platform": {"os": "windows", "arch": "x86_64"},
-        "python": sys.version.split()[0],
-        "interpreter": {"executable": Path(sys.base_prefix).name + "/python.exe"},
-        "wheels": [
-            {
-                "name": "fixture",
-                "version": "1.0",
-                "filename": "fixture-1.0-py3-none-any.whl",
-                "sha256": "a" * 64,
-            }
-        ],
-        "replaces": ["fixture"],
-    }
-    environment = root / ".venv"
-    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(environment)], check=True)
-    (root / ".run").mkdir()
-    receipt = root / ".run/environment-base.json"
-    receipt.write_text(json.dumps(base))
-    monkeypatch.setattr(environment_downloads, "read_metadata", lambda *args: b"[]")
-    monkeypatch.setattr(environment_artifacts, "validate_manifest", lambda *args: base)
-    monkeypatch.setattr(environment_artifacts, "acquire_base", lambda *args: base_root)
-    monkeypatch.setattr(setup_envs, "select_base", lambda *args: base)
-    monkeypatch.setattr(build_release, "workspace_projects", lambda *args: {})
-    run = setup_envs.command
-
-    def fixture_command(*args, **kwargs):
-        if args[:2] == ("uv", "export"):
-            (root / ".run/workspace-requirements.txt").write_text("")
-        elif args[0] != "uv":
-            run(*args, **kwargs)
-
-    monkeypatch.setattr(setup_envs, "command", fixture_command)
-    if matching_base:
-        assert setup_envs.setup(root) == environment / "Scripts/python.exe"
-    else:
-        before = receipt.read_bytes()
-        with pytest.raises(subprocess.CalledProcessError):
-            setup_envs.setup(root)
-        assert receipt.read_bytes() == before

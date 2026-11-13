@@ -983,6 +983,12 @@ def build_generation(
             prepare_pack_catalogs(destination, in_process_packs)
         if prepare_packs is not None:
             prepare_packs(destination)
+        if prepare_packs is None and (destination / "development-sources.json").is_file():
+            from .environment_development import install_live_sources
+
+            install_live_sources(
+                destination, read_document(destination / "development-sources.json")
+            )
         if artifact_sources is not None:
             write_document(destination / "artifact-sources.json", artifact_sources)
         files = tuple(

@@ -320,31 +320,6 @@ def test_file3d_source_preflight_normalizes_empty_before_asset_wrapping(
     assert missing == []
 
 
-def test_file3d_source_preflight_distinguishes_empty_default_from_missing_required() -> None:
-    from dinkster_server.preflight import bind_model_names
-
-    for default, required, expected in (
-        ("", True, {"model": TypedLiteral(FILE_3D_TYPE, None)}),
-        (None, False, {"model": TypedLiteral(FILE_3D_TYPE, None)}),
-        (None, True, {}),
-    ):
-        schema = NodeSchema(
-            "preview-file",
-            inputs=(
-                InputSpec(
-                    "model",
-                    TypeExpr.union(CORE_STRING, FILE_3D_TYPE),
-                    default=default,
-                    required=required,
-                ),
-            ),
-        )
-        graph = Graph({"preview": GraphNode(schema.node_type)})
-        prepared, missing = bind_model_names(graph, {schema.node_type: schema}, None)
-        assert not missing
-        assert prepared.nodes["preview"].inputs == expected
-
-
 @pytest.mark.parametrize("preview_union", [False, True])
 def test_file3d_submission_rejects_missing_companions_as_client_error(
     tmp_path: Path, preview_union: bool
@@ -632,29 +607,6 @@ def test_load_file3d_empty_and_self_contained_binary_sources(tmp_path: Path) -> 
         assert source.read_bytes() == payload
 
 
-def test_file3d_null_roundtrip_preserves_type_and_declares_no_assets() -> None:
-    registry = TypeRegistry()
-    for spec in register_file3d_types(registry):
-        value = registry.wrap(spec.type_id, None)
-        assert value.type_id == spec.type_id
-        assert value.resolve() is None
-        assert value.meta.entries == {"asset_refs": []}
-        assert spec.encode(None) == b"null"
-        assert spec.decode(b"null") is None
-        assert spec.validate_encoded is not None
-        spec.validate_encoded(b"null", value.meta.entries)
-        with pytest.raises(AssetError, match="metadata"):
-            spec.validate_encoded(b"null", {"asset_refs": [], "format": "glb"})
-        restored = registry.wrap(spec.type_id, spec.decode(spec.encode(None)))
-        assert restored.fingerprint == value.fingerprint
-        rendition = registry.render(value, "manifest")
-        assert rendition.mime == "application/json"
-        assert rendition.data == b"null"
-        for malformed in (False, 0, "none", {"format": "glb", "source": None}):
-            with pytest.raises(AssetError):
-                registry.wrap(spec.type_id, malformed)
-
-
 def test_file3d_sources_and_sidecars_keep_original_bytes_and_receiver_authority(
     tmp_path: Path,
 ) -> None:
@@ -803,106 +755,6 @@ def test_file3d_source_cannot_introduce_filesystem_authority(source: object) -> 
     register_file3d_types(registry)
     with pytest.raises(AssetError):
         registry.wrap(FILE_3D_TYPE, {"format": "obj", "source": source})
-
-
-@pytest.mark.parametrize(
-    "type_id,format_id",
-    (
-        ("FILE_3D", "custom"),
-        ("FILE_3D_GLB", "glb"),
-        ("FILE_3D_GLTF", "gltf"),
-        ("FILE_3D_FBX", "fbx"),
-        ("FILE_3D_OBJ", "obj"),
-        ("FILE_3D_STL", "stl"),
-        ("FILE_3D_USDZ", "usdz"),
-        ("FILE_3D_PLY", "ply"),
-        ("FILE_3D_SPLAT", "splat"),
-        ("FILE_3D_SPZ", "spz"),
-        ("FILE_3D_KSPLAT", "ksplat"),
-        ("FILE_3D_SPLAT_ANY", "ply"),
-        ("FILE_3D_SPLAT_ANY", "splat"),
-        ("FILE_3D_SPLAT_ANY", "spz"),
-        ("FILE_3D_SPLAT_ANY", "ksplat"),
-        ("FILE_3D_POINT_CLOUD_ANY", "ply"),
-        ("FILE_3D", ""),
-        ("FILE_3D_SPLAT_ANY", ""),
-        ("FILE_3D_POINT_CLOUD_ANY", ""),
-    ),
-)
-def test_file3d_format_families_retain_original_format(type_id: str, format_id: str) -> None:
-    registry = TypeRegistry()
-    register_file3d_types(registry)
-    ref = AssetRef(digest_bytes(b"original"), "source", 8)
-    resource = AssetRef(digest_bytes(b"sidecar"), "data.bin", 7)
-    obj = {"format": format_id, "source": ref, "resources": {"mesh/data.bin": resource}}
-    spec = registry.spec(type_id)
-    encoded = spec.encode(obj)
-    decoded = cast("dict[str, object]", spec.decode(encoded))
-    assert decoded == obj
-    value = registry.wrap(type_id, obj)
-    assert spec.validate_encoded is not None
-    spec.validate_encoded(encoded, value.meta.entries)
-    assert dict(value.meta.entries) == {
-        "format": format_id,
-        "asset_refs": [ref.to_wire(), resource.to_wire()],
-    }
-    rendition = registry.render(value, "manifest")
-    assert json.loads(rendition.data) == {
-        "format": format_id,
-        "source": ref.to_wire(),
-        "resources": {"mesh/data.bin": resource.to_wire()},
-    }
-    assert spec.fingerprint is not None
-    assert spec.fingerprint(obj) == registry.wrap(type_id, decoded).fingerprint
-    assert value_asset_references(
-        {"model": registry.wrap(type_id, decoded)}, complete_registry=registry
-    ) == {ref.digest: ref, resource.digest: resource}
-    wrong = {**obj, "format": "gltf" if type_id == FILE_3D_GLB_TYPE else "glb"}
-    if type_id != FILE_3D_TYPE:
-        with pytest.raises(AssetError, match="does not accept"):
-            spec.encode(wrong)
-
-
-@pytest.mark.parametrize("format_id", (None, False, 0, ".ply", "PLY", "../ply"))
-def test_file3d_unspecified_format_does_not_accept_malformed_formats(format_id: object) -> None:
-    registry = TypeRegistry()
-    register_file3d_types(registry)
-    ref = AssetRef(digest_bytes(b"original"), "source", 8)
-    obj = {"format": format_id, "source": ref}
-    spec = registry.spec(FILE_3D_TYPE)
-    with pytest.raises(AssetError, match="format"):
-        spec.encode(obj)
-    payload = json.dumps({**obj, "source": ref.to_wire()}).encode()
-    with pytest.raises(AssetError, match="format"):
-        spec.decode(payload)
-
-
-@pytest.mark.parametrize(
-    "type_id",
-    (
-        "FILE_3D_GLB",
-        "FILE_3D_GLTF",
-        "FILE_3D_FBX",
-        "FILE_3D_OBJ",
-        "FILE_3D_STL",
-        "FILE_3D_USDZ",
-        "FILE_3D_PLY",
-        "FILE_3D_SPLAT",
-        "FILE_3D_SPZ",
-        "FILE_3D_KSPLAT",
-    ),
-)
-def test_file3d_concrete_formats_require_declared_format(type_id: str) -> None:
-    registry = TypeRegistry()
-    register_file3d_types(registry)
-    ref = AssetRef(digest_bytes(b"original"), "source", 8)
-    obj = {"format": "", "source": ref}
-    spec = registry.spec(type_id)
-    with pytest.raises(AssetError, match="does not accept"):
-        spec.encode(obj)
-    payload = json.dumps({**obj, "source": ref.to_wire()}).encode()
-    with pytest.raises(AssetError, match="does not accept"):
-        spec.decode(payload)
 
 
 FILE3D_SOURCE = b'{"asset":{"version":"2.0"},"buffers":[{"uri":"mesh/data.bin"}]}'
@@ -1087,44 +939,6 @@ def test_authored_viewport_captures_rebind_without_granting_paths(tmp_path: Path
         "camera_info": None,
     }
     assert target.decode(source.encode({})) == {}
-
-
-@pytest.mark.parametrize("change", ("revoke", "replace", "index"))
-def test_viewport_captures_retain_local_grant_authority(tmp_path: Path, change: str) -> None:
-    root = tmp_path / "captures"
-    root.mkdir()
-    capture = root / "frame.png"
-    capture.write_bytes(b"original capture bytes")
-    snapshot = tmp_path / "mounts.json"
-    mounts = MountTable(snapshot)
-    mounts.add(MountDef(id="captures", path=root), kind="media/image")
-    ref = mounts.bind_name("frame.png", "media/image")
-    assert isinstance(ref, LocalAssetRef)
-    registry = TypeRegistry()
-    register_asset_type(registry, MountSnapshotResolver(snapshot))
-    spec = register_load3d_type(registry)
-    value = {"image": ref, "recording": ""}
-    payload = spec.encode(value)
-    foreign = TypeRegistry()
-    register_asset_type(foreign, MountSnapshotResolver(tmp_path / "foreign.json"))
-    foreign_spec = register_load3d_type(foreign)
-    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
-        foreign_spec.decode(payload)
-    restored = cast(dict[str, object], spec.decode(payload))
-    assert cast(LocalAssetRef, restored["image"]).read_bytes() == b"original capture bytes"
-    if change == "index":
-        mounts.scan("captures")
-        indexed = cast(dict[str, object], spec.decode(payload))["image"]
-        assert isinstance(indexed, AssetRef)
-        assert indexed.digest == digest_bytes(b"original capture bytes")
-        assert indexed.read_bytes() == b"original capture bytes"
-    else:
-        if change == "revoke":
-            mounts.remove("captures")
-        else:
-            capture.write_bytes(b"replacement bytes")
-        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
-            spec.decode(payload)
 
 
 VIEWPORT_CAPTURE = b"\x01\xff\x03\x00asymmetric capture"

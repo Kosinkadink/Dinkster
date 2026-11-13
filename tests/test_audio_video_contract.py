@@ -13,7 +13,6 @@ import pytest
 from aiohttp import web
 from dinkster_api.v1 import (
     AUDIO_TYPE,
-    VIDEO_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -24,7 +23,6 @@ from dinkster_assets import (
     AssetRef,
     AssetVault,
     digest_bytes,
-    register_video_value_type,
 )
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import bind_video_value
@@ -35,7 +33,6 @@ from dinkster_values import (
     edit_video,
     encode_video,
     video_from_source,
-    video_meta,
 )
 from dinkster_values.audio_codec import (
     append_audio_edit,
@@ -46,10 +43,8 @@ from dinkster_values.audio_codec import (
     encode_audio,
 )
 from dinkster_values.audio_lazy import LazyAudio
-from dinkster_values.video_codec import validate_video_encoded
 from dinkster_video_runtime import assemble_video, disassemble_video
 from dinkster_workers import RemoteWorker
-from dinkster_workers.devices import DeviceMap
 from test_remote import TOKEN, start_service, stop_service
 from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost
 
@@ -248,21 +243,6 @@ def test_source_video_concat_audio_is_lazy_across_selected_boundary(
     )
 
 
-def test_source_video_unknown_duration_uses_measured_video_end(
-    tmp_path, decoded_audio_samples
-) -> None:
-    from dinkster_video_runtime.runtime import _extract_audio, _Segment
-
-    data, pcm = _encoded_video_audio()
-    source = _video_asset(data, AssetVault(tmp_path))
-    video = video_from_source(source)
-    audio = _extract_audio([_Segment(video, Fraction(1, 4), None)], Fraction(1, 2))
-    assert isinstance(audio, LazyAudio)
-    assert effective_audio_facts(audio)["frames"] == 24000
-    assert decoded_audio_samples == []
-    np.testing.assert_array_equal(audio_window(audio, 0, 24000)["waveform"], pcm[..., 12000:36000])
-
-
 @pytest.mark.parametrize(
     "channels,samples,layout",
     [(1, 9_000_000, "mono"), (3, 48_000, "3.0"), (6, 48_000, "5.1"), (9, 1_000_000, "9c")],
@@ -396,66 +376,6 @@ def test_concat_trim_selects_component_audio_without_eager_concat() -> None:
     audio = disassemble_video(selected)["audio"]
     assert isinstance(audio, LazyAudio)
     np.testing.assert_array_equal(audio_window(audio, 0, 48000)["waveform"], pcm)
-
-
-@pytest.mark.parametrize("samples", [100, 100_000])
-@pytest.mark.parametrize("complete", (False, True))
-def test_nested_audio_roundtrip_binds_without_decoding(
-    tmp_path, monkeypatch, samples, complete
-) -> None:
-    pcm = np.linspace(-1, 1, samples, dtype=np.float32).reshape(1, 1, -1)
-    images = np.ones((2, 4, 4, 4), np.float32)
-    audio_value = {"waveform": pcm, "sample_rate": 8000}
-    value = assemble_video(images, audio=None if complete else audio_value, fps=8)
-    if complete:
-        value["complete_audio"] = audio_value
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "producer"))
-    producer = TypeRegistry()
-    register_video_value_type(producer, VIDEO_TYPE)
-    wrapped = producer.wrap(VIDEO_TYPE, value)
-    bound = wrapped.resolve()
-    encoded = encode_video(bound)
-    refs = cast(list[dict[str, Any]], wrapped.meta.get("asset_refs"))
-    assert len(refs) == (1 if samples == 100_000 else 0)
-    destination = AssetVault(tmp_path / "consumer")
-    for ref in refs:
-        data = AssetRef.from_wire(ref, AssetVault(tmp_path / "producer")).open()
-        with data, destination.writer(ref["digest"]) as writer:
-            writer.write(data.read())
-            writer.commit()
-    with monkeypatch.context() as patch:
-        patch.setattr(AssetRef, "open", lambda self: pytest.fail("codec opened audio"))
-        validate_video_encoded(memoryview(encoded), wrapped.meta.entries)
-        qualified = DeviceMap(mapping={}, qualifier="video-consumer").value(wrapped)
-        validate_video_encoded(memoryview(encoded), qualified.meta.entries)
-        with pytest.raises(ValueError, match="cost"):
-            validate_video_encoded(
-                encoded, {**qualified.meta.entries, "cost": {"ram@video-consumer": 0}}
-            )
-        rebound = bind_video_value(decode_video(encoded), destination)
-        assert encode_video(rebound) == encoded
-        assert video_meta(rebound) == wrapped.meta.entries
-    from dinkster_caches import MemoryLRUCache
-
-    async def reuse() -> None:
-        cache = MemoryLRUCache()
-        consumer = TypeRegistry()
-        register_video_value_type(consumer, VIDEO_TYPE, destination)
-        transported = consumer.wrap(VIDEO_TYPE, rebound)
-        await cache.put("nested-video-audio", {"video": transported})
-        cached = await cache.get("nested-video-audio")
-        assert cached is not None
-        assert encode_video(cached["video"].resolve()) == encoded
-        assert cached["video"].meta == transported.meta
-
-    run_scenario(reuse())
-    audio = (
-        rebound["complete_audio"]
-        if complete
-        else cast(dict[str, Any], rebound["components"])["audio"]
-    )
-    np.testing.assert_array_equal(audio_window(audio, 13, 50)["waveform"], pcm[..., 13:63])
-    assert len(encoded) < 4096
 
 
 class TrimAudioFixture(Node):

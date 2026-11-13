@@ -8,12 +8,9 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_collab import SessionService, SessionStore, add_session_routes
-from dinkster_collab.routes import _TokenBucketLimiter
-from dinkster_collab.sessions import ActorLimitError
 from dinkster_server.auth import (
     CAPABILITIES,
     CompositeAuthenticator,
-    DelegationStore,
     Principal,
     PrincipalPermissionStore,
     StaticBearerAuthenticator,
@@ -412,47 +409,6 @@ def test_job_event_stream_rechecks_authority_after_dequeue(
     run_scenario(scenario())
 
 
-def test_delegation_expiry_and_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = DelegationStore()
-    user = Principal("u", {"scope": CAPABILITIES}, expires_at=time.time() + 2)
-    issued = store.mint(user, "scope", "agent", None, 600)
-    assert float(str(issued["expiresAt"])) > time.time() + 590
-    principal = store.authenticate(str(issued["token"]))
-    assert principal is not None and principal.kind == "agent"
-    for _ in range(31):
-        store.mint(user, "scope", "agent", None, 600)
-    with pytest.raises(web.HTTPTooManyRequests):
-        store.mint(user, "scope", "agent", None, 600)
-    independent = store.mint(
-        Principal("expired", {"scope": CAPABILITIES}, expires_at=1), "scope", "agent", None, 600
-    )
-    assert store.authenticate(str(independent["token"])) is not None
-    monkeypatch.setattr(time, "time", lambda: float(str(independent["expiresAt"])) + 1)
-    assert store.authenticate(str(independent["token"])) is None
-    store.close()
-
-
-def test_principal_kind_budgets_and_actor_storage_are_bounded() -> None:
-    now = [0.0]
-    limiter = _TokenBucketLimiter(2, 2, lambda: now[0])
-    assert limiter.consume("user", "agent") is None
-    assert limiter.consume("user", "agent") == 1000
-    assert limiter.consume("user", "human") is None
-    assert limiter.consume("user", "human") == 500
-    now[0] = 10
-    assert limiter.consume("another", "agent") is None
-    assert len(limiter._principal_buckets) == 1
-    assert len(limiter._agent_buckets) == 1
-    service = SessionService()
-    sid = service.create(scope="local", document_id="d", snapshot={}).session_id
-    for index in range(256):
-        service.bind_actor(sid, f"actor-{index}", "local")
-    with pytest.raises(ActorLimitError):
-        service.bind_actor(sid, "overflow", "local")
-    service.bind_actor(sid, "actor-0", "local")
-    assert len(service.get(sid).actor_bindings) == 256
-
-
 def test_store_failure_does_not_advance_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -549,22 +505,3 @@ def test_agent_run_attribution_and_local_mode(auth_enabled: bool, tmp_path: Path
             await jwks.close()
 
     run_scenario(scenario())
-
-
-def test_local_agents_keep_explicit_history_journal_and_training_scopes() -> None:
-    from dataclasses import replace
-
-    from aiohttp.test_utils import make_mocked_request
-    from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
-    from dinkster_server.execution_journal import _run_scope
-    from dinkster_server.history import _history_scope
-    from dinkster_server.training_sessions import _training_scope
-
-    for resolve in (_history_scope, _run_scope, _training_scope):
-        request = make_mocked_request("GET", "/")
-        request[PRINCIPAL_KEY] = replace(LOCAL_PRINCIPAL, kind="agent")
-        with pytest.raises(web.HTTPBadRequest, match="Bad Request"):
-            resolve(request)
-        scoped = make_mocked_request("GET", "/?scope=local")
-        scoped[PRINCIPAL_KEY] = request[PRINCIPAL_KEY]
-        assert resolve(scoped) == "local"

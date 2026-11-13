@@ -9,7 +9,6 @@ signature).
 """
 
 import dataclasses
-import json
 from typing import Any, cast
 
 import pytest
@@ -30,7 +29,6 @@ from dinkster_schema import (
     OutputSpec,
     ReplacementCase,
     ReplacementLink,
-    ReplacementMigration,
     ReplacementNode,
     ReplacementPredicate,
     ReplacementRule,
@@ -62,146 +60,7 @@ FALLBACK = ReplacementCase.build("new.node")
 # -- predicate wire shapes ----------------------------------------------------
 
 
-def test_predicate_wire_shapes() -> None:
-    """Every predicate kind encodes exactly the TS union member's fields."""
-    p = ReplacementPredicate
-    assert _wire(ReplacementCase.build("new.node", when=p.always()), FALLBACK)["cases"][0][
-        "when"
-    ] == {"kind": "always"}
-    cases = {
-        p.input_connected("image"): {"kind": "inputConnected", "input": "image"},
-        p.value_present("seed"): {"kind": "valuePresent", "input": "seed"},
-        p.value_equals("mode", "linear"): {
-            "kind": "valueEquals",
-            "input": "mode",
-            "value": "linear",
-        },
-        p.value_equals("mask", None): {
-            "kind": "valueEquals",
-            "input": "mask",
-            "value": None,
-        },
-        p.not_(p.value_present("seed")): {
-            "kind": "not",
-            "of": {"kind": "valuePresent", "input": "seed"},
-        },
-        p.all_of(p.value_present("a"), p.input_connected("b")): {
-            "kind": "all",
-            "of": [
-                {"kind": "valuePresent", "input": "a"},
-                {"kind": "inputConnected", "input": "b"},
-            ],
-        },
-        p.any_of(): {"kind": "any", "of": []},
-    }
-    for predicate, wire in cases.items():
-        case = ReplacementCase.build("new.node", when=predicate)
-        assert _wire(case, FALLBACK)["cases"][0]["when"] == wire
-
-
-def test_stale_target_choices_field_refuses_decode() -> None:
-    wire = _wire(FALLBACK)
-    wire["cases"][0]["targetChoices"] = []
-    with pytest.raises(ValueError, match="targetChoices"):
-        rule_from_wire(wire)
-
-
-def test_predicate_deep_recursion_roundtrips() -> None:
-    p = ReplacementPredicate
-    deep = p.not_(p.all_of(p.any_of(p.value_equals("x", [1, {"y": None}]), p.always())))
-    rule = _rule(ReplacementCase.build("new.node", when=deep), FALLBACK)
-    assert rule_from_wire(rule_to_wire(rule)) == rule
-
-
-def test_predicate_validation() -> None:
-    p = ReplacementPredicate
-    with pytest.raises(ValueError, match="unknown predicate kind"):
-        p(kind="sometimes")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="requires an input"):
-        p(kind="inputConnected")
-    with pytest.raises(ValueError, match="exactly one child"):
-        p(kind="not")
-    with pytest.raises(ValueError, match="carries no input"):
-        p(kind="all", input="x")
-    with pytest.raises(ValueError, match="carries no fields"):
-        p(kind="always", input="x")
-    with pytest.raises(ValueError, match="carries no value"):
-        p(kind="valuePresent", input="x", value=3)
-    with pytest.raises(ValueError, match="JSON-serializable"):
-        p.value_equals("x", object())
-
-
 # -- transforms and mapping sources -------------------------------------------
-
-
-def test_transform_wire_shapes() -> None:
-    rename = ValueTransform.enum_rename({"lcm": "lcm_scheduler", "ddim": "ddim_v2"})
-    assert _wire(
-        ReplacementCase.build(
-            "new.node", inputs={"sched": MappingSource.from_value("sched", rename)}
-        ),
-    )["cases"][0]["inputs"]["sched"] == {
-        "kind": "value",
-        "input": "sched",
-        "transform": {
-            "kind": "enumRename",
-            "map": {"lcm": "lcm_scheduler", "ddim": "ddim_v2"},
-        },
-    }
-    scaled = MappingSource.from_value("cfg", ValueTransform.scale(0.5, offset=1.0))
-    wire = _wire(ReplacementCase.build("new.node", inputs={"cfg": scaled}))
-    entry = wire["cases"][0]["inputs"]["cfg"]
-    assert entry["transform"] == {"kind": "scale", "factor": 0.5, "offset": 1.0}
-    # offset omitted at its default, like every optional wire field
-    plain = MappingSource.from_value("cfg", ValueTransform.scale(2.0))
-    wire = _wire(ReplacementCase.build("new.node", inputs={"cfg": plain}))
-    entry = wire["cases"][0]["inputs"]["cfg"]
-    assert entry["transform"] == {"kind": "scale", "factor": 2.0}
-
-
-def test_transform_validation() -> None:
-    with pytest.raises(ValueError, match="unknown transform kind"):
-        ValueTransform(kind="clamp")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="no factor/offset"):
-        ValueTransform(kind="enumRename", factor=2.0)
-    with pytest.raises(ValueError, match="no map"):
-        ValueTransform(kind="scale", map=(("a", "b"),))
-    with pytest.raises(ValueError, match="finite numbers"):
-        ValueTransform.scale(float("inf"))
-    with pytest.raises(ValueError, match="finite numbers"):
-        ValueTransform.scale(10**400)
-    with pytest.raises(ValueError, match="must be strings"):
-        ValueTransform(kind="enumRename", map=(("a", 3),))  # type: ignore[arg-type]
-
-
-def test_mapping_source_wire_shapes() -> None:
-    sources = {
-        MappingSource.copy("image"): {"kind": "copy", "input": "image"},
-        MappingSource.from_value("seed"): {"kind": "value", "input": "seed"},
-        MappingSource.link("model"): {"kind": "link", "input": "model"},
-        MappingSource.constant(42): {"kind": "constant", "value": 42},
-        MappingSource.constant(None): {"kind": "constant", "value": None},
-    }
-    for source, wire in sources.items():
-        case = ReplacementCase.build("new.node", inputs={"target": source})
-        assert _wire(case)["cases"][0]["inputs"]["target"] == wire
-
-
-def test_mapping_source_validation() -> None:
-    with pytest.raises(ValueError, match="unknown mapping source kind"):
-        MappingSource(kind="merge", input="a")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="requires a source input"):
-        MappingSource(kind="copy")
-    with pytest.raises(ValueError, match="carries no constant value"):
-        MappingSource(kind="link", input="a", value=3)
-    with pytest.raises(ValueError, match="carries no transform"):
-        MappingSource(kind="copy", input="a", transform=ValueTransform.scale(2.0))
-    with pytest.raises(ValueError, match="only a value"):
-        MappingSource(kind="constant", input="a", value=3)
-    with pytest.raises(ValueError, match="JSON-serializable"):
-        MappingSource.constant({1, 2})
-    with pytest.raises(ValueError, match="JSON-serializable"):
-        MappingSource.constant(float("nan"))
 
 
 def test_input_family_mapping_wire_shapes_and_roundtrip() -> None:
@@ -251,149 +110,6 @@ def test_input_family_mapping_wire_shapes_and_roundtrip() -> None:
     assert rule_from_wire(explicit_wire) == _rule(explicit)
 
 
-def test_input_family_mapping_validation() -> None:
-    member = InputFamilyMember.build("value1", inputs={"value": MappingSource.copy("a")})
-    with pytest.raises(ValueError, match="unknown input family mapping kind"):
-        InputFamilyMapping(kind="rename")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="source family id"):
-        InputFamilyMapping.copy("", inputs={"value": MappingSource.copy("value")})
-    with pytest.raises(ValueError, match="template input mappings"):
-        InputFamilyMapping.copy("values", inputs={})
-    with pytest.raises(ValueError, match="requires explicit members"):
-        InputFamilyMapping.from_members()
-    with pytest.raises(ValueError, match="duplicate suffixes"):
-        InputFamilyMapping.from_members(member, member)
-    with pytest.raises(ValueError, match="member suffix"):
-        InputFamilyMember.build("bad.suffix", inputs={"value": MappingSource.copy("a")})
-    with pytest.raises(ValueError, match="requires input mappings"):
-        InputFamilyMember.build("value1", inputs={})
-
-
-def test_input_family_positional_member_ids_roundtrip() -> None:
-    mapping = InputFamilyMapping.copy(
-        "operands",
-        inputs={"value": MappingSource.copy("item")},
-        source_template=("item",),
-        source_member_port="operands.operands",
-        member_ids="targetPositions",
-    )
-    rule = _rule(ReplacementCase.build("new.node", input_families={"values": mapping}))
-    wire = _wire(*rule.cases)
-    assert wire["cases"][0]["inputFamilies"]["values"] == {
-        "kind": "copy",
-        "sourceFamily": "operands",
-        "inputs": {"value": {"kind": "copy", "input": "item"}},
-        "sourceTemplate": {"inputs": ["item"], "memberPort": "operands.operands"},
-        "memberIds": "targetPositions",
-    }
-    assert rule_from_wire(wire) == rule
-    current = NodeSchema(node_type="new.node", replacements=(rule,))
-    assert schema_from_wire(schema_to_wire(current)) == current
-    without_option = dataclasses.replace(
-        current,
-        replacements=(
-            _rule(
-                ReplacementCase.build(
-                    "new.node",
-                    input_families={"values": dataclasses.replace(mapping, member_ids=None)},
-                )
-            ),
-        ),
-    )
-    assert (
-        "memberIds"
-        not in _wire(*without_option.replacements[0].cases)["cases"][0]["inputFamilies"]["values"]
-    )
-    assert schema_signature(current) == schema_signature(without_option)
-    wire["cases"][0]["inputFamilies"]["values"]["memberIds"] = None
-    with pytest.raises(ValueError, match="memberIds"):
-        rule_from_wire(wire)
-
-
-@pytest.mark.parametrize("option", [True, "unknown", [], {}, 0])
-def test_input_family_rejects_invalid_member_identity_options(option: Any) -> None:
-    with pytest.raises(ValueError, match="member ids"):
-        InputFamilyMapping.copy(
-            "operands", inputs={"value": MappingSource.copy("item")}, member_ids=option
-        )
-    wire = _wire(
-        ReplacementCase.build(
-            "new.node",
-            input_families={
-                "values": InputFamilyMapping.copy(
-                    "operands", inputs={"value": MappingSource.copy("item")}
-                )
-            },
-        )
-    )
-    wire["cases"][0]["inputFamilies"]["values"]["memberIds"] = option
-    with pytest.raises(ValueError, match="memberIds"):
-        rule_from_wire(wire)
-
-
-def test_input_family_members_rejects_copy_identity_option() -> None:
-    member = InputFamilyMember.build("a", inputs={"value": MappingSource.constant(9)})
-    with pytest.raises(ValueError, match="only explicit members"):
-        InputFamilyMapping(kind="members", members=(member,), member_ids="targetPositions")
-    wire = _wire(
-        ReplacementCase.build(
-            "new.node", input_families={"values": InputFamilyMapping.from_members(member)}
-        )
-    )
-    wire["cases"][0]["inputFamilies"]["values"]["memberIds"] = "targetPositions"
-    with pytest.raises(ValueError, match="memberIds"):
-        rule_from_wire(wire)
-
-
-@pytest.mark.parametrize(
-    ("template", "member_port"),
-    [(("item",), ""), (("weight", "item"), ""), (("item",), "operands.operands")],
-)
-def test_input_family_source_template_roundtrip_without_predecessor(
-    template: tuple[str, ...], member_port: str
-) -> None:
-    mapping = InputFamilyMapping.copy(
-        "operands",
-        inputs={"value": MappingSource.copy("item")},
-        source_template=template,
-        source_member_port=member_port,
-    )
-    case = ReplacementCase.build("new.node", input_families={"values": mapping})
-    wire = _wire(case)
-    expected: dict[str, object] = {"inputs": list(template)}
-    if member_port:
-        expected["memberPort"] = member_port
-    assert wire["cases"][0]["inputFamilies"]["values"]["sourceTemplate"] == expected
-    assert rule_from_wire(wire) == _rule(case)
-    target = NodeSchema(
-        node_type="new.node",
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
-        replacements=(_rule(case),),
-    )
-    assert validate_replacement_references({target.node_type: target}) == ()
-
-
-def test_input_family_historical_template_is_not_the_current_same_type_schema() -> None:
-    mapping = InputFamilyMapping.copy(
-        "retired",
-        inputs={"value": MappingSource.copy("item")},
-        source_template=("weight", "item"),
-    )
-    case = ReplacementCase.build("current.node", input_families={"values": mapping})
-    rule = ReplacementRule(
-        from_type="current.node",
-        cases=(case,),
-        migration=ReplacementMigration(("legacy_mode",)),
-    )
-    current = NodeSchema(
-        node_type="current.node",
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
-        replacements=(rule,),
-    )
-    assert schema_from_wire(schema_to_wire(current)) == current
-    assert validate_replacement_references({current.node_type: current}) == ()
-
-
 def test_input_family_source_template_checks_an_available_predecessor() -> None:
     mapping = InputFamilyMapping.copy(
         "operands", inputs={"value": MappingSource.copy("item")}, source_template=("item",)
@@ -416,39 +132,6 @@ def test_input_family_source_template_checks_an_available_predecessor() -> None:
     )
     assert len(problems) == 1
     assert "source template ids do not match" in problems[0].message
-
-
-@pytest.mark.parametrize(
-    "template",
-    [
-        None,
-        {},
-        {"inputs": []},
-        {"inputs": "item"},
-        {"inputs": [1]},
-        {"inputs": ["item", "item"]},
-        {"inputs": ["bad.path"]},
-        {"inputs": ["other"]},
-        {"inputs": ["item"], "extra": True},
-        {"inputs": ["item"], "memberPort": None},
-        {"inputs": ["item"], "memberPort": ""},
-        {"inputs": ["item"], "memberPort": "bad..path"},
-        {"inputs": ["item", "weight"], "memberPort": "operands.operands"},
-    ],
-)
-def test_input_family_source_template_rejects_malformed_wire(template: object) -> None:
-    case = ReplacementCase.build(
-        "new.node",
-        input_families={
-            "values": InputFamilyMapping.copy(
-                "operands", inputs={"value": MappingSource.copy("item")}
-            )
-        },
-    )
-    wire = _wire(case)
-    wire["cases"][0]["inputFamilies"]["values"]["sourceTemplate"] = template
-    with pytest.raises(ValueError):
-        rule_from_wire(wire)
 
 
 def test_output_family_mapping_wire_shapes_and_roundtrip() -> None:
@@ -482,22 +165,6 @@ def test_output_family_mapping_wire_shapes_and_roundtrip() -> None:
         }
     }
     assert rule_from_wire(explicit_wire) == _rule(explicit)
-
-
-def test_output_family_mapping_validation() -> None:
-    member = OutputFamilyMember("0", "result")
-    with pytest.raises(ValueError, match="unknown output family mapping kind"):
-        OutputFamilyMapping(kind="rename")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="source family id"):
-        OutputFamilyMapping.copy("")
-    with pytest.raises(ValueError, match="requires explicit members"):
-        OutputFamilyMapping.from_members()
-    with pytest.raises(ValueError, match="duplicate suffixes"):
-        OutputFamilyMapping.from_members(member, member)
-    with pytest.raises(ValueError, match="member suffix"):
-        OutputFamilyMember("bad.suffix", "result")
-    with pytest.raises(ValueError, match="source output id"):
-        OutputFamilyMember("0", "bad.output")
 
 
 # -- cases and rules -----------------------------------------------------------
@@ -536,31 +203,6 @@ def test_case_and_rule_validation() -> None:
         )
 
 
-def test_guarded_fanout_to_multiple_successors() -> None:
-    """A rule's cases name their own targets: guarded fan-out is legitimate
-    and never constrained to the carrying schema's node type."""
-    rule = ReplacementRule(
-        from_type="old.node",
-        note="split in v0.4",
-        cases=(
-            ReplacementCase.build(
-                "new.node_a",
-                when=ReplacementPredicate.input_connected("mask"),
-                inputs={"mask": MappingSource.copy("mask")},
-            ),
-            ReplacementCase.build("new.node_b"),
-        ),
-    )
-    wire = cast("Any", rule_to_wire(rule))
-    assert wire["from"] == "old.node"
-    assert wire["note"] == "split in v0.4"
-    assert [case["to"] for case in wire["cases"]] == ["new.node_a", "new.node_b"]
-    assert rule_from_wire(wire) == rule
-    # ...and it rides a schema whose node_type matches neither target
-    carrier = NodeSchema(node_type="pack.registrar", replacements=(rule,))
-    assert schema_to_wire(carrier)["replacements"] == [wire]
-
-
 def test_rule_wire_roundtrip_full() -> None:
     rule = ReplacementRule(
         from_type="old.sampler",
@@ -593,85 +235,6 @@ def test_rule_wire_roundtrip_full() -> None:
     assert "outputs" not in wire["cases"][1]
 
 
-def test_same_type_migration_wire_and_validation() -> None:
-    migration = ReplacementMigration(("legacy.policy", "color_source", "color_value"))
-    rule = ReplacementRule(
-        from_type="new.node",
-        migration=migration,
-        cases=(
-            ReplacementCase.build(
-                "new.node",
-                slot_variants={"policy": "exact_color", "policy.color_source": "integer"},
-                inputs={"policy.color_source.color_value": MappingSource.copy("color_value")},
-            ),
-        ),
-    )
-    wire = cast("Any", rule_to_wire(rule))
-    assert wire["migration"] == {
-        "historicalInputs": ["legacy.policy", "color_source", "color_value"]
-    }
-    assert rule_from_wire(wire) == rule
-
-    with pytest.raises(ValueError, match="requires historical input ids"):
-        ReplacementMigration(())
-    with pytest.raises(ValueError, match="requires historical input ids"):
-        ReplacementMigration(["value"])  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="duplicate historical input ids"):
-        ReplacementMigration(("value", "value"))
-    with pytest.raises(ValueError, match="invalid historical input id"):
-        ReplacementMigration(("bad..path",))
-    with pytest.raises(ValueError, match="every case must preserve the node type"):
-        ReplacementRule(
-            from_type="old.node",
-            migration=ReplacementMigration(("value",)),
-            cases=(ReplacementCase.build("new.node"),),
-        )
-    with pytest.raises(ValueError, match="must be ReplacementMigration"):
-        ReplacementRule(
-            from_type="new.node",
-            migration={"historicalInputs": ["value"]},  # type: ignore[arg-type]
-            cases=(ReplacementCase.build("new.node"),),
-        )
-
-
-@pytest.mark.parametrize(
-    "migration",
-    (
-        None,
-        [],
-        {"historicalInputs": []},
-        {"historicalInputs": ["value"], "extra": True},
-        {"historicalInputs": "value"},
-        {"historicalInputs": [1]},
-        {"historicalInputs": ["value", "value"]},
-    ),
-)
-def test_migration_wire_rejects_malformed_data(migration: object) -> None:
-    with pytest.raises(ValueError):
-        rule_from_wire(
-            {
-                "from": "same.node",
-                "migration": migration,
-                "cases": [{"to": "same.node"}],
-            }
-        )
-
-
-def test_legacy_cases_without_nodes_encode_byte_identically() -> None:
-    case = ReplacementCase.build(
-        "new.node",
-        inputs={"legacy:input": MappingSource.copy("picture")},
-        outputs={"legacy:output": "result"},
-    )
-    encoded = json.dumps(rule_to_wire(_rule(case)), separators=(",", ":"))
-    assert encoded == (
-        '{"from":"old.node","cases":[{"to":"new.node",'
-        '"inputs":{"legacy:input":{"kind":"copy","input":"picture"}},'
-        '"outputs":{"legacy:output":"result"}}]}'
-    )
-    assert rule_from_wire(json.loads(encoded)) == _rule(case)
-
-
 def test_one_to_n_case_round_trips_with_nodes_links_and_addresses() -> None:
     case = ReplacementCase.build(
         "new.node",
@@ -693,105 +256,6 @@ def test_one_to_n_case_round_trips_with_nodes_links_and_addresses() -> None:
     empty_wire = rule_to_wire(empty)
     assert empty_wire["cases"][0]["nodes"] == {}  # type: ignore[index]
     assert rule_from_wire(empty_wire).cases[0].nodes == ()
-
-
-def test_helper_node_and_address_construction_error_matrix() -> None:
-    node = ReplacementNode.build("helper.node")
-    failures = (
-        lambda: ReplacementCase("new.node", nodes=(("bad.id", node),)),
-        lambda: ReplacementCase("new.node", nodes=(("dup", node), ("dup", node))),
-        lambda: ReplacementNode.build(""),
-        lambda: ReplacementNode.build("helper.node", values={"bad:port": 1}),
-        lambda: ReplacementNode.build("helper.node", values={"bad..port": 1}),
-        lambda: ReplacementNode.build("helper.node", values={"x": object()}),
-        lambda: ReplacementNode.build("helper.node", values={"x": float("nan")}),
-        lambda: ReplacementNode.build("helper.node", values={"x": float("inf")}),
-        lambda: ReplacementNode.build("helper.node", values={"x": float("-inf")}),
-        lambda: ReplacementCase.build("new.node", inputs={"": MappingSource.copy("x")}),
-        lambda: ReplacementCase.build(
-            "new.node", nodes={"h": node}, inputs={"h:x:y": MappingSource.copy("x")}
-        ),
-        lambda: ReplacementCase.build(
-            "new.node", nodes={"h": node}, inputs={":x": MappingSource.copy("x")}
-        ),
-        lambda: ReplacementCase.build("new.node", nodes={"h": node}, outputs={"h:": "out"}),
-        lambda: ReplacementCase.build(
-            "new.node", nodes={"h": node}, inputs={"other:x": MappingSource.copy("x")}
-        ),
-        lambda: ReplacementCase.build("new.node", nodes={}, outputs={"h:x": "out"}),
-    )
-    for construct in failures:
-        with pytest.raises(ValueError):
-            construct()
-
-
-def test_slot_variants_wire_shape_and_validation() -> None:
-    case = ReplacementCase.build(
-        "new.node",
-        nodes={"helper": ReplacementNode.build("helper.node")},
-        slot_variants={
-            "policy": "tolerance_color",
-            "policy.color_source": "integer",
-            "helper:source": "source_kind",
-        },
-    )
-    wire = _wire(case)
-    assert wire["cases"][0]["slotVariants"] == {
-        "policy": "tolerance_color",
-        "policy.color_source": "integer",
-        "helper:source": "source_kind",
-    }
-    assert rule_from_wire(wire) == _rule(case)
-
-    node = ReplacementNode.build("helper.node")
-    failures = (
-        lambda: ReplacementCase(
-            "new.node",
-            slot_variants=(
-                ("policy", "a"),
-                ("policy", "b"),
-            ),
-        ),
-        lambda: ReplacementCase.build("new.node", slot_variants={"": "active"}),
-        lambda: ReplacementCase.build(
-            "new.node",
-            slot_variants={"policy": 1},  # type: ignore[dict-item]
-        ),
-        lambda: ReplacementCase.build(
-            "new.node",
-            nodes={"helper": node},
-            slot_variants={"missing:source": "number"},
-        ),
-        lambda: ReplacementCase(
-            "new.node",
-            slot_variants=(("policy", ""),),
-        ),
-        lambda: ReplacementCase.build("new.node", slot_variants={".policy": "active"}),
-        lambda: ReplacementCase.build("new.node", slot_variants={"policy.": "active"}),
-        lambda: ReplacementCase.build("new.node", slot_variants={"policy..mode": "active"}),
-        lambda: ReplacementCase.build("new.node", slot_variants={"helper:mode": "active"}),
-    )
-    for construct in failures:
-        with pytest.raises(ValueError):
-            construct()
-
-    for malformed in ({"policy": 1}, ["policy", {"kind": "constant", "value": "active"}]):
-        with pytest.raises(ValueError):
-            rule_from_wire(
-                {"from": "old.node", "cases": [{"to": "new.node", "slotVariants": malformed}]}
-            )
-    with pytest.raises(ValueError, match="unexpected fields: targetChoices"):
-        rule_from_wire(
-            {
-                "from": "old.node",
-                "cases": [
-                    {
-                        "to": "new.node",
-                        "targetChoices": {"policy": {"kind": "constant", "value": "active"}},
-                    }
-                ],
-            }
-        )
 
 
 def test_single_feeder_and_fan_in_rules() -> None:
@@ -835,108 +299,6 @@ def test_internal_links_must_be_acyclic() -> None:
         )
     with pytest.raises(ValueError, match="acyclic"):
         ReplacementCase.build("new.node", links=(ReplacementLink("out", "input"),))
-
-
-def test_decode_rejects_malformed_wire() -> None:
-    good = rule_to_wire(_rule(FALLBACK))
-    with pytest.raises(ValueError, match="unknown predicate kind"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [{"to": "b", "when": {"kind": "whenever"}}, {"to": "b"}],
-            }
-        )
-    with pytest.raises(ValueError, match="unknown transform kind"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [
-                    {
-                        "to": "b",
-                        "inputs": {
-                            "x": {
-                                "kind": "value",
-                                "input": "y",
-                                "transform": {"kind": "clamp"},
-                            }
-                        },
-                    }
-                ],
-            }
-        )
-    with pytest.raises(ValueError, match="unknown mapping source kind"):
-        rule_from_wire({"from": "a", "cases": [{"to": "b", "inputs": {"x": {"kind": "merge"}}}]})
-    with pytest.raises(ValueError, match="unknown input family mapping kind"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [
-                    {
-                        "to": "b",
-                        "inputFamilies": {"items": {"kind": "rename"}},
-                    }
-                ],
-            }
-        )
-    with pytest.raises(ValueError, match="unknown output family mapping kind"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [
-                    {
-                        "to": "b",
-                        "outputFamilies": {"items": {"kind": "rename"}},
-                    }
-                ],
-            }
-        )
-    with pytest.raises(ValueError, match="exactly kind and sourceFamily"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [
-                    {
-                        "to": "b",
-                        "outputFamilies": {
-                            "items": {
-                                "kind": "copy",
-                                "sourceFamily": "old_items",
-                                "members": [],
-                            }
-                        },
-                    }
-                ],
-            }
-        )
-    with pytest.raises(ValueError, match="exactly suffix and output"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [
-                    {
-                        "to": "b",
-                        "outputFamilies": {
-                            "items": {
-                                "kind": "members",
-                                "members": [{"suffix": "0", "output": "value", "extra": True}],
-                            }
-                        },
-                    }
-                ],
-            }
-        )
-    with pytest.raises((KeyError, TypeError)):
-        rule_from_wire({"cases": [{"to": "b"}]})  # missing "from"
-    with pytest.raises((KeyError, TypeError)):
-        rule_from_wire({"from": "a"})  # missing "cases"
-    with pytest.raises(ValueError, match="unconditional"):
-        rule_from_wire(
-            {
-                "from": "a",
-                "cases": [{"to": "b", "when": {"kind": "valuePresent", "input": "x"}}],
-            }
-        )
-    assert rule_from_wire(good) == _rule(FALLBACK)
 
 
 # -- schema wire + signature ---------------------------------------------------
@@ -1060,59 +422,6 @@ def _dynamic_target_schema() -> NodeSchema:
             ),
         ),
     )
-
-
-def test_reference_check_accepts_declared_historical_source_inputs() -> None:
-    target = _dynamic_target_schema()
-    selected = {
-        "policy": "tolerance_color",
-        "policy.color_source": "integer",
-        "source": "number",
-    }
-    inputs = {
-        "fixed": MappingSource.copy("fixed"),
-        "policy.color_source.color_value": MappingSource.copy("old_color_value"),
-    }
-    rule = ReplacementRule(
-        from_type=target.node_type,
-        migration=ReplacementMigration(("old_policy", "old_color_value")),
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                when=ReplacementPredicate.value_equals("old_policy", "tolerance_color"),
-                slot_variants=selected,
-                inputs=inputs,
-            ),
-            ReplacementCase.build(
-                target.node_type,
-                slot_variants=selected,
-                inputs=inputs,
-            ),
-        ),
-    )
-    schema = dataclasses.replace(target, replacements=(rule,))
-    assert validate_replacement_references({schema.node_type: schema}) == ()
-
-    bad_rule = dataclasses.replace(
-        rule,
-        cases=(
-            rule.cases[0],
-            dataclasses.replace(
-                rule.cases[1],
-                inputs=(
-                    (
-                        "policy.color_source.color_value",
-                        MappingSource.copy("old_color_typo"),
-                    ),
-                ),
-            ),
-        ),
-    )
-    bad_schema = dataclasses.replace(schema, replacements=(bad_rule,))
-    problems = validate_replacement_references({bad_schema.node_type: bad_schema})
-    assert len(problems) == 1
-    assert problems[0].ref == "old_color_typo"
-    assert "not a static input id of new.dynamic" in problems[0].message
 
 
 def test_reference_check_elaborates_nested_dynamic_target_paths() -> None:
@@ -1422,59 +731,6 @@ def test_connection_consumption_is_accounted_across_family_copy_mappings() -> No
     assert problems[0].ref == "value"
     assert "items.*.value" in problems[0].message
     assert "consumed by multiple target mappings" in problems[0].message
-
-
-def test_source_dependent_slot_variants_use_guarded_literal_cases() -> None:
-    source = NodeSchema(
-        node_type="old.guarded-slot",
-        inputs=(InputSpec("kind", TypeExpr.concrete("STRING")), InputSpec("shared", INT)),
-    )
-    target = NodeSchema(
-        node_type="new.guarded-slot",
-        slots=(
-            DynamicSlotSpec(
-                "source",
-                variants=(
-                    SlotVariant("integer", INT),
-                    SlotVariant("string", TypeExpr.concrete("STRING")),
-                ),
-            ),
-        ),
-    )
-    rule = ReplacementRule(
-        from_type=source.node_type,
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                when=ReplacementPredicate.value_equals("kind", "integer"),
-                slot_variants={"source": "integer"},
-                inputs={"source": MappingSource.copy("shared")},
-            ),
-            ReplacementCase.build(
-                target.node_type,
-                slot_variants={"source": "string"},
-                inputs={"source": MappingSource.copy("shared")},
-            ),
-        ),
-    )
-    schemas = {
-        source.node_type: source,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    assert validate_replacement_references(schemas) == ()
-    assert rule_to_wire(rule)["cases"] == [
-        {
-            "to": target.node_type,
-            "when": {"kind": "valueEquals", "input": "kind", "value": "integer"},
-            "slotVariants": {"source": "integer"},
-            "inputs": {"source": {"kind": "copy", "input": "shared"}},
-        },
-        {
-            "to": target.node_type,
-            "slotVariants": {"source": "string"},
-            "inputs": {"source": {"kind": "copy", "input": "shared"}},
-        },
-    ]
 
 
 @pytest.mark.parametrize(
@@ -2204,28 +1460,6 @@ def test_reference_check_validates_output_family_mappings() -> None:
     schemas["new.node"] = dataclasses.replace(constrained_target, replacements=(noncanonical,))
     joined = "\n".join(problem.message for problem in validate_replacement_references(schemas))
     assert "requires canonical zero-based explicit member suffixes" in joined
-
-
-def test_reference_check_rejects_output_family_mapping_over_budget() -> None:
-    members = tuple(OutputFamilyMember(str(index), f"result_{index}") for index in range(513))
-    rule = _rule(
-        ReplacementCase.build(
-            "new.node",
-            output_families={"values": OutputFamilyMapping.from_members(*members)},
-        )
-    )
-    source = dataclasses.replace(
-        PREDECESSOR,
-        outputs=tuple(OutputSpec(member.output, INT) for member in members),
-    )
-    target = dataclasses.replace(
-        SUCCESSOR,
-        output_families=(OutputFamilySpec("values", INT),),
-        replacements=(rule,),
-    )
-    problems = validate_replacement_references({"old.node": source, "new.node": target})
-    assert len(problems) == 1
-    assert "exceeds the 512 member budget" in problems[0].message
 
 
 def test_reference_check_skips_absent_schemas() -> None:

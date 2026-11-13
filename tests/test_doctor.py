@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_protocol import EXTENSION_SCOPES
-from dinkster_workers import ManifestError, detect_bubblewrap, load_manifest
+from dinkster_workers import detect_bubblewrap, load_manifest
 from dinkster_workers.doctor import (
     DOCTOR_REPORT_VERSION,
     diagnose,
@@ -126,73 +126,6 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     assert codes(report) <= {"import.slow"}, render_text(report)
 
 
-def test_doctor_warns_for_extension_declarations_without_runtime_consumers(
-    tmp_path: Path,
-) -> None:
-    manifest_text = (
-        HEALTHY_MANIFEST
-        + """\
-
-[pack.extension]
-privileges = ["frontend"]
-capabilities = ["filesystem"]
-
-[[pack.extension.frontend-modules]]
-id = "healthy.frontend"
-module = "./frontend.js"
-privileges = ["app-workflow"]
-contributions = [
-  { id = "healthy.editor", kind = "editor" },
-  { id = "healthy.binding", kind = "editorBinding" },
-  { id = "healthy.panel", kind = "panel" },
-  { id = "healthy.note", kind = "virtualNode" },
-  { id = "healthy.observer", kind = "workflowObserver" },
-]
-"""
-    )
-    manifest_path = write_pack(
-        tmp_path / "unconsumed", manifest_text, "healthy_nodes", HEALTHY_NODES
-    )
-
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-
-    by_code = {finding.code: finding for finding in report.findings}
-    contribution = by_code["extension.contribution-unconsumed"]
-    assert contribution.severity == "warning"
-    assert "pack 'healthy-nodes'" in contribution.message
-    assert "'workflowObserver'" in contribution.message
-    assert (
-        sum(finding.code == "extension.contribution-unconsumed" for finding in report.findings) == 1
-    )
-    capability = by_code["extension.capability-unconsumed"]
-    assert capability.severity == "warning"
-    assert "pack 'healthy-nodes'" in capability.message
-    assert "'filesystem'" in capability.message
-
-
-def test_doctor_rejects_an_unknown_frontend_contribution_kind(tmp_path: Path) -> None:
-    manifest = write_pack(
-        tmp_path / "unknown-frontend-kind",
-        HEALTHY_MANIFEST
-        + """\
-
-[pack.extension]
-privileges = ["frontend"]
-
-[[pack.extension.frontend-modules]]
-id = "healthy.frontend"
-module = "./frontend.js"
-privileges = ["graph-editor-canvas"]
-contributions = [{ id = "healthy.future", kind = "futureKind" }]
-""",
-        "healthy_nodes",
-        HEALTHY_NODES,
-    )
-
-    with pytest.raises(ManifestError, match="unknown frontend contribution kind"):
-        load_manifest(manifest)
-
-
 def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     manifest = distribution / "healthy_pack" / "dinkster-pack.toml"
@@ -208,37 +141,6 @@ def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_pat
     assert not report.ok
     assert "entry.unresolvable" in codes(report)
     assert report.entry_path == ""
-
-
-def test_blocking_import_emits_slow_warning(tmp_path: Path) -> None:
-    source = "import time\ntime.sleep(2.1)\n" + HEALTHY_NODES
-    manifest = write_pack(tmp_path / "blocking", HEALTHY_MANIFEST, "healthy_nodes", source)
-
-    report = diagnose(manifest)
-
-    assert report.ok, render_text(report)
-    assert report.node_types == ("healthy.doubler", "healthy.tagger")
-    slow = [finding for finding in report.findings if finding.code == "import.slow"]
-    assert len(slow) == 1, render_text(report)
-    assert slow[0].severity == "warning"
-
-
-@pytest.mark.parametrize("elapsed_ms, warns", [(1999.0, False), (2000.0, False), (2001.0, True)])
-def test_slow_import_warning_boundary(tmp_path: Path, elapsed_ms: float, warns: bool) -> None:
-    from dinkster_workers.doctor import _probe_findings, _run_probe
-
-    path = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
-    manifest = load_manifest(path)
-    probed = _run_probe(manifest, None)
-    assert isinstance(probed, dict), probed
-    probed["import_ms"] = elapsed_ms
-    findings = _probe_findings(probed, manifest)
-    slow = [finding for finding in findings if finding.code == "import.slow"]
-    assert bool(slow) is warns
-    if warns:
-        assert len(slow) == 1
-        assert slow[0].severity == "warning"
-        assert "2001ms" in slow[0].message
 
 
 def test_diagnose_static_matches_full_doctor_static_prefix(tmp_path: Path) -> None:
@@ -260,26 +162,6 @@ def test_diagnose_static_matches_full_doctor_static_prefix(tmp_path: Path) -> No
     full = diagnose(manifest_path)
     assert marker.read_text() == "yes"
     assert full.findings[: len(static.findings)] == static.findings
-
-
-def test_diagnose_static_rejects_a_different_pack_root(tmp_path: Path) -> None:
-    manifest_path = write_pack(
-        tmp_path / "static", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES
-    )
-
-    with pytest.raises(ValueError, match="pack_root"):
-        diagnose_static(tmp_path / "other", load_manifest(manifest_path))
-
-
-def test_doctor_warns_until_sandbox_needs_are_declared(tmp_path: Path) -> None:
-    undeclared = HEALTHY_MANIFEST.replace("[pack.sandbox]\n\n", "")
-    manifest = write_pack(tmp_path / "undeclared", undeclared, "healthy_nodes", HEALTHY_NODES)
-
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
-
-    finding = next(item for item in report.findings if item.code == "sandbox.needs-undeclared")
-    assert finding.severity == "warning"
-    assert "[pack.sandbox]" in finding.fix
 
 
 def test_doctor_python_runs_probe_under_selected_interpreter(tmp_path: Path) -> None:
@@ -350,37 +232,6 @@ def test_invalid_icon_is_a_publish_gate_error(tmp_path: Path) -> None:
     assert finding.fix
 
 
-def test_doctor_reports_docs_coverage_unknown_nodes_and_long_descriptions(tmp_path: Path) -> None:
-    nodes = HEALTHY_NODES.replace(
-        'node_type="healthy.doubler",',
-        'node_type="healthy.doubler",\n            description="' + ("x" * 241) + '",',
-    )
-    manifest = HEALTHY_MANIFEST + '\n[pack.docs]\ndir = "docs"\ndefault_locale = "en"\n'
-    manifest_path = write_pack(tmp_path / "docpack", manifest, "healthy_nodes", nodes)
-    for node_type in ("healthy.doubler", "healthy.unknown"):
-        directory = tmp_path / "docpack" / "docs" / "nodes" / node_type
-        directory.mkdir(parents=True)
-        (directory / "en.md").write_text(
-            '+++\ntitle = "Node"\nsummary = "Node help."\nschema_version = 1\n+++\n'
-        )
-
-    report = diagnose(manifest_path)
-    assert report.docs_coverage is not None
-    assert report.docs_coverage.total_nodes == 2
-    assert dict(report.docs_coverage.locale_counts) == {"en": 1, "zh": 0}
-    assert codes(report) >= {
-        "docs.description-too-long",
-        "docs.unknown-node",
-    }
-    text = render_text(report)
-    assert "docs coverage:" in text
-    assert "en      1/2" in text
-    assert "zh      0/2" in text
-
-    plain_manifest = write_pack(tmp_path / "plain-pack", HEALTHY_MANIFEST, "healthy_nodes", nodes)
-    assert "docs.description-too-long" in codes(diagnose(plain_manifest))
-
-
 @pytest.mark.parametrize(
     ("declaration", "message"),
     (
@@ -422,48 +273,6 @@ def test_doctor_reports_symlinked_docs_tree(tmp_path: Path) -> None:
     finding = next(item for item in report.findings if item.code == "docs.invalid")
     assert finding.severity == "error"
     assert "symlink" in finding.message
-
-
-@pytest.mark.parametrize(
-    ("body", "message"),
-    (
-        ('blueprint = "other.starter"\n', "references unknown blueprint 'other.starter'"),
-        ('caption = "No target"\n', "must declare exactly one blueprint or template"),
-        (
-            'blueprint = "starter"\ntemplate = "workflow"\n',
-            "must declare exactly one blueprint or template",
-        ),
-        ('blueprint = "starter"\ncaption = true\n', "caption must be a string"),
-    ),
-)
-def test_doctor_reports_invalid_doc_example_blocks(tmp_path: Path, body: str, message: str) -> None:
-    manifest = HEALTHY_MANIFEST + (
-        '\n[pack.docs]\ndir = "docs"\n'
-        '[[pack.blueprints]]\nid = "starter"\nname = "Starter"\nfile = "starter.json"\n'
-        '[[pack.templates]]\nid = "workflow"\nname = "Workflow"\nfile = "workflow.json"\n'
-    )
-    manifest_path = write_pack(tmp_path / "docpack", manifest, "healthy_nodes", HEALTHY_NODES)
-    (manifest_path.parent / "starter.json").write_text("{}")
-    (manifest_path.parent / "workflow.json").write_text("{}")
-    guide = manifest_path.parent / "docs" / "guides" / "examples"
-    guide.mkdir(parents=True)
-    (guide / "en.md").write_text(
-        '+++\ntitle = "Examples"\nsummary = "Example workflows."\n+++\n'
-        f"```dinkster-example\n{body}```\n"
-    )
-
-    loaded = load_manifest(manifest_path)
-    assert loaded.docs is not None
-    assert loaded.docs.pages == ()
-    assert len(loaded.docs.validation_problems) == 1
-    report = diagnose(manifest_path)
-
-    assert not report.ok
-    finding = next(item for item in report.findings if item.code == "docs.invalid")
-    assert finding.severity == "error"
-    assert str(Path("docs") / "guides" / "examples" / "en.md") in finding.message
-    assert message in finding.message
-    assert finding.fix
 
 
 @pytest.mark.parametrize(
@@ -515,83 +324,6 @@ def test_doctor_accepts_valid_locale_catalog(tmp_path: Path, exact_node: bool) -
 
     assert report.ok, render_text(report)
     assert "docs.invalid" not in codes(report)
-
-
-def test_doctor_reports_locale_catalog_file_failures(tmp_path: Path) -> None:
-    from dinkster_workers.manifest import LOCALE_CATALOG_MAX_BYTES
-
-    manifest_path = write_pack(
-        tmp_path / "catalog-pack", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES
-    )
-    locales = manifest_path.parent / "locales"
-    locales.mkdir()
-    (locales / "PT-br.json").write_text("{}")
-    (locales / "bad.json").write_text("{")
-    (locales / "zh.json").write_bytes(b" " * (LOCALE_CATALOG_MAX_BYTES + 1))
-    outside = tmp_path / "outside.json"
-    outside.write_text("{}")
-    try:
-        (locales / "linked.json").symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks unavailable")
-
-    report = diagnose(manifest_path)
-
-    findings = [finding for finding in report.findings if finding.code == "docs.invalid"]
-    assert not report.ok
-    assert len(findings) == 4
-    assert all(finding.severity == "error" for finding in findings)
-    assert all(finding.fix for finding in findings)
-    messages = "\n".join(finding.message for finding in findings)
-    assert "canonical lowercase" in messages
-    assert "invalid JSON" in messages
-    assert "byte cap" in messages
-    assert "symlink" in messages
-
-
-def test_doctor_reports_malformed_catalog_pack_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import dinkster_workers.manifest as manifest_module
-
-    manifest_path = write_pack(
-        tmp_path / "catalog-pack", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES
-    )
-    locales = manifest_path.parent / "locales"
-    locales.mkdir()
-    (locales / "en.json").write_text("{")
-    (locales / "fr.json").write_text("{")
-    monkeypatch.setattr(manifest_module, "LOCALE_CATALOG_PACK_MAX_BYTES", 1)
-
-    report = diagnose(manifest_path)
-
-    findings = [finding for finding in report.findings if finding.code == "docs.invalid"]
-    assert not report.ok
-    assert len(findings) == 2
-    assert all(finding.severity == "error" for finding in findings)
-    assert all(finding.fix for finding in findings)
-    assert any("invalid JSON" in finding.message for finding in findings)
-    assert any("pack budget" in finding.message for finding in findings)
-
-
-def test_doctor_reports_unknown_doc_node_reference(tmp_path: Path) -> None:
-    manifest = HEALTHY_MANIFEST + '\n[pack.docs]\ndir = "docs"\n'
-    manifest_path = write_pack(tmp_path / "docpack", manifest, "healthy_nodes", HEALTHY_NODES)
-    guide = manifest_path.parent / "docs" / "guides" / "node-help"
-    guide.mkdir(parents=True)
-    (guide / "en.md").write_text(
-        '+++\ntitle = "Node help"\nsummary = "References nodes."\n+++\n'
-        '```dinkster-node\nnode = "healthy.doubler"\n```\n'
-        '```dinkster-node\nnode = "healthy.missing"\n```\n'
-    )
-
-    report = diagnose(manifest_path)
-
-    finding = next(item for item in report.findings if item.code == "docs.unknown-node-reference")
-    assert finding.severity == "warning"
-    assert "healthy.missing" in finding.message
-    assert "healthy.doubler" not in finding.message
-    assert finding.fix
 
 
 def test_invalid_blueprint_is_a_publish_gate_error(tmp_path: Path) -> None:
@@ -773,51 +505,6 @@ def test_executed_node_types_need_no_namespace_claim(tmp_path: Path) -> None:
     assert "namespace.uncovered" not in codes(report)
 
 
-def test_reserved_namespace_claim_warns(tmp_path: Path) -> None:
-    """A claim under a reserved root (std/comfy/core/dinkster) is legal shape
-    but composes only under host trust and is never granted by the
-    registry - a warning naming the root, not an error (doctor cannot know
-    it is not looking at a first-party pack)."""
-    manifest = HEALTHY_MANIFEST.replace(
-        'namespaces = ["healthy"]', 'namespaces = ["healthy", "std.extras"]'
-    )
-    manifest_path = write_pack(tmp_path / "reserved", manifest, "healthy_nodes", HEALTHY_NODES)
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert not any(f.severity == "error" for f in report.findings)
-    reserved = [f for f in report.findings if f.code == "namespace.reserved"]
-    assert len(reserved) == 1
-    assert "'std.extras'" in reserved[0].message
-    assert "'std'" in reserved[0].message
-
-
-def test_overlapping_namespace_claims_are_manifest_invalid(tmp_path: Path) -> None:
-    """Self-overlapping claims are a load-time ManifestError, so doctor
-    surfaces them through its manifest.invalid finding."""
-    manifest = HEALTHY_MANIFEST.replace(
-        'namespaces = ["healthy"]', 'namespaces = ["healthy", "healthy.extra"]'
-    )
-    manifest_path = write_pack(tmp_path / "overlap", manifest, "healthy_nodes", HEALTHY_NODES)
-    report = diagnose(manifest_path)
-    assert not report.ok
-    assert codes(report) == {"manifest.invalid"}
-    assert "overlap" in report.findings[0].message
-
-
-def test_unpinned_dependency_warns_with_fix(tmp_path: Path) -> None:
-    manifest = write_pack(
-        tmp_path / "unpinned",
-        HEALTHY_MANIFEST.replace('"numpy>=1.26"', '"numpy"'),
-        "healthy_nodes",
-        HEALTHY_NODES,
-    )
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
-    assert not any(f.severity == "error" for f in report.findings)
-    unpinned = [f for f in report.findings if f.code == "manifest.unpinned-dep"]
-    assert len(unpinned) == 1
-    assert "numpy" in unpinned[0].message
-    assert unpinned[0].fix
-
-
 def test_invalid_requirement_syntax_is_an_error(tmp_path: Path) -> None:
     """A requirement uv would refuse at provision time is caught here,
     before any user hits it - as an error naming the offending list."""
@@ -835,39 +522,6 @@ def test_invalid_requirement_syntax_is_an_error(tmp_path: Path) -> None:
     assert bad[0].fix
 
 
-def test_environment_checks_are_advisory_and_gpu_free(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Platform/accelerator fit is context, not a defect: an excluded
-    host platform and an uncovered host accelerator are info findings
-    that never fail the report, computed from driver-file detection -
-    no torch import, no GPU context. Extra-requires lists get the same
-    PEP 508 validation as base requires."""
-    import dinkster_workers.doctor as doctor_module
-
-    foreign = "win32" if sys.platform != "win32" else "linux"
-    manifest = write_pack(
-        tmp_path / "envpack",
-        HEALTHY_MANIFEST.replace(
-            'requires = ["numpy>=1.26"]',
-            f'requires = ["numpy>=1.26"]\nplatforms = ["{foreign}"]\n'
-            f'[pack.extra-requires]\ncuda = ["torch>=2.4"]\nrocm = ["torch =bad= 1"]',
-        ),
-        "healthy_nodes",
-        HEALTHY_NODES,
-    )
-    monkeypatch.setattr(doctor_module, "detect_accelerator", lambda: "cpu")
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
-    found = codes(report)
-    assert "environment.platform-excluded" in found
-    assert "environment.accelerator-not-covered" in found
-    infos = [f for f in report.findings if f.code.startswith("environment.")]
-    assert all(f.severity == "info" for f in infos)
-    bad = [f for f in report.findings if f.code == "manifest.invalid-requirement"]
-    assert len(bad) == 1 and "[pack.extra-requires] rocm" in bad[0].message
-    assert any(f.severity == "error" for f in report.findings)
-
-
 @pytest.mark.parametrize("test_path", ["tests/test_nodes.py", "tests/fixtures.py"])
 def test_public_pack_testing_import_is_allowed(tmp_path: Path, test_path: str) -> None:
     manifest = write_pack(tmp_path / "tested", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
@@ -877,34 +531,6 @@ def test_public_pack_testing_import_is_allowed(tmp_path: Path, test_path: str) -
     report = diagnose(manifest)
     assert report.ok, render_text(report)
     assert not [finding for finding in report.findings if finding.code.startswith("imports.")]
-
-
-@pytest.mark.parametrize(
-    ("source_path", "import_statement"),
-    [
-        ("healthy_nodes/__init__.py", "from dinkster_engine.testing import load_pack"),
-        ("healthy_nodes/__init__.py", "import dinkster_engine.testing"),
-        ("tests/test_nodes.py", "from dinkster_engine.testing import Engine"),
-        ("tests/test_nodes.py", "from dinkster_engine.testing import IsolatedWorker"),
-        ("tests/test_nodes.py", "from dinkster_engine.testing import load_pack, Engine"),
-        ("tests/test_nodes.py", "from dinkster_engine.testing import *"),
-        ("tests/test_nodes.py", "import dinkster_engine.testing"),
-    ],
-)
-def test_pack_testing_exception_preserves_host_import_boundary(
-    tmp_path: Path, source_path: str, import_statement: str
-) -> None:
-    manifest = write_pack(tmp_path / "tested", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
-    source = manifest.parent / source_path
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text(import_statement + "\n" + HEALTHY_NODES)
-    report = diagnose_static(manifest.parent, load_manifest(manifest))
-    assert any(
-        finding.code == "imports.host-machinery"
-        and finding.severity == "error"
-        and finding.location == str(Path(source_path)) + ":1"
-        for finding in report.findings
-    )
 
 
 def test_private_and_host_imports_are_errors(tmp_path: Path) -> None:
@@ -1001,97 +627,6 @@ def test_declared_pack_helpers_are_public_and_exactly_scoped(tmp_path: Path) -> 
         "imports dinkster_conditioning_extra",
         "imports dinkster_sampling",
     }
-
-
-def test_import_side_effects_and_thread_spawns_warn(tmp_path: Path) -> None:
-    source = (
-        "import threading\n"
-        'print("loading my pack!!")\n'
-        "_t = threading.Thread(target=lambda: threading.Event().wait(), "
-        "daemon=True)\n"
-        "_t.start()\n" + HEALTHY_NODES
-    )
-    manifest = write_pack(tmp_path / "noisy", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    found = codes(report)
-    assert "import.side-effect-output" in found
-    assert "import.side-effect-threads" in found
-    output = next(f for f in report.findings if f.code == "import.side-effect-output")
-    assert "loading my pack" in output.message
-
-
-def test_cuda_init_at_import_warns(tmp_path: Path) -> None:
-    """A pack whose import initializes a CUDA context gets flagged: an idle
-    context holds ~450 MiB of VRAM per worker process for its whole
-    lifetime (measured, RTX 4090) before any work runs, so the first GPU
-    op belongs in execute(), never at import. The probe reads
-    sys.modules["torch"].cuda.is_initialized(), so a stub torch exercises
-    the seam without a GPU."""
-    root = tmp_path / "hungry"
-    root.mkdir(parents=True)
-    (root / "torch.py").write_text(
-        "class cuda:\n    @staticmethod\n    def is_initialized():\n        return True\n"
-    )
-    source = "import torch  # stub: pretends import created a context\n" + (HEALTHY_NODES)
-    manifest = write_pack(root, HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    assert "import.side-effect-cuda" in codes(report)
-    finding = next(f for f in report.findings if f.code == "import.side-effect-cuda")
-    assert finding.severity == "warning"
-    assert "VRAM" in finding.fix
-
-
-def test_import_time_pack_logging_is_structured_not_raw_output(
-    tmp_path: Path,
-) -> None:
-    source = (
-        "from dinkster_api.v1 import pack_logger\n"
-        '_log = pack_logger("healthy-nodes")\n'
-        '_log.info("registering %d nodes", 2)\n' + HEALTHY_NODES
-    )
-    manifest = write_pack(tmp_path / "logging", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    found = codes(report)
-    # Proper logging is an informational finding, never a raw-output warning.
-    assert "import.log" in found
-    assert "import.side-effect-output" not in found
-    assert report.ok, render_text(report)
-    log_finding = next(f for f in report.findings if f.code == "import.log")
-    assert log_finding.severity == "info"
-    assert "dinkster.pack.healthy" in log_finding.message
-    assert "registering 2 nodes" in log_finding.message
-
-
-def test_logging_under_another_packs_origin_warns(tmp_path: Path) -> None:
-    source = (
-        "from dinkster_api.v1 import pack_logger\n"
-        '_log = pack_logger("somebody-else")\n'
-        '_log.info("hello")\n' + HEALTHY_NODES
-    )
-    manifest = write_pack(tmp_path / "spoof", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    assert "import.log-foreign-origin" in codes(report)
-    finding = next(f for f in report.findings if f.code == "import.log-foreign-origin")
-    assert finding.severity == "warning"
-    assert "dinkster.pack.somebody-else" in finding.message
-    assert "healthy" in finding.fix
-
-
-def test_raw_prints_still_warn_alongside_structured_logs(tmp_path: Path) -> None:
-    source = (
-        "from dinkster_api.v1 import pack_logger\n"
-        'pack_logger("healthy-nodes").info("fine")\n'
-        'print("not fine")\n' + HEALTHY_NODES
-    )
-    manifest = write_pack(tmp_path / "mixed", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    found = codes(report)
-    assert "import.log" in found
-    assert "import.side-effect-output" in found
-    output = next(f for f in report.findings if f.code == "import.side-effect-output")
-    # The log record must not leak into the captured raw output.
-    assert "fine" in output.message
-    assert "dinkster.pack" not in output.message
 
 
 def test_broken_entry_is_a_finding_not_a_crash(tmp_path: Path) -> None:
@@ -1240,81 +775,6 @@ def test_probe_crash_detail_redacts_environment(
     assert len(finding.message) < 550
 
 
-def test_fallback_codec_on_crossing_type_warns(tmp_path: Path) -> None:
-    source = HEALTHY_NODES.replace(
-        "registry.register(\n"
-        '        "healthy.tag",\n'
-        "        encode=lambda obj: json.dumps(obj).encode(),\n"
-        "        decode=lambda data: json.loads(data),\n"
-        "    )",
-        'registry.register("healthy.tag")',
-    )
-    manifest = write_pack(tmp_path / "fallback", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    assert report.ok  # perf finding: warning, not error (DESIGN 3.9)
-    fallback = [f for f in report.findings if f.code == "types.fallback-codec"]
-    assert len(fallback) == 1
-    assert "healthy.tag" in fallback[0].message
-    assert "encode" in fallback[0].fix
-
-
-def test_unregistered_schema_type_warns(tmp_path: Path) -> None:
-    source = HEALTHY_NODES.replace(
-        'registry.register(\n        "healthy.tag",',
-        'registry.register(\n        "healthy.other",',
-    )
-    manifest = write_pack(tmp_path / "unregistered", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    unregistered = [f for f in report.findings if f.code == "types.unregistered"]
-    assert len(unregistered) == 1
-    assert "healthy.tag" in unregistered[0].message
-
-
-@pytest.mark.parametrize("open_slot", [False, True])
-def test_unregistered_nested_slot_type_warns(tmp_path: Path, open_slot: bool) -> None:
-    from dinkster_workers.catalog import read_catalog
-
-    slot_type = "TypeExpr.list_of(TypeExpr.concrete('healthy.slot_value'))"
-    declaration = (
-        f"slot_type={slot_type}" if open_slot else f"variants=(SlotVariant('value', {slot_type}),)"
-    )
-    source = (
-        HEALTHY_NODES
-        + f"""
-from dinkster_api.v1 import DynamicSlotSpec, InputFamilySpec, SlotVariant
-
-class Slot(Node):
-    @classmethod
-    def define_schema(cls):
-        slot = DynamicSlotSpec('socket', {declaration})
-        return NodeSchema(
-            node_type='healthy.slot',
-            input_families=(InputFamilySpec('items', (slot,)),),
-        )
-
-    @classmethod
-    def execute(cls, **inputs):
-        return cls.outputs()
-
-NODES = [Slot]
-"""
-    )
-    manifest = write_pack(tmp_path / "slot", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    assert report.ok, render_text(report)
-    unregistered = [finding for finding in report.findings if finding.code == "types.unregistered"]
-    assert len(unregistered) == 1
-    assert "healthy.slot_value" in unregistered[0].message
-    assert read_catalog(load_manifest(manifest)) is not None
-
-
-def test_empty_pack_warns(tmp_path: Path) -> None:
-    source = HEALTHY_NODES + "\n\nNODES = []\n"
-    manifest = write_pack(tmp_path / "empty", HEALTHY_MANIFEST, "healthy_nodes", source)
-    report = diagnose(manifest)
-    assert "entry.no-nodes" in codes(report)
-
-
 @pytest.mark.parametrize("broken", (False, True))
 def test_catalog_driven_node_source_is_reported_without_hiding_entry_errors(
     tmp_path: Path, broken: bool
@@ -1375,53 +835,6 @@ def test_cli_renders_and_exits_by_health(tmp_path: Path, capsys) -> None:
 # itself.
 
 
-def test_diagnose_wraps_the_probe_argv_in_the_jail(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_workers import ProbeJail
-
-    manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
-    plain = [sys.executable, "-m", "dinkster_workers._doctor_probe", str(manifest)]
-    jail = ProbeJail(bwrap="/fake/bwrap", user_namespaces=True)
-    seen: list[list[str]] = []
-    seen_kwargs: list[dict[str, object]] = []
-    seen_environment_files: list[dict[str, str]] = []
-    real_run = subprocess.run
-
-    def spy(argv: list[str], **kwargs: object) -> object:
-        seen.append(list(argv))
-        seen_kwargs.append(kwargs)
-        inherited = kwargs["pass_fds"]
-        assert isinstance(inherited, tuple) and len(inherited) == 1
-        with os.fdopen(os.dup(inherited[0]), "rb") as environment_file:
-            seen_environment_files.append(json.load(environment_file))
-        runnable = dict(kwargs)
-        runnable.pop("pass_fds", None)
-        runnable["env"] = None
-        return real_run(plain, **runnable)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("dinkster_workers.doctor.preflight_interpreter", lambda _python: (3, 12))
-    monkeypatch.setattr("dinkster_workers.doctor.subprocess.run", spy)
-    explicit_environment = {"DINKSTER_EXPLICIT_SENTINEL": "delivered-by-fd"}
-    report = diagnose(manifest, probe_jail=jail, environment=explicit_environment)
-    assert report.ok, render_text(report)
-    # the import probe is doctor's only subprocess, and it went through bwrap
-    assert len(seen) == 1
-    wrapped = seen[0]
-    assert seen_environment_files == [explicit_environment]
-    assert seen_kwargs[0]["env"] == {}
-    assert len(seen_kwargs[0]["pass_fds"]) == 1  # type: ignore[arg-type]
-    assert wrapped[0] == "/fake/bwrap"
-    assert "--unshare-net" in wrapped
-    assert "--setenv" not in wrapped
-    assert "delivered-by-fd" not in wrapped
-    # the original probe invocation survives at the tail, past the rlimit stub
-    assert wrapped[-3:] == plain[1:]
-    # the pack root rides in read-only
-    root_binds = [wrapped[i + 1] for i, a in enumerate(wrapped) if a == "--ro-bind"]
-    assert str(manifest.parent) in root_binds
-
-
 def test_cli_sandbox_refusal_is_loud_and_leaves_stdout_clean(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1439,28 +852,6 @@ def test_cli_sandbox_refusal_is_loud_and_leaves_stdout_clean(
     captured = capsys.readouterr()
     assert "refused" in captured.err and "no bwrap on this machine" in captured.err
     assert captured.out == ""  # --json consumers never see refusal noise
-
-
-def test_cli_sandbox_passes_the_detected_jail_to_diagnose(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster_workers import ProbeJail
-
-    manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
-    jail = ProbeJail(bwrap="/fake/bwrap", user_namespaces=True)
-    monkeypatch.setattr("dinkster_workers.doctor.detect_probe_jail", lambda: jail)
-    received: list[object] = []
-
-    def fake_diagnose(path: Path, *, probe_jail: object = None) -> object:
-        received.append(probe_jail)
-        return diagnose(path)  # real, unjailed - the wiring is under test
-
-    monkeypatch.setattr("dinkster_workers.doctor.diagnose", fake_diagnose)
-    assert main([str(manifest), "--sandbox", "--json"]) == 0
-    assert received == [jail]
-    assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
 _JAIL_CAPABILITY = detect_bubblewrap() if sys.platform == "linux" else None

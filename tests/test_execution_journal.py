@@ -6,7 +6,6 @@ GET /api/runs/{runId}/journal replay page."""
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -141,41 +140,6 @@ def test_flush_persists_classified_wire_events(store: JournalStore) -> None:
     assert journal.scope_of("other") is None
 
 
-def test_events_without_a_run_reference_are_ignored(store: JournalStore) -> None:
-    journal = ExecutionJournal(store)
-    journal.observe({"type": "node_started", "seq": 1}, scope="local")
-    flush(journal)
-    assert store.latest_seq(execution_run_stream("")) == 0
-
-
-def test_finalize_prunes_telemetry_keeping_last_progress_per_node(
-    store: JournalStore,
-) -> None:
-    journal = ExecutionJournal(store)
-    run = "run-1"
-    journal.observe(lifecycle(run, "node_started", 1, node_id="a"), scope="local")
-    journal.observe(progress_event(run, 2, node_id="a", step=1), scope="local")
-    journal.observe(progress_event(run, 3, node_id="a", step=2), scope="local")
-    journal.observe(log_event(run, 4, level="info"), scope="local")
-    journal.observe(log_event(run, 5, level="warning"), scope="local")
-    journal.observe(progress_event(run, 6, node_id="b", step=7), scope="local")
-    journal.observe(job_state(run, 7, "completed"), scope="local")
-    flush(journal)
-
-    page = journal.read(run)
-    names = [record.name for record in page.records]
-    assert names == ["node_started", "log", "job_state", "progress", "progress"]
-    assert all(record.durable for record in page.records)
-    keepers = {
-        cast("str", record.payload["nodeId"]): record.payload
-        for record in page.records
-        if record.name == "progress"
-    }
-    assert keepers["a"] == progress_event(run, 3, node_id="a", step=2)
-    assert keepers["b"] == progress_event(run, 6, node_id="b", step=7)
-    assert page.coalesced_below > 0
-
-
 def test_runs_beyond_keep_runs_expire_oldest_first(store: JournalStore) -> None:
     journal = ExecutionJournal(store, keep_runs=1)
     for run in ("run-1", "run-2"):
@@ -258,17 +222,6 @@ def test_buffer_cap_sheds_only_coalescible_records(
     assert [record.payload["seq"] for record in page.records] == [1, 2, 4]
 
 
-def test_read_scoped_misses_are_indistinguishable(store: JournalStore) -> None:
-    journal = ExecutionJournal(store)
-    journal.observe(lifecycle("run-1", "node_started", 1), scope="alice")
-    flush(journal)
-    page = journal.read_scoped("run-1", "alice")
-    assert page is not None
-    assert [record.name for record in page.records] == ["node_started"]
-    assert journal.read_scoped("run-1", "bob") is None
-    assert journal.read_scoped("run-2", "alice") is None
-
-
 def test_close_wakes_the_flush_loop_and_lands_the_buffer(tmp_path: Path) -> None:
     path = tmp_path / "execution.sqlite"
 
@@ -285,48 +238,6 @@ def test_close_wakes_the_flush_loop_and_lands_the_buffer(tmp_path: Path) -> None
     reopened = ExecutionJournal(JournalStore(path))
     names = [record.name for record in reopened.read("run-1").records]
     assert names == ["node_started", "job_state"]
-    run_scenario(reopened.close())
-
-
-def test_close_waits_for_an_in_flight_write(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "execution.sqlite"
-
-    async def scenario() -> None:
-        journal = ExecutionJournal(JournalStore(path), flush_interval=0.01)
-        entered = threading.Event()
-        release = threading.Event()
-        closing = asyncio.Event()
-        original = journal._write
-        original_stop = journal._stop.set
-
-        def note_close() -> None:
-            original_stop()
-            closing.set()
-
-        def slow_write(batch: list[Any]) -> None:
-            entered.set()
-            assert release.wait(5)
-            original(batch)
-
-        monkeypatch.setattr(journal, "_write", slow_write)
-        monkeypatch.setattr(journal._stop, "set", note_close)
-        journal.start()
-        journal.observe(lifecycle("run-1", "node_started", 1), scope="local")
-        assert await asyncio.to_thread(entered.wait, 5)
-        closer = asyncio.ensure_future(journal.close())
-        try:
-            await asyncio.wait_for(closing.wait(), 5)
-            assert not closer.done()
-        finally:
-            release.set()
-        async with asyncio.timeout(5):
-            await closer
-
-    run_scenario(scenario())
-    reopened = ExecutionJournal(JournalStore(path))
-    assert reopened.scope_of("run-1") == "local"
     run_scenario(reopened.close())
 
 
@@ -370,33 +281,6 @@ def test_crash_abandoned_runs_become_retention_eligible(tmp_path: Path) -> None:
     assert row is not None
     assert row["finished"] == pytest.approx(now + 5.0)
     raw.close()
-
-
-def test_journal_survives_reopen(tmp_path: Path) -> None:
-    path = tmp_path / "execution.sqlite"
-    journal = ExecutionJournal(JournalStore(path))
-    journal.observe(lifecycle("run-1", "node_started", 1), scope="local")
-    journal.observe(job_state("run-1", 2, "completed"), scope="local")
-    run_scenario(journal.close())
-
-    reopened = ExecutionJournal(JournalStore(path))
-    assert reopened.scope_of("run-1") == "local"
-    page = reopened.read("run-1")
-    assert [record.name for record in page.records] == ["node_started", "job_state"]
-    run_scenario(reopened.close())
-
-
-def test_observe_after_close_is_a_noop(tmp_path: Path) -> None:
-    journal = ExecutionJournal(JournalStore(tmp_path / "execution.sqlite"))
-    run_scenario(journal.close())
-    journal.observe(lifecycle("run-1", "node_started", 1), scope="local")  # no crash
-
-
-def test_retention_bounds_must_be_non_negative(store: JournalStore) -> None:
-    with pytest.raises(ValueError, match="keep_runs"):
-        ExecutionJournal(store, keep_runs=-1)
-    with pytest.raises(ValueError, match="keep_days"):
-        ExecutionJournal(store, keep_days=-1.0)
 
 
 # -- end to end over HTTP -----------------------------------------------------

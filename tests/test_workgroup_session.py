@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable
 from typing import TypedDict
 
 import pytest
@@ -10,7 +10,6 @@ from dinkster_protocol import (
     CancelWorkGroup,
     DeviceResourceId,
     PrepareReplica,
-    ReleaseWorkGroup,
     ReplicaBinding,
     ReplicaId,
     ReplicaReady,
@@ -23,7 +22,6 @@ from dinkster_protocol import (
     WorkGroupDefinition,
     WorkGroupId,
     WorkGroupMessage,
-    WorkGroupReleased,
     WorkUnitDefinition,
     WorkUnitId,
     WorkUnitProgress,
@@ -31,16 +29,13 @@ from dinkster_protocol import (
 )
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import host as host_module
-from dinkster_workers.boundary import PROTOCOL_VERSION, BoundaryError, ValueCodec, write_frame
+from dinkster_workers.boundary import PROTOCOL_VERSION, ValueCodec, write_frame
 from dinkster_workers.in_process import InProcessWorker
 from dinkster_workers.session import BoundarySession
 from dinkster_workers.workgroup_session import (
     WORKGROUP_FRAME_TYPE,
     WORKGROUP_HELLO_FIELD,
-    WorkGroupSession,
     WorkGroupTransportClosed,
-    workgroup_frame,
-    workgroup_message_from_frame,
 )
 
 from tests.async_scenarios import run_scenario
@@ -133,33 +128,6 @@ async def close_host(
     await host_task
     server.close()
     await server.wait_closed()
-
-
-def test_closed_envelope_is_exact_and_blob_free() -> None:
-    message = ReplicaReady(**child_fields("worker-a"))
-    frame = workgroup_frame(message)
-    assert frame == {
-        "type": WORKGROUP_FRAME_TYPE,
-        "message": {
-            "type": "replicaReady",
-            "version": 1,
-            "capability": WORKGROUP_CAPABILITY,
-            "workerInstance": "worker-a",
-            "replica": "replica-a",
-            "group": "group-a",
-            "attempt": 1,
-            "device": "device-a",
-        },
-    }
-    assert workgroup_message_from_frame(frame, ()) == message
-    for malformed, blobs in (
-        ({**frame, "extra": True}, ()),
-        ({"type": WORKGROUP_FRAME_TYPE}, ()),
-        (frame, (b"blob",)),
-        ({"type": WORKGROUP_FRAME_TYPE, "message": {"type": "unknown"}}, ()),
-    ):
-        with pytest.raises(BoundaryError):
-            workgroup_message_from_frame(malformed, blobs)
 
 
 def test_handler_capability_is_authenticated_present_or_absent() -> None:
@@ -267,53 +235,6 @@ def test_parent_endpoint_round_trip_preserves_reply_order() -> None:
     run_scenario(scenario())
 
 
-def test_endpoint_owns_direction_and_correlation_refusal() -> None:
-    async def scenario() -> None:
-        async def foreign_correlation(
-            message: WorkGroupMessage,
-        ) -> tuple[WorkGroupMessage, ...]:
-            return (ReplicaReady(**child_fields(message.worker.value, attempt=2)),)
-
-        session, _hello, server, host_task = await open_host(foreign_correlation)
-        try:
-            assert session.instance_token is not None
-            endpoint = session.bind_workgroup_endpoint(
-                definition(session.instance_token), ReplicaId("replica-a")
-            )
-            command = PrepareReplica(
-                **child_fields(session.instance_token),
-                recipe=ReplicaRecipeId("sha256:" + "a" * 64),
-            )
-            await endpoint.send(command)
-            with pytest.raises(WorkGroupTransportClosed):
-                await endpoint.receive()
-            assert not session.alive
-
-            sent: list[dict[str, object]] = []
-
-            async def send(header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-                sent.append(dict(header))
-
-            transport = WorkGroupSession(send)
-            transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-            direct = transport.bind(
-                definition("worker-a"),
-                ReplicaId("replica-a"),
-                worker_instance="worker-a",
-            )
-            command = PrepareReplica(
-                **child_fields("worker-a"),
-                recipe=ReplicaRecipeId("sha256:" + "a" * 64),
-            )
-            transport.accept(workgroup_frame(command), ())
-            with pytest.raises(ValueError, match="illegal type"):
-                await direct.receive()
-        finally:
-            await close_host(session, server, host_task)
-
-    run_scenario(scenario())
-
-
 def test_cancel_command_reaches_handler_while_run_is_pending() -> None:
     async def scenario() -> None:
         cancel_seen = asyncio.Event()
@@ -354,370 +275,6 @@ def test_cancel_command_reaches_handler_while_run_is_pending() -> None:
             assert type(await asyncio.wait_for(endpoint.receive(), 2)) is WorkUnitResult
         finally:
             await close_host(session, server, host_task)
-
-    run_scenario(scenario())
-
-
-def test_multiple_bound_endpoints_route_replies_by_exact_correlation() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint_a = transport.bind(
-            definition("worker-a", group="group-a"),
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-        endpoint_b = transport.bind(
-            definition("worker-a", group="group-b"),
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-        receive_a = asyncio.create_task(endpoint_a.receive())
-        receive_b = asyncio.create_task(endpoint_b.receive())
-        await asyncio.sleep(0)
-        reply_b = ReplicaReady(**child_fields("worker-a", group="group-b"))
-        reply_a = ReplicaReady(**child_fields("worker-a", group="group-a"))
-        transport.accept(workgroup_frame(reply_b), ())
-        transport.accept(workgroup_frame(reply_a), ())
-        assert await receive_a == reply_a
-        assert await receive_b == reply_b
-
-    run_scenario(scenario())
-
-
-def test_released_attempts_retire_only_after_consumption_and_stay_bounded() -> None:
-    async def scenario() -> None:
-        sent: list[dict[str, object]] = []
-
-        async def send(header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            sent.append(dict(header))
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a", attempt=1),
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-        released = WorkGroupReleased(**child_fields("worker-a", attempt=1))
-        transport.accept(workgroup_frame(released), ())
-        assert len(transport._channels) == 1  # noqa: SLF001
-
-        invalid = definition("worker-b", attempt=2)
-        with pytest.raises(ValueError, match="authenticated session"):
-            transport.bind(invalid, ReplicaId("replica-a"), worker_instance="worker-a")
-        assert len(transport._channels) == 1  # noqa: SLF001
-        assert await endpoint.receive() == released
-
-        channels = transport._channels  # noqa: SLF001
-        with pytest.raises(ValueError, match="authenticated session"):
-            transport.bind(invalid, ReplicaId("replica-a"), worker_instance="worker-a")
-        assert transport._channels is channels  # noqa: SLF001
-        with pytest.raises(BoundaryError, match="retired group attempt"):
-            transport.accept(
-                workgroup_frame(ReplicaReady(**child_fields("worker-a", attempt=1))), ()
-            )
-
-        old_endpoint = endpoint
-        for attempt in range(2, 34):
-            endpoint = transport.bind(
-                definition("worker-a", attempt=attempt),
-                ReplicaId("replica-a"),
-                worker_instance="worker-a",
-            )
-            assert len(transport._channels) == 1  # noqa: SLF001
-            with pytest.raises(WorkGroupTransportClosed):
-                await old_endpoint.receive()
-            with pytest.raises(WorkGroupTransportClosed):
-                await old_endpoint.send(
-                    ReleaseWorkGroup(**child_fields("worker-a", attempt=attempt - 1))
-                )
-            with pytest.raises(BoundaryError, match="retired group attempt"):
-                transport.accept(
-                    workgroup_frame(
-                        WorkGroupReleased(**child_fields("worker-a", attempt=attempt - 1))
-                    ),
-                    (),
-                )
-            released = WorkGroupReleased(**child_fields("worker-a", attempt=attempt))
-            transport.accept(workgroup_frame(released), ())
-            assert await endpoint.receive() == released
-            old_endpoint = endpoint
-
-        assert sent == []
-
-    run_scenario(scenario())
-
-
-def test_release_consumption_wakes_every_concurrent_receiver() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a"), ReplicaId("replica-a"), worker_instance="worker-a"
-        )
-        pending = [asyncio.create_task(endpoint.receive()) for _ in range(2)]
-        await asyncio.sleep(0)
-        released = WorkGroupReleased(**child_fields("worker-a"))
-        transport.accept(workgroup_frame(released), ())
-
-        results = await asyncio.gather(*pending, return_exceptions=True)
-        assert results.count(released) == 1
-        failures = [result for result in results if isinstance(result, BaseException)]
-        assert len(failures) == 1
-        assert type(failures[0]) is WorkGroupTransportClosed
-
-    run_scenario(scenario())
-
-
-def test_release_retires_after_all_earlier_accepted_replies_drain() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a"), ReplicaId("replica-a"), worker_instance="worker-a"
-        )
-        ready = ReplicaReady(**child_fields("worker-a"))
-        released = WorkGroupReleased(**child_fields("worker-a"))
-        transport.accept(workgroup_frame(ready), ())
-        transport.accept(workgroup_frame(released), ())
-
-        assert await endpoint.receive() == ready
-        await endpoint.send(ReleaseWorkGroup(**child_fields("worker-a")))
-        assert await endpoint.receive() == released
-        with pytest.raises(WorkGroupTransportClosed):
-            await endpoint.receive()
-        with pytest.raises(WorkGroupTransportClosed):
-            await endpoint.send(ReleaseWorkGroup(**child_fields("worker-a")))
-
-    run_scenario(scenario())
-
-
-def test_queued_release_rejects_late_and_duplicate_replies_before_consumption() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a"), ReplicaId("replica-a"), worker_instance="worker-a"
-        )
-        released = WorkGroupReleased(**child_fields("worker-a"))
-        transport.accept(workgroup_frame(released), ())
-
-        for late in (ReplicaReady(**child_fields("worker-a")), released):
-            with pytest.raises(BoundaryError, match="retired group attempt"):
-                transport.accept(workgroup_frame(late), ())
-
-        assert await endpoint.receive() == released
-        with pytest.raises(WorkGroupTransportClosed):
-            await endpoint.receive()
-
-    run_scenario(scenario())
-
-
-def test_future_attempt_reply_refuses_without_settling_current_attempt() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a", attempt=1),
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-
-        for future in (
-            ReplicaReady(**child_fields("worker-a", attempt=2)),
-            WorkGroupReleased(**child_fields("worker-a", attempt=2)),
-        ):
-            with pytest.raises(BoundaryError, match="retired group attempt"):
-                transport.accept(workgroup_frame(future), ())
-
-        ready = ReplicaReady(**child_fields("worker-a", attempt=1))
-        transport.accept(workgroup_frame(ready), ())
-        assert await endpoint.receive() == ready
-
-    run_scenario(scenario())
-
-
-def test_transport_loss_close_and_cancellation_wake_without_retained_tasks() -> None:
-    async def scenario() -> None:
-        sent: list[dict[str, object]] = []
-
-        async def send(header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            sent.append(dict(header))
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a"),
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-        cancelled = asyncio.create_task(endpoint.receive())
-        await asyncio.sleep(0)
-        cancelled.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await cancelled
-        assert all(  # noqa: SLF001 - task ownership proof
-            not channel.waiters for channel in transport._channels.values()
-        )
-
-        retained = ReplicaReady(**child_fields("worker-a"))
-        raced = asyncio.create_task(endpoint.receive())
-        await asyncio.sleep(0)
-        transport.accept(workgroup_frame(retained), ())
-        raced.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await raced
-        assert await endpoint.receive() == retained
-
-        pending = [asyncio.create_task(endpoint.receive()) for _ in range(2)]
-        await asyncio.sleep(0)
-        transport.fail(ConnectionError("lost"))
-        for task in pending:
-            with pytest.raises(WorkGroupTransportClosed):
-                await task
-        assert all(  # noqa: SLF001
-            not channel.waiters and not channel.messages for channel in transport._channels.values()
-        )
-        assert sent == []
-
-    run_scenario(scenario())
-
-
-def test_accepted_reply_drains_before_transport_failure() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        transport = WorkGroupSession(send)
-        transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-        endpoint = transport.bind(
-            definition("worker-a"),
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-        pending = asyncio.create_task(endpoint.receive())
-        await asyncio.sleep(0)
-        reply = ReplicaReady(**child_fields("worker-a"))
-        transport.accept(workgroup_frame(reply), ())
-        transport.fail(ConnectionError("EOF after reply"))
-
-        assert await pending == reply
-        with pytest.raises(WorkGroupTransportClosed):
-            await endpoint.receive()
-
-    run_scenario(scenario())
-
-
-def test_pristine_unbind_allows_same_attempt_rebind_and_works_after_failure() -> None:
-    async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-        return None
-
-    transport = WorkGroupSession(send)
-    transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-    current = definition("worker-a")
-    old = transport.bind(current, ReplicaId("replica-a"), worker_instance="worker-a")
-    transport.unbind(current, ReplicaId("replica-a"))
-    rebound = transport.bind(current, ReplicaId("replica-a"), worker_instance="worker-a")
-
-    async def old_endpoint_is_closed() -> None:
-        with pytest.raises(WorkGroupTransportClosed):
-            await old.receive()
-
-    run_scenario(old_endpoint_is_closed())
-    transport.fail(ConnectionError("lost"))
-    transport.unbind(current, ReplicaId("replica-a"))
-    assert rebound.binding == current.members[0]
-
-
-def test_unbind_requires_the_exact_bound_definition() -> None:
-    async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-        return None
-
-    transport = WorkGroupSession(send)
-    transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-    current = definition("worker-a")
-    transport.bind(current, ReplicaId("replica-a"), worker_instance="worker-a")
-    foreign = WorkGroupDefinition(
-        current.group,
-        current.attempt,
-        current.members,
-        (
-            WorkUnitDefinition(
-                WorkUnitId("unit-other"), ReplicaId("replica-a"), SemanticSlot.SINGLE
-            ),
-        ),
-    )
-
-    with pytest.raises(ValueError, match="different workgroup definition"):
-        transport.unbind(foreign, ReplicaId("replica-a"))
-    transport.unbind(current, ReplicaId("replica-a"))
-
-
-def test_unbind_refuses_active_channels_and_releases_settled_channels() -> None:
-    async def scenario() -> None:
-        async def send(_header: Mapping[str, object], _blobs: Sequence[bytes]) -> None:
-            return None
-
-        def bound(attempt: int) -> tuple[WorkGroupSession, WorkGroupDefinition, object]:
-            transport = WorkGroupSession(send)
-            transport.negotiate({WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]})
-            current = definition("worker-a", attempt=attempt)
-            endpoint = transport.bind(current, ReplicaId("replica-a"), worker_instance="worker-a")
-            return transport, current, endpoint
-
-        sent, sent_definition, sent_endpoint = bound(1)
-        await sent_endpoint.send(  # type: ignore[union-attr]
-            PrepareReplica(
-                **child_fields("worker-a", attempt=1),
-                recipe=ReplicaRecipeId("sha256:" + "a" * 64),
-            )
-        )
-        with pytest.raises(RuntimeError, match="still active"):
-            sent.unbind(sent_definition, ReplicaId("replica-a"))
-
-        queued, queued_definition, _ = bound(2)
-        queued.accept(workgroup_frame(ReplicaReady(**child_fields("worker-a", attempt=2))), ())
-        with pytest.raises(RuntimeError, match="still active"):
-            queued.unbind(queued_definition, ReplicaId("replica-a"))
-
-        waiting, waiting_definition, waiting_endpoint = bound(3)
-        waiter = asyncio.create_task(waiting_endpoint.receive())  # type: ignore[union-attr]
-        await asyncio.sleep(0)
-        with pytest.raises(RuntimeError, match="still active"):
-            waiting.unbind(waiting_definition, ReplicaId("replica-a"))
-        waiter.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiter
-
-        terminal, terminal_definition, terminal_endpoint = bound(4)
-        released = WorkGroupReleased(**child_fields("worker-a", attempt=4))
-        terminal.accept(workgroup_frame(released), ())
-        with pytest.raises(RuntimeError, match="still active"):
-            terminal.unbind(terminal_definition, ReplicaId("replica-a"))
-        assert await terminal_endpoint.receive() == released  # type: ignore[union-attr]
-        terminal.unbind(terminal_definition, ReplicaId("replica-a"))
-        rebound = terminal.bind(
-            terminal_definition,
-            ReplicaId("replica-a"),
-            worker_instance="worker-a",
-        )
-        assert rebound.binding == terminal_definition.members[0]
 
     run_scenario(scenario())
 

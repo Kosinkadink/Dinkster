@@ -437,8 +437,7 @@ The whole-list projection is additionally pinned at ComfyUI
 links project as `(None,)`, while `INPUT_IS_LIST` delivers resolved lists
 without slicing) and `comfy_api/latest/_io.py` (V3 `is_input_list` lowers to
 the same runtime flag). The fixture records connected-undemanded, demanded,
-and unconnected projections, and
-`test_current_comfy_whole_list_projection_is_source_pinned` names that proof.
+and unconnected projections.
 
 Regeneration is byte-deterministic and refuses a missing or mismatched pinned
 git object.

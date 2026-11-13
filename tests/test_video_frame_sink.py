@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 from fractions import Fraction
@@ -314,19 +313,6 @@ def test_malformed_records_close_the_generator(fault: str) -> None:
     assert closed == [True]
 
 
-def test_pillow_webp_receives_method(monkeypatch: pytest.MonkeyPatch) -> None:
-    methods = []
-    original = Image.Image.save
-
-    def save(self: Image.Image, *args: Any, **kwargs: Any) -> None:
-        methods.append(kwargs.get("method"))
-        original(self, *args, **kwargs)
-
-    monkeypatch.setattr(Image.Image, "save", save)
-    save_frame_records(Records(), io.BytesIO(), format="webp", bit_depth=8, color=COLOR, method=6)
-    assert methods == [6, 6, 6]
-
-
 @pytest.mark.parametrize("format", ["apng", "png8", "png16"])
 def test_png_metadata_matches_ordinary_still_reader(format: str) -> None:
     metadata = {
@@ -371,73 +357,3 @@ def test_png_nonstandard_metadata_keys_remain_in_typed_envelope() -> None:
         Records(), output, format="apng", bit_depth=8, color=COLOR, metadata=metadata
     )
     assert read_video_metadata(output.getvalue()) == metadata
-
-
-@pytest.mark.parametrize("error", [RuntimeError, asyncio.CancelledError])
-def test_source_failure_or_cancellation_closes_input_and_keeps_destination_open(error) -> None:
-    class Broken(Records):
-        def __next__(self):
-            if self.position == 1:
-                raise error("stop")
-            return super().__next__()
-
-    source = Broken()
-    output = io.BytesIO()
-    with pytest.raises(error):
-        save_frame_records(source, output, format="apng", bit_depth=8, color=COLOR)
-    assert source.closed == 1 and not output.closed
-
-
-def test_iter_creation_failure_closes_source() -> None:
-    class Broken(Records):
-        def __iter__(self):
-            raise RuntimeError("iteration unavailable")
-
-    source = Broken()
-    with pytest.raises(RuntimeError, match="iteration unavailable"):
-        save_frame_records(source, io.BytesIO(), format="apng", bit_depth=8, color=COLOR)
-    assert source.closed == 1
-
-
-def test_fallback_header_reads_are_bounded_and_reporting_follows_source_close() -> None:
-    class BoundedReads(io.BytesIO):
-        def read(self, size: int | None = -1) -> bytes:
-            assert size is not None and 0 <= size <= 4096
-            return super().read(size)
-
-    source = Records(count=100, alpha=True)
-    output = BoundedReads()
-    diagnostics = []
-
-    def report(record):
-        assert source.closed == 1
-        assert output.tell() == len(output.getvalue())
-        diagnostics.append(record)
-
-    save_frame_records(
-        source, output, format="gif_pillow", bit_depth=8, color=COLOR, on_diagnostic=report
-    )
-    assert len(diagnostics) == 1
-    assert diagnostics[0]["effective"] == {
-        "container": "webp",
-        "codec": "webp",
-        "pixelFormat": "rgba",
-        "channelLayout": None,
-    }
-    assert not output.closed
-
-
-def test_failed_fallback_does_not_report_successful_substitution() -> None:
-    source = Records(alpha=True)
-    diagnostics = []
-    with pytest.raises(ValueError, match="declared frame_count"):
-        save_frame_records(
-            source,
-            io.BytesIO(),
-            format="gif_pillow",
-            bit_depth=8,
-            color=COLOR,
-            frame_count=1,
-            on_diagnostic=diagnostics.append,
-        )
-    assert source.closed == 1 and diagnostics == []

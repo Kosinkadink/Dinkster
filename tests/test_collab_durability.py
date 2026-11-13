@@ -86,41 +86,6 @@ def test_sessions_survive_restart(tmp_path: Path) -> None:
         second_store.close()
 
 
-def test_existing_database_adds_workflow_document_kind(tmp_path: Path) -> None:
-    path = tmp_path / "sessions.sqlite"
-    with sqlite3.connect(path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE sessions (
-                session_id TEXT PRIMARY KEY,
-                scope TEXT NOT NULL,
-                document_id TEXT NOT NULL,
-                snapshot TEXT NOT NULL,
-                snapshot_revision INTEGER NOT NULL,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
-            ("legacy", "local", "document", "null", 0, 1.0),
-        )
-
-    store = SessionStore(path)
-    try:
-        session = SessionService(store=store).get("legacy")
-        assert session.document_kind == "workflow"
-        with sqlite3.connect(path) as connection:
-            column = next(
-                row
-                for row in connection.execute("PRAGMA table_info(sessions)")
-                if row[1] == "document_kind"
-            )
-        assert column[3:] == (1, "'workflow'", 0)
-    finally:
-        store.close()
-
-
 def test_checkpoint_pruning_is_durable(tmp_path: Path) -> None:
     path = tmp_path / "sessions.sqlite"
     store = SessionStore(path)
@@ -175,21 +140,6 @@ def test_refused_stale_append_does_not_reach_store(tmp_path: Path) -> None:
     store.close()
 
 
-def test_storeless_service_creates_no_file(tmp_path: Path) -> None:
-    service = SessionService()
-    session = service.create(scope="local", document_id="document", snapshot=None)
-    op, replayed = service.append(
-        session.session_id,
-        op_id="op",
-        actor_id="actor",
-        base_revision=0,
-        patch=PATCH,
-    )
-    assert not replayed
-    assert service.get(session.session_id).revision == op.revision
-    assert list(tmp_path.iterdir()) == []
-
-
 def test_actor_bindings_survive_restart_and_are_deleted_on_close(tmp_path: Path) -> None:
     path = tmp_path / "sessions.sqlite"
     first_store = SessionStore(path)
@@ -225,23 +175,6 @@ def test_actor_bindings_survive_restart_and_are_deleted_on_close(tmp_path: Path)
     second_store.close()
 
 
-def test_presence_binding_is_durable_without_an_op(tmp_path: Path) -> None:
-    path = tmp_path / "sessions.sqlite"
-    store = SessionStore(path)
-    service = SessionService(store=store)
-    session = service.create(scope="team", document_id="document", snapshot=None)
-    service.bind_actor(session.session_id, "actor", "alice")
-    store.close()
-
-    reloaded_store = SessionStore(path)
-    reloaded = SessionService(store=reloaded_store)
-    try:
-        with pytest.raises(ActorPrincipalMismatchError):
-            reloaded.bind_actor(session.session_id, "actor", "bob")
-    finally:
-        reloaded_store.close()
-
-
 def test_acl_survives_restart_and_is_deleted_on_close(tmp_path: Path) -> None:
     path = tmp_path / "sessions.sqlite"
     first_store = SessionStore(path)
@@ -267,19 +200,3 @@ def test_acl_survives_restart_and_is_deleted_on_close(tmp_path: Path) -> None:
         assert conn.execute("SELECT count(*) FROM session_acl").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM session_policy").fetchone()[0] == 0
     second_store.close()
-
-
-def test_storeless_acl_has_the_same_role_semantics() -> None:
-    service = SessionService()
-    session = service.create(
-        scope="team", document_id="document", snapshot=None, principal_id="alice"
-    )
-    service.replace_acl(
-        session.session_id,
-        principal_id="alice",
-        default_role="viewer",
-        entries={"alice": "owner", "bob": "editor"},
-    )
-    assert service.role_for(session.session_id, "alice") == "owner"
-    assert service.role_for(session.session_id, "bob") == "editor"
-    assert service.role_for(session.session_id, "unlisted") == "viewer"

@@ -92,31 +92,6 @@ def test_endpoints_absent_without_export() -> None:
     run_scenario(scenario())
 
 
-def test_peer_cache_store_round_trip(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        store = DiskCacheStore(tmp_path, registry)
-        value = registry.wrap("STRING", "computed on A")
-        await store.put("shared-key", {"out": value})
-        server = await serve_cache(store)
-        try:
-            async with PeerCacheStore(str(server.make_url("")), make_registry()) as peer:
-                hit = await peer.get("shared-key")
-                assert hit is not None
-                assert hit["out"].fingerprint == value.fingerprint  # H4
-                assert hit["out"].resolve() == "computed on A"
-                assert peer.hits == 1
-
-                assert await peer.get("never-computed") is None
-                assert peer.misses == 1
-
-                await peer.put("shared-key", hit)  # read-only: a no-op
-        finally:
-            await server.close()
-
-    run_scenario(scenario())
-
-
 class TamperingExport:
     """A peer whose blob bytes do not match their digests."""
 

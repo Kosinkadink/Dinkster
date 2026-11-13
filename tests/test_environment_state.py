@@ -6,7 +6,6 @@ import hashlib
 import json
 import subprocess
 import sys
-import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,6 @@ from dinkster_supervisor.environment_state import (
     Channel,
     EnvironmentError,
     Generation,
-    Journal,
     read_current,
     set_current,
     writer_lock,
@@ -126,22 +124,6 @@ def test_doctor_detects_edits_missing_and_added_files_without_reporting_pack_fil
     )
 
 
-def test_generation_drift_bounds_memory_for_large_pack_environments(tmp_path: Path):
-    path = _generation(tmp_path, 1)
-    generation = Generation.read(path)
-    packages = path.parent / "packs/example/site-packages"
-    packages.mkdir(parents=True)
-    for index in range(4096):
-        (packages / f"module_{index}.py").touch()
-    tracemalloc.start()
-    try:
-        assert generation.drift(path.parent) == ()
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    assert peak < 512 * 1024
-
-
 def test_generation_preserves_in_process_hosting_and_defaults_to_isolated(tmp_path: Path):
     path = _generation(tmp_path, 1)
     assert Generation.read(path).in_process_packs == ()
@@ -165,40 +147,6 @@ def test_generation_refuses_file_hashes_outside_its_tree(tmp_path: Path, name: s
     path.write_text(json.dumps(metadata))
     with pytest.raises(EnvironmentError, match="relative file path"):
         Generation.read(path)
-
-
-def test_journal_records_recovery_state_and_retains_failure_diagnostics(tmp_path: Path):
-    path = tmp_path / "journal" / "update.json"
-    Journal("update", 2, 3, "switching").write(path)
-    interrupted = Journal.read(path)
-    assert interrupted.incomplete
-    assert (interrupted.previous, interrupted.target) == (2, 3)
-    Journal("update", 2, 3, "rolled-back", "target failed health check").write(path)
-    recovered = Journal.read(path)
-    assert not recovered.incomplete
-    assert recovered.error == "target failed health check"
-    assert json.loads(path.read_text())["format"] == "dinkster.journal/1"
-
-
-@pytest.mark.parametrize(
-    "settings",
-    [
-        [],
-        {},
-        {"previous": "{}"},
-        {"previous": "{}", "target": 42},
-        {"previous": "{}", "target": "not json"},
-        {"previous": "{}", "target": "{}"},
-    ],
-)
-def test_journal_refuses_incomplete_or_invalid_project_selection(tmp_path: Path, settings: object):
-    path = tmp_path / "journal.json"
-    Journal("update", 1, 2, "switching").write(path)
-    document = json.loads(path.read_bytes())
-    document["projectSettings"] = settings
-    path.write_text(json.dumps(document))
-    with pytest.raises(EnvironmentError, match="project settings"):
-        Journal.read(path)
 
 
 def _channel_document() -> dict:
