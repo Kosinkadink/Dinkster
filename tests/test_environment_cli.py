@@ -1963,7 +1963,7 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
                     pygit2.IndexEntry(
                         f"{kind}/{path.relative_to(folder).as_posix()}",
                         repository.create_blob(path.read_bytes()),
-                        pygit2.GIT_FILEMODE_BLOB,
+                        pygit2.enums.FileMode.BLOB,
                     )
                 )
     signature = pygit2.Signature("Fixture", "fixture@example.invalid")
@@ -2084,4 +2084,4 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
     (generation / "python/module.py").write_text("ANSWER = 99\n")
     code, damaged = _run(tmp_path, "doctor")
     assert code == 1 and damaged["status"] == "drift", damaged
-    assert "built from local folders" in damaged["sourceDescription"]
+    assert "not reviewed by the registry" in damaged["sourceDescription"]
