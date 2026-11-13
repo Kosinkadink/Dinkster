@@ -1,0 +1,17 @@
+name: Daily Windows validation
+
+on:
+  schedule:
+    - cron: '23 10 * * *'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  validation:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/full-validation.yml
+    with:
+      platform: windows
+    secrets: inherit

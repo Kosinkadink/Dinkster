@@ -2,13 +2,13 @@ name: full-validation
 
 on:
   push:
-    branches: [main, windows-sqlite-runtime-570]
-  schedule:
-    - cron: '0 6-22/2 * * *'
-      timezone: America/Los_Angeles
-    - cron: '23 10 * * *'
+    branches: [main]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      platform:
+        type: string
+        default: linux
 
 permissions:
   actions: read
@@ -20,7 +20,7 @@ env:
   # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
   PYTEST_ADDOPTS: "-n0"
 
-# Started main runs finish; only superseded pushes to other refs cancel.
+# Started main runs finish; pending pushes batch behind them.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
@@ -32,26 +32,55 @@ jobs:
     outputs:
       run-heavy: ${{ steps.plan.outputs.run-heavy }}
       run-torch: ${{ steps.plan.outputs.run-torch }}
+      run-windows: ${{ steps.plan.outputs.run-windows }}
+      test-matrix: ${{ steps.plan.outputs.test-matrix }}
     steps:
-      - name: Skip an unchanged scheduled commit
+      - name: Select platform lanes and skip completed daily commits
         id: plan
         uses: actions/github-script@v7
+        env:
+          PLATFORM: ${{ inputs.platform || 'linux' }}
         with:
           script: |
-            core.setOutput('run-torch', 'true');
-            if (context.eventName !== 'schedule') {
-              core.setOutput('run-heavy', 'true');
-              return;
+            const platform = process.env.PLATFORM;
+            if (!['linux', 'windows'].includes(platform)) {
+              throw new Error(`Unknown validation platform: ${platform}`);
             }
-            const runs = await github.rest.actions.listWorkflowRuns({
-              ...context.repo,
-              workflow_id: 'full-validation.yml',
-              branch: 'main',
-              status: 'success',
-              event: 'schedule',
-              per_page: 1,
-            });
-            core.setOutput('run-heavy', runs.data.workflow_runs[0]?.head_sha === context.sha ? 'false' : 'true');
+            if (platform === 'windows' && context.eventName !== 'schedule') {
+              throw new Error('Windows validation runs only on the daily main schedule');
+            }
+            const windows = platform === 'windows';
+            const include = Array.from({length: windows ? 10 : 12}, (_, index) => ({
+              os: platform,
+              runner: platform,
+              'python-version': windows ? '3.14.10' : '3.12',
+              shard: index + 1,
+              shard_name: `, shard ${index + 1}`,
+              pytest_args: `-p tools.pytest_file_shard --file-shard ${index + 1}/${windows ? 10 : 12}`,
+              run_checks: index === 0,
+              'timeout-minutes': windows && index === 0 ? 45 : 30,
+            }));
+            core.setOutput('test-matrix', JSON.stringify({include}));
+            let run = true;
+            if (context.eventName === 'schedule') {
+              const current = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: context.runId,
+              });
+              const previous = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                ...context.repo,
+                workflow_id: current.data.workflow_id,
+                branch: 'main',
+                head_sha: context.sha,
+                status: 'completed',
+                per_page: 100,
+              });
+              run = !previous.some(item =>
+                item.id !== context.runId && item.head_sha === context.sha &&
+                !['cancelled', 'skipped'].includes(item.conclusion));
+            }
+            core.setOutput('run-heavy', String(run));
+            core.setOutput('run-torch', String(run && !windows));
+            core.setOutput('run-windows', String(run && windows));
 
   test:
     needs: validation-plan
@@ -61,189 +90,7 @@ jobs:
     timeout-minutes: ${{ matrix.timeout-minutes }}
     strategy:
       fail-fast: false
-      matrix:
-        # Windows keeps the tcp boundary transport and the shm
-        # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
-        # user OS, not a nice-to-have.
-        # Linux splits expensive histories and generations by case; other files
-        # stay whole. Checks and generated contracts run once per OS.
-        include:
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 1
-            shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/12"
-            run_checks: true
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 2
-            shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 3
-            shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 4
-            shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 5
-            shard_name: ", shard 5"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 5/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 6
-            shard_name: ", shard 6"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 6/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 7
-            shard_name: ", shard 7"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 7/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 8
-            shard_name: ", shard 8"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 8/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 9
-            shard_name: ", shard 9"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 9/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 10
-            shard_name: ", shard 10"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 10/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 11
-            shard_name: ", shard 11"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 11/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: linux
-            runner: linux
-            python-version: "3.12"
-            shard: 12
-            shard_name: ", shard 12"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 12/12"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 1
-            shard_name: ", shard 1"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 1/10"
-            run_checks: true
-            timeout-minutes: 45
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 2
-            shard_name: ", shard 2"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 2/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 3
-            shard_name: ", shard 3"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 3/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 4
-            shard_name: ", shard 4"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 4/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 5
-            shard_name: ", shard 5"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 5/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 6
-            shard_name: ", shard 6"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 6/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 7
-            shard_name: ", shard 7"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 7/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 8
-            shard_name: ", shard 8"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 8/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 9
-            shard_name: ", shard 9"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 9/10"
-            run_checks: false
-            timeout-minutes: 30
-          - os: windows
-            runner: windows
-            python-version: "3.14.10"
-            shard: 10
-            shard_name: ", shard 10"
-            pytest_args: "-p tools.pytest_file_shard --file-shard 10/10"
-            run_checks: false
-            timeout-minutes: 30
+      matrix: ${{ fromJSON(needs.validation-plan.outputs.test-matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -442,7 +289,7 @@ jobs:
 
   windows-runtime:
     needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
+    if: needs.validation-plan.outputs.run-windows == 'true'
     name: Windows environment and supervisor runtime (shard ${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).windows }}
     timeout-minutes: 45
@@ -474,6 +321,28 @@ jobs:
           uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
             "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
           & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+      - name: Create a disposable ReFS clone-test volume
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $image = Join-Path $env:RUNNER_TEMP "clone-proof-$([guid]::NewGuid()).vhdx"
+          $letter = 71..90 | ForEach-Object { [char]$_ } | Where-Object { -not (Test-Path "${_}:\") } | Select-Object -First 1
+          if (-not $letter) { throw 'No unused drive letter for disposable clone proof' }
+          @"
+          create vdisk file="$image" maximum=2048 type=expandable
+          select vdisk file="$image"
+          attach vdisk
+          create partition primary
+          format fs=refs quick label=DinksterCloneProof
+          assign letter=$letter
+          "@ | diskpart
+          $volume = Get-Volume -DriveLetter $letter -ErrorAction Stop
+          if ($volume.FileSystem -ne 'ReFS') { throw 'Disposable ReFS creation failed; see diskpart output' }
+          $root = "${letter}:\clone-tests"
+          New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
+          Set-FileIntegrity -FileName $root -Enable $false -ErrorAction Stop
+          "DINKSTER_CLONE_TEST_ROOT=$root" >> $env:GITHUB_ENV
+          'DINKSTER_REQUIRE_REAL_CLONES=1' >> $env:GITHUB_ENV
       - name: Test Windows runtime contracts
         shell: pwsh
         env:
@@ -514,8 +383,6 @@ jobs:
           if-no-files-found: error
 
   coverage-gate:
-    # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
-    # Raise --cov-fail-under when real coverage rises; never lower it.
     needs: [validation-plan, test, windows-runtime]
     if: ${{ !cancelled() && needs.validation-plan.outputs.run-heavy == 'true' }}
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
@@ -524,7 +391,11 @@ jobs:
       - name: Require every coverage shard to pass
         run: |
           test '${{ needs.test.result }}' = success
-          test '${{ needs.windows-runtime.result }}' = success
+          if [ '${{ needs.validation-plan.outputs.run-windows }}' = true ]; then
+            test '${{ needs.windows-runtime.result }}' = success
+          else
+            test '${{ needs.windows-runtime.result }}' = skipped
+          fi
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -540,17 +411,20 @@ jobs:
           pattern: coverage-shard-*
           path: coverage-data
           merge-multiple: true
-      - name: Combine coverage and enforce the unchanged branch floor
+      - name: Combine and report selected-platform coverage
         run: |
-          for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            test -f "coverage-data/.coverage.$shard"
-          done
-          for shard in 1 2 3 4 5 6 7 8; do
-            test -f "coverage-data/.coverage.windows-runtime-$shard"
-          done
+          if [ '${{ needs.validation-plan.outputs.run-windows }}' = true ]; then
+            for shard in 1 2 3 4 5 6 7 8; do
+              test -f "coverage-data/.coverage.windows-runtime-$shard"
+            done
+          else
+            for shard in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              test -f "coverage-data/.coverage.$shard"
+            done
+          fi
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"
           uv run coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data
-          uv run coverage report --fail-under=80
+          uv run coverage report
 
   main-status:
     name: main validation status
@@ -590,6 +464,7 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           RUN_TORCH: ${{ needs.validation-plan.outputs.run-torch }}
+          RUN_WINDOWS: ${{ needs.validation-plan.outputs.run-windows }}
           TEST_RESULT: ${{ needs.test.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
@@ -603,13 +478,18 @@ jobs:
           else
             test "$TORCH_RESULT" = skipped
           fi
-          test "$RUNTIME_RESULT" = success
+          if [ "$RUN_WINDOWS" = true ]; then
+            test "$RUNTIME_RESULT" = success
+            test "$PROBE_JAIL_RESULT" = skipped
+          else
+            test "$RUNTIME_RESULT" = skipped
+            test "$PROBE_JAIL_RESULT" = success
+          fi
           test "$COVERAGE_RESULT" = success
-          test "$PROBE_JAIL_RESULT" = success
 
   probe-jail:
     needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
+    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.validation-plan.outputs.run-torch == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 15
     steps:

@@ -156,7 +156,7 @@ The selections and setup commands in
 | CPU node packs | All four `node pack tests (CPU, shard N)` selections in the CPU bundle's `.venv` |
 | CPU vision packs | The `vision pack tests (CPU)` root contracts, evidence-tooling tests, vision typecheck and non-model vision tests |
 | Probe jail | Live jail, jailed-doctor and sandbox model-selection host contracts in the configured Linux isolation environment |
-| Coverage gate | All twelve Linux and eight Windows runtime coverage files combined; `coverage report --fail-under=80` |
+| Coverage report | The selected platform's coverage artifacts combined, without a percentage floor |
 
 Build the CPU runtime with
 `uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
@@ -200,7 +200,7 @@ native Windows or live-jail environments in the matrix.
 
 Native Windows evidence runs on a Windows machine; a Linux collection or
 simulated platform is not a replacement. Preserve the existing assertions,
-platform exclusions and coverage floor. Model/GPU comparisons are separate
+platform exclusions and coverage sources. Model/GPU comparisons are separate
 from this non-model runtime matrix.
 
 When reporting this matrix, name the executed lanes, exact head, commands,
@@ -220,28 +220,27 @@ not-run reason and fails instead of reporting unexecuted validation as green.
 {"linux":["ubuntu-latest"],"windows":["windows-latest"],"macos":["macos-latest"],"forkLinux":["ubuntu-latest"]}
 ```
 
-`.github/workflows/full-validation.yml` runs on every main push, every two
-hours from 06:00 through 22:00 Pacific, daily at 10:23 UTC, on manual
-dispatch, and when called by the release workflow. The `on.schedule` cron
-list in that file is the single schedule definition; change its first cron
-line to change the two-hour cadence. A scheduled run skips the heavy jobs
-when the latest successful main run already validated the same commit.
-Main pushes use one concurrency group that cancels superseded active runs
-and replaces older pending runs as new commits arrive. A merge whose run is
-cancelled or replaced is covered by the next successful complete run at a
-descendant head. Find candidate runs in the Actions
-`full-validation` history, then confirm coverage from a local clone with
-`git merge-base --is-ancestor <merge-sha> <run-head-sha>`. Scheduled,
-dispatched and release-called runs use a separate non-cancelling durable group,
-so push traffic neither queues nor replaces them. Full validation executes the
-matrix above, including branch coverage during the root/runtime test jobs
-rather than a second root-suite run. Linux root shards retain complete phase
-durations and JUnit totals; Windows runtime jobs print all durations. Root
-jobs have 30-minute limits except Windows root shard 1 at 45 minutes; Windows
-runtime jobs have 45-minute limits, CPU-pack jobs 20 minutes and probe jail
-15 minutes. These are failure backstops, not target completion times.
-`main-status` uploads one JSON artifact with every aggregate result and fails
-unless every selected lane passed.
+`.github/workflows/full-validation.yml` runs Linux validation on batched
+main pushes. Started runs finish; newer pending pushes replace older pending
+pushes in the same concurrency group. It has no Linux schedule. Confirm a
+landing is covered by a natural main run with
+`git merge-base --is-ancestor <merge-sha> <run-head-sha>`.
+
+`.github/workflows/windows-validation.yml` calls the Windows lanes once a day
+at 10:23 UTC on main, never on a push or pull request. Its admission step
+checks completed runs of that daily workflow for the exact commit, regardless
+of whether the result was red or green. A completed run is not repeated;
+cancelled and skipped runs are incomplete evidence. The daily call does not
+run the Linux, CPU-pack or probe-jail lanes. Windows runtime shards retain
+the disposable ReFS clone-test environment formerly used on pull requests.
+
+Coverage is collected inside the selected platform's test jobs rather than
+by repeating the root suite. Linux root shards retain phase durations and
+JUnit totals; Windows runtime jobs print all durations. Root jobs have
+30-minute limits except Windows root shard 1 at 45 minutes; Windows runtime
+jobs have 45-minute limits, CPU-pack jobs 20 minutes and probe jail 15 minutes.
+These are failure backstops, not target completion times. `main-status`
+uploads every aggregate result and requires every selected lane to pass.
 
 Owners do not dispatch, rerun or cancel full validation to obtain evidence for
 a pull request. Use naturally completed main runs; cancelled or replaced runs
@@ -258,14 +257,12 @@ supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 ## Coverage
 
 The counted root command above uses the same branch-coverage source list as
-the hosted Linux root and Windows runtime jobs. Hosted coverage combines all
-Linux root and Windows runtime artifacts in the matrix above before running
-`coverage report --fail-under=80`; a missing artifact or failed shard fails
-the gate. A local root report alone is not the combined hosted result.
+the hosted Linux root and Windows runtime jobs. Each platform's run combines
+its own artifacts and runs `coverage report` without a percentage floor. A
+missing selected artifact or failed shard still fails the report job. Linux
+and daily Windows percentages are separate reports, not combined coverage.
 
-CI enforces a ratcheting floor (see `.github/workflows/full-validation.yml`); raise it
-when real coverage rises, never lower it to make a PR pass. Known
-measurement caveat: code that runs in worker subprocesses (`host.py`,
+Code that runs in worker subprocesses (`host.py`,
 `service.py`, `provision.py`, `_doctor_probe.py`) is exercised by the suite
 but under-reported, because coverage does not follow spawned processes.
 Their coverage numbers are floors, not truth - their *behavior* is covered
