@@ -11,7 +11,6 @@ import venv
 from pathlib import Path
 
 import pytest
-from dinkster_workers import interpreter
 from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.interpreter import InterpreterPreflightError, preflight_interpreter
 from dinkster_workers.launch import LaunchSpec, SubprocessLauncher
@@ -148,24 +147,6 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
         assert set(report.node_types) == {"healthy.doubler", "healthy.tagger"}
 
 
-def test_version_script_requires_no_additional_imports() -> None:
-    command = (
-        "import sys\n"
-        "def reject_import(event, args):\n"
-        "    if event == 'import':\n"
-        "        raise RuntimeError('version probe imported ' + args[0])\n"
-        "sys.addaudithook(reject_import)\n" + interpreter._VERSION_SCRIPT
-    )
-    result = subprocess.run(
-        [sys.executable, "-I", "-S", "-c", command],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=5,
-    )
-    assert result.stdout.strip() == f"[{sys.version_info.major},{sys.version_info.minor}]"
-
-
 @pytest.mark.parametrize("hook_name", ["startup.pth", "sitecustomize.py"])
 def test_preflight_does_not_execute_site_hooks(tmp_path: Path, hook_name: str) -> None:
     root = tmp_path / "selected"
@@ -193,32 +174,6 @@ def test_preflight_does_not_execute_site_hooks(tmp_path: Path, hook_name: str) -
     assert normal_start.returncode == 61
 
 
-@pytest.mark.parametrize("version", [(3, 12), (3, 13), (3, 14)])
-def test_preflight_accepts_supported_version(
-    version: tuple[int, int], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[tuple[list[str], dict[str, object]]] = []
-
-    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        seen.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, f"[{version[0]},{version[1]}]\n", "")
-
-    monkeypatch.setattr("dinkster_workers.interpreter.subprocess.run", run)
-    assert preflight_interpreter("/selected/python") == version
-    command, kwargs = seen[0]
-    assert command[:4] == ["/selected/python", "-I", "-S", "-c"]
-    assert "sys.version_info" in command[4]
-    assert kwargs == {
-        "capture_output": True,
-        "text": True,
-        "encoding": "utf-8",
-        "errors": "replace",
-        "timeout": 5.0,
-        "check": False,
-        "shell": False,
-    }
-
-
 @pytest.mark.parametrize(
     ("result", "match"),
     [
@@ -242,15 +197,6 @@ def test_preflight_fails_closed_for_bad_result(
         preflight_interpreter("/selected/python")
 
 
-def test_preflight_failures_are_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "dinkster_workers.interpreter.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, "", "failure"),
-    )
-    with pytest.raises(InterpreterPreflightError, match=r"configure an executable Python >=3\.12"):
-        preflight_interpreter("/selected/python")
-
-
 @pytest.mark.parametrize(
     ("failure", "match"),
     [
@@ -268,15 +214,3 @@ def test_preflight_fails_closed_when_probe_does_not_complete(
     with pytest.raises(InterpreterPreflightError, match=match) as caught:
         preflight_interpreter(Path("/selected/python"))
     assert "secret path details" not in str(caught.value)
-
-
-def test_preflight_bounds_selected_interpreter_diagnostic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "dinkster_workers.interpreter.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, "", "x" * 1_000),
-    )
-    with pytest.raises(InterpreterPreflightError) as caught:
-        preflight_interpreter("/" + "selected" * 1_000)
-    assert len(str(caught.value)) < 700

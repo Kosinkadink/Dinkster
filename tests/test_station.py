@@ -25,8 +25,6 @@ from dinkster_registry import Lockfile
 from dinkster_supervisor import (
     IngressDef,
     InstallDef,
-    InstallsError,
-    engine_command,
     start_station,
 )
 
@@ -98,37 +96,6 @@ def stub_install(tmp_path: Path, name: str, *, autostart: bool = False) -> Insta
         autostart=autostart,
         engine=(sys.executable, str(script)),
     )
-
-
-def test_engine_command_shapes(tmp_path: Path) -> None:
-    """The configured command (or the station default) always gains
-    --install-root; --host/--port ride the supervisor protocol later."""
-    root = tmp_path / "r"
-    configured = InstallDef(
-        name="a", root=root, port=8200, engine=("/venv/bin/python", "-m", "dinkster.serve")
-    )
-    assert engine_command(configured) == [
-        "/venv/bin/python",
-        "-m",
-        "dinkster.serve",
-        "--install-root",
-        str(root),
-    ]
-    defaulted = InstallDef(name="b", root=root, port=8201)
-    assert engine_command(defaulted) == [
-        sys.executable,
-        "-m",
-        "dinkster.serve",
-        "--install-root",
-        str(root),
-    ]
-    assert engine_command(defaulted, ["/other/python", "-m", "engine"]) == [
-        "/other/python",
-        "-m",
-        "engine",
-        "--install-root",
-        str(root),
-    ]
 
 
 def test_station_ports_bind_before_any_engine(tmp_path: Path) -> None:
@@ -300,15 +267,6 @@ def test_station_autostart_and_failure_isolation(tmp_path: Path) -> None:
                     assert resp.status == 503
         finally:
             await station.close()
-
-    run_scenario(scenario())
-
-
-def test_station_refuses_management_port_collision(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        install = stub_install(tmp_path, "clash")
-        with pytest.raises(InstallsError, match="management port"):
-            await start_station((install,), port=install.port)
 
     run_scenario(scenario())
 

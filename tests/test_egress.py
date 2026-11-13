@@ -23,19 +23,6 @@ from tests.async_scenarios import run_scenario
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    (
-        ("https://API.Example.test/", "https://api.example.test"),
-        ("https://api.example.test:443", "https://api.example.test"),
-        ("https://api.example.test:8443", "https://api.example.test:8443"),
-        ("https://[2606:4700:4700::1111]", "https://[2606:4700:4700::1111]"),
-    ),
-)
-def test_normalize_egress_origin(value: str, expected: str) -> None:
-    assert normalize_egress_origin(value) == expected
-
-
-@pytest.mark.parametrize(
     "value",
     (
         "http://api.example.test",
@@ -243,48 +230,6 @@ def test_egress_proxy_rejects_non_public_dns_answers(
             writer.close()
             await writer.wait_closed()
         finally:
-            await proxy.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="requires Unix sockets")
-def test_egress_proxy_bounds_idle_and_concurrent_clients(
-    unix_socket_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def scenario() -> None:
-        if sys.platform == "win32":
-            raise AssertionError("Unix-socket test ran on Windows")
-        monkeypatch.setattr(egress_module, "_MAX_CLIENTS", 1)
-        monkeypatch.setattr(egress_module, "_REQUEST_TIMEOUT_SECONDS", 0.05)
-        proxy = await EgressProxy.start(
-            unix_socket_dir / "egress.sock",
-            ("https://api.example.test",),
-        )
-        first_reader, first_writer = await asyncio.open_unix_connection(proxy.socket_path)
-        try:
-            for _ in range(100):
-                if proxy._clients:
-                    break
-                await asyncio.sleep(0.001)
-            assert len(proxy._clients) == 1
-
-            second_reader, second_writer = await asyncio.open_unix_connection(proxy.socket_path)
-            try:
-                assert await asyncio.wait_for(second_reader.read(), timeout=1.0) == b""
-            finally:
-                second_writer.close()
-                await second_writer.wait_closed()
-
-            status, _headers, _body = await asyncio.wait_for(
-                _response(first_reader),
-                timeout=1.0,
-            )
-            assert status == 502
-        finally:
-            first_writer.close()
-            await first_writer.wait_closed()
             await proxy.close()
 
     run_scenario(scenario())

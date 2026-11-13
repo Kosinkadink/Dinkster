@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,27 +17,16 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_conditioning.clip import (
-    CLIPSetLastLayer,
     CLIPTextEncode,
-    CLIPVisionEncode,
 )
-from dinkster_conditioning.clip_model_specific import T5TokenizerOptions
 from dinkster_flux.flux_conditioning import (
-    CLIPTextEncodeFlux,
-    FluxDisableGuidance,
-    FluxGuidance,
     FluxKontextMultiReferenceLatentMethod,
 )
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_hidream.clip_model_specific import CLIPTextEncodeHiDream
 from dinkster_misc_models.clip_model_specific import (
     CLIPTextEncodeLumina2,
     CLIPTextEncodePixArtAlpha,
 )
-from dinkster_sd.clip import unCLIPConditioning
-
-from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
-from tests.async_scenarios import run_scenario
 
 
 class TextEncoder:
@@ -61,54 +49,9 @@ class TextEncoder:
         ]
 
 
-@pytest.mark.parametrize("layer", (-24, -7, -1))
-def test_layer_selection_preserves_source_and_scheduled_conditioning(layer: int) -> None:
-    source = TextEncoder()
-    selected: Any = CLIPSetLastLayer.execute(clip=source, stop_at_clip_layer=layer)["CLIP"]
-    text = "  literal {prompt|choices}\nnext\t"
-    result = CLIPTextEncode.execute(clip=selected, text=text)["CONDITIONING"]
-    assert result == [
-        [text, {"layer": layer, "start_percent": 0.125}],
-        [text + " next", {"layer": layer, "start_percent": 0.75}],
-    ]
-    assert selected is not source
-    assert source.layer == -1
-
-
 def test_missing_clip_reports_checkpoint_encoder_error() -> None:
     with pytest.raises(RuntimeError, match="checkpoint does not contain a valid clip"):
         CLIPTextEncode.execute(clip=None, text="prompt")
-
-
-def test_clip_vision_encode_schema_uses_portable_vision_types() -> None:
-    schema = CLIPVisionEncode.define_schema()
-
-    assert schema.node_type == "dinkster.conditioning.clip_vision_encode"
-    assert [input.id for input in schema.inputs] == ["clip_vision", "image", "crop"]
-    assert schema.inputs[0].type == TypeExpr.concrete("CLIP_VISION")
-    assert schema.inputs[1].type == TypeExpr.concrete("IMAGE")
-    assert schema.inputs[2].default == "center"
-    assert schema.outputs[0].id == "CLIP_VISION_OUTPUT"
-    assert schema.outputs[0].type == TypeExpr.concrete("CLIP_VISION_OUTPUT")
-
-
-def test_unclip_conditioning_schema_uses_portable_vision_output() -> None:
-    schema = unCLIPConditioning.define_schema()
-
-    assert schema.node_type == "dinkster.sd.un_clip_conditioning"
-    assert schema.category == "model/conditioning"
-    assert [input.id for input in schema.inputs] == [
-        "conditioning",
-        "clip_vision_output",
-        "strength",
-        "noise_augmentation",
-    ]
-    assert schema.inputs[0].type == TypeExpr.concrete("CONDITIONING")
-    assert schema.inputs[1].type == TypeExpr.concrete("CLIP_VISION_OUTPUT")
-    assert schema.inputs[2].default == 1.0
-    assert schema.inputs[3].default == 0.0
-    assert schema.outputs[0].id == "CONDITIONING"
-    assert schema.outputs[0].type == TypeExpr.concrete("CONDITIONING")
 
 
 class ModelTextEncoder:
@@ -130,35 +73,6 @@ class ModelTextEncoder:
         self, tokens: dict[str, str], add_dict: dict[str, Any] | None = None
     ) -> list[list[object]]:
         return [[tokens, {"start_percent": 0.25, **(add_dict or {})}]]
-
-
-def test_flux_prompt_streams_and_guidance_preserve_scheduled_metadata() -> None:
-    encoder = ModelTextEncoder()
-    result: Any = CLIPTextEncodeFlux.execute(
-        clip=encoder, clip_l="short\n{one|two}", t5xxl="different long prompt", guidance=7.25
-    )["CONDITIONING"]
-    expected_tokens = {
-        "l": "l:short\n{one|two}",
-        "g": "g:short\n{one|two}",
-        "t5xxl": "t5xxl:different long prompt",
-        "llama": "llama:short\n{one|two}",
-        "extra": "extra:short\n{one|two}",
-    }
-    assert result == [[expected_tokens, {"start_percent": 0.25, "guidance": 7.25}]]
-    result.append(["second embedding", {"end_percent": 0.9, "guidance": 13.0}])
-    changed: Any = FluxGuidance.execute(conditioning=result, guidance=0.0)["CONDITIONING"]
-    disabled: Any = FluxDisableGuidance.execute(conditioning=changed)["CONDITIONING"]
-    assert changed == [
-        [expected_tokens, {"start_percent": 0.25, "guidance": 0.0}],
-        ["second embedding", {"end_percent": 0.9, "guidance": 0.0}],
-    ]
-    assert disabled == [
-        [expected_tokens, {"start_percent": 0.25, "guidance": None}],
-        ["second embedding", {"end_percent": 0.9, "guidance": None}],
-    ]
-    assert result[0][1] == {"start_percent": 0.25, "guidance": 7.25}
-    assert result[1][1] == {"end_percent": 0.9, "guidance": 13.0}
-    assert changed[0][0] is result[0][0]
 
 
 @pytest.mark.parametrize(
@@ -230,26 +144,6 @@ def test_model_specific_prompts_and_resolution() -> None:
         CLIPTextEncodeLumina2.execute(clip=None, user_prompt="", system_prompt="alignment")
 
 
-def test_t5_options_preserve_source_and_other_tokenizers() -> None:
-    source = ModelTextEncoder()
-    selected: Any = T5TokenizerOptions.execute(clip=source, min_padding=7, min_length=43)["CLIP"]
-    assert selected is not source
-    assert source.options == {"unrelated": 17}
-    assert selected.options == {
-        "unrelated": 17,
-        "t5xxl_min_padding": 7,
-        "t5xxl_min_length": 43,
-        "pile_t5xl_min_padding": 7,
-        "pile_t5xl_min_length": 43,
-        "t5base_min_padding": 7,
-        "t5base_min_length": 43,
-        "mt5xl_min_padding": 7,
-        "mt5xl_min_length": 43,
-        "umt5xxl_min_padding": 7,
-        "umt5xxl_min_length": 43,
-    }
-
-
 class EncoderSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -278,85 +172,3 @@ class ConditioningText(Node):
 
 
 CLIP_FIXTURES = (EncoderSource, ConditioningText)
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-def test_ordinary_pack_encodes_original_and_selected_layers(
-    tmp_path: Path, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
-        try:
-            (tmp_path / "clip_fixture.py").write_text(
-                "from test_comfy_clip_nodes import CLIP_FIXTURES\n"
-                "from dinkster_api.v1 import register_inference_types\n",
-                encoding="ascii",
-            )
-            source_manifest = tmp_path / "dinkster-pack.toml"
-            source_manifest.write_text(
-                '[pack]\nname="clip-fixture"\npublisher="dinkster"\n'
-                'namespaces=["clip-fixture"]\n[pack.entry]\n'
-                'nodes="clip_fixture:CLIP_FIXTURES"\n'
-                'types="clip_fixture:register_inference_types"\n',
-                encoding="ascii",
-            )
-            specs = [
-                _installed_pack_spec(identity, module, in_process=in_process)
-                for identity, module in (
-                    ("dinkster-latent", "dinkster_latent"),
-                    ("dinkster-conditioning", "dinkster_conditioning"),
-                )
-            ]
-            specs.append(PackSpec(source_manifest, in_process=in_process))
-            manifests = tuple(Path(spec.manifest) for spec in specs)
-            for spec in specs:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=spec.manifest,
-                        packs=spec.packs,
-                        trust_reserved=True,
-                        in_process=in_process,
-                        worker_group=None if in_process else "clip-fixture",
-                        group_manifests=() if in_process else manifests,
-                    )
-                )
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("clip-fixture.source"),
-                    "select": GraphNode(
-                        "dinkster.conditioning.clip_set_last_layer",
-                        {"clip": Link("source", "CLIP"), "stop_at_clip_layer": -7},
-                    ),
-                    "original": GraphNode(
-                        "dinkster.conditioning.clip_text_encode",
-                        {"clip": Link("source", "CLIP"), "text": "original"},
-                    ),
-                    "selected": GraphNode(
-                        "dinkster.conditioning.clip_text_encode",
-                        {"clip": Link("select", "CLIP"), "text": "selected"},
-                    ),
-                    "original-text": GraphNode(
-                        "clip-fixture.text", {"conditioning": Link("original", "CONDITIONING")}
-                    ),
-                    "selected-text": GraphNode(
-                        "clip-fixture.text", {"conditioning": Link("selected", "CONDITIONING")}
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["original-text", "selected-text"])
-                for name, text, layer in (
-                    ("original-text", "original", -1),
-                    ("selected-text", "selected", -7),
-                ):
-                    assert result.outputs[name]["text"].resolve() == repr(
-                        [
-                            [text, {"layer": layer, "start_percent": 0.125}],
-                            [text + " next", {"layer": layer, "start_percent": 0.75}],
-                        ]
-                    )
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())

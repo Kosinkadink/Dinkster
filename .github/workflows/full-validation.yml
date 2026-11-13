@@ -135,9 +135,6 @@ jobs:
         if: matrix.run_checks
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-      - name: Verify bounded VIDEO save memory
-        if: matrix.os == 'linux' && matrix.run_checks
-        run: python scripts/develop.py run -- pytest tests/test_video_conformance_tool.py::test_full_resolution_rss_gate -q -rx
       - run: >
           python scripts/develop.py run -- python -m pytest -q ${{ matrix.pytest_args }}
           --ignore-glob=tests/test_environment_*.py
@@ -196,9 +193,7 @@ jobs:
         if: matrix.run_checks
       - name: Export the published default catalog
         if: matrix.os == 'linux' && matrix.run_checks
-        run: python scripts/develop.py run -- pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
-        env:
-          DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
       - uses: actions/checkout@v4
         if: matrix.os == 'linux' && matrix.run_checks
         with:

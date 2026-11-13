@@ -163,10 +163,9 @@ jobs:
         run: python scripts/develop.py run -- python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
-        run: python scripts/develop.py run -- pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
         env:
           CUDA_VISIBLE_DEVICES: ""
-          DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
       - name: Read the pinned frontend revision
         if: needs.checks.outputs.engine == 'true'
         id: frontend

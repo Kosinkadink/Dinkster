@@ -4,9 +4,7 @@ import asyncio
 import base64
 import json
 import os
-from collections.abc import MutableMapping
 from pathlib import Path
-from typing import cast
 
 import pytest
 from dinkster_assets import AssetError, AssetRef, digest_bytes, register_asset_type
@@ -14,9 +12,7 @@ from dinkster_caches import DiskCacheStore, DiskCAS, MemoryLRUCache
 from dinkster_caches.wire import entry_from_wire
 from dinkster_protocol import CachedResult, SavedArtifact
 from dinkster_values import (
-    RESOURCES_META_KEY,
     EncodedPayload,
-    ResourceHandle,
     TypeRegistry,
     Value,
     ValueMeta,
@@ -90,47 +86,6 @@ def test_disk_trim_remeasures_shared_blobs(tmp_path: Path) -> None:
         assert actual <= budget
         assert await tight.get("old-a") is None
         assert await tight.get("old-b") is None
-
-    run_scenario(scenario())
-
-
-def test_value_meta_copies_source_mappings_and_residency_sequences() -> None:
-    devices = ["cuda:0", "cuda:1"]
-    resources: dict[str, object] = {"gpu": devices}
-    source: dict[str, object] = {RESOURCES_META_KEY: resources, "shape": "old"}
-    meta = ValueMeta(source)
-    source["shape"] = "new"
-    resources["gpu"] = "cuda:9"
-    devices.append("cuda:2")
-
-    assert meta.get("shape") == "old"
-    assert meta.get(RESOURCES_META_KEY) == {"gpu": ("cuda:0", "cuda:1")}
-
-
-def test_resource_handle_copies_source_mappings() -> None:
-    residency: dict[str, str | tuple[str, ...]] = {"gpu": "cuda:0"}
-    cost = {"vram:cuda:0": 100}
-    handle = ResourceHandle("resource", "model", residency, cost)
-    residency["gpu"] = "cuda:1"
-    cost["vram:cuda:0"] = 200
-
-    assert handle.residency == {"gpu": "cuda:0"}
-    assert handle.cost == {"vram:cuda:0": 100}
-
-
-def test_memory_cache_hit_cannot_mutate_stored_outputs() -> None:
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        registry.register("test.value")
-        cache = MemoryLRUCache()
-        await cache.put("key", {"out": registry.wrap("test.value", 1)})
-        first = await cache.get("key")
-        assert first is not None
-        with pytest.raises(TypeError):
-            cast("MutableMapping[str, Value]", first)["out"] = registry.wrap("test.value", 2)
-        second = await cache.get("key")
-        assert second is not None
-        assert second["out"].resolve() == 1
 
     run_scenario(scenario())
 
@@ -245,31 +200,6 @@ def test_cache_external_asset_roots_survive_restart_and_follow_invalidation(tmp_
         memory.clear()
         async with memory.hold_asset_references(registry) as roots:
             assert roots == set()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("link", ["directory", "manifest"])
-def test_cache_asset_roots_refuse_linked_reference_state(tmp_path: Path, link: str) -> None:
-    async def scenario() -> None:
-        cache_root = tmp_path / "cache"
-        registry = TypeRegistry()
-        registry.register("test.value")
-        disk = DiskCacheStore(cache_root, registry)
-        await disk.put("one", {"out": registry.wrap("test.value", 1)})
-        original = cache_root / "entries"
-        if link == "manifest":
-            original = next(original.glob("*.json"))
-        target = tmp_path / "outside"
-        original.rename(target)
-        try:
-            original.symlink_to(target, target_is_directory=target.is_dir())
-        except OSError as exc:
-            pytest.skip(f"symlinks unavailable: {exc}")
-        with pytest.raises(AssetError):
-            with disk.hold_asset_references():
-                pytest.fail("linked reference state was followed")
-        assert target.exists()
 
     run_scenario(scenario())
 

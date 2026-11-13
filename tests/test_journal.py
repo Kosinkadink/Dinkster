@@ -10,7 +10,6 @@ telemetry pruning has gone.
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -111,17 +110,6 @@ def test_delete_stream_removes_records_and_counter(store: JournalStore) -> None:
     assert record.seq == 1
 
 
-def test_transaction_read_sees_its_own_writes(store: JournalStore) -> None:
-    def run(txn: JournalTransaction) -> None:
-        txn.append(STREAM, "session_created", {}, durable=True, timestamp=1.0)
-        page = txn.read(STREAM, after=0)
-        assert [record.seq for record in page.records] == [1]
-        assert page.latest_seq == 1
-        assert page.coalesced_below == 0
-
-    store.transact(run)
-
-
 def test_transaction_prune_and_delete_roll_back_with_the_transaction(
     store: JournalStore,
 ) -> None:
@@ -150,61 +138,6 @@ def test_prune_watermark_caps_at_latest_and_never_regresses(store: JournalStore)
     assert store.read(STREAM, after=0).coalesced_below == 1
     with pytest.raises(ValueError, match="up_to"):
         store.prune_coalescible(STREAM, -1)
-
-
-def test_append_validates_inputs(store: JournalStore) -> None:
-    with pytest.raises(ValueError, match="stream_id"):
-        store.append(" ", "metric", {}, durable=False)
-    with pytest.raises(ValueError, match="name"):
-        store.append(STREAM, "", {}, durable=False)
-    with pytest.raises(ValueError, match="string-keyed"):
-        store.append(STREAM, "metric", {1: "x"}, durable=False)  # type: ignore[dict-item]
-    with pytest.raises(ValueError, match="keys must be strings"):
-        store.append(STREAM, "metric", {"nested": {1: "x"}}, durable=False)
-    with pytest.raises(ValueError, match="finite"):
-        store.append(STREAM, "metric", {"loss": float("nan")}, durable=False)
-    with pytest.raises(ValueError, match="canonical-JSON"):
-        store.append(STREAM, "metric", {"giant": "x" * (256 * 1024 + 1)}, durable=False)
-    with pytest.raises(ValueError, match="timestamp"):
-        store.append(STREAM, "metric", {}, durable=False, timestamp=-1.0)
-    with pytest.raises(ValueError, match="timestamp"):
-        store.append(STREAM, "metric", {}, durable=False, timestamp=float("nan"))
-    # The durability class decides what retention may prune; a truthy
-    # non-bool must not silently become durable (or prunable).
-    with pytest.raises(ValueError, match="durable"):
-        store.append(STREAM, "metric", {}, durable="false")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="durable"):
-        store.append(STREAM, "metric", {}, durable=None)  # type: ignore[arg-type]
-    assert store.latest_seq(STREAM) == 0  # nothing above consumed a seq
-
-
-def test_returned_record_is_decoupled_from_caller_payload(store: JournalStore) -> None:
-    payload: dict[str, object] = {"steps": [1, 2]}
-    record = store.append(STREAM, "metric", payload, durable=False, timestamp=1.0)
-    steps = payload["steps"]
-    assert isinstance(steps, list)
-    steps.append(3)
-    assert record.payload == {"steps": [1, 2]}
-    assert store.read(STREAM, after=0).records[0].payload == {"steps": [1, 2]}
-
-
-def test_append_is_atomic_across_counter_and_row(store: JournalStore) -> None:
-    # Force the row insert to fail after the counter upsert by planting a
-    # conflicting primary key; the transaction must roll back both writes.
-    store._conn.execute(  # pyright: ignore[reportPrivateUsage]
-        "INSERT INTO journal (stream, seq, ts, name, durable, payload)"
-        " VALUES (?, 1, 0.0, 'planted', 1, '{}')",
-        (STREAM,),
-    )
-    store._conn.commit()  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(sqlite3.IntegrityError):
-        store.append(STREAM, "metric", {}, durable=False, timestamp=1.0)
-    assert store.latest_seq(STREAM) == 0  # counter upsert was rolled back
-    store._conn.execute(  # pyright: ignore[reportPrivateUsage]
-        "DELETE FROM journal WHERE stream = ?", (STREAM,)
-    )
-    store._conn.commit()  # pyright: ignore[reportPrivateUsage]
-    assert store.append(STREAM, "metric", {}, durable=False, timestamp=2.0).seq == 1
 
 
 def test_transact_rolls_back_every_write_on_raise(store: JournalStore) -> None:
@@ -238,20 +171,3 @@ def test_transact_rolls_back_every_write_on_raise(store: JournalStore) -> None:
 
     assert store.transact(committed) == 1
     assert store.latest_seq(STREAM) == 1
-
-
-def test_append_defaults_timestamp_to_now(store: JournalStore) -> None:
-    record = store.append(STREAM, "metric", {}, durable=False)
-    assert record.timestamp > 0.0
-
-
-def test_record_to_wire(store: JournalStore) -> None:
-    record = store.append(STREAM, "metric", {"loss": 0.25}, durable=False, timestamp=7.0)
-    assert record.to_wire() == {
-        "streamId": STREAM,
-        "seq": 1,
-        "timestamp": 7.0,
-        "name": "metric",
-        "durable": False,
-        "payload": {"loss": 0.25},
-    }

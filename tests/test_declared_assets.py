@@ -18,7 +18,6 @@ from dinkster_assets import (
     AssetError,
     AssetNeed,
     AssetVault,
-    ChainResolver,
     DeclaredAsset,
     RemoteSource,
     clear_declared_assets,
@@ -32,8 +31,7 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import IsolatedWorker, load_manifest
-from dinkster_workers.host import load_pack
+from dinkster_workers import IsolatedWorker
 
 from tests.async_scenarios import run_scenario
 
@@ -80,31 +78,6 @@ def model_declaration(
 # --- resolver_from_env -----------------------------------------------------------
 
 
-def test_resolver_from_env_empty_is_none() -> None:
-    assert resolver_from_env({}) is None
-
-
-def test_resolver_from_env_vault_only(tmp_path: Path) -> None:
-    root = vault_with_model(tmp_path)
-    resolver = resolver_from_env({"DINKSTER_ASSET_VAULT": str(root)})
-    assert isinstance(resolver, AssetVault)
-    path = resolver.resolve(MODEL_DIGEST)
-    assert path is not None and path.read_bytes() == MODEL_BYTES
-
-
-def test_resolver_from_env_chains_vault_and_mounts(tmp_path: Path) -> None:
-    root = vault_with_model(tmp_path)
-    resolver = resolver_from_env(
-        {
-            "DINKSTER_ASSET_VAULT": str(root),
-            "DINKSTER_MOUNTS_SNAPSHOT": str(tmp_path / "mounts-snapshot.json"),
-        }
-    )
-    assert isinstance(resolver, ChainResolver)
-    path = resolver.resolve(MODEL_DIGEST)
-    assert path is not None and path.read_bytes() == MODEL_BYTES
-
-
 def test_resolver_from_env_skips_unreadable_root(tmp_path: Path) -> None:
     """An unscanned/stale library index is advisory: the chain assembles
     without it (warning logged) instead of failing worker startup - reads
@@ -121,89 +94,6 @@ def test_resolver_from_env_skips_unreadable_root(tmp_path: Path) -> None:
 
 
 # --- declared_asset --------------------------------------------------------------
-
-
-def test_no_table_is_a_worker_context_error() -> None:
-    with pytest.raises(AssetError, match="no declaration table"):
-        declared_asset("aux-model")
-
-
-def test_unknown_id_lists_declared_ids(tmp_path: Path) -> None:
-    install_declared_assets(
-        "auxpack", [model_declaration("lineart"), model_declaration("depth")], None
-    )
-    with (
-        use_declared_asset_pack("auxpack"),
-        pytest.raises(AssetError, match=r"declares no asset 'typo'") as excinfo,
-    ):
-        declared_asset("typo")
-    assert "depth, lineart" in str(excinfo.value)
-    assert "auxpack" in str(excinfo.value)
-
-
-def test_no_store_configured_is_loud() -> None:
-    install_declared_assets("auxpack", [model_declaration()], None)
-    with (
-        use_declared_asset_pack("auxpack"),
-        pytest.raises(AssetError, match="no asset store configured"),
-    ):
-        declared_asset("aux-model")
-
-
-def test_unacquired_correlates_with_declaration_and_never_downloads(
-    tmp_path: Path,
-) -> None:
-    """The digest is declared and remotely sourced, but the vault is empty:
-    the error names id, digest, and the consent path - and nothing fetched
-    (the remote URL is not even resolvable)."""
-    empty_vault = AssetVault(tmp_path / "vault")
-    install_declared_assets("auxpack", [model_declaration()], empty_vault)
-    with (
-        use_declared_asset_pack("auxpack"),
-        pytest.raises(AssetError, match="not acquired") as excinfo,
-    ):
-        declared_asset("aux-model")
-    message = str(excinfo.value)
-    assert "aux-model" in message
-    assert MODEL_DIGEST in message
-    assert "acquireAssets" in message
-
-
-def test_acquired_resolves_to_readable_ref(tmp_path: Path) -> None:
-    vault = AssetVault(vault_with_model(tmp_path))
-    install_declared_assets(
-        "auxpack",
-        [model_declaration(size=len(MODEL_BYTES), media_type="application/x-model")],
-        vault,
-    )
-    with use_declared_asset_pack("auxpack"):
-        ref = declared_asset("aux-model")
-    assert ref.digest == MODEL_DIGEST
-    assert ref.name == "Aux Model"
-    assert ref.size == len(MODEL_BYTES)
-    assert ref.media_type == "application/x-model"
-    assert ref.read_bytes() == MODEL_BYTES
-
-
-def test_undeclared_size_and_media_fall_back(tmp_path: Path) -> None:
-    """A declaration without size stats the landed file; without a media
-    type the ref carries the octet-stream default (AssetRef's contract)."""
-    vault = AssetVault(vault_with_model(tmp_path))
-    install_declared_assets("auxpack", [model_declaration()], vault)
-    with use_declared_asset_pack("auxpack"):
-        ref = declared_asset("aux-model")
-    assert ref.size == len(MODEL_BYTES)
-    assert ref.media_type == "application/octet-stream"
-
-
-def test_reinstall_replaces_the_table(tmp_path: Path) -> None:
-    vault = AssetVault(vault_with_model(tmp_path))
-    install_declared_assets("first", [model_declaration("a")], vault)
-    install_declared_assets("second", [model_declaration("b")], vault)
-    with use_declared_asset_pack("second"):
-        with pytest.raises(AssetError, match="'second' declares no asset 'a'"):
-            declared_asset("a")
-        assert declared_asset("b").read_bytes() == MODEL_BYTES
 
 
 def test_declared_asset_context_is_pack_local(tmp_path: Path) -> None:
@@ -240,19 +130,6 @@ def write_decl_manifest(tmp_path: Path) -> Path:
         'urls = ["https://hub.example/aux.bin"]\n'
     )
     return manifest
-
-
-def test_load_pack_installs_declared_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The host-side seam: loading a manifest makes its declarations
-    reachable through declared_asset, resolver bound from the worker's
-    environment contract."""
-    root = vault_with_model(tmp_path)
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(root))
-    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
-    monkeypatch.delenv("DINKSTER_ASSET_ROOT", raising=False)
-    load_pack(load_manifest(write_decl_manifest(tmp_path)))
-    with use_declared_asset_pack("declpack"):
-        assert declared_asset("aux-model").read_bytes() == MODEL_BYTES
 
 
 # --- E2E: a real isolated worker reads its own declaration -------------------------

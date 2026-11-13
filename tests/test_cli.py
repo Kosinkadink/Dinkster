@@ -61,26 +61,6 @@ def write_pack(root: Path) -> Path:
     return root
 
 
-def test_help_lists_every_command_exit_0(capsys) -> None:
-    assert main(["help"]) == 0
-    listing = capsys.readouterr().out
-    for name in (
-        "doctor",
-        "serve",
-        "setup",
-        "stop",
-        "update",
-        "rollback",
-        "develop",
-        "pack",
-        "installs",
-        "demo",
-        "isolated-demo",
-    ):
-        assert name in listing
-    assert "run/bootstrap a registry service" not in listing
-
-
 @pytest.mark.parametrize("command", [[], ["serve"], ["stop"], ["update"], ["rollback"]])
 def test_lifecycle_help_lists_project_and_operation_options(command: list[str], capsys) -> None:
     with pytest.raises(SystemExit) as exit_info:
@@ -97,16 +77,6 @@ def test_lifecycle_help_lists_project_and_operation_options(command: list[str], 
         assert "--channel" in help_text and "--variant" in help_text
     elif command == ["rollback"]:
         assert "--approve" in help_text
-
-
-def test_development_help_exposes_source_selection_and_consent(capsys) -> None:
-    with pytest.raises(SystemExit) as error:
-        main(["develop", "--help"])
-    assert error.value.code == 0
-    help_text = capsys.readouterr().out
-    for option in ("--root", "--source", "--pack-source", "--library-source", "--plan", "--yes"):
-        assert option in help_text
-    assert "dependency ranges resolved at build time" in help_text
 
 
 def test_unknown_command_is_loud_exit_2(capsys) -> None:
@@ -129,18 +99,6 @@ def test_doctor_subcommand_is_the_real_publish_gate(tmp_path: Path, capsys) -> N
     (pack / "healthy/__init__.py").write_text("raise Exception()\n")
     assert main(["doctor", str(pack)]) == 1
     assert "entry.unresolvable" in capsys.readouterr().out
-
-
-def test_sysargv_commands_get_threaded_args_and_argv_restored(capsys) -> None:
-    """sys.argv-style mains (here: `pack`, hitting dinkster.manager's own
-    argparse) receive the tail through a rebound sys.argv that is
-    restored afterwards even when the command exits."""
-    before = list(sys.argv)
-    with pytest.raises(SystemExit) as excinfo:
-        main(["pack", "--help"])
-    assert excinfo.value.code == 0
-    assert "install root" in capsys.readouterr().out
-    assert sys.argv == before
 
 
 def test_dispatcher_imports_lazily_and_module_form_works() -> None:

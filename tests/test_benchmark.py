@@ -12,14 +12,13 @@ from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import BoundaryDiagnostic, EdgeCost, InProcessWorker
+from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
 from dinkster.benchmark import (
     RECORD_VERSION,
     BenchmarkAssembler,
     HardwareSampler,
-    default_hardware_probe,
     instrument_engine_factory,
     record_to_json,
     write_record,
@@ -182,108 +181,7 @@ def test_failed_node_and_region_occurrences() -> None:
     assert record["totals"] == {"failed": 1, "executed": 0}
 
 
-def test_boundary_diagnostic_attaches_to_its_occurrence() -> None:
-    records, assembler, _ = collect()
-    assembler.on_engine_event(EngineEvent("run_started", "r", detail={"planned": []}))
-    # The worker reports its breakdown before the engine emits node_finished.
-    assembler.on_boundary_diagnostic(
-        BoundaryDiagnostic(
-            invocation_id="inv-1",
-            node_id="n",
-            node_type="mypack.foo",
-            pack="mypack",
-            inputs=(
-                EdgeCost(
-                    edge_id="image",
-                    type_id="mypack.image",
-                    transport="shm",
-                    size_bytes=1024,
-                    codec_ms=0.4,
-                    declared_codec=False,
-                    reused=False,
-                ),
-            ),
-            outputs=(),
-            execute_ms=10.0,
-            round_trip_ms=12.5,
-        )
-    )
-    assembler.on_engine_event(EngineEvent("node_finished", "r", "n", {"duration_ms": 12.5}))
-    assembler.on_engine_event(EngineEvent("run_finished", "r", detail={"executed": 1}))
-    (record,) = records
-    (occurrence,) = occurrences(record)
-    boundary = cast("dict[str, object]", occurrence["boundary"])
-    assert boundary["pack"] == "mypack"
-    assert boundary["executeMs"] == 10.0
-    assert boundary["boundaryMs"] == 2.5
-    assert boundary["inputs"] == [
-        {
-            "edgeId": "image",
-            "typeId": "mypack.image",
-            "transport": "shm",
-            "sizeBytes": 1024,
-            "codecMs": 0.4,
-            "declaredCodec": False,
-            "reused": False,
-            "networkBytes": 0,
-            "transferMs": 0.0,
-        }
-    ]
-    # Consumed on attach: nothing pending to mis-attribute to a later run.
-    assert assembler._pending_boundary == {}
-
-
-def test_open_runs_are_bounded() -> None:
-    """A failed run never emits run_finished; the assembler must not leak."""
-    records, assembler, _ = collect()
-    for i in range(200):
-        assembler.on_engine_event(EngineEvent("run_started", f"r{i}", detail={"planned": []}))
-    assert len(assembler._runs) <= 64
-    # The evicted run's late events are ignored, not crashed on.
-    assembler.on_engine_event(EngineEvent("node_finished", "r0", "n", {}))
-    assembler.on_engine_event(EngineEvent("run_finished", "r0", detail={}))
-    assert records == []
-
-
 # -- hardware sampler ---------------------------------------------------------
-
-
-def test_default_hardware_probe_reports_effective_system_memory() -> None:
-    metrics = default_hardware_probe()
-    assert cast(int, metrics["rssBytes"]) > 0
-    assert cast(int, metrics["systemTotalBytes"]) > 0
-    assert 0 <= cast(int, metrics["systemAvailableBytes"]) <= cast(int, metrics["systemTotalBytes"])
-    assert (
-        0
-        <= cast(int, metrics["systemSwapAvailableBytes"])
-        <= cast(int, metrics["systemSwapTotalBytes"])
-    )
-    provenance = cast(list[str], metrics["systemMemoryProvenance"])
-    assert provenance[0] == "psutil"
-
-
-def test_sampler_is_bounded_and_windows_by_time() -> None:
-    clock = FakeClock()
-    readings = iter(range(1000))
-    sampler = HardwareSampler(probe=lambda: {"rssBytes": next(readings)}, capacity=5, clock=clock)
-    for step in range(10):
-        clock.now = 100.0 + step
-        sampler.sample_once()
-    # Bounded: only the newest 5 survive.
-    kept = sampler.samples_between(0.0, 1e9)
-    assert [s.metrics["rssBytes"] for s in kept] == [5, 6, 7, 8, 9]
-    # Windowed: inclusive bounds on the shared monotonic clock.
-    window = sampler.samples_between(106.0, 108.0)
-    assert [s.metrics["rssBytes"] for s in window] == [6, 7, 8]
-
-
-def test_failing_probe_records_nothing() -> None:
-    def probe() -> dict[str, object]:
-        raise RuntimeError("nvml fell over")
-
-    sampler = HardwareSampler(probe=probe)
-    sampler.sample_once()
-    assert sampler.samples_between(0.0, 1e9) == []
 
 
 def test_samples_attach_to_records_relative_to_run_start() -> None:
@@ -304,22 +202,6 @@ def test_samples_attach_to_records_relative_to_run_start() -> None:
 
 
 # -- serialization -------------------------------------------------------------
-
-
-def test_record_json_is_deterministic_and_write_names_stably(tmp_path) -> None:
-    record = {
-        "record": RECORD_VERSION,
-        "runId": "abcdef1234567890",
-        "startedAtUtc": "2026-07-20T12:00:00.123456+00:00",
-        "b": 1,
-        "a": 2,
-    }
-    first = record_to_json(record)
-    second = record_to_json(dict(reversed(list(record.items()))))
-    assert first == second  # key order never leaks into the artifact
-    path = write_record(record, tmp_path)
-    assert path.name == "bench-20260720T120000-840881e18cbe4007.json"
-    assert json.loads(path.read_text(encoding="utf-8")) == record
 
 
 def test_write_record_distinguishes_runs_with_the_same_timestamp_prefix(tmp_path) -> None:

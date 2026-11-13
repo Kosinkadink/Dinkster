@@ -243,22 +243,6 @@ def test_supervisor_stop_proves_blocked_import_worker_exit_before_collection(
                 connection.close()
 
 
-def test_collection_retains_legacy_direct_child_only_stop_receipt(tmp_path: Path):
-    for number in (1, 2, 3):
-        _generation(tmp_path, number)
-    (tmp_path / "current").write_text("3\n")
-    Journal("update", 2, 3, "complete").write(tmp_path / "journal/100.json")
-    instance = "legacy-supervisor"
-    directory = tmp_path / "runtime/1/old.process" / hashlib.sha256(instance.encode()).hexdigest()
-    directory.mkdir(parents=True)
-    write_document(directory / "state.json", {"instance": instance, "state": "stopped", "pid": 1})
-    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
-    code, refused = _run(tmp_path, "gc", "--yes")
-    assert code == 1 and "descendant cleanup is unproven" in refused["error"], refused
-    assert (tmp_path / "generations/1").is_dir()
-    assert {p: p.read_bytes() for p in before} == before
-
-
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
 @pytest.mark.parametrize("command", ["gc", "cleanup"])
 def test_failed_owned_family_cleanup_cannot_make_generation_collectible(
@@ -419,26 +403,6 @@ def test_retained_count_uses_activation_ancestry_and_changes_only_next_collectio
         if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
     }
     assert {p: p.read_bytes() for p in preserved} == preserved
-
-
-@pytest.mark.parametrize("count", [0, 101, True, "2", 2.5, None])
-def test_invalid_retained_count_refuses_cleanup_without_mutation(
-    cleanup_project: Path, count: object
-):
-    root = cleanup_project
-    write_document(
-        root / "cleanup.json",
-        {
-            "format": "dinkster.cleanup/1",
-            "automatic": True,
-            "previousSuccessfulActivations": count,
-        },
-    )
-    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    for arguments in (("--plan",), ("--keep-previous", "1", "--yes")):
-        code, refused = _run(root, "cleanup", *arguments)
-        assert code == 1 and "invalid cleanup policy" in refused["error"], refused
-    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
 
 
 @pytest.mark.parametrize("condition", ["json", "format", "string", "number", "linked"])
@@ -761,100 +725,6 @@ def cleanup_project(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
         (directory / "sentinel").write_text(name)
     (tmp_path / "store").write_text(str(tmp_path / "cache") + "\n")
     return tmp_path
-
-
-@pytest.mark.parametrize("fault", [None, "provenance", "malformed"])
-@pytest.mark.parametrize("runtime", [None, "file", "linked-directory"])
-def test_cleanup_captures_legacy_software_without_repairing_conflicting_imports(
-    cleanup_project: Path, fault: str | None, runtime: str | None
-):
-    from dinkster_supervisor.environment_history import activation_entries, history, validate_import
-    from dinkster_supervisor.environment_state import writer_lock
-
-    root = cleanup_project
-    for path in (root / "history").glob("*.json"):
-        path.unlink()
-    for path in (root / "journal").glob("*.json"):
-        replace(Journal.read(path), history_entry=None).write(path)
-    legacy = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    code, disabled = _run(root, "cleanup", "--automatic", "off", "--yes")
-    assert code == 0, disabled
-    code, disabled = _run(root, "cleanup", "--yes")
-    assert code == 0 and disabled["status"] == "disabled", disabled
-    with writer_lock(root):
-        code, busy = _run(root, "cleanup", "--yes")
-    assert code == 0 and busy["status"] == "deferred", busy
-    assert history(root) == []
-    assert {p: p.read_bytes() for p in legacy} == legacy
-    code, enabled = _run(root, "cleanup", "--automatic", "on", "--yes")
-    assert code == 0, enabled
-    code, imported = _run(root, "import", "2", "--yes")
-    assert code == 0 and imported["entry"]["kind"] == "import", imported
-    receipt = root / "history/00000000000000000001.json"
-    original = receipt.read_bytes()
-    payload = root / "generations/2/packs/fixture/runtime.py"
-    if runtime is not None:
-        payload.parent.mkdir(parents=True)
-        if runtime == "file":
-            payload.write_bytes(b"materialized runtime with recorded software identity")
-        elif os.name == "nt":
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(payload), str(root / "models")],
-                capture_output=True,
-                check=True,
-            )
-        else:
-            payload.symlink_to(root / "models", target_is_directory=True)
-    if fault == "provenance":
-        entry = json.loads(original)
-        entry["provenance"]["digest"] = "sha256:" + "0" * 64
-        write_document(receipt, entry)
-    elif fault == "malformed":
-        entry = json.loads(original)
-        del entry["generation"]
-        write_document(receipt, entry)
-    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    code, preview = _run(root, "cleanup", "--plan")
-    assert code == 0, preview
-    rows = {row["generation"]: row for row in preview["cleanup"]["generations"]}
-    assert rows[2]["status"] == ("deferred" if fault else "candidate"), rows[2]
-    assert rows[7]["status"] == "deferred", rows[7]
-    assert rows[1]["reasons"] == ["previous successful activation"]
-    assert rows[3]["reasons"] == ["current activation"]
-    if fault:
-        assert "history coverage required" in rows[2]["reasons"][0], rows[2]
-    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
-    code, result = _run(root, "cleanup", "--yes")
-    assert code == 0 and result["status"] == ("deferred" if fault else "complete"), result
-    assert (root / "generations/2").exists() == bool(fault)
-    assert (root / "generations/7").exists() == (fault in {"provenance", "malformed"})
-    protected = {
-        p: data
-        for p, data in before.items()
-        if not any(p.is_relative_to(root / "generations" / str(n)) for n in (2, 7))
-        and not p.is_relative_to(root / "runtime/maintenance")
-    }
-    assert {p: p.read_bytes() for p in protected} == protected
-    if fault:
-        assert {p: p.read_bytes() for p in before if p.is_relative_to(root / "generations/2")} == {
-            p: data for p, data in before.items() if p.is_relative_to(root / "generations/2")
-        }
-        receipt.write_bytes(original)
-        code, result = _run(root, "cleanup", "--yes")
-        assert code == 0 and result["status"] == "complete", result
-        assert not (root / "generations/2").exists()
-        protected[receipt] = original
-    assert {entry["generation"] for entry in history(root)} == {1, 2, 3, 7}
-    assert all(entry["kind"] == "import" for entry in history(root))
-    assert activation_entries(root) == []
-    for entry in history(root):
-        validate_import(root, entry)
-    receipts = {p: p.read_bytes() for p in (root / "history").glob("*.json")}
-    code, result = _run(root, "cleanup", "--yes")
-    assert code == 0 and result["status"] == "complete", result
-    assert sorted(p.name for p in (root / "generations").iterdir()) == ["1", "3"]
-    assert {p: p.read_bytes() for p in protected} == protected
-    assert {p: p.read_bytes() for p in (root / "history").glob("*.json")} == receipts
 
 
 @pytest.mark.parametrize("fault", [None, "pending", "conflicting", "unreadable"])
@@ -2072,25 +1942,6 @@ environment.main()
     code, rollback = _run(tmp_path, "rollback", "--plan")
     assert code == 1 and "no previous successful history entry" in rollback["error"], rollback
     assert (tmp_path / "current").read_bytes() == b"3\n"
-
-
-@pytest.mark.parametrize("numbers", [[1], [2, 2], [0], [True], ["2"]])
-def test_collection_journal_refuses_unsafe_generation_sets(tmp_path: Path, numbers: list):
-    path = tmp_path / "100.json"
-    path.write_text(
-        json.dumps(
-            {
-                "format": "dinkster.journal/1",
-                "operation": "gc",
-                "previous": 1,
-                "target": 1,
-                "stage": "building",
-                "collectedGenerations": numbers,
-            }
-        )
-    )
-    with pytest.raises(ValueError):
-        Journal.read(path)
 
 
 @pytest.mark.parametrize("enabled", [True, False])

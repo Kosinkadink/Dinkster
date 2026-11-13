@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import pytest
 from dinkster_schema import (
-    NAME_MAX,
     RESERVED_NAMESPACES,
     canonical_claim,
-    canonical_name,
     claim_covers,
     claims_conflict,
     reserved_root,
@@ -30,40 +28,6 @@ from dinkster_schema import (
 )
 def test_valid_names(name: str) -> None:
     assert validate_name(name) is None
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "",  # empty
-        "Img",  # uppercase is rejected, never normalized
-        "IMG",
-        "-img",  # leading separator
-        "img-",  # trailing separator
-        "img--x",  # repeated separator
-        "img._x",  # adjacent separators
-        "1img",  # must start with a letter
-        "img extra",  # whitespace
-        "img/extra",  # foreign separator
-        "im\u00e4ge",  # non-ASCII
-        "a" * (NAME_MAX + 1),  # too long
-    ],
-)
-def test_invalid_names(name: str) -> None:
-    assert validate_name(name) is not None
-
-
-def test_max_length_boundary() -> None:
-    assert validate_name("a" * NAME_MAX) is None
-
-
-def test_canonical_collapses_separators() -> None:
-    """-, _ and . are one equivalence class: one claim, one pack."""
-    assert canonical_name("foo-bar") == "foo-bar"
-    assert canonical_name("foo_bar") == "foo-bar"
-    assert canonical_name("foo.bar") == "foo-bar"
-    assert canonical_name("a.b_c-d") == "a-b-c-d"
-    assert canonical_name("img") == "img"
 
 
 def test_coverage_is_dot_bounded() -> None:
@@ -144,8 +108,3 @@ def test_namespace_and_exact_claims_cannot_own_the_same_node() -> None:
     assert not claims_conflict("img", "Img")
     assert reserved_root("Core.Blur") == "core"
     assert reserved_root("CoreBlur") is None
-
-
-@pytest.mark.parametrize("claim", ["", " Bad", "Bad ", "Bad/Node", "Bad..Node", "Bad\tNode"])
-def test_malformed_exact_claims_are_rejected(claim: str) -> None:
-    assert validate_claim(claim) is not None

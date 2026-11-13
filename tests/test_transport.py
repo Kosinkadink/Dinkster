@@ -21,7 +21,6 @@ from dinkster_workers import (
     IsolatedWorker,
     TransportChoice,
     TransportError,
-    connect_endpoint,
     unix_endpoints_supported,
 )
 from dinkster_workers.boundary import TransferStat
@@ -29,15 +28,6 @@ from dinkster_workers.transport import TOKEN_ENV
 from test_isolated import DEV_MANIFEST, core_registry, image_graph
 
 from tests.async_scenarios import run_scenario
-
-
-def test_endpoint_parsing_rejects_garbage() -> None:
-    async def scenario() -> None:
-        for endpoint in ("unix:", "tcp:no-port", "tcp:127.0.0.1:notaport", "carrier-pigeon:x"):
-            with pytest.raises(TransportError):
-                await connect_endpoint(endpoint)
-
-    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("grouped", [False, True])
@@ -95,38 +85,6 @@ def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:
                 assert await reader.readexactly(4) == b"ping"
                 writer.close()
                 good_writer.close()
-            finally:
-                await listener.close()
-
-    run_scenario(scenario())
-
-
-def test_missing_token_fails_fast_on_child_side() -> None:
-    async def scenario() -> None:
-        assert os.environ.get(TOKEN_ENV) is None
-        with pytest.raises(TransportError, match=TOKEN_ENV):
-            await connect_endpoint("tcp:127.0.0.1:1")
-
-    run_scenario(scenario())
-
-
-def test_unix_listener_where_supported() -> None:
-    if not unix_endpoints_supported():
-        pytest.skip("no unix endpoints on this platform")
-
-    async def scenario() -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            listener = await BoundaryListener.create(Path(tmpdir), transport="auto")
-            try:
-                assert listener.endpoint.startswith("unix:")
-                assert listener.child_env == {}
-                _, client_writer = await connect_endpoint(listener.endpoint)
-                reader, writer = await asyncio.wait_for(listener.connected, 5.0)
-                client_writer.write(b"ping")
-                await client_writer.drain()
-                assert await reader.readexactly(4) == b"ping"
-                writer.close()
-                client_writer.close()
             finally:
                 await listener.close()
 

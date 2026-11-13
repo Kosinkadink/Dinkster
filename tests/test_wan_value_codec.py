@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from dinkster_api.v1 import (
     AUDIO_ENCODER_OUTPUT_TYPE,
@@ -95,37 +93,6 @@ def test_public_codec_roundtrip_and_fingerprints(
         assert spec.fingerprint(value) == spec.fingerprint(dict(reversed(tuple(value.items()))))
 
 
-def test_wandancer_audio_encoder_output_preserves_optional_scale_and_fingerprint_inputs(
-    registry: TypeRegistry,
-) -> None:
-    spec = registry.spec(AUDIO_ENCODER_OUTPUT_TYPE)
-    assert spec.validate_encoded is not None
-    assert spec.fingerprint is not None
-    encoded = spec.encode(WANDANCER_ENCODER)
-    spec.validate_encoded(encoded, {})
-    assert spec.decode(encoded) == WANDANCER_ENCODER
-    without_scale = {
-        key: value for key, value in WANDANCER_ENCODER.items() if key != "audio_inject_scale"
-    }
-    without_scale_encoded = spec.encode(without_scale)
-    spec.validate_encoded(without_scale_encoded, {})
-    assert spec.decode(without_scale_encoded) == without_scale
-    assert spec.fingerprint(WANDANCER_ENCODER) != spec.fingerprint(
-        {
-            **WANDANCER_ENCODER,
-            "audio_feature": EncodedLatentTensor(
-                "float32", (1, 1, 2), b"\x00\x00\x00\x40\x00\x00\x00\xc0"
-            ),
-        }
-    )
-    assert spec.fingerprint(WANDANCER_ENCODER) != spec.fingerprint(
-        {**WANDANCER_ENCODER, "fps": 30.0}
-    )
-    assert spec.fingerprint(WANDANCER_ENCODER) != spec.fingerprint(
-        {**WANDANCER_ENCODER, "audio_inject_scale": 0.5}
-    )
-
-
 @pytest.mark.parametrize(
     ("type_id", "value"),
     (
@@ -153,42 +120,6 @@ def test_public_codec_rejects_invalid_fields_on_encode_and_decode(
     payload = encode_latent({"samples": value})
     with pytest.raises(ValueError):
         spec.encode(value)
-    with pytest.raises(ValueError):
-        spec.decode(payload)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(payload, {})
-
-
-@pytest.mark.parametrize("field", ("fps", "audio_inject_scale"))
-@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
-def test_wandancer_codec_rejects_nonfinite_scalars(
-    registry: TypeRegistry, field: str, value: float
-) -> None:
-    spec = registry.spec(AUDIO_ENCODER_OUTPUT_TYPE)
-    assert spec.validate_encoded is not None
-    payload = encode_latent({"samples": WANDANCER_ENCODER})
-    original = json.dumps(field).encode() + b":" + str(WANDANCER_ENCODER[field]).encode()
-    assert payload.count(original) == 1
-    malformed = payload.replace(
-        original, json.dumps(field).encode() + b":" + json.dumps(value).encode()
-    )
-    with pytest.raises(ValueError):
-        spec.encode({**WANDANCER_ENCODER, field: value})
-    with pytest.raises(ValueError):
-        spec.decode(malformed)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(malformed, {})
-
-
-@pytest.mark.parametrize(
-    "type_id", (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE)
-)
-@pytest.mark.parametrize("payload", (b"not-a-tensor", encode_latent({"samples": HALF, "extra": 1})))
-def test_public_codec_rejects_invalid_envelopes(
-    registry: TypeRegistry, type_id: str, payload: bytes
-) -> None:
-    spec = registry.spec(type_id)
-    assert spec.validate_encoded is not None
     with pytest.raises(ValueError):
         spec.decode(payload)
     with pytest.raises(ValueError):

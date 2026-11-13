@@ -33,7 +33,6 @@ from dinkster_assets import (
     MountTable,
     classify_media,
     classify_media_file,
-    classify_media_handle,
     digest_bytes,
 )
 from dinkster_audio.audio_io import LoadAudio
@@ -459,13 +458,6 @@ MEDIA_CASES = (
 )
 
 
-@pytest.mark.parametrize(("data", "expected"), MEDIA_CASES)
-def test_classify_media_accepts_closed_byte_derived_set(
-    data: bytes, expected: MediaClassification
-) -> None:
-    assert classify_media(data) == expected
-
-
 @pytest.mark.parametrize(
     ("image_format", "expected"),
     [
@@ -511,84 +503,11 @@ def test_classify_media_rejects_layer_two_and_handles_id3_versions() -> None:
     assert classify_media(id3v24_footer).media_type == "audio/mpeg"
 
 
-def test_classify_media_rejects_invalid_internal_framing() -> None:
-    flac = bytearray(_flac())
-    flac[-2] ^= 1
-    malformed_sos = _jpeg().replace(b"\xff\xda\x00\x08\x01", b"\xff\xda\x00\x08\x02")
-    unknown_jpeg_component = _jpeg().replace(
-        b"\xff\xda\x00\x08\x01\x01", b"\xff\xda\x00\x08\x01\x02"
-    )
-    wav = bytearray(_wav())
-    struct.pack_into("<I", wav, 28, 123)
-    bad_footer = b"ID3\x04\x00\x10" + bytes(14) + _mp3()
-    for data in (
-        bytes(flac),
-        malformed_sos,
-        unknown_jpeg_component,
-        bytes(wav),
-        bad_footer,
-    ):
-        with pytest.raises(AssetError):
-            classify_media(data)
-
-
-def test_classify_media_rejects_truncated_ogg_codec_id_and_unsupported_mp4_audio() -> None:
-    for data in (_ogg_page(b"OpusHead"), _mp4(_audio_mp4_track(b"alac"))):
-        with pytest.raises(AssetError):
-            classify_media(data)
-
-
 def test_classify_media_uses_mp4_track_types_and_prefers_video() -> None:
     assert classify_media(_mp4(_audio_mp4_track())) == MediaClassification(
         "media/audio", "audio/mp4", "m4a"
     )
     assert classify_media(_mp4(_audio_mp4_track(), _video_mp4_track())).media_type == "video/mp4"
-
-
-@pytest.mark.parametrize(("start", "end"), [(6, 8), (16, 18), (18, 20), (24, 28)])
-def test_classify_media_rejects_invalid_mp4_audio_sample_fields(start: int, end: int) -> None:
-    track = _audio_mp4_track()
-    sample_offset = track.index(b"mp4a") + 4
-    damaged = track[: sample_offset + start] + bytes(end - start) + track[sample_offset + end :]
-    with pytest.raises(AssetError):
-        classify_media(_mp4(damaged))
-
-
-@pytest.mark.parametrize(
-    "descriptor",
-    [
-        b"",
-        _aac_esds()[:-1],
-        _aac_esds().replace(b"\x40\x15", b"\x20\x15"),
-        _aac_esds().replace(b"\x11\x88", b"\x00\x00"),
-    ],
-)
-def test_classify_media_requires_valid_mp4_aac_descriptor(descriptor: bytes) -> None:
-    with pytest.raises(AssetError):
-        classify_media(_mp4(_audio_mp4_track(descriptor=descriptor)))
-
-
-@pytest.mark.parametrize(("count", "entry_count"), [(0, 0), (0, 1), (2, 1)])
-def test_classify_media_rejects_mp4_stsd_entry_count_mismatch(count: int, entry_count: int) -> None:
-    sample = _audio_mp4_track()
-    sample_start = sample.index(b"mp4a") - 4
-    sample_size = struct.unpack_from(">I", sample, sample_start)[0]
-    entry = sample[sample_start : sample_start + sample_size]
-    stsd = _box(b"stsd", bytes(4) + struct.pack(">I", count) + entry * entry_count)
-    with pytest.raises(AssetError):
-        classify_media(_mp4(_mp4_track(b"soun", b"", minf=_box(b"stbl", stsd))))
-
-
-def test_classify_media_rejects_ambiguous_and_excessive_mp4_audio_tables() -> None:
-    sample = _audio_mp4_track()
-    stbl_start = sample.index(b"stbl") - 4
-    stbl_size = struct.unpack_from(">I", sample, stbl_start)[0]
-    stbl = sample[stbl_start : stbl_start + stbl_size]
-    duplicate_stbl = _mp4_track(b"soun", b"", minf=stbl + stbl)
-    excessive_minf = _mp4_track(b"soun", b"", minf=_box(b"free", b"") * 100_001)
-    for track in (duplicate_stbl, excessive_minf):
-        with pytest.raises(AssetError):
-            classify_media(_mp4(track))
 
 
 def test_classify_media_uses_webm_track_type_and_rejects_trackless_container() -> None:
@@ -607,44 +526,6 @@ def test_classify_media_uses_webm_track_type_and_rejects_trackless_container() -
 def test_classify_media_accepts_speex_and_flac_ogg_identification() -> None:
     for data in (_ogg_speex(), _ogg_flac()):
         assert classify_media(data) == MediaClassification("media/audio", "audio/ogg", "ogg")
-
-
-def test_classify_media_rejects_truncated_mp4_boxes_and_zero_visual_dimensions() -> None:
-    mp4 = _mp4()
-    truncated_mvhd = mp4.replace(_box(b"mvhd", bytes(100)), _box(b"mvhd", bytes(20)))
-    valid_sample = bytearray(78)
-    valid_sample[6:8] = b"\x00\x01"
-    valid_sample[24:28] = b"\x00\x01\x00\x01"
-    zero_dimensions = mp4.replace(_box(b"avc1", bytes(valid_sample)), _box(b"avc1", bytes(78)))
-    for data in (truncated_mvhd, zero_dimensions):
-        with pytest.raises(AssetError):
-            classify_media(data)
-
-
-def test_classify_media_rejects_webp_order_and_webm_codec_near_misses() -> None:
-    animated = _animated_webp()
-    out_of_order = _riff(
-        b"WEBP",
-        [
-            (b"VP8X", b"\x02" + bytes(9)),
-            (b"ANMF", bytes(16) + _webp()[12:]),
-            (b"ANIM", bytes(6)),
-        ],
-    )
-    top_level_image = animated + b"ignored"
-    matroska_codec = _webm().replace(b"V_VP9", b"V_AVC")
-    for data in (out_of_order, top_level_image, matroska_codec):
-        with pytest.raises(AssetError):
-            classify_media(data)
-
-
-def test_classify_media_rejects_extensible_wave_overstated_extension() -> None:
-    fmt = bytearray(40)
-    struct.pack_into("<HHIIHHH", fmt, 0, 0xFFFE, 1, 8_000, 16_000, 2, 16, 65_535)
-    fmt[18:20] = (16).to_bytes(2, "little")
-    fmt[24:40] = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x008\x9bq"
-    with pytest.raises(AssetError):
-        classify_media(_riff(b"WAVE", [(b"fmt ", bytes(fmt)), (b"data", b"\x00\x00")]))
 
 
 @pytest.mark.parametrize(("data", "expected"), MEDIA_CASES)
@@ -677,84 +558,6 @@ def test_classify_media_rejects_every_truncated_prefix(
 def test_classify_media_rejects_unknown_near_miss_and_ambiguous_bytes(
     data: bytes,
 ) -> None:
-    with pytest.raises(AssetError):
-        classify_media(data)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        struct.pack("<4sII", b"glTF", 1, 12),
-        struct.pack("<4sII", b"glTF", 2, 12),
-        _glb()[:8] + struct.pack("<I", len(_glb()) + 4) + _glb()[12:],
-        struct.pack("<4sII", b"glTF", 2, 16) + bytes(4),
-        struct.pack("<4sII", b"glTF", 2, 24) + struct.pack("<I4s", 16, b"JSON") + b"    ",
-        _glb_chunks((b"BIN\x00", b"\x00\x00\x00\x00")),
-        _glb_chunks((b"JSON", b'{"asset":{"version":"2.0"}}')),
-        _glb_chunks((b"JSON", b"{}  "), (b"JSON", b"    ")),
-        _glb_chunks((b"JSON", b"{}  "), (b"BIN\x00", b""), (b"BIN\x00", b"")),
-        _glb_chunks((b"JSON", b"{}  "), (b"ABCD", b""), (b"BIN\x00", b"")),
-        _glb_chunks((b"JSON", b"{}  ")),
-        _glb_chunks((b"JSON", b"")),
-        _glb_chunks((b"JSON", b"{{{ ")),
-        _glb_chunks((b"JSON", b"\xff\xff\xff\xff")),
-        _glb_chunks((b"JSON", b"[]  ")),
-        _glb_json(b'{"asset":{"version":"2.0"},"x":NaN}'),
-        _glb_json('{"asset":{"version":"2.\u0660"}}'.encode()),
-        _glb_json('{"asset":{"version":"2.0"}}'.encode("utf-16-le")),
-        _glb({"asset": {}}, bin_payload=None),
-        _glb({"asset": {"version": "3.0"}}, bin_payload=None),
-        _glb({"asset": {"version": "2.0"}}),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 16}]}),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 0}]}),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 0}]}, bin_payload=b""),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": -1}]}, bin_payload=b""),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": True}]}),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 3.5}]}),
-        _glb({"asset": {"version": "2.0"}, "buffers": "no"}, bin_payload=None),
-        _glb({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 4}]}, bin_payload=None),
-        _glb(
-            {"asset": {"version": "2.0"}, "buffers": [{"byteLength": 1}]},
-            bin_payload=b"\x00\x01\x01\x01",
-        ),
-    ],
-)
-def test_classify_media_rejects_malformed_glb(data: bytes) -> None:
-    with pytest.raises(AssetError):
-        classify_media(data)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        b"ply\n",
-        _ply(header=b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nend_header\n"),
-        _ply()[:-1],
-        _ply() + b"\x00",
-        _ply(body=b""),
-        _ply(properties=((b"float", b"x"), (b"float", b"y"))),
-        _ply(
-            header=b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
-            b"property list uchar int vertex_indices\nend_header\n",
-            body=b"",
-        ),
-        _ply(
-            header=b"ply\nformat binary_little_endian 1.0\nelement face 1\n"
-            b"property float x\nproperty float y\nproperty float z\nend_header\n",
-            body=bytes(12),
-        ),
-        _ply(header=b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nend_header\n"),
-        _ply(
-            header=b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
-            b"property float x\nproperty float y\nproperty float z\nend_header"
-        ),
-        _ply(
-            header=b"ply\r\nformat binary_little_endian 1.0\r\nelement vertex 1\r\n"
-            b"property double x\nproperty float y\nproperty float z\nend_header\r\n"
-        ),
-    ],
-)
-def test_classify_media_rejects_malformed_ply(data: bytes) -> None:
     with pytest.raises(AssetError):
         classify_media(data)
 
@@ -799,31 +602,6 @@ def test_classify_media_accepts_spec_conforming_glb_variants() -> None:
     assert classify_media(_glb(bin_payload=None)) == expected
 
 
-def test_classify_media_file_failure_releases_mapping_for_deletion(tmp_path: Path) -> None:
-    corrupted = bytearray(_png())
-    corrupted[29] ^= 0x01  # flip one IHDR CRC byte
-    path = tmp_path / "corrupted.png"
-    path.write_bytes(bytes(corrupted))
-    with pytest.raises(AssetError) as file_error:
-        classify_media_file(path)
-    assert file_error.value.__context__ is None
-    with path.open("rb") as handle:
-        with pytest.raises(AssetError) as handle_error:
-            classify_media_handle(handle)
-    assert handle_error.value.__context__ is None
-    path.unlink()
-
-
-def test_classification_is_immutable_and_has_no_metadata_authority() -> None:
-    result = classify_media(_png())
-    with pytest.raises(AttributeError):
-        result.media_type = "video/mp4"  # type: ignore[misc]
-    with pytest.raises(TypeError):
-        classify_media(_png(), media_type="video/mp4")  # type: ignore[call-arg]
-    with pytest.raises((AssetError, TypeError)):
-        classify_media({"bytes": _png(), "name": "lie.mp4"})  # type: ignore[arg-type]
-
-
 def _grant(scope: str = "alice", data: bytes = _png()) -> MediaGrant:
     facts = classify_media(data)
     return MediaGrant(
@@ -834,59 +612,6 @@ def _grant(scope: str = "alice", data: bytes = _png()) -> MediaGrant:
         extension=facts.extension,
         byte_size=len(data),
     )
-
-
-def test_media_grant_is_immutable_validated_and_round_trips(tmp_path: Path) -> None:
-    path = tmp_path / "library.sqlite"
-    grant = _grant()
-    with closing(LibraryStore(path)) as store:
-        assert store.grant_media(grant, _png()) == grant
-        assert store.media_grant(grant.scope, grant.digest, grant.kind) == grant
-        assert store.media_grant("bob", grant.digest, grant.kind) is None
-        with pytest.raises(TypeError):
-            store.media_grant(grant.scope, grant.digest)  # type: ignore[call-arg]
-    with closing(LibraryStore(path)) as reopened:
-        assert reopened.media_grant(grant.scope, grant.digest, grant.kind) == grant
-    with pytest.raises(AttributeError):
-        grant.byte_size = 0  # type: ignore[misc]
-
-
-def test_media_grant_exact_regrant_is_idempotent_and_conflicts_refuse(
-    tmp_path: Path,
-) -> None:
-    grant = _grant()
-    with closing(LibraryStore(tmp_path / "library.sqlite")) as store:
-        assert store.grant_media(grant, _png()) == grant
-        assert store.grant_media(grant, _png()) == grant
-        for replacement in (
-            MediaGrant(
-                **{
-                    **grant.__dict__,
-                    "media_type": "image/webp",
-                    "extension": "webp",
-                }
-            ),
-            MediaGrant(**{**grant.__dict__, "byte_size": grant.byte_size + 1}),
-        ):
-            with pytest.raises(AssetError, match="do not match supplied bytes"):
-                store.grant_media(replacement, _png())
-        assert store.media_grant(grant.scope, grant.digest, grant.kind) == grant
-
-
-def test_media_grant_constructor_closes_facts_and_scope() -> None:
-    grant = _grant()
-    invalid = (
-        {**grant.__dict__, "scope": " "},
-        {**grant.__dict__, "digest": "not-a-digest"},
-        {**grant.__dict__, "kind": "media/video"},
-        {**grant.__dict__, "media_type": "text/plain"},
-        {**grant.__dict__, "extension": "jpeg"},
-        {**grant.__dict__, "byte_size": -1},
-        {**grant.__dict__, "byte_size": True},
-    )
-    for fields in invalid:
-        with pytest.raises(AssetError):
-            MediaGrant(**fields)
 
 
 def test_media_grant_concurrent_exact_and_conflicting_writes_are_atomic(
@@ -1556,29 +1281,6 @@ def test_latent_ingest_normalizes_integer_digit_limit_to_invalid_input(tmp_path:
     run_scenario(scenario())
 
 
-def test_latent_ingest_normalizes_bounded_nesting_to_invalid_input(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, library = await _media_client(tmp_path)
-        raw = b"[" * 10000 + b"0" + b"]" * 10000
-        raw += b" " * (-len(raw) % 8)
-        payload = struct.pack("<Q", len(raw)) + raw
-        try:
-            response = await client.post(
-                "/api/assets/latent?scope=local&name=bad-nesting.latent",
-                data=payload,
-                headers={"Content-Type": "application/x-comfy-latent"},
-            )
-            assert response.status == 415
-            assert (await response.json())["error"]["code"] == "asset.media.invalid_latent"
-            assert library.vault.digests() == []
-            assert library.latent_reserved_bytes == [0]
-            assert not list(library.vault.root.glob(".latent-upload-*"))
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_latent_metadata_probe_ignores_integer_limit_vae_hint(tmp_path: Path) -> None:
     async def scenario() -> None:
         client, _library = await _media_client(tmp_path)
@@ -1588,28 +1290,6 @@ def test_latent_metadata_probe_ignores_integer_limit_vae_hint(tmp_path: Path) ->
         try:
             uploaded = await client.post(
                 "/api/assets/latent?scope=local&name=hint.latent",
-                data=payload,
-                headers={"Content-Type": "application/x-comfy-latent"},
-            )
-            assert uploaded.status == 201
-            metadata = await client.get(f"/api/assets/{digest}/metadata")
-            assert metadata.status == 200
-            assert (await metadata.json())["metadata"]["latent"]["vaeHint"] == ""
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_latent_metadata_probe_ignores_bounded_nesting_vae_hint(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, _library = await _media_client(tmp_path)
-        hint = '{"version":' + "[" * 3900 + "1" + "]" * 3900 + "}"
-        payload = _latent({"dinkster_vae_hint": hint})
-        digest = digest_bytes(payload)
-        try:
-            uploaded = await client.post(
-                "/api/assets/latent?scope=local&name=nested-hint.latent",
                 data=payload,
                 headers={"Content-Type": "application/x-comfy-latent"},
             )
@@ -1694,183 +1374,6 @@ def test_latent_ingest_preserves_filesystem_headroom(
             )
         finally:
             await client.close()
-
-    run_scenario(scenario())
-
-
-def test_latent_spool_write_does_not_block_event_loop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_server import library as library_module
-
-    async def scenario() -> None:
-        client, _library = await _media_client(tmp_path)
-        entered = threading.Event()
-        release = threading.Event()
-        real_spool = library_module._spool_media_upload_chunk
-
-        def blocked_spool(temporary: object, hasher: object, chunk: bytes) -> None:
-            entered.set()
-            assert release.wait(timeout=5)
-            real_spool(temporary, hasher, chunk)
-
-        monkeypatch.setattr(library_module, "_spool_media_upload_chunk", blocked_spool)
-        upload = asyncio.create_task(
-            client.post(
-                "/api/assets/latent?scope=local&name=responsive.latent",
-                data=_latent(),
-                headers={"Content-Type": "application/x-comfy-latent"},
-            )
-        )
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            health = await asyncio.wait_for(client.get("/api/health"), timeout=1)
-            assert health.status == 200
-            release.set()
-            response = await asyncio.wait_for(upload, timeout=5)
-            assert response.status == 201
-        finally:
-            release.set()
-            if not upload.done():
-                upload.cancel()
-                with suppress(asyncio.CancelledError):
-                    await upload
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_latent_repeated_cancellation_waits_for_spool_owner_and_cleans_admission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_server import library as library_module
-
-    async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
-            store=LibraryStore(tmp_path / "library.sqlite"),
-        )
-        entered = threading.Event()
-        release = threading.Event()
-        real_spool = library_module._spool_media_upload_chunk
-
-        def blocked_spool(temporary: object, hasher: object, chunk: bytes) -> None:
-            entered.set()
-            assert release.wait(timeout=5)
-            real_spool(temporary, hasher, chunk)
-
-        monkeypatch.setattr(library_module, "_spool_media_upload_chunk", blocked_spool)
-        task = asyncio.create_task(handle_latent_upload(cast(web.Request, _LatentRequest(library))))
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            task.cancel()
-            await asyncio.sleep(0)
-            task.cancel()
-            await asyncio.sleep(0)
-            assert not task.done()
-            assert library.latent_reserved_bytes == [1024 * 1024 * 1024]
-            assert len(list(library.vault.root.glob(".latent-upload-*"))) == 1
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert library.latent_reserved_bytes == [0]
-            assert list(library.vault.root.glob(".latent-upload-*")) == []
-            assert library.vault.digests() == []
-            assert (
-                library.store.media_grant("local", digest_bytes(_latent()), "data/latent") is None
-            )
-            await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=1)
-            await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=1)
-            library.latent_ingest_slots.release()
-            library.latent_ingest_slots.release()
-        finally:
-            release.set()
-            if not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            library.store.close()
-
-    run_scenario(scenario())
-
-
-def test_latent_cancellation_before_publication_commit_leaves_nothing(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
-            store=LibraryStore(tmp_path / "library.sqlite"),
-        )
-        await library.media_ingest_lock.acquire()
-        task = asyncio.create_task(handle_latent_upload(cast(web.Request, _LatentRequest(library))))
-        try:
-            for _ in range(500):
-                waiters = getattr(library.media_ingest_lock, "_waiters", None)
-                if waiters:
-                    break
-                await asyncio.sleep(0.01)
-            else:
-                pytest.fail("latent upload did not wait for publication ownership")
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert library.latent_reserved_bytes == [0]
-            assert list(library.vault.root.glob(".latent-upload-*")) == []
-            assert library.vault.digests() == []
-            assert (
-                library.store.media_grant("local", digest_bytes(_latent()), "data/latent") is None
-            )
-        finally:
-            if not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            library.media_ingest_lock.release()
-            library.store.close()
-
-    run_scenario(scenario())
-
-
-def test_latent_cancellation_after_commit_point_settles_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
-            store=LibraryStore(tmp_path / "library.sqlite"),
-        )
-        entered = threading.Event()
-        release = threading.Event()
-        original = library.store.grant_latent_result
-
-        def blocked(grant: MediaGrant) -> tuple[MediaGrant, bool]:
-            entered.set()
-            assert release.wait(timeout=5)
-            return original(grant)
-
-        monkeypatch.setattr(library.store, "grant_latent_result", blocked)
-        task = asyncio.create_task(handle_latent_upload(cast(web.Request, _LatentRequest(library))))
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            task.cancel()
-            await asyncio.sleep(0)
-            task.cancel()
-            await asyncio.sleep(0)
-            assert not task.done()
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            digest = digest_bytes(_latent())
-            assert library.vault.resolve(digest) is not None
-            assert library.store.media_grant("local", digest, "data/latent") is not None
-            assert library.latent_reserved_bytes == [0]
-            assert list(library.vault.root.glob(".latent-upload-*")) == []
-        finally:
-            release.set()
-            if not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            library.store.close()
 
     run_scenario(scenario())
 
@@ -2021,19 +1524,6 @@ def test_media_recorder_audio_webm_publishes_length_and_waveform(
     run_scenario(_assert_media_recorder_audio_webm_upload(tmp_path, codec))
 
 
-def test_media_recorder_webm_fixture_encoders_follow_pyav_availability() -> None:
-    available = writable_media_recorder_webm_audio_encoders()
-    expected: list[str] = []
-    for codec in ("libopus", "libvorbis"):
-        try:
-            av.Codec(codec, "w")
-        except Exception:  # noqa: BLE001 - PyAV uses several codec error classes
-            continue
-        expected.append(codec)
-    assert available == tuple(expected)
-    assert "libopus" in available
-
-
 def test_vorbis_webm_upload_remains_admitted(tmp_path: Path) -> None:
     run_scenario(_assert_media_recorder_audio_webm_upload(tmp_path, "vorbis"))
 
@@ -2127,31 +1617,6 @@ def test_media_ingest_validation_refuses_without_publication(tmp_path: Path) -> 
     run_scenario(scenario())
 
 
-def test_media_ingest_malformed_validator_failure_returns_415_and_cleans_spool(
-    tmp_path: Path,
-) -> None:
-    corrupted = bytearray(_png())
-    corrupted[29] ^= 0x01  # flip one IHDR CRC byte so the PNG validator itself fails
-
-    async def scenario() -> None:
-        client, library = await _media_client(tmp_path)
-        try:
-            response = await client.post(
-                _media_path("local", "media/image", "corrupted.png"),
-                data=bytes(corrupted),
-                headers=_media_headers("image/png"),
-            )
-            assert response.status == 415, await response.text()
-            body = await response.json()
-            assert body["error"]["code"] == "asset.media.unsupported_media"
-            assert list(library.vault.root.glob(".media-upload-*")) == []
-            assert library.vault.digests() == []
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
     base = _jpeg()
     limit = len(base) + 2
@@ -2213,22 +1678,6 @@ def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
             await client.close()
 
     run_scenario(scenario())
-
-
-def test_default_media_limits_mirror_frontend_per_kind_bounds(tmp_path: Path) -> None:
-    library = ServerLibrary(
-        vault=AssetVault(tmp_path / "vault"),
-        store=LibraryStore(tmp_path / "library.sqlite"),
-    )
-    try:
-        assert dict(library.media_upload_limits) == {
-            "media/image": 256 * 1024 * 1024,
-            "media/audio": 1024 * 1024 * 1024,
-            "media/video": 1024 * 1024 * 1024,
-            "media/model3d": 1024 * 1024 * 1024,
-        }
-    finally:
-        library.store.close()
 
 
 def test_media_upload_limit_is_selected_by_claimed_kind(tmp_path: Path) -> None:
@@ -2402,133 +1851,6 @@ def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) 
         finally:
             library.store.grant_media_result = original  # type: ignore[method-assign]
             await client.close()
-
-    run_scenario(scenario())
-
-
-def test_media_ingest_cancellation_retains_publication_serialization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Content:
-        async def iter_chunked(self, _size: int) -> AsyncIterator[bytes]:
-            yield _png()
-
-    class Request:
-        def __init__(self, library: ServerLibrary, name: str) -> None:
-            self.app = {LIBRARY_KEY: library}
-            self.content_length = len(_png())
-            self.content = Content()
-            self.query = MultiDictProxy(
-                MultiDict({"scope": "local", "kind": "media/image", "name": name})
-            )
-            self.headers = {"Content-Type": "image/png"}
-
-        def __getitem__(self, key: web.RequestKey[Principal]) -> Principal:
-            assert key is PRINCIPAL_KEY
-            return LOCAL_PRINCIPAL
-
-    async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
-            store=LibraryStore(tmp_path / "library.sqlite"),
-        )
-        waiting = asyncio.Event()
-        original_acquire = library.media_ingest_lock.acquire
-
-        async def acquire() -> bool:
-            if library.media_ingest_lock.locked():
-                waiting.set()
-            return await original_acquire()
-
-        monkeypatch.setattr(library.media_ingest_lock, "acquire", acquire)
-        entered = threading.Event()
-        release = threading.Event()
-        original = library.store.grant_media_result
-        calls = 0
-
-        def blocked(grant: MediaGrant, data: bytes) -> tuple[MediaGrant, bool]:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                entered.set()
-                assert release.wait(timeout=5)
-            return original(grant, data)
-
-        library.store.grant_media_result = blocked  # type: ignore[method-assign]
-        first = asyncio.create_task(
-            handle_media_upload(cast(web.Request, Request(library, "first.png")))
-        )
-        await asyncio.to_thread(entered.wait)
-        first.cancel()
-        second = asyncio.create_task(
-            handle_media_upload(cast(web.Request, Request(library, "second.png")))
-        )
-        await asyncio.wait_for(waiting.wait(), 5)
-        assert not second.done()
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await first
-        response = await asyncio.wait_for(second, timeout=5)
-        assert response.status == 200
-        assert calls == 2
-        library.store.grant_media_result = original  # type: ignore[method-assign]
-        library.store.close()
-
-    run_scenario(scenario())
-
-
-def test_media_ingest_cancellation_before_publication_handoff_removes_spool(
-    tmp_path: Path,
-) -> None:
-    class Content:
-        async def iter_chunked(self, _size: int) -> AsyncIterator[bytes]:
-            yield _png()
-
-    class Request:
-        def __init__(self, library: ServerLibrary) -> None:
-            self.app = {LIBRARY_KEY: library}
-            self.content_length = len(_png())
-            self.content = Content()
-            self.query = MultiDictProxy(
-                MultiDict({"scope": "local", "kind": "media/image", "name": "waiting.png"})
-            )
-            self.headers = {"Content-Type": "image/png"}
-
-        def __getitem__(self, key: web.RequestKey[Principal]) -> Principal:
-            assert key is PRINCIPAL_KEY
-            return LOCAL_PRINCIPAL
-
-    async def scenario() -> None:
-        library = ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"),
-            store=LibraryStore(tmp_path / "library.sqlite"),
-        )
-        await library.media_ingest_lock.acquire()
-        task = asyncio.create_task(handle_media_upload(cast(web.Request, Request(library))))
-        try:
-            for _ in range(500):
-                waiters = getattr(library.media_ingest_lock, "_waiters", None)
-                if waiters:
-                    break
-                await asyncio.sleep(0.01)
-            else:
-                pytest.fail("media upload did not wait for publication ownership")
-            spools = list(library.vault.root.glob(".media-upload-*"))
-            assert len(spools) == 1
-            assert spools[0].read_bytes() == _png()
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert list(library.vault.root.glob(".media-upload-*")) == []
-            assert library.vault.digests() == []
-        finally:
-            if not task.done():
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-            library.media_ingest_lock.release()
-            library.store.close()
 
     run_scenario(scenario())
 

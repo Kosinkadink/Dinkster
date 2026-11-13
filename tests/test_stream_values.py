@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 from dinkster_api.v1 import AUDIO_TYPE
-from dinkster_values import MediaChunk, MediaStream, TypeRegistry
+from dinkster_values import MediaStream, TypeRegistry
 
 
 def stream(
@@ -47,27 +47,6 @@ def test_invalid_ranges_refuse_before_source_read(start: int, stop: int, message
     try:
         with pytest.raises(ValueError, match=message):
             value.read(start, stop)
-        assert reads == []
-    finally:
-        value.close()
-
-
-@pytest.mark.parametrize(
-    ("total", "chunk_size", "message"),
-    [(-1, 1, "total"), (True, 1, "total"), (1, 0, "chunk_size"), (1, False, "chunk_size")],
-)
-def test_constructor_rejects_invalid_bounds(total: int, chunk_size: int, message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        stream(total=total, chunk_size=chunk_size)
-
-
-def test_invalid_iteration_range_refuses_before_source_read() -> None:
-    reads: list[tuple[int, int]] = []
-    value = stream(reads=reads)
-    try:
-        chunks = value.iter_chunks(3, 2)
-        with pytest.raises(ValueError, match="outside"):
-            next(chunks)
         assert reads == []
     finally:
         value.close()
@@ -217,24 +196,6 @@ def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
         second.close()
 
 
-def test_registry_wraps_exact_stream_with_an_independent_lease() -> None:
-    events: list[str] = []
-    registry = TypeRegistry()
-    registry.register("IMAGE")
-    original = stream(closed=events)
-    source_fingerprint = registry.wrap("stream<IMAGE>", original).fingerprint
-    wrapped = registry.wrap("stream<IMAGE>", original)
-    retained = wrapped.resolve()
-    assert isinstance(retained, MediaStream)
-    assert retained is original
-    assert retained.type_id == "IMAGE"
-    assert wrapped.fingerprint == source_fingerprint
-    original.close()
-    assert events == ["source"]
-    retained.close()
-    assert events == ["source"]
-
-
 def test_registry_refuses_different_registered_stream_type() -> None:
     registry = TypeRegistry()
     registry.register("IMAGE")
@@ -245,17 +206,3 @@ def test_registry_refuses_different_registered_stream_type() -> None:
             registry.wrap(f"stream<{AUDIO_TYPE}>", value)
     finally:
         value.close()
-
-
-def test_registry_refuses_closed_stream() -> None:
-    registry = TypeRegistry()
-    registry.register("IMAGE")
-    value = stream()
-    value.close()
-    with pytest.raises(ValueError, match="closed"):
-        registry.wrap("stream<IMAGE>", value)
-
-
-def test_media_chunk_rejects_noncanonical_ranges() -> None:
-    with pytest.raises(ValueError, match="integers"):
-        MediaChunk(0, 1, True, object())

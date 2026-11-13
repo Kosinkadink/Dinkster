@@ -20,6 +20,15 @@
   is not a refusal unless an explicit maximum-age policy requires one. Recovery
   status distinguishes policy allowance from execution and never claims an
   unreviewed repair is compatible or automatically resumes stopped work.
+  `/api/security` includes visible queued and retained jobs, their submitted node
+  types, workflow identity when supplied, and pinned execution snapshot identity.
+  Job visibility follows the caller's scoped job-read grants. Submitted graphs
+  identify work, not proof that a node executed or an incident affected a result.
+  Human operators with settings authority can approve, disapprove or change an
+  exact active notice answer through `/api/security/answers` using registry,
+  notice UUID, positive revision and an explicit `approved` boolean. Agents,
+  delegated callers and stale revisions refuse without changing answers.
+  Neither approval nor a changed answer automatically resumes stopped work.
   Public environment commands accept exact-notice approval/disapproval changes
   after unattended start and authenticated signed-feed file import. Rejected
   imports preserve cached evidence and answers; neither operation resumes work.
@@ -78,6 +87,13 @@
   Both repair commands accept `--progress FILE`; a sibling `FILE.cancel`
   cancels preparation before the next progress boundary, including before
   activation. Cancellation does not select the replacement generation.
+  Repair results and offline list/details expose the last activation outcome,
+  previous and replacement generation, error and explicit next recovery action.
+  A refused retry preserves any outstanding interrupted-activation status and
+  its explicit recovery action instead of treating a new plan as recovery.
+  A failed or cancelled replacement build/activation restores the prior selection;
+  retrying a consumed approval requires a newly reviewed plan. Earlier generations
+  and their source/dependency locks remain unchanged.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.
@@ -824,7 +840,7 @@
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
 
-### Development generations from local folders
+### Development generations from local folders or public git
 
 Standalone local-folder and `git+URL[@REF]` pack installs remain available as
 development inputs without a published dependency lock. Their plans report
@@ -847,6 +863,30 @@ dinkster-env --root /absolute/project status
 dinkster-env --root /absolute/project doctor
 dinkster-env --root /absolute/project start --yes
 ```
+
+Each source option also accepts a public HTTPS git URL. No system git program
+is needed. Append `#ref=REF&subdirectory=PATH` to select a branch, tag, full
+commit or GitHub pull request head and a repository subdirectory. Without a ref,
+the repository's default branch is selected. Quote URLs containing `&`.
+For example, with a local engine and a pack from a branch, pull request or fork:
+
+```sh
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=refs/pull/123/head&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/YOUR-ACCOUNT/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+```
+
+Replace the example branch, pull request, fork and package directory with the
+source you want to run. Review the plan, then repeat it with `--approve` and
+`--yes` as above. This explicitly runs unreviewed development code. Private
+repositories, credentials in URLs, non-HTTPS URLs, symlinks, submodules and LFS
+pointers in selected content are refused. Git sources are captured inputs, not
+live folders; live local inputs can be mixed with captured git inputs.
+Ambient git rewrites and TLS settings do not
+apply; a configured HTTP proxy is honored. History records the credential-free
+URL, requested ref, resolved commit, selected subdirectory and content digest.
+Restore uses the retained wheels, not the current remote branch; running develop
+again is an explicit new build and can select a newer commit.
 
 Repeat `--pack-source` for more packs and `--library-source` for more helper
 folders or wheels. Omit library inputs when none are needed. Choose a base variant
@@ -897,8 +937,8 @@ capture; this does not grant registry admission. Missing sources, changed plan i
 API ranges and dependency conflicts refuse rather than inventing versions or
 dropping constraints.
 
-Development generations are built from local folders, not reviewed by the
-registry; dependency ranges resolve at build time. After editing a pack, stop the
+Development generations are built from explicitly selected sources, not reviewed
+by the registry; dependency ranges resolve at build time. After editing a pack, stop the
 engine with `dinkster-env --root /absolute/project stop --yes`, then repeat the
 plan and approved `develop` commands to build a new generation. An ordinary
 channel update refuses a local generation instead of changing its source.

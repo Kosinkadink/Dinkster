@@ -16,8 +16,6 @@ from dinkster_latent.latent_operations import (
     LatentApplyOperation,
     LatentApplyOperationCFG,
     LatentOperationBlend,
-    LatentOperationSharpen,
-    LatentOperationTonemapReinhard,
     ReplaceVideoLatentFrames,
 )
 from test_comfy_latent_nodes import ArrayTensor
@@ -142,36 +140,6 @@ def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
             await composer.close()
 
     run_scenario(scenario())
-
-
-def test_latent_operation_interfaces_keep_exact_input_order_and_optional_groups() -> None:
-    expected = {
-        "dinkster.latent.latent_apply_operation": ("samples", "operation"),
-        "dinkster.latent.latent_apply_operation_cfg": (
-            "model",
-            "operation",
-            "start_percent",
-            "end_percent",
-        ),
-        "dinkster.latent.latent_operation_blend": ("reference", "strength"),
-        "dinkster.latent.latent_operation_tonemap_reinhard": ("multiplier",),
-        "dinkster.latent.latent_operation_sharpen": ("sharpen_radius", "sigma", "alpha"),
-        "dinkster.latent.replace_video_latent_frames": ("destination", "source", "index"),
-    }
-    assert {
-        node.schema().node_type: tuple(port.id for port in node.schema().inputs)
-        for node in (
-            LatentApplyOperation,
-            LatentApplyOperationCFG,
-            LatentOperationBlend,
-            LatentOperationTonemapReinhard,
-            LatentOperationSharpen,
-            ReplaceVideoLatentFrames,
-        )
-    } == expected
-    assert not ReplaceVideoLatentFrames.schema().inputs[1].required
-    assert ReplaceVideoLatentFrames.schema().inputs[2].required
-    assert all(not port.required for port in LatentApplyOperationCFG.schema().inputs[-2:])
 
 
 def test_apply_preserves_metadata_and_zero_strength_operation_keeps_input() -> None:

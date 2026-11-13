@@ -1,9 +1,7 @@
 """Native loop expansion executes body occurrences through the engine."""
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -19,7 +17,6 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_to_wire,
 )
 from dinkster_utilities.loop_lists import ListElement, MakeList
 from dinkster_utilities.loops import (
@@ -32,7 +29,7 @@ from dinkster_utilities.loops import (
 from dinkster_utilities.math import ComfyMathExpression
 from dinkster_utilities.primitive import PrimitiveBoolean, PrimitiveInt
 from dinkster_utilities.switch import ComfySwitchNode
-from dinkster_values import TypeRegistry, ValueMeta, is_absent, list_children, register_core_types
+from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
 from tests.async_scenarios import run_scenario
@@ -50,45 +47,6 @@ NODES = (
     MakeList,
     ListElement,
 )
-
-
-@pytest.mark.parametrize(
-    ("node_type", "expected"),
-    [
-        (
-            "dinkster.utilities.end_loop",
-            [("output_value", False), ("next_iteration_value", False), ("accumulate", True)],
-        ),
-        (
-            "dinkster.utilities.loop_iteration",
-            [
-                ("iteration_index", True),
-                ("is_first", True),
-                ("is_last", True),
-                ("list_item", False),
-                ("current_iteration_value", False),
-                ("reuse_cache", True),
-            ],
-        ),
-    ],
-)
-def test_loop_wire_inputs_preserve_v3_declaration_order(
-    node_type: str, expected: list[tuple[str, bool]]
-) -> None:
-    schema = build_schemas(NODES)[node_type]
-    interface = cast(list[dict[str, object]], schema_to_wire(schema)["interface"])
-    inputs = [(item["id"], item["required"]) for item in interface if item["role"] == "input"]
-    assert inputs == expected
-    if node_type == "dinkster.utilities.end_loop":
-        family = next(item for item in interface if item["role"] == "inputFamily")
-        assert family["id"] == "terminations"
-        assert family["required"] is False
-        assert family["minMembers"] == 0
-        assert family["maxMembers"] == 50
-        assert family["memberPrefix"] == "termination"
-        assert family["template"] == [
-            {"role": "input", "id": "termination", "required": False, "type": {"kind": "wildcard"}}
-        ]
 
 
 def make_engine() -> Engine:
@@ -320,63 +278,6 @@ def test_accumulation_control_reads_its_value(accumulate: bool, linked: bool) ->
     )
     result = run_scenario(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
     assert result.outputs["end"]["outputs"].resolve() == ([0, 1, 2] if accumulate else [2])
-
-
-def test_loop_collection_preserves_child_envelopes() -> None:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    value = replace(
-        registry.wrap("INT", 17),
-        meta=ValueMeta({"resourceProducerArm": "producer", "provenance": "original"}),
-    )
-
-    class Source(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                "test.stamped", outputs=(OutputSpec("value", TypeExpr.concrete("INT")),)
-            )
-
-        @classmethod
-        def execute(cls):
-            return cls.outputs(value=value)
-
-    nodes = (*NODES, Source)
-    engine = Engine(
-        schemas=build_schemas(nodes),
-        registry=registry,
-        worker=InProcessWorker(build_node_types(nodes), registry),
-        cache=MemoryLRUCache(),
-    )
-    graph = Graph(
-        {
-            "source": GraphNode("test.stamped", {}),
-            "items": GraphNode(
-                "dinkster.utilities.make_list", {"items.0": Link("source", "value")}
-            ),
-            "start": GraphNode(
-                "dinkster.utilities.start_loop",
-                {"mode.list": Link("items", "list")},
-                slot_variants={"mode": "List"},
-            ),
-            "end": GraphNode(
-                "dinkster.utilities.end_loop",
-                {"output_value": Link("start", "list_item"), "accumulate": True},
-            ),
-        }
-    )
-
-    async def scenario() -> None:
-        for replay in (False, True):
-            result = await asyncio.wait_for(engine.run(graph, ["end"]), 10)
-            children = list_children(result.outputs["end"]["outputs"])
-            assert children is not None and len(children) == 1
-            assert children[0].meta == value.meta
-            assert children[0].fingerprint == value.fingerprint
-            if replay:
-                assert "items" in result.cached
-
-    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])

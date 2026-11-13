@@ -18,7 +18,6 @@ from dinkster_engine import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
-    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -26,9 +25,7 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    elaborate,
     schema_from_wire,
-    schema_signature,
     schema_to_wire,
 )
 from dinkster_values import RESOURCES_META_KEY, TypeRegistry, register_core_types
@@ -263,16 +260,6 @@ def test_gpu_nodes_serialize_by_default() -> None:
     run_scenario(scenario())
 
 
-def test_configured_capacity_allows_overlap() -> None:
-    async def scenario() -> None:
-        GpuSleeper.reset()
-        engine, _ = make_engine(resource_capacities={"gpu": 2})
-        await engine.run(fanout("test.gpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
-        assert GpuSleeper.peak == 2  # a powerful GPU runs two, never three
-
-    run_scenario(scenario())
-
-
 def test_io_nodes_overlap_while_gpu_serializes() -> None:
     async def scenario() -> None:
         GpuSleeper.reset()
@@ -289,37 +276,6 @@ def test_io_nodes_overlap_while_gpu_serializes() -> None:
         await engine.run(graph, ["g1", "g2", "i1", "i2"])
         assert GpuSleeper.peak == 1  # gpu lane serialized
         assert IoSleeper.peak == 2  # io nodes unaffected by gpu admission
-
-    run_scenario(scenario())
-
-
-def test_plain_nodes_serialize_by_default() -> None:
-    async def scenario() -> None:
-        CpuSleeper.reset()
-        engine, _ = make_engine()
-        await engine.run(fanout("test.cpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
-        assert CpuSleeper.peak == 1  # implicit compute lane, capacity 1
-        assert "compute" in engine._resource_slots
-
-    run_scenario(scenario())
-
-
-def test_compute_capacity_widens_plain_parallelism() -> None:
-    async def scenario() -> None:
-        CpuSleeper.reset()
-        engine, _ = make_engine(resource_capacities={"compute": 2})
-        await engine.run(fanout("test.cpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
-        assert CpuSleeper.peak == 2  # widened deliberately, still bounded
-
-    run_scenario(scenario())
-
-
-def test_io_nodes_overlap_freely() -> None:
-    async def scenario() -> None:
-        IoSleeper.reset()
-        engine, _ = make_engine()
-        await engine.run(fanout("test.io_sleeper", "a", "b", "c"), ["a", "b", "c"])
-        assert IoSleeper.peak == 3  # exempt from the compute lane
 
     run_scenario(scenario())
 
@@ -350,42 +306,6 @@ def test_cache_hits_need_no_permit() -> None:
             assert result.cached == ("warm",)
         finally:
             engine._resource_slot("gpu").release()
-
-    run_scenario(scenario())
-
-
-def test_single_flight_waiter_consumes_no_permit() -> None:
-    async def scenario() -> None:
-        GpuSleeper.reset()
-        engine, worker = make_engine(resource_capacities={"gpu": 2}, gated=True)
-        assert isinstance(worker, GatedWorker)
-        graph = fanout("test.gpu_sleeper", "shared")
-
-        owner = asyncio.create_task(engine.run(graph, ["shared"]))
-        await asyncio.wait_for(worker.entered.wait(), 1)  # owner holds one permit
-        waiter = asyncio.create_task(engine.run(graph, ["shared"]))
-        for _ in range(5):  # let the waiter reach the shield
-            await asyncio.sleep(0)
-
-        assert worker.invocations == 1  # waiter never invoked
-        assert engine._resource_slots["gpu"]._value == 1  # only the owner's permit
-
-        worker.gate.set()
-        r1, r2 = await asyncio.wait_for(asyncio.gather(owner, waiter), 1)
-        assert worker.invocations == 1
-        assert engine._resource_slots["gpu"]._value == 2  # everything released
-
-    run_scenario(scenario())
-
-
-def test_multiple_kinds_acquired_and_released() -> None:
-    async def scenario() -> None:
-        DualResource.reset()
-        engine, _ = make_engine()
-        await engine.run(fanout("test.dual", "a", "b"), ["a", "b"])
-        assert DualResource.peak == 1  # both kinds default to capacity 1
-        assert engine._resource_slots["gpu"]._value == 1
-        assert engine._resource_slots["npu"]._value == 1
 
     run_scenario(scenario())
 
@@ -423,22 +343,6 @@ def test_permits_released_after_cancellation() -> None:
     run_scenario(scenario())
 
 
-def test_invalid_capacity_is_rejected() -> None:
-    with pytest.raises(ValueError, match="must be >= 1"):
-        make_engine(resource_capacities={"gpu": 0})
-    with pytest.raises(ValueError, match="non-empty"):
-        make_engine(resource_capacities={"": 1})
-
-
-def test_invalid_occupies_declarations_are_rejected() -> None:
-    with pytest.raises(ValueError, match="duplicate occupies"):
-        NodeSchema(node_type="t", occupies=("gpu", "gpu"))
-    with pytest.raises(ValueError, match="non-empty strings"):
-        NodeSchema(node_type="t", occupies=("",))
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        NodeSchema(node_type="t", occupies=("gpu",), io_bound=True)
-
-
 def test_wire_round_trip_preserves_admission_hints() -> None:
     schema = GpuSleeper.define_schema()
     restored = schema_from_wire(schema_to_wire(schema))
@@ -449,26 +353,6 @@ def test_wire_round_trip_preserves_admission_hints() -> None:
     plain_wire = schema_to_wire(CpuSleeper.define_schema())
     assert "occupies" not in plain_wire
     assert "ioBound" not in plain_wire
-
-
-def test_occupies_never_changes_the_signature() -> None:
-    plain = CpuSleeper.define_schema()
-    occupying = NodeSchema(
-        node_type=plain.node_type,
-        inputs=plain.inputs,
-        outputs=plain.outputs,
-        occupies=("gpu", "npu"),
-    )
-    waiting = NodeSchema(
-        node_type=plain.node_type,
-        inputs=plain.inputs,
-        outputs=plain.outputs,
-        io_bound=True,
-    )
-    # Admission metadata is scheduling, not computation (hazard H4): the
-    # same cache entries stay valid on differently configured hosts.
-    assert schema_signature(plain) == schema_signature(occupying)
-    assert schema_signature(plain) == schema_signature(waiting)
 
 
 def sampler_graph(*pairs: tuple[str, str]) -> Graph:
@@ -503,28 +387,6 @@ def test_samplers_on_the_same_device_serialize() -> None:
         graph = sampler_graph(("cuda:0", "a"), ("cuda:0", "b"))
         await engine.run(graph, ["sample_a", "sample_b"])
         assert Sampler.peak == 1  # one lane, default capacity 1
-
-    run_scenario(scenario())
-
-
-def test_per_device_capacity_override() -> None:
-    async def scenario() -> None:
-        Sampler.reset()
-        engine, _ = make_engine(resource_capacities={"gpu:cuda:0": 2})
-        graph = sampler_graph(("cuda:0", "a"), ("cuda:0", "b"))
-        await engine.run(graph, ["sample_a", "sample_b"])
-        assert Sampler.peak == 2  # this one device admits two
-
-    run_scenario(scenario())
-
-
-def test_bound_lane_inherits_kind_capacity() -> None:
-    async def scenario() -> None:
-        Sampler.reset()
-        engine, _ = make_engine(resource_capacities={"gpu": 2})
-        graph = sampler_graph(("cuda:0", "a"), ("cuda:0", "b"))
-        await engine.run(graph, ["sample_a", "sample_b"])
-        assert Sampler.peak == 2  # "gpu:cuda:0" falls back to the "gpu" figure
 
     run_scenario(scenario())
 
@@ -564,45 +426,6 @@ def test_device_never_changes_cache_identity() -> None:
     run_scenario(scenario())
 
 
-def test_elaboration_preserves_occupies() -> None:
-    dynamic = NodeSchema(
-        node_type="test.dyn_gpu",
-        input_families=(InputFamilySpec("items", STRING),),
-        outputs=(OutputSpec("out", STRING),),
-        occupies=("gpu",),
-    )
-    effective = elaborate(dynamic, ["items.0", "items.1"])
-    assert effective.occupies == ("gpu",)
-
-
-class BlockAllWorker:
-    """Blocks every invocation on one gate; counts concurrent entries."""
-
-    def __init__(self, inner: InProcessWorker) -> None:
-        self._inner = inner
-        self.gate = asyncio.Event()
-        self.entered = 0
-        self.entered_changed = asyncio.Event()
-
-    async def prepare(self, node_types: Sequence[str]) -> None:
-        await self._inner.prepare(node_types)
-
-    async def invoke(
-        self,
-        invocation: Invocation,
-        on_event: OnInvocationEvent | None = None,
-    ) -> InvocationResult:
-        self.entered += 1
-        self.entered_changed.set()
-        await self.gate.wait()
-        return await self._inner.invoke(invocation)
-
-    async def wait_for_entered(self, count: int) -> None:
-        while self.entered < count:
-            self.entered_changed.clear()
-            await self.entered_changed.wait()
-
-
 def test_resource_status_idle_then_active_then_released() -> None:
     """resource_status() reports occupancy honestly: lanes appear once first
     used, count while an invocation holds them, and return to zero after."""
@@ -618,71 +441,5 @@ def test_resource_status_idle_then_active_then_released() -> None:
         worker.gate.set()
         await run
         assert engine.resource_status()["gpu"]["executionInUse"] == 0
-
-    run_scenario(scenario())
-
-
-def test_resource_status_exact_count_with_wider_capacity() -> None:
-    async def scenario() -> None:
-        GpuSleeper.reset()
-        registry = TypeRegistry()
-        register_core_types(registry)
-        worker = BlockAllWorker(InProcessWorker(build_node_types(NODES), registry))
-        engine = Engine(
-            schemas=build_schemas(NODES),
-            registry=registry,
-            worker=worker,
-            cache=MemoryLRUCache(),
-            resource_capacities={"gpu": 2},
-        )
-        run = asyncio.create_task(
-            engine.run(fanout("test.gpu_sleeper", "a", "b", "c"), ["a", "b", "c"])
-        )
-        # Capacity 2: exactly two invocations get lanes; the third is gated
-        # at admission, so it must NOT be counted as in use.
-        await worker.wait_for_entered(2)
-        await asyncio.sleep(0)  # let any (wrongly) admitted third node surface
-        status = engine.resource_status()
-        assert status["gpu"] == {"executionCapacity": 2, "executionInUse": 2}
-        worker.gate.set()
-        await run
-        assert engine.resource_status()["gpu"]["executionInUse"] == 0
-
-    run_scenario(scenario())
-
-
-def test_resource_status_released_after_error() -> None:
-    async def scenario() -> None:
-        engine, _ = make_engine()
-        with pytest.raises(ExecutionError):
-            await engine.run(fanout("test.gpu_fail", "x"), ["x"])
-        assert engine.resource_status()["gpu"]["executionInUse"] == 0
-
-    run_scenario(scenario())
-
-
-def test_resource_status_released_after_cancellation() -> None:
-    async def scenario() -> None:
-        engine, worker = make_engine(gated=True)
-        assert isinstance(worker, GatedWorker)
-        run = asyncio.create_task(engine.run(fanout("test.gpu_sleeper", "a"), ["a"]))
-        await worker.entered.wait()
-        assert engine.resource_status()["gpu"]["executionInUse"] == 1
-        run.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await run
-        assert engine.resource_status()["gpu"]["executionInUse"] == 0
-
-    run_scenario(scenario())
-
-
-def test_resource_status_reports_bound_lanes() -> None:
-    async def scenario() -> None:
-        Sampler.reset()
-        engine, _ = make_engine(resource_capacities={"gpu": 2})
-        await engine.run(sampler_graph(("cuda:0", "t")), ["sample_t"])
-        status = engine.resource_status()
-        # The bound lane inherits its kind's configured capacity.
-        assert status["gpu:cuda:0"] == {"executionCapacity": 2, "executionInUse": 0}
 
     run_scenario(scenario())

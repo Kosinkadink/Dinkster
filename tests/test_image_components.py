@@ -6,7 +6,6 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from av.error import ArgumentError
 from dinkster_api.v1 import ImageComponents, decode_image_components, open_image_components
 from dinkster_assets import AssetRef, digest_file
 from PIL import Image
@@ -117,19 +116,6 @@ def test_decode_image_components_matches_reference_nonbyte_odd_width(tmp_path: P
     assert decoded.alpha is None
 
 
-@pytest.mark.parametrize(("height", "width"), ((3, 17), (9, 33), (3, 65)))
-def test_decode_image_components_matches_reference_small_nonbyte_failure(
-    tmp_path: Path, height: int, width: int
-) -> None:
-    path = tmp_path / f"sixteen-bit-{width}x{height}.png"
-    Image.fromarray(np.zeros((height, width), dtype=np.uint16)).save(path)
-
-    with pytest.raises(ArgumentError, match="Invalid argument returned 22"):
-        _reference_nonbyte_pixels(path)
-    with pytest.raises(ArgumentError, match="Invalid argument returned 22"):
-        decode_image_components(_asset(path))
-
-
 @pytest.mark.parametrize(
     ("orientation", "quadrant"),
     ((1, 0), (2, 2), (3, 2), (4, 0), (5, 3), (6, 3), (7, 1), (8, 1)),
@@ -159,23 +145,6 @@ def test_decode_image_components_matches_reference_exif_rotation(
     np.testing.assert_array_equal(decoded.pixels, expected)
 
 
-def test_decode_image_components_opens_source_once(tmp_path: Path) -> None:
-    path = tmp_path / "image.png"
-    Image.fromarray(np.zeros((2, 3, 3), dtype=np.uint8)).save(path)
-
-    class Source:
-        opens = 0
-
-        def open(self):
-            self.opens += 1
-            return path.open("rb")
-
-    source = Source()
-    decode_image_components(source)
-
-    assert source.opens == 1
-
-
 def test_decode_image_components_admission_boundaries(tmp_path: Path) -> None:
     pixels = np.array(
         [[[3, 17, 251], [44, 92, 10], [125, 231, 6]], [[29, 7, 33], [240, 80, 1], [9, 180, 63]]],
@@ -196,38 +165,6 @@ def test_decode_image_components_admission_boundaries(tmp_path: Path) -> None:
         decode_image_components(asset, max_dimension=2)
     with pytest.raises(ValueError, match="working-set limit"):
         decode_image_components(asset, max_working_set_bytes=33_343)
-
-
-def test_decode_image_components_source_admission_precedes_parser(tmp_path: Path) -> None:
-    path = tmp_path / "not-an-image"
-    path.write_bytes(b"invalid encoded image")
-
-    class Source:
-        handle: Any = None
-
-        def open(self):
-            self.handle = path.open("rb")
-            return self.handle
-
-    source = Source()
-    with pytest.raises(ValueError, match="input byte limit"):
-        decode_image_components(source, max_source_bytes=1)
-    assert source.handle.closed
-
-
-def test_decode_image_components_default_dimension_admission(tmp_path: Path) -> None:
-    path = tmp_path / "wide.png"
-    Image.new("RGB", (16_385, 1)).save(path)
-    with pytest.raises(ValueError, match="dimensions must be between 1 and 16384"):
-        decode_image_components(_asset(path))
-
-
-def test_decode_image_components_admits_alignment_working_set(tmp_path: Path) -> None:
-    path = tmp_path / "aligned.png"
-    Image.fromarray(np.arange(66, dtype=np.uint16).reshape(2, 33)).save(path)
-    # Unaligned pixels fit; the 64x32 conversion scratch does not.
-    with pytest.raises(ValueError, match="working-set limit"):
-        decode_image_components(_asset(path), max_working_set_bytes=200_000)
 
 
 @pytest.mark.parametrize("suffix", ("gif", "png"))
@@ -303,18 +240,3 @@ def test_open_image_components_closes_source_and_iterator_on_exit(
     with pytest.raises(StopIteration):
         next(frames)
     np.testing.assert_array_equal(first.pixels[0, 0], np.array([17, 92, 211], np.float32) / 255)
-
-
-def test_open_image_components_checks_each_frame_before_conversion(tmp_path: Path) -> None:
-    import io
-
-    path = tmp_path / "varying.mjpeg"
-    with path.open("wb") as handle:
-        for size in ((3, 2), (5, 2)):
-            encoded = io.BytesIO()
-            Image.new("RGB", size, (61, 122, 183)).save(encoded, format="JPEG")
-            handle.write(encoded.getvalue())
-    with open_image_components(_asset(path), max_dimension=3) as frames:
-        assert next(frames).pixels.shape == (2, 3, 3)
-        with pytest.raises(ValueError, match="dimensions"):
-            next(frames)

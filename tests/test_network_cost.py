@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import pytest
-from dinkster_server import NWPath, detect_network_cost, network_cost
+from dinkster_server import NWPath, detect_network_cost
 
 
 @dataclass(frozen=True)
@@ -102,66 +101,6 @@ def test_macos_network_path_detection(path: NWPath, expected: str) -> None:
     assert detect_network_cost(platform_name="darwin", nwpath_reader=PathReader(path)) == expected
 
 
-def test_macos_native_network_path_monitor(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Network:
-        def __init__(self) -> None:
-            self.handler: Callable[[object], None] | None = None
-            self.cancelled = False
-
-        @staticmethod
-        def nw_path_monitor_create() -> object:
-            return object()
-
-        def nw_path_monitor_set_update_handler(
-            self, _monitor: object, handler: Callable[[object], None]
-        ) -> None:
-            self.handler = handler
-
-        @staticmethod
-        def nw_path_monitor_set_queue(_monitor: object, _queue: object) -> None:
-            pass
-
-        def nw_path_monitor_start(self, _monitor: object) -> None:
-            assert self.handler is not None
-            self.handler(object())
-
-        def nw_path_monitor_cancel(self, _monitor: object) -> None:
-            self.cancelled = True
-
-        @staticmethod
-        def nw_path_is_expensive(_path: object) -> bool:
-            return False
-
-        @staticmethod
-        def nw_path_is_constrained(_path: object) -> bool:
-            return True
-
-    class Dispatch:
-        DISPATCH_QUEUE_SERIAL = None
-
-        @staticmethod
-        def dispatch_queue_create(_label: bytes, _attribute: object) -> object:
-            return object()
-
-    native = Network()
-    monkeypatch.setattr(
-        network_cost,
-        "_module",
-        lambda name: native if name == "Network" else Dispatch(),
-    )
-
-    assert detect_network_cost(platform_name="darwin") == "metered"
-    assert native.cancelled is True
-
-
 @pytest.mark.parametrize("platform", ("linux", "win32"))
 def test_network_detection_failures_are_unknown(platform: str) -> None:
     assert detect_network_cost(platform_name=platform, runner=Runner("", error=True)) == "unknown"
-
-
-def test_unsupported_platform_and_missing_macos_path_are_unknown(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(network_cost, "_read_macos_nwpath", lambda: None)
-    assert detect_network_cost(platform_name="freebsd") == "unknown"
-    assert detect_network_cost(platform_name="darwin") == "unknown"

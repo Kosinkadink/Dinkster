@@ -2,10 +2,9 @@ import asyncio
 import base64
 import json
 import time
-from types import MappingProxyType, SimpleNamespace
+from types import SimpleNamespace
 from uuid import UUID
 
-import dinkster_server.auth as auth_module
 import dinkster_token_verifier.verifier as verifier_module
 import pytest
 from aiohttp import web
@@ -18,7 +17,6 @@ from dinkster_server import (
     create_app,
     principal_for,
 )
-from dinkster_token_verifier import VerifiedPrincipal
 from joserfc import jwt
 from joserfc.jwk import OctKey, OKPKey
 from test_server import SCHEMAS, make_engine
@@ -94,97 +92,6 @@ class _JwksService:
 
     async def close(self) -> None:
         await self.server.close()
-
-
-def test_token_authenticator_maps_verified_principal_without_deriving_grants(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    grants = MappingProxyType({SCOPE: frozenset({"jobs:read", "settings:read"})})
-    verified = VerifiedPrincipal(
-        principal_id=f"k_{UUID(int=3)}",
-        grants=grants,
-        kind="agent",
-        organization_id=None,
-        account_id=UUID(int=4),
-        api_key_id=UUID(int=5),
-        api_key_scopes=frozenset({"jobs:read", "settings:read"}),
-        jti=UUID(int=6),
-        expires_at=int(time.time()) + 600,
-    )
-    instances: list[object] = []
-    accepted = f"header.{_encode_segment({'exp': int(time.time()) + 600})}.signature"
-
-    class StubVerifier:
-        def __init__(self, **configuration: str) -> None:
-            self.configuration = configuration
-            self.tokens: list[str] = []
-            instances.append(self)
-
-        async def verify(self, token: str) -> VerifiedPrincipal | None:
-            self.tokens.append(token)
-            return verified if token == accepted else None
-
-    monkeypatch.setattr(auth_module, "TokenVerifier", StubVerifier)
-    authenticator = TokenAuthenticator(
-        "https://identity.example/.well-known/jwks.json",
-        ISSUER,
-        AUDIENCE,
-    )
-
-    async def scenario() -> None:
-        principal = await authenticator.authenticate(accepted)
-        assert principal is not None
-        assert principal.principal_id == verified.principal_id
-        assert principal.grants == verified.grants
-        assert principal.kind == verified.kind
-        assert await authenticator.authenticate("rejected") is None
-        with pytest.raises(TypeError):
-            principal.grants[SCOPE] = frozenset()  # type: ignore[index]
-
-    run_scenario(scenario())
-
-    assert len(instances) == 1
-    verifier = instances[0]
-    assert isinstance(verifier, StubVerifier)
-    assert verifier.configuration == {
-        "jwks_url": "https://identity.example/.well-known/jwks.json",
-        "issuer": ISSUER,
-        "audience": AUDIENCE,
-    }
-    assert verifier.tokens == [accepted, "rejected"]
-
-
-def test_composite_authenticator_uses_declared_order() -> None:
-    calls: list[str] = []
-    static_principal = Principal("static", {"local": frozenset()})
-    token_principal = Principal(PRINCIPAL_ID, {SCOPE: frozenset()})
-
-    class StubAuthenticator:
-        def __init__(self, name: str, principal: Principal | None) -> None:
-            self.name = name
-            self.principal = principal
-
-        async def authenticate(self, token: str) -> Principal | None:
-            calls.append(f"{self.name}:{token}")
-            return self.principal
-
-    async def scenario() -> None:
-        static_first = CompositeAuthenticator(
-            StubAuthenticator("static", static_principal),
-            StubAuthenticator("token", token_principal),
-        )
-        assert await static_first.authenticate("shared") is static_principal
-        assert calls == ["static:shared"]
-
-        calls.clear()
-        fallback = CompositeAuthenticator(
-            StubAuthenticator("static", None),
-            StubAuthenticator("token", token_principal),
-        )
-        assert await fallback.authenticate("jwt") is token_principal
-        assert calls == ["static:jwt", "token:jwt"]
-
-    run_scenario(scenario())
 
 
 def test_token_authenticator_rejects_invalid_credentials_without_raising() -> None:

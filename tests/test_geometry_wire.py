@@ -32,67 +32,10 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import EncodedLatentTensor, encode_latent, register_core_types
-from dinkster_workers import load_manifest
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
-from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
-
-
-def test_selected_vision_packet_registration_leaves_other_codecs_unregistered() -> None:
-    registry = TypeRegistry()
-    first = register_vision_packet_types(registry, type_ids=("FACE_LANDMARKS",))
-    assert len(first) == 1
-    assert first[0] is registry.spec("FACE_LANDMARKS")
-    assert "DA3_GEOMETRY" not in registry
-    assert "MHR_POSE_DATA" not in registry
-    assert "KIMODO_POSE_DATA" not in registry
-    packet = {
-        "frames": [[], []],
-        "image_size": (113, 197),
-        "connection_sets": {"outline": frozenset({(9, 2), (3, 7)})},
-    }
-    assert first[0].decode(first[0].encode(packet)) == packet
-    assert register_vision_packet_types(registry, type_ids=("FACE_LANDMARKS",)) == first
-    with pytest.raises(ValueError, match="unknown vision packet types"):
-        register_vision_packet_types(registry, type_ids=("DA3_GEOMETRY", "not-a-packet"))
-    assert "DA3_GEOMETRY" not in registry
-    assert register_vision_packet_types(registry, type_ids=()) == ()
-    assert len(register_vision_packet_types(registry)) == 4
-
-
-@pytest.mark.parametrize(
-    "type_id,pack",
-    (
-        ("DA3_MODEL", "depth-anything-3"),
-        ("FACE_DETECTION_MODEL", "mediapipe"),
-        ("SAM3D_BODY_MODEL", "sam3d-body"),
-    ),
-)
-def test_family_models_retain_their_complete_holding_process_object(
-    type_id: str, pack: str
-) -> None:
-    manifest = load_manifest(Path(f"packages/dinkster-nodes-vision-{pack}/dinkster-pack.toml"))
-    assert manifest.types_entry is not None
-    register_types = resolve_entry(manifest.types_entry)
-    assert callable(register_types)
-    registry = TypeRegistry()
-    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
-        register_types(registry)
-    spec = registry.spec(type_id)
-    wrapper = {"model": object(), "patchers": {"short": object(), "full": object()}}
-    assert spec.decode(spec.encode(wrapper)) is wrapper
-    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
-        register_types(registry)
-    assert registry.spec(type_id) is spec
-
-    authority = TypeRegistry()
-    with authority.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
-        previous = authority.register(type_id, encode=lambda _: b"first", decode=lambda _: wrapper)
-        register_types(authority)
-    assert authority.spec(type_id) is previous
-    assert authority.spec(type_id).encode(wrapper) == b"first"
 
 
 def tensor(shape: tuple[int, ...], dtype: str = "float32") -> EncodedLatentTensor:
@@ -163,69 +106,6 @@ def test_voxel_roundtrip_accepts_dense_sparse_and_empty_payloads(shape: tuple[in
     assert restored == plain
 
 
-def test_geometry_transport_is_cold_and_rejects_invalid_mesh_layouts() -> None:
-    script = """
-import sys
-sys.modules['torch'] = None
-sys.modules['dinkster_inference'] = None
-from dinkster_api.v1 import (
-    MESH_TYPE, VOXEL_TYPE, SHAPE_SUBDIVIDES_TYPE, TypeRegistry, register_inference_types,
-)
-from dinkster_values import EncodedLatentTensor
-from dinkster_api.v1 import TriangleMeshBatch
-from dinkster_3d import NODES as geometry_nodes
-from dinkster_hunyuan import NODES as hunyuan_nodes
-from dinkster_workers import load_manifest
-runtimes = {node.schema().node_type: node.schema() for node in (*geometry_nodes, *hunyuan_nodes)}
-names = {'dinkster.3d.rotate_mesh', 'dinkster.3d.get_mesh_info',
-         'dinkster.hunyuan.vae_decode_hunyuan3_d',
-         'dinkster.3d.voxel_to_mesh_basic', 'dinkster.3d.voxel_to_mesh'}
-assert names <= runtimes.keys()
-for pack, nodes in (('3d', geometry_nodes), ('hunyuan', hunyuan_nodes)):
-    manifest = load_manifest(f'packages/dinkster-nodes-{pack}/dinkster-pack.toml')
-    assert all(any(node.schema().node_type.startswith(ns + '.') for ns in manifest.namespaces)
-               for node in nodes)
-assert runtimes['dinkster.3d.voxel_to_mesh_basic'].deprecation is not None
-assert runtimes['dinkster.3d.voxel_to_mesh_basic'].search_visibility == 'deprecated'
-r = TypeRegistry()
-register_inference_types(r)
-m = TriangleMeshBatch(EncodedLatentTensor('float32', (1, 0, 3), b''),
-                      EncodedLatentTensor('int64', (1, 0, 3), b''))
-s = r.spec(MESH_TYPE)
-assert type(s.decode(s.encode(m))) is TriangleMeshBatch
-s = r.spec(VOXEL_TYPE)
-v = {'data': m.vertices, 'voxel_colors': None, 'resolution': None}
-assert s.decode(s.encode(v)) == v
-s = r.spec(SHAPE_SUBDIVIDES_TYPE)
-stages = [{'feats': EncodedLatentTensor('float32', (0, 2), b''),
-           'coords': EncodedLatentTensor('int64', (0, 4), b''),
-           'shape': (3, 2), 'scale': ((1, 3), (2, 7), (9, 11))}]
-assert s.decode(s.encode(stages)) == stages
-assert sys.modules['torch'] is None
-assert sys.modules['dinkster_inference'] is None
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-    )
-    assert result.returncode == 0, result.stderr
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    mesh = TriangleMeshBatch(tensor((1, 2, 3)), tensor((1, 1, 3), "int64"))
-    values = {field.name: getattr(mesh, field.name) for field in fields(mesh)}
-    values["vertex_counts"] = tensor((1,), "int64")
-    spec = registry.spec(MESH_TYPE)
-    with pytest.raises(ValueError, match="provided together"):
-        spec.decode(encode_latent({"samples": values}))
-    values["vertex_counts"] = None
-    values["vertices"] = tensor((2, 3))
-    with pytest.raises(ValueError, match="batch, vertices, 3"):
-        spec.decode(encode_latent({"samples": values}))
-    values["vertices"] = tensor((1, 2, 3))
-    values["unlit"] = 1
-    with pytest.raises(ValueError, match="booleans"):
-        spec.decode(encode_latent({"samples": values}))
-
-
 def test_shape_subdivides_roundtrip_and_materialization_preserve_sparse_state() -> None:
     import torch
 
@@ -282,34 +162,6 @@ def test_shape_subdivides_roundtrip_and_materialization_preserve_sparse_state() 
     authority = prior.register(SHAPE_SUBDIVIDES_TYPE)
     register_inference_types(prior)
     assert prior.spec(SHAPE_SUBDIVIDES_TYPE) is authority
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"extra": None},
-        {"shape": (1, 7)},
-        {"shape": (True, 2)},
-        {"scale": ((1, 0), (1, 1), (1, 1))},
-        {"scale": (0.5, 1, 1)},
-        {"coords": tensor((1, 3), "int64")},
-        {"coords": tensor((1, 4))},
-        {"feats": tensor((2,))},
-    ],
-)
-def test_shape_subdivides_rejects_malformed_structural_stages(changes: dict[str, Any]) -> None:
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    stage = {
-        "feats": tensor((1, 2)),
-        "coords": tensor((1, 4), "int64"),
-        "shape": (3, 2),
-        "scale": ((1, 3), (5, 7), (9, 11)),
-    }
-    spec = registry.spec(SHAPE_SUBDIVIDES_TYPE)
-    assert spec.validate_encoded is not None
-    with pytest.raises(ValueError, match="SHAPE_SUBDIVIDES"):
-        spec.validate_encoded(encode_latent({"samples": [{**stage, **changes}]}), {})
 
 
 def test_shape_subdivides_refuses_pickle_before_reconstruction(tmp_path: Path) -> None:

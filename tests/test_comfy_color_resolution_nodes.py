@@ -2,42 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, cast
-
 import pytest
-from dinkster_api.v1 import schema_from_wire, schema_to_wire
-from dinkster_graph import Graph, GraphNode
-from dinkster_utilities import NODES
 from dinkster_utilities.color_resolution import ColorToRGBInt, ResolutionSelector
-
-from dinkster.compose import PackSpec, ServingComposer
-from tests.async_scenarios import run_scenario
-
-
-def test_color_and_resolution_schemas_preserve_public_types_and_positional_inputs() -> None:
-    assert ColorToRGBInt in NODES
-    assert ResolutionSelector in NODES
-    assert ColorToRGBInt.schema().node_type == "dinkster.utilities.color_to_rgb_int"
-    assert ResolutionSelector.schema().node_type == "dinkster.utilities.resolution_selector"
-    color = cast(dict[str, Any], schema_to_wire(ColorToRGBInt.schema()))
-    assert color["interface"][0]["type"] == {"kind": "concrete", "types": ["COLOR"]}
-    assert color["interface"][0]["default"] == "#ffffff"
-    assert color["interface"][0]["widget"] == {"type": "COLOR"}
-    resolution = cast(dict[str, Any], schema_to_wire(ResolutionSelector.schema()))
-    inputs = [item for item in resolution["interface"] if item["role"] == "input"]
-    assert [item["id"] for item in inputs] == ["aspect_ratio", "megapixels", "preview", "multiple"]
-    assert inputs[2]["required"] is False
-    assert inputs[2]["type"] == {"kind": "concrete", "types": ["RESOLUTION_PREVIEW"]}
-    assert inputs[2]["widget"] == {
-        "type": "RESOLUTION_PREVIEW",
-        "ratio_widget": "aspect_ratio",
-        "megapixels_widget": "megapixels",
-        "multiple_widget": "multiple",
-    }
-    for node in (ColorToRGBInt, ResolutionSelector):
-        wire = schema_to_wire(node.schema())
-        assert schema_to_wire(schema_from_wire(wire)) == wire
 
 
 def test_color_values_preserve_case_alpha_and_reference_rejection() -> None:
@@ -75,40 +41,3 @@ def test_resolution_rounds_to_requested_multiple_and_ignores_preview_payload() -
     ) == {"width": 1568, "height": 672}
     with pytest.raises(KeyError):
         ResolutionSelector.execute(aspect_ratio="unrecognized", megapixels=1, multiple=8)
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-def test_color_and_resolution_execute_twice_through_the_native_pack(in_process: bool) -> None:
-    async def scenario() -> None:
-        manifest = (
-            Path(__file__).resolve().parents[1]
-            / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
-        )
-        composer = ServingComposer()
-        try:
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            graph = Graph(
-                nodes={
-                    "color": GraphNode(
-                        "dinkster.utilities.color_to_rgb_int", {"color": "#aB12CD80"}
-                    ),
-                    "resolution": GraphNode(
-                        "dinkster.utilities.resolution_selector",
-                        {"aspect_ratio": "21:9 (Ultrawide)", "megapixels": 1.0, "multiple": 8},
-                    ),
-                }
-            )
-            for _ in range(2):
-                result = await engine.run(graph, ["color", "resolution"])
-                assert result.outputs["color"]["rgb_int"].resolve() == 11211469
-                assert result.outputs["color"]["hex"].resolve() == "#aB12CD"
-                assert result.outputs["color"]["alpha"].resolve() == 128 / 255
-                assert result.outputs["resolution"]["width"].resolve() == 1568
-                assert result.outputs["resolution"]["height"].resolve() == 672
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())

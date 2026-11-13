@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,10 +19,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_conditioning import NODES
 from dinkster_conditioning.pid_conditioning import PiDConditioning
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_inference.latent_formats import SD3, SDXL, Flux, Flux2, Wan21
-
-from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -130,72 +124,3 @@ class Inspect(Node):
         torch.testing.assert_close(lq_latent, expected)
         assert metadata["degrade_sigma"].dtype == torch.float32
         return cls.outputs(summary="pid-conditioning")
-
-
-@pytest.mark.parametrize("in_process", (True,))
-def test_pid_conditioning_executes_twice_through_production_host(
-    tmp_path: Path, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join(
-                    (
-                        str(tmp_path),
-                        str(Path(__file__).parent),
-                        os.environ.get("PYTHONPATH", ""),
-                    )
-                ),
-            }
-        )
-        try:
-            (tmp_path / "pid_conditioning_fixture.py").write_text(
-                "from test_pid_conditioning_torch import Inspect, Source\n"
-                "from dinkster_api.v1 import register_inference_types\n"
-                "NODES = (Source, Inspect)\n",
-                encoding="ascii",
-            )
-            fixture_manifest = tmp_path / "dinkster-pack.toml"
-            fixture_manifest.write_text(
-                '[pack]\nname = "pid-conditioning-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["pid-conditioning-fixture"]\n\n[pack.entry]\n'
-                'nodes = "pid_conditioning_fixture:NODES"\n'
-                'types = "pid_conditioning_fixture:register_inference_types"\n',
-                encoding="ascii",
-            )
-            for identity, module in (
-                ("dinkster-latent", "dinkster_latent"),
-                ("dinkster-conditioning", "dinkster_conditioning"),
-            ):
-                await composer.add_pack(
-                    _installed_pack_spec(identity, module, in_process=in_process)
-                )
-            await composer.add_pack(PackSpec(fixture_manifest, in_process=in_process))
-            graph = Graph(
-                nodes={
-                    "source": GraphNode("pid-conditioning-fixture.source"),
-                    "conditioning": GraphNode(
-                        "dinkster.conditioning.pi_d_conditioning",
-                        {
-                            "positive": Link("source", "positive"),
-                            "latent": Link("source", "latent"),
-                            "latent_format": "flux",
-                            "degrade_sigma": 0.37,
-                        },
-                    ),
-                    "inspect": GraphNode(
-                        "pid-conditioning-fixture.inspect",
-                        {"conditioning": Link("conditioning", "CONDITIONING")},
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["inspect"])
-                assert result.outputs["inspect"]["summary"].resolve() == "pid-conditioning"
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

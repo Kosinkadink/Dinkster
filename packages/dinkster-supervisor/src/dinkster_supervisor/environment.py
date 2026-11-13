@@ -96,6 +96,7 @@ from .environment_stores import (
 from .environment_tools import acquire_tools
 from .environment_transactions import (
     activate,
+    activation_status,
     begin_activation,
     begin_setup,
     next_generation,
@@ -500,6 +501,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 args.source,
                 tuple(args.pack_source),
                 tuple(args.library_source),
+                git_origins=getattr(args, "git_origins", None),
                 live_engine=args.live_engine,
                 live_packs=tuple(args.live_pack),
                 live_libraries=tuple(args.live_library),
@@ -520,8 +522,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
             local["development"] = development
             result["development"] = development
+            approval_inputs = {
+                **local,
+                "development": {
+                    **development,
+                    "sources": [
+                        {**row, "path": row["git"]} if "git" in row else row
+                        for row in development["sources"]
+                    ],
+                },
+            }
             approval = (
-                "sha256:" + hashlib.sha256(json.dumps(local, sort_keys=True).encode()).hexdigest()
+                "sha256:"
+                + hashlib.sha256(json.dumps(approval_inputs, sort_keys=True).encode()).hexdigest()
             )
             result["sourceApproval"] = approval
             if args.approve is not None and args.approve != approval:
@@ -1486,6 +1499,7 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
             or (args.generation is None and read_current(args.root) != number)
         ):
             raise EnvironmentError("selected software changed during security inspection")
+        report["recovery"] = activation_status(args.root)
         result.update(current=read_current(args.root), security=report)
         return 0
     if args.security_action == "policy":
@@ -1632,13 +1646,15 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
-    develop = commands.add_parser("develop", help="capture and build explicit local sources")
-    develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
-    develop.add_argument("--pack-source", type=Path, action="append", default=[])
+    develop = commands.add_parser(
+        "develop", help="capture and build explicit local or public git sources"
+    )
+    develop.add_argument("--source", required=True, help="engine folder or HTTPS git URL")
+    develop.add_argument("--pack-source", action="append", default=[])
     develop.add_argument(
         "--contributor", action="store_true", help="run the live engine with development tools"
     )
-    develop.add_argument("--library-source", type=Path, action="append", default=[])
+    develop.add_argument("--library-source", action="append", default=[])
     develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
     develop.add_argument(
         "--live-pack",
@@ -1826,7 +1842,12 @@ def run(args: argparse.Namespace) -> int:
             code = 0
         elif args.operation == "doctor" and args.repair:
             code = _repair(args, result)
-        elif args.operation in {"setup", "update", "develop"}:
+        elif args.operation == "develop":
+            from .environment_development import acquired_development_sources
+
+            with acquired_development_sources(args) as selected:
+                code = _install(selected, result)
+        elif args.operation in {"setup", "update"}:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
@@ -1847,6 +1868,26 @@ def run(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
+    if args.operation == "security" and args.security_action in {"fix-one", "fix-all"}:
+        try:
+            result["current"] = read_current(args.root)
+            result["recovery"] = recovery = activation_status(args.root)
+            if (
+                code != 0
+                and recovery["state"] != "interrupted"
+                and recovery.get("error") != result.get("error")
+            ):
+                result["recovery"] = {
+                    "state": "cancelled"
+                    if result["error"] == "pack preparation cancelled"
+                    else "refused",
+                    "current": result["current"],
+                    "error": result["error"],
+                    "action": "Selection is unchanged; inspect the error and review a new plan.",
+                }
+        except (OSError, ValueError) as exc:
+            code = 1
+            result.update(status="error", error=str(exc))
     if (
         code == 0
         and result["status"] == "applied"
@@ -1894,6 +1935,9 @@ def run(args: argparse.Namespace) -> int:
             print(step)
         for change in cast("list[str]", result.get("changes", [])):
             print(change)
+        if "recovery" in result:
+            recovery = cast("dict[str, object]", result["recovery"])
+            print(f"Recovery: {recovery['state']}. {recovery['action']}")
         if "error" in result:
             print(result["error"], file=sys.stderr)
         if "url" in result:

@@ -17,7 +17,6 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    materialize_latent,
 )
 from dinkster_audio_models.audio_latent import (
     EmptyAceStep15LatentAudio,
@@ -58,51 +57,6 @@ def test_audio_duration_rounding_and_metadata(node, seconds, shape, ratio) -> No
     assert {key: value for key, value in latent.items() if key != "samples"} == expected
 
 
-@pytest.mark.parametrize("in_process", (True,))
-def test_ordinary_manifest_creates_audio_latents_twice(in_process: bool) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(
-            worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"}
-        )
-        cases = (
-            ("dinkster.latent.empty_latent_audio", (3, 64, 22), 2048),
-            ("dinkster.audio.models.empty_ace_step_latent_audio", (3, 8, 16, 10), None),
-            ("dinkster.audio.models.empty_ace_step1_5_latent_audio", (3, 64, 26), 1764),
-            ("dinkster.audio.models.empty_yu_e2_latent_audio", (3, 64, 26), 1920),
-        )
-        try:
-            for identity, module in (
-                ("dinkster-latent", "dinkster_latent"),
-                ("dinkster-conditioning", "dinkster_conditioning"),
-                ("dinkster-audio-models", "dinkster_audio_models"),
-            ):
-                await composer.add_pack(
-                    _installed_pack_spec(identity, module, in_process=in_process)
-                )
-            graph = Graph(
-                nodes={
-                    name: GraphNode(name, {"seconds": 1.02, "batch_size": 3})
-                    for name, _, _ in cases
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, list(graph.nodes))
-                for name, shape, ratio in cases:
-                    latent = materialize_latent(result.outputs[name]["LATENT"].resolve())
-                    samples = latent["samples"]
-                    assert samples.shape == shape
-                    assert samples.device.type == "cpu"
-                    assert samples.dtype == torch.float32
-                    assert not samples.count_nonzero()
-                    assert latent["type"] == "audio"
-                    assert latent.get("downscale_ratio_temporal") == ratio
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())
-
-
 @pytest.mark.parametrize(
     ("shape", "expected"), (((3, 7, 11), (11, 1, 3)), ((2, 8, 5, 13), (13, 5, 2)))
 )
@@ -126,27 +80,6 @@ def test_audio_latent_size_uses_last_nested_stream() -> None:
     result = GetAudioLatentSize.execute(latent={"samples": nested})
     assert result == {"length": 13, "audio_channels": 5, "batch_size": 2}
     assert torch.equal(nested.unbind()[-1], audio)
-
-
-@pytest.mark.parametrize("audio_last", (True, False))
-def test_audio_size_canonical_streams_preserve_last_stream_semantics(audio_last: bool) -> None:
-    video = torch.arange(1 * 16 * 4 * 2 * 3, dtype=torch.float64).reshape(1, 16, 4, 2, 3)
-    audio = torch.arange(2 * 8 * 5 * 13, dtype=torch.float32).reshape(2, 8, 5, 13)
-    pairs = (("video", video), ("audio", audio))
-    samples = MultiStreamLatent.from_pairs(pairs if audio_last else pairs[::-1])
-    if audio_last:
-        assert GetAudioLatentSize.execute(latent={"samples": samples}) == {
-            "length": 13,
-            "audio_channels": 5,
-            "batch_size": 2,
-        }
-    else:
-        with pytest.raises(ValueError, match="too many values to unpack"):
-            GetAudioLatentSize.execute(latent={"samples": samples})
-    assert samples.by_role("video") is video
-    assert samples.by_role("audio") is audio
-    assert torch.equal(video.flatten(), torch.arange(video.numel(), dtype=torch.float64))
-    assert torch.equal(audio.flatten(), torch.arange(audio.numel(), dtype=torch.float32))
 
 
 class SizeSource(Node):

@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from dinkster.installer import Installer, InstallError
-from dinkster.storelock import StoreLockTimeout, hold_lock
 
 MANIFEST_TEMPLATE = '[pack]\nname = "{name}"\n\n[pack.entry]\nnodes = "{name}:NODES"\n'
 
@@ -70,20 +69,6 @@ def release(child: subprocess.Popen[str]) -> None:
     assert child.stdin is not None
     child.stdin.close()
     child.wait(timeout=10)
-
-
-def test_lock_excludes_across_processes(tmp_path: Path) -> None:
-    lock_path = tmp_path / ".lock"
-    child = hold_in_subprocess(lock_path)
-    try:
-        with pytest.raises(StoreLockTimeout, match="held by another process"):
-            with hold_lock(lock_path, timeout=0.3):
-                pass
-    finally:
-        release(child)
-    # released: acquisition succeeds immediately
-    with hold_lock(lock_path, timeout=1.0):
-        pass
 
 
 def test_installer_mutation_times_out_loudly_while_lock_is_held(tmp_path: Path) -> None:

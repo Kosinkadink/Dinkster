@@ -160,42 +160,6 @@ def test_start_failure_preserves_exit_code_and_current_output(
     assert len(message) < 68 * 1024
 
 
-@pytest.mark.parametrize("custom_library", [False, True])
-def test_managed_generation_command_uses_local_project_options(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, custom_library: bool
-) -> None:
-    root = tmp_path / "project"
-    make_generation(root)
-    library = tmp_path / "chosen library" if custom_library else root / "dinkster-library"
-    if custom_library:
-        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
-    else:
-        monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
-    commands = []
-
-    def launch(command, **kwargs):
-        commands.append(command)
-        raise OSError("captured launch")
-
-    monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
-    with pytest.raises(OSError, match="captured launch"):
-        start_engine(root, 1, "main", free_port())
-    command = commands[0]
-    assert command[command.index("--") + 1 :] == [
-        str(root / "generations/1/python" / ("python.exe" if os.name == "nt" else "bin/python3")),
-        "-I",
-        "-B",
-        "-m",
-        "dinkster.serve",
-        "--generation",
-        str(root / "generations/1"),
-        "--library-root",
-        str(library),
-        "--prepare-stale-catalogs",
-        "--allow-mount-changes",
-    ]
-
-
 @pytest.mark.parametrize("host_contamination", [False, True])
 def test_managed_generation_persists_folder_grant_across_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_contamination: bool

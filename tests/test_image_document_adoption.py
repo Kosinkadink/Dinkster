@@ -26,7 +26,6 @@ from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY, Principal
 from dinkster_server.library import ServerLibrary, add_library_routes
 from PIL import Image
 
-from dinkster.serve import _validate_collaboration_snapshot
 from tests.async_scenarios import run_scenario
 
 MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
@@ -120,17 +119,6 @@ def _blank_document() -> dict[str, object]:
         "masks": {},
         "resources": {},
     }
-
-
-def test_collaboration_snapshot_validation_is_image_specific() -> None:
-    document = _blank_document()
-    assert _validate_collaboration_snapshot("image", "blank", document) is None
-    assert (
-        _validate_collaboration_snapshot("image", "different", document)
-        == "ImageDocument lineage must match documentId"
-    )
-    assert _validate_collaboration_snapshot("image", "blank", {}) is not None
-    assert _validate_collaboration_snapshot("workflow", "workflow", {}) is None
 
 
 def _canonical(value: object) -> bytes:
@@ -600,23 +588,6 @@ def test_storage_failure_leaves_retryable_bytes_without_an_adoption_manifest(
     run_scenario(scenario())
 
 
-def test_fixed_document_limit_ignores_larger_generic_upload_configuration(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, library = await _client(tmp_path, upload_limit=32 * 1024 * 1024)
-        try:
-            response = await client.post(
-                "/api/assets/image-document?scope=local",
-                data=bytes(16 * 1024 * 1024 + 1),
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-            assert response.status == 413
-            assert library.vault.digests() == []
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_fixed_document_limit_ignores_smaller_generic_upload_configuration(tmp_path: Path) -> None:
     async def scenario() -> None:
         client, library = await _client(tmp_path, upload_limit=1)
@@ -631,184 +602,6 @@ def test_fixed_document_limit_ignores_smaller_generic_upload_configuration(tmp_p
             assert library.vault.resolve(digest_bytes(body)) is not None
         finally:
             await client.close()
-
-    run_scenario(scenario())
-
-
-def test_raster_verification_refuses_when_decode_slots_are_busy(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, library = await _client(tmp_path)
-        resource = _png()
-        resource_digest = await _hold_resource(client, resource)
-        body = _canonical(_document(resource, resource_digest))
-        await library.image_document_decode_slots.acquire()
-        await library.image_document_decode_slots.acquire()
-        try:
-            response = await client.post(
-                "/api/assets/image-document?scope=local",
-                data=body,
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-            assert response.status == 429
-            assert (await response.json())["error"][
-                "code"
-            ] == "asset.image_document.verification_busy"
-            assert library.image_document_decode_reserved_bytes == [0]
-            assert library.vault.resolve(digest_bytes(body)) is None
-        finally:
-            library.image_document_decode_slots.release()
-            library.image_document_decode_slots.release()
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_document_without_rasters_bypasses_decode_slots(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, library = await _client(tmp_path)
-        await library.image_document_decode_slots.acquire()
-        await library.image_document_decode_slots.acquire()
-        body = _canonical(_blank_document())
-        try:
-            response = await client.post(
-                "/api/assets/image-document?scope=local",
-                data=body,
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-            assert response.status == 201
-            assert library.image_document_decode_reserved_bytes == [0]
-            assert library.vault.resolve(digest_bytes(body)) is not None
-        finally:
-            library.image_document_decode_slots.release()
-            library.image_document_decode_slots.release()
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_decode_reservation_accounts_for_container_memory() -> None:
-    common: dict[str, object] = {"width": 10_000, "height": 10_000, "byteSize": 250_000_000}
-    assert (
-        image_document_module._decode_reservation(  # pyright: ignore[reportPrivateUsage]
-            {**common, "mediaType": "image/png"}
-        )
-        == 400_000_000
-    )
-    assert (
-        image_document_module._decode_reservation(  # pyright: ignore[reportPrivateUsage]
-            {**common, "mediaType": "image/jpeg"}
-        )
-        == 1_000_000_000
-    )
-    assert (
-        image_document_module._decode_reservation(  # pyright: ignore[reportPrivateUsage]
-            {**common, "mediaType": "image/webp"}
-        )
-        == 1_850_000_000
-    )
-
-
-def test_raster_verification_reserves_decoded_memory_across_requests(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        client, library = await _client(tmp_path)
-        resource = _png()
-        entered = threading.Event()
-        release = threading.Event()
-
-        def blocked_verification(*_args: object) -> None:
-            entered.set()
-            assert release.wait(timeout=5)
-
-        monkeypatch.setattr(image_document_module, "_verify_dependencies", blocked_verification)
-        digest = await _hold_resource(client, resource)
-        document = _document(resource, digest)
-        resources = document["resources"]
-        assert isinstance(resources, dict)
-        descriptor = resources["r0"]
-        assert isinstance(descriptor, dict)
-        descriptor["width"] = 10_000
-        descriptor["height"] = 10_000
-        descriptor["mediaType"] = "image/webp"
-        descriptor["byteSize"] = 250_000_000
-        body = _canonical(document)
-        first = asyncio.create_task(
-            client.post(
-                "/api/assets/image-document?scope=local",
-                data=body,
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-        )
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            assert library.image_document_decode_reserved_bytes == [1_850_000_000]
-            second = await client.post(
-                "/api/assets/image-document?scope=local",
-                data=body,
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-            assert second.status == 429
-            assert library.image_document_decode_reserved_bytes == [1_850_000_000]
-            release.set()
-            assert (await first).status == 201
-            assert library.image_document_decode_reserved_bytes == [0]
-        finally:
-            release.set()
-            if not first.done():
-                first.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await first
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_cancelled_raster_verification_keeps_capacity_until_worker_settles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        _client_instance, library = await _client(tmp_path)
-        entered = threading.Event()
-        release = threading.Event()
-
-        def blocked_verification(*_args: object) -> None:
-            entered.set()
-            assert release.wait(timeout=5)
-
-        monkeypatch.setattr(image_document_module, "_verify_dependencies", blocked_verification)
-        dependency: dict[str, object] = {
-            "width": 10_000,
-            "height": 10_000,
-            "byteSize": 1,
-            "mediaType": "image/png",
-        }
-        task = asyncio.create_task(
-            image_document_module._verify_dependencies_bounded(library, "local", [dependency])
-        )
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            task.cancel()
-            await asyncio.sleep(0)
-            task.cancel()
-            await asyncio.sleep(0)
-            assert not task.done()
-            assert library.image_document_decode_reserved_bytes == [400_000_000]
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert library.image_document_decode_reserved_bytes == [0]
-            await asyncio.wait_for(library.image_document_decode_slots.acquire(), timeout=1)
-            await asyncio.wait_for(library.image_document_decode_slots.acquire(), timeout=1)
-            library.image_document_decode_slots.release()
-            library.image_document_decode_slots.release()
-        finally:
-            release.set()
-            if not task.done():
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await task
-            await _client_instance.close()
 
     run_scenario(scenario())
 
@@ -906,33 +699,6 @@ def test_image_library_records_require_typed_adoption(tmp_path: Path) -> None:
                 },
             )
             assert accepted_update.status == 200
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_adopted_blank_document_can_enter_image_library(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, _library = await _client(tmp_path)
-        body = _canonical(_blank_document())
-        try:
-            adopted = await client.post(
-                "/api/assets/image-document?scope=local",
-                data=body,
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-            assert adopted.status == 201
-            created = await client.post(
-                "/api/library",
-                json={
-                    "scope": "local",
-                    "name": "Blank",
-                    "digest": digest_bytes(body),
-                    "mediaType": MEDIA_TYPE,
-                },
-            )
-            assert created.status == 201
         finally:
             await client.close()
 

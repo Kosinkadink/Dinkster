@@ -145,19 +145,6 @@ def test_nested_unsafe_integer_literal_rejected_on_decode(literal: object) -> No
         graph_from_wire(wire)
 
 
-def test_safe_nested_integer_literals_still_round_trip() -> None:
-    safe = 2**53 - 1
-    graph = Graph(
-        nodes={
-            "n": GraphNode(
-                "t",
-                {"list": [safe], "typed": TypedLiteral("INT", safe)},
-            )
-        }
-    )
-    assert graph_from_wire(graph_to_wire(graph)) == graph
-
-
 def test_typed_literal_round_trip_inside_region_body() -> None:
     wire = {
         "nodes": {

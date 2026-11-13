@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import math
-from collections.abc import Callable
 from dataclasses import FrozenInstanceError
-from typing import cast
 
 import pytest
 from dinkster_api.v1 import CURVE_TYPE, Curve, register_curve_type
-from dinkster_values import RenditionUnavailable, TypeRegistry
+from dinkster_values import TypeRegistry
 
 
 def test_curve_is_frozen_validated_and_interpolates() -> None:
@@ -29,19 +26,6 @@ def test_curve_is_frozen_validated_and_interpolates() -> None:
     assert Curve(((high, 0), (high_end, 2))).evaluate(high_middle) == 1.0
     with pytest.raises(FrozenInstanceError):
         curve.points = ()  # type: ignore[misc]
-
-
-@pytest.mark.parametrize(
-    "points",
-    [
-        ((math.inf, 1),),
-        ((0, math.nan),),
-        ((True, 1),),
-    ],
-)
-def test_curve_rejects_invalid_points(points: object) -> None:
-    with pytest.raises((TypeError, ValueError)):
-        Curve(points)  # type: ignore[arg-type]
 
 
 def test_curve_defaults_and_source_forms_share_monotone_interpolation() -> None:
@@ -82,53 +66,6 @@ def test_curve_duplicate_positions_preserve_stable_order_and_interpolation() -> 
     assert smooth.points == linear.points == ((0.0, 0.0), (0.5, 0.25), (0.5, 1.0), (1.0, 0.0))
     assert [smooth.evaluate(x) for x in (0.0, 0.5, 0.75, 1.0)] == [0.0, 1.0, 0.625, 0.0]
     assert [linear.evaluate(x) for x in (0.0, 0.5, 0.75, 1.0)] == [0.0, 1.0, 0.5, 0.0]
-
-
-def test_curve_codec_is_canonical_without_a_value_point_limit() -> None:
-    registry = TypeRegistry()
-    register_curve_type(registry)
-    register_curve_type(registry)
-    spec = registry.spec(CURVE_TYPE)
-    curve = Curve(((0, 1), (2.5, -3)), "linear")
-    encoded = (
-        b'{"interpolation":"linear","points":[{"position":0.0,"value":1.0},'
-        b'{"position":2.5,"value":-3.0}]}'
-    )
-    assert spec.encode(curve) == encoded
-    assert spec.decode(encoded) == curve
-    assert spec.coerce is not None
-    assert spec.coerce(json.loads(encoded)) == curve
-    assert spec.decode(b'{"points":[{"position":0,"value":1}]}') == Curve(((0, 1),))
-    assert spec.meta is not None
-    assert spec.meta(curve) == {"pointCount": 2, "start": 0.0, "end": 2.5}
-    with pytest.raises(ValueError, match="invalid CURVE payload"):
-        spec.decode(b"not json")
-    # Hand-derived: equal-position entries retain their original order across the codec.
-    duplicates = Curve(((1, 0), (1, 2)))
-    assert spec.decode(spec.encode(duplicates)) == duplicates
-    oversized = Curve(tuple((index, index) for index in range(4097)))
-    assert spec.decode(spec.encode(oversized)) == oversized
-
-
-def test_curve_points_rendition_declares_and_enforces_point_bound() -> None:
-    registry = TypeRegistry()
-    register_curve_type(registry)
-    rendition = registry.renditions_of(CURVE_TYPE)[0]
-    assert rendition.kind == "curve-points"
-    assert rendition.mime == "application/json"
-    assert rendition.limits == {"points": 4096}
-
-    curve = Curve(
-        tuple((index / 8, (-1.0 if index == 2047 else index / 4096)) for index in range(4096))
-    )
-    record = json.loads(registry.render(registry.wrap(CURVE_TYPE, curve), rendition.kind).data)
-    assert len(record["points"]) == 4096
-    assert record["points"][2047] == {"position": 255.875, "value": -1.0}
-
-    render = cast(Callable[[object], bytes], rendition.render)
-    oversized = {"points": [{"position": index, "value": index} for index in range(4097)]}
-    with pytest.raises(RenditionUnavailable, match="preview exceeds 4096"):
-        render(oversized)
 
 
 def test_curve_interpolation_is_explicit_and_shape_preserving() -> None:

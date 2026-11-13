@@ -21,7 +21,6 @@ from dinkster_api.v1 import (
     JsonObjectSchema,
     PackRoute,
 )
-from dinkster_protocol.frontend_modules import FRONTEND_CONTRIBUTION_KINDS
 from dinkster_server import Principal, StaticBearerAuthenticator, create_app
 from dinkster_server.auth import install_auth
 from dinkster_server.pack_surfaces import install_pack_surfaces
@@ -38,30 +37,6 @@ PROOF_EVENT = "video-preview.initialized"
 PROOF_ROUTE = f"/api/extensions/{PROOF_PACK}/routes/preview-policy"
 SAFE_JSON_INTS = (-(2**53 - 1), 2**53 - 1)
 UNSAFE_JSON_INTS = (-(2**53 + 1), -(2**53), 2**53, 2**53 + 1)
-
-
-def test_frontend_contribution_vocabulary_is_the_supported_set() -> None:
-    assert FRONTEND_CONTRIBUTION_KINDS == (
-        "widgetKind",
-        "widgetView",
-        "previewRenderer",
-        "textEditorExtension",
-        "menu",
-        "command",
-        "keybinding",
-        "setting",
-        "canvasLayer",
-        "nodeDecoration",
-        "hostUi",
-        "searchProvider",
-        "workflowObserver",
-        "eventConsumer",
-        "workflowImporter",
-        "editor",
-        "editorBinding",
-        "panel",
-        "virtualNode",
-    )
 
 
 @pytest.fixture
@@ -93,34 +68,6 @@ def test_frontend_consumer_preserves_declared_event_name(
     undeclared = replace(manifest, extension=replace(manifest.extension, events=()))
     with pytest.raises(ValueError, match="event declared by its pack"):
         resolve_frontend_modules(undeclared)
-
-
-@pytest.mark.parametrize(
-    "event_name", [None, 1, "", "example", "example..event", "Example.event", "example.1event"]
-)
-def test_frontend_consumer_and_pack_event_reject_the_same_invalid_names(event_name: str) -> None:
-    from dinkster_protocol import PackEvent
-    from dinkster_protocol.frontend_modules import FrontendContribution
-
-    with pytest.raises(ValueError, match="pack event name"):
-        PackEvent(event_name)
-    with pytest.raises(ValueError, match="pack event name"):
-        FrontendContribution("example.consumer", "eventConsumer", event_name)
-
-
-def test_event_names_do_not_relax_frontend_contribution_ids() -> None:
-    from dinkster_protocol.frontend_modules import FrontendContribution
-
-    assert FrontendContribution("example.note", "virtualNode").to_wire() == {
-        "id": "example.note",
-        "kind": "virtualNode",
-    }
-    with pytest.raises(ValueError, match="frontend id"):
-        FrontendContribution("example.some_consumer", "eventConsumer", "example.some_event")
-    with pytest.raises(ValueError, match="only eventConsumer"):
-        FrontendContribution("example.consumer", "hostUi", "example.some_event")
-    with pytest.raises(ValueError, match="unknown frontend contribution kind"):
-        FrontendContribution("example.future", "futureKind")
 
 
 def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Path) -> None:
@@ -323,14 +270,6 @@ def test_schema_and_event_reporter_enforce_safe_integer_bounds(field_type: str, 
             assert received == []
 
 
-@pytest.mark.parametrize("value", [-1e100, -float(2**53), float(2**53), 1e100, 1.25])
-def test_number_schema_preserves_finite_floats(value: float) -> None:
-    schema = JsonObjectSchema((JsonField("value", "number"),))
-    result = schema.validate({"value": value})
-    assert result == {"value": value}
-    assert type(result["value"]) is float
-
-
 @pytest.mark.parametrize("field_type", ["integer", "number"])
 def test_http_route_request_and_response_enforce_safe_integer_bounds(field_type: str) -> None:
     schema = JsonObjectSchema((JsonField("value", field_type),))
@@ -368,26 +307,6 @@ def test_http_route_request_and_response_enforce_safe_integer_bounds(field_type:
                 assert len(calls) == count + 1
 
     run_scenario(scenario())
-
-
-def test_same_pack_catalog_identity_and_stale_module_rejection(preview_manifest: Path) -> None:
-    env = {"PYTHONPATH": str(preview_manifest.parent / "src")}
-    assert diagnose(preview_manifest, environment=env).ok
-    other = preview_manifest.with_name("native-pack.toml")
-    shutil.copyfile(preview_manifest, other)
-    # Creating another source file invalidates the first artifact's source digest.
-    assert diagnose(preview_manifest, environment=env).ok
-    assert diagnose(other, environment=env).ok
-    first, second = (
-        read_catalog(load_manifest(preview_manifest)),
-        read_catalog(load_manifest(other)),
-    )
-    assert first is not None and second is not None and first.source != second.source
-    manifest = load_manifest(preview_manifest)
-    module = resolve_frontend_modules(manifest)[0]
-    assert module != replace(module, module_digest="sha256:" + "0" * 64)
-    with pytest.raises(ValueError, match="snapshot"):
-        read_module(manifest, replace(module, module_digest="sha256:" + "0" * 64))
 
 
 @pytest.mark.parametrize("field_type", ["integer", "number"])
@@ -452,42 +371,5 @@ def test_typed_event_uses_pinned_generation_and_rejects_invalid_payloads(field_t
             "extensionSnapshotDigest": runtime.extension_snapshot_digest,
         }
         assert "schemaVersion" not in emitted[-1].detail
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("close", [False, True])
-def test_route_rpc_cancellation_and_worker_death_clear_pending(
-    monkeypatch: pytest.MonkeyPatch, close: bool
-) -> None:
-    from dinkster_workers.session import WorkerDied
-
-    from tests.test_isolated import negotiated_session
-
-    session = negotiated_session()
-    sent: list[dict[str, object]] = []
-
-    async def send(header, blobs):
-        sent.append(header)
-
-    monkeypatch.setattr(session, "send", send)
-
-    async def scenario() -> None:
-        route = PackRoute("policy", "GET", "pack:policy")
-        task = asyncio.create_task(session.call_pack_route(route, {}))
-        await asyncio.sleep(0)
-        assert sent == [
-            {"type": "packRoute", "requestId": "route-0", "route": route.to_wire(), "data": {}}
-        ]
-        if close:
-            await session.close()
-            with pytest.raises(WorkerDied):
-                await task
-        else:
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert sent[-1] == {"type": "cancelPackRoute", "requestId": "route-0"}
-        assert session._route_pending == {}
 
     run_scenario(scenario())

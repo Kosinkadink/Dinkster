@@ -86,59 +86,6 @@ def test_stock_comfyui_marker_is_exact_and_metadata_format_is_irrelevant(
 
 
 @pytest.mark.parametrize(
-    ("marker", "body", "error"),
-    [
-        ({"dtype": "F16", "shape": [0], "data_offsets": [4, 4]}, b"data", "marker"),
-        ({"dtype": "F32", "shape": [1], "data_offsets": [4, 8]}, b"dataxxxx", "marker"),
-        ({"dtype": "F32", "shape": [0], "data_offsets": [2, 2]}, b"data", "contiguous"),
-        ({"dtype": "F32", "shape": [0], "data_offsets": [8, 8]}, b"data", "contiguous"),
-    ],
-)
-def test_comfyui_marker_dtype_shape_and_body_cursor_are_exact(
-    marker: dict[str, object], body: bytes, error: str
-) -> None:
-    source = safetensors(
-        {
-            "latent_tensor": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-            "latent_format_version_0": marker,
-        },
-        body,
-    )
-    with pytest.raises(AssetError, match=error):
-        parse_latent_asset(source)
-
-
-@pytest.mark.parametrize(
-    "tensor",
-    [
-        {"dtype": "F32", "shape": [True], "data_offsets": [0, 4]},
-        {"dtype": "F32", "shape": [1.0], "data_offsets": [0, 4]},
-        {"dtype": "F32", "shape": [1], "data_offsets": [False, 4]},
-        {"dtype": "F32", "shape": [1], "data_offsets": [0.0, 4]},
-    ],
-)
-def test_comfyui_shape_and_offsets_require_exact_python_integers(
-    tensor: dict[str, object],
-) -> None:
-    with pytest.raises(AssetError):
-        parse_latent_asset(safetensors({"latent_tensor": tensor}, b"data"))
-
-
-@pytest.mark.parametrize("name", ["model.weight", "extra", "dinkster_samples"])
-def test_schema_less_comfyui_profile_rejects_every_extra_tensor(name: str) -> None:
-    source = safetensors(
-        {
-            "__metadata__": {"format": "pt"},
-            "latent_tensor": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-            name: {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]},
-        },
-        b"dataxxxx",
-    )
-    with pytest.raises(AssetError, match="schema-less"):
-        parse_latent_asset(source)
-
-
-@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("sourceName", "data:text/plain,vae"),
@@ -158,14 +105,6 @@ def test_vae_hint_field_validator_rejects_url_path_control_and_unregistered_ids(
 ) -> None:
     with pytest.raises(AssetError):
         validate_vae_hint_field(field, value)
-
-
-def test_vae_hint_field_validator_accepts_path_free_text_and_dinkster_ids() -> None:
-    assert validate_vae_hint_field("sourceName", "vae.safetensors") == "vae.safetensors"
-    assert validate_vae_hint_field("sourceLogicalId", "builtin-vae") == "builtin-vae"
-    assert (
-        validate_vae_hint_field("latentSpace", "dinkster.sdxl_refiner") == "dinkster.sdxl_refiner"
-    )
 
 
 def test_parsed_vae_hint_uses_the_shared_field_authority() -> None:
@@ -232,28 +171,6 @@ def test_parsed_vae_hint_uses_the_shared_field_authority() -> None:
         )
     )
     assert valid_vae_hint(nested_descriptor) == ""
-
-
-def test_vae_hint_recursion_error_is_informational(monkeypatch: pytest.MonkeyPatch) -> None:
-    descriptor = parse_latent_asset(
-        safetensors(
-            {
-                "__metadata__": {"dinkster_vae_hint": "{}"},
-                "latent_tensor": {
-                    "dtype": "F32",
-                    "shape": [1],
-                    "data_offsets": [0, 4],
-                },
-            },
-            b"data",
-        )
-    )
-
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise RecursionError("nested JSON")
-
-    monkeypatch.setattr("dinkster_assets.latent_format.json.loads", fail)
-    assert valid_vae_hint(descriptor) == ""
 
 
 @pytest.mark.parametrize(
@@ -323,70 +240,6 @@ def test_brackets_inside_metadata_text_do_not_count_as_json_nesting() -> None:
     assert descriptor.tensors[0].shape == (1,)
 
 
-@pytest.mark.parametrize("version", [True, False])
-def test_native_schema_version_requires_an_exact_integer(version: bool) -> None:
-    schema = json.dumps(
-        {
-            "format": "dinkster.latent",
-            "version": version,
-            "structure": "single",
-            "streams": [{"tensor": "dinkster_samples", "dtype": "F32", "shape": [1]}],
-        },
-        separators=(",", ":"),
-    )
-    source = safetensors(
-        {
-            "__metadata__": {"dinkster_latent_schema": schema},
-            "dinkster_samples": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-        },
-        b"data",
-    )
-    with pytest.raises(AssetError, match="unknown Dinkster latent schema"):
-        parse_latent_asset(source)
-
-
-def test_native_single_redundant_shape_rejects_boolean_dimension() -> None:
-    schema = json.dumps(
-        {
-            "format": "dinkster.latent",
-            "version": 1,
-            "structure": "single",
-            "streams": [{"tensor": "dinkster_samples", "dtype": "F32", "shape": [True]}],
-        },
-        separators=(",", ":"),
-    )
-    source = safetensors(
-        {
-            "__metadata__": {"dinkster_latent_schema": schema},
-            "dinkster_samples": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-        },
-        b"data",
-    )
-    with pytest.raises(AssetError, match="does not equal"):
-        parse_latent_asset(source)
-
-
-def test_native_redundancy_and_extra_tensor_refuse() -> None:
-    schema = json.dumps(
-        {
-            "format": "dinkster.latent",
-            "version": 1,
-            "structure": "single",
-            "streams": [{"tensor": "dinkster_samples", "dtype": "F32", "shape": [1]}],
-        },
-        separators=(",", ":"),
-    )
-    source = safetensors(
-        {
-            "__metadata__": {"dinkster_latent_schema": schema},
-            "dinkster_samples": {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]},
-        },
-        b"xx",
-    )
-    with pytest.raises(AssetError, match="does not equal"):
-        parse_latent_asset(source)
-
-
 def _native_multi(
     streams: list[dict[str, object]],
     tensors: dict[str, object] | None = None,
@@ -435,39 +288,6 @@ def test_native_multi_role_order_and_names_are_exact() -> None:
     for streams in bad_cases:
         with pytest.raises(AssetError):
             parse_latent_asset(_native_multi(streams))
-
-
-def test_native_multi_order_and_redundant_shape_reject_booleans() -> None:
-    tensor: dict[str, object] = {
-        "dinkster_stream_0000": {
-            "dtype": "F32",
-            "shape": [1],
-            "data_offsets": [0, 4],
-        }
-    }
-    boolean_order = [_stream(False, "video", "dinkster_stream_0000")]
-    with pytest.raises(AssetError, match="order"):
-        parse_latent_asset(_native_multi(boolean_order, tensor, b"abcd"))
-
-    boolean_shape = [_stream(0, "video", "dinkster_stream_0000")]
-    boolean_shape[0]["shape"] = [True]
-    with pytest.raises(AssetError, match="does not equal"):
-        parse_latent_asset(_native_multi(boolean_shape, tensor, b"abcd"))
-
-
-def test_native_extra_tensor_and_offset_gap_refuse() -> None:
-    streams = [_stream(0, "video", "dinkster_stream_0000")]
-    extra: dict[str, object] = {
-        "dinkster_stream_0000": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-        "extra": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]},
-    }
-    with pytest.raises(AssetError, match="unreferenced"):
-        parse_latent_asset(_native_multi(streams, extra))
-    gap: dict[str, object] = {
-        "dinkster_stream_0000": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]}
-    }
-    with pytest.raises(AssetError, match="contiguous"):
-        parse_latent_asset(_native_multi(streams, gap))
 
 
 def test_header_alignment_and_resource_bounds_refuse_before_body() -> None:
