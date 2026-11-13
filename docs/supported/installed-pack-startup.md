@@ -856,8 +856,13 @@ when the default listener is occupied. Project and store directories must be
 outside selected source folders. Building uses verified copies, never editable
 installs into author folders. Selected helper wheels participate in engine
 resolution before packs are built, including replacements for engine dependencies
-whose real versions still satisfy the declared constraints. Explicitly selected
-first-party packs may use their reserved namespaces only in this development
+whose real versions still satisfy the declared constraints. The exception is an
+explicitly selected local `dinkster-inference`: `develop` may override the engine's
+exact inference pin, reports the pinned and local versions, and retains the local
+wheel for restore. For example, add `--library-source /absolute/dinkster-inference`
+to both commands above. Other dependencies and non-development installs keep
+their declared constraints; this does not loosen the published inference pin.
+Explicitly selected first-party packs may use their reserved namespaces only in this development
 capture; this does not grant registry admission. Missing sources, changed plan inputs, incompatible
 API ranges and dependency conflicts refuse rather than inventing versions or
 dropping constraints.

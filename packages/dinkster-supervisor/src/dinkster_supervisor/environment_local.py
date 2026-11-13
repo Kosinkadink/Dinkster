@@ -21,8 +21,9 @@ from urllib.request import Request, urlopen
 
 from blake3 import blake3
 from dinkster_store import object_path, pack_archive_path, pack_label, readable_label
+from packaging.requirements import Requirement
 from packaging.tags import compatible_tags, cpython_tags, platform_tags
-from packaging.utils import parse_wheel_filename
+from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .environment_artifacts import base_label, engine_label
 from .environment_constraints import effective_constraints, requirement_hashes
@@ -98,7 +99,14 @@ def local_selection(
 
 
 def _resolve(
-    requirements: Path, constraints: Path, output: Path, *, python: Path, index: str, source: Path
+    requirements: Path,
+    constraints: Path,
+    output: Path,
+    *,
+    python: Path,
+    index: str,
+    source: Path,
+    overrides: Path | None = None,
 ) -> dict[str, Any]:
     run_local_command(
         [
@@ -108,6 +116,7 @@ def _resolve(
             str(requirements),
             "--constraints",
             str(constraints),
+            *(["--overrides", str(overrides)] if overrides is not None else []),
             "--python",
             str(python),
             "--only-binary",
@@ -323,7 +332,56 @@ def prepare_local(
             },
         }
         effective = work / "effective.txt"
-        effective.write_text(effective_constraints(exported.read_text(), base))
+        engine_constraints = effective_constraints(exported.read_text(), base)
+        overrides = None
+        if "development" in selection:
+            inference = [
+                path
+                for path in library_wheels
+                if parse_wheel_filename(path.name)[0] == "dinkster-inference"
+            ]
+            if len(inference) > 1:
+                raise EnvironmentError("duplicate development library: dinkster-inference")
+            if inference:
+                wheel = inference[0]
+                version = str(parse_wheel_filename(wheel.name)[1])
+                project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
+                requirements = [
+                    *project.get("dependencies", []),
+                    *project.get("optional-dependencies", {}).get("inference", []),
+                ]
+                for value in requirements:
+                    requirement = Requirement(value)
+                    if canonicalize_name(requirement.name) != "dinkster-inference":
+                        continue
+                    pins = list(requirement.specifier)
+                    if (
+                        len(pins) == 1
+                        and pins[0].operator == "=="
+                        and version not in requirement.specifier
+                    ):
+                        notice = (
+                            f"development overrides dinkster-inference pin {pins[0].version} "
+                            f"with local version {version}"
+                        )
+                        selection["development"]["inferenceOverride"] = {
+                            "pinnedVersion": pins[0].version,
+                            "localVersion": version,
+                            "notice": notice,
+                        }
+                        print(notice, file=sys.stderr, flush=True)
+                # uv overrides replace dependency requirements, not exported constraints.
+                engine_constraints = (
+                    "\n".join(
+                        line
+                        for line in engine_constraints.replace("\\\n", "").splitlines()
+                        if not re.match(r"(?i)^dinkster[-_.]inference(?:\s|[=<>!~@])", line)
+                    )
+                    + "\n"
+                )
+                overrides = work / "inference-override.txt"
+                overrides.write_text(f"dinkster-inference @ {wheel.resolve().as_uri()}\n")
+        effective.write_text(engine_constraints)
         built = work / "built"
         for package in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             run_local_command(
@@ -341,6 +399,7 @@ def prepare_local(
             python=python,
             index=selection["index"],
             source=source,
+            overrides=overrides,
         )
         wheels = retain_wheels(engine, python, store, source)
         prefix = Path(
