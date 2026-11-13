@@ -599,14 +599,14 @@ wheels = [
 
 [[package]]
 name = "comfy-kitchen"
-version = "0.2.40"
+version = "0.2.41"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/51/5944dd2e8b78c475173eb4afcaa46c07f0b5c68df2f7d6cd94823017aa5c/comfy_kitchen-0.2.40-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3bd596482a4f69a726845ce75fa751896ce7e5c2d210ed3a30794ea17871bebb", size = 36451059, upload-time = "2026-10-22T02:26:06.151Z" },
-    { url = "https://files.pythonhosted.org/packages/5d/40/1871ee8c58eeef8d15cbf49a461eba0775303f2d9eb34c11af7c29e455c1/comfy_kitchen-0.2.40-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:eb726664c772189e6ece742876487f1349965808b854742790e9001dbb7c0f9d", size = 67811219, upload-time = "2026-10-22T02:26:10.129Z" },
-    { url = "https://files.pythonhosted.org/packages/f1/82/133fadabcc038d59d3220823633824ec731e7a8b2e543ab4544b09537357/comfy_kitchen-0.2.40-cp312-abi3-win_amd64.whl", hash = "sha256:f40547824b2a0ad3425d10946d2fe2a5ba8595cb53361991c914bda4addccfb5", size = 64015779, upload-time = "2026-10-22T02:26:15.027Z" },
-    { url = "https://files.pythonhosted.org/packages/c7/5e/09daa3f84dd1ad3fde034c9b5148417e998ce8d39c79fa9790b2089667c5/comfy_kitchen-0.2.40-cp312-abi3-win_arm64.whl", hash = "sha256:9ca9cb1518604498f914b6419fa3c07d89c9c1d0676dd39ec64bc603820489a2", size = 8554962, upload-time = "2026-10-22T02:26:17.708Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl", hash = "sha256:e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099", size = 260625, upload-time = "2026-10-22T02:26:19.45Z" },
+    { url = "https://files.pythonhosted.org/packages/49/e3/f6738af148e634075e41c6b96b007aa2d6bd670d3d484a157f14526f8bb5/comfy_kitchen-0.2.41-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:161ee74206277182be7d31faa0b5f2e079b37c076092c276c90bea2e086f6e1e", size = 37637289, upload-time = "2026-11-05T01:45:00.529Z" },
+    { url = "https://files.pythonhosted.org/packages/11/8b/672ecbe36e5e59c559fb8f7ffcce935e283184b08a88313da99d3d3cc0d9/comfy_kitchen-0.2.41-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ca16d4c4f4cdd8fb76af7261b9fcc4596b2111511077dd7cd7f4884b5f2686af", size = 69235207, upload-time = "2026-11-05T01:45:07.26Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/c0/403dd5e44158a0def758c20850f80200ebc39ff702d177493b96e4d480bf/comfy_kitchen-0.2.41-cp312-abi3-win_amd64.whl", hash = "sha256:cbe8f7fd9aa42e2af01a31d235fd4de59eb429ecc5a58287eed0975195b68707", size = 65283137, upload-time = "2026-11-05T01:45:14.09Z" },
+    { url = "https://files.pythonhosted.org/packages/53/55/841672b10fa9421ec6c52189ef8e9be75575b5eebf3b515ddb7eadc8987b/comfy_kitchen-0.2.41-cp312-abi3-win_arm64.whl", hash = "sha256:79bb5c33c63e96de27c12e3495e238847d2f28a40e1595f46506bc316cb31b27", size = 17145331, upload-time = "2026-11-05T01:45:17.998Z" },
+    { url = "https://files.pythonhosted.org/packages/98/50/25c120039731b874daeec5aa771e0787a8acd074aeb2a3354e005a91f067/comfy_kitchen-0.2.41-py3-none-any.whl", hash = "sha256:19bdd7f8aaa35c512ef69393038ddca51f030bcabf6a7694fdf1660bcae8c66a", size = 264906, upload-time = "2026-11-05T01:45:20.616Z" },
 ]
 
 [[package]]
@@ -880,10 +880,10 @@ requires-dist = [
     { name = "blake3", specifier = ">=0.4" },
     { name = "comfy-aimdo", specifier = "==0.6.0" },
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
-    { name = "comfy-kitchen", specifier = "==0.2.40" },
+    { name = "comfy-kitchen", specifier = "==0.2.41" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
     { name = "dinkster-engine", editable = "packages/dinkster-engine" },
-    { name = "dinkster-inference", marker = "extra == 'inference'", specifier = "==0.1.1" },
+    { name = "dinkster-inference", marker = "extra == 'inference'", specifier = "==0.1.2" },
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'default'", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'supervisor'", editable = "packages/dinkster-supervisor" },
@@ -1070,7 +1070,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-inference"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1103,9 +1103,9 @@ dependencies = [
     { name = "transformers" },
     { name = "yarl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/43/15/a27f4cd8a158c0e392d877078627667cc660bed99f72fdaaeae53798f144/dinkster_inference-0.1.1.tar.gz", hash = "sha256:2333817763b68013b7cab244c8d2bed8abf59ffd018aa9a73f7ae90c9170e6d3", size = 10266802, upload-time = "2026-11-01T23:34:16.996Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/03/2f020b0e4146336e25922dccfc45876ae435c79fb3453cc011ddae5c6a4b/dinkster_inference-0.1.2.tar.gz", hash = "sha256:b3752508ef8d968b20a518726708768224e9dc69ba3bacfe18e11c4983b49ccb", size = 10283214, upload-time = "2026-11-13T04:22:35.768Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/d0/c5515905853c64379aab3c091c0123ab85010b926a841e431c8e469ca111/dinkster_inference-0.1.1-py3-none-any.whl", hash = "sha256:62ef627f218b95ac11e43fef6a214d6b13844883520c13acae1d2bec13136c7b", size = 10580737, upload-time = "2026-11-01T23:34:14.623Z" },
+    { url = "https://files.pythonhosted.org/packages/35/3e/1329eeb95b6b9dbf134c8d9729c208e321947e8200c008d6a348d379bf08/dinkster_inference-0.1.2-py3-none-any.whl", hash = "sha256:f194d677f9e43ce631de9d3ec5f079f0bac2b6486ab5e02d291886a26b639660", size = 10605754, upload-time = "2026-11-13T04:22:33.669Z" },
 ]
 
 [[package]]

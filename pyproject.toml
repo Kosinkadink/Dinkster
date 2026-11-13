@@ -8,7 +8,7 @@ dependencies = [
     "blake3>=0.4",
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
     "comfy-aimdo==0.6.0",
-    "comfy-kitchen==0.2.40",
+    "comfy-kitchen==0.2.41",
     "dinkster-api==0.0.3",
     "dinkster-engine==0.0.3",
     "dinkster-token-verifier==0.1.2",
@@ -34,7 +34,7 @@ dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 
 [project.optional-dependencies]
-inference = ["dinkster-inference==0.1.1"]
+inference = ["dinkster-inference==0.1.2"]
 default = [
     "dinkster-supervisor",
 ]
