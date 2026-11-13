@@ -65,7 +65,7 @@ dev = [
     "pyright>=1.1.390",
     "scipy-stubs>=1.18.1.0",
     "dinkster-opentimelineio==0.19.0",
-    "dinkster-inference==0.1.1",
+    "dinkster-inference",
     "threadpoolctl>=3.7",
 ]
 
