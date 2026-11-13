@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -15,15 +14,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from dinkster_store import object_path, readable_label
 from packaging.requirements import Requirement
 from packaging.tags import parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .boundary import PROTOCOL_VERSION
-from .pack_lock import GenerationPackages, LockedWheel, PackLock, PackPlan, plan_pack
+from .pack_lock import GenerationPackages, PackLock, PackPlan, plan_pack
 from .provision import ProvisionError
-from .wheel_download import download_wheel
+from .wheel_download import fetch_wheel as fetch_wheel
+from .wheel_download import verify_wheel
 
 
 def venv_python(directory: Path) -> Path:
@@ -66,42 +65,6 @@ def _create_layered_venv(generation_python: Path, directory: Path, uv_cache: Pat
     return python
 
 
-def _verify(path: Path, wheel: LockedWheel) -> bool:
-    if not path.is_file() or path.stat().st_size != wheel.size:
-        return False
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest() == wheel.sha256
-
-
-def fetch_wheel(wheel: LockedWheel, store: Path, *, offline: bool = False) -> Path:
-    """Admit bytes only after size and digest verification; prefer stored bytes."""
-    target = (
-        object_path(
-            store,
-            "sha256:" + wheel.sha256,
-            label=None if offline else readable_label(Path(wheel.filename).stem),
-        )
-        / wheel.filename
-    )
-    for candidate in (target, store / wheel.filename):
-        if _verify(candidate, wheel):
-            return candidate
-    if offline:
-        raise ProvisionError(f"offline pack wheel missing or corrupt: {wheel.filename}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, name = tempfile.mkstemp(dir=target.parent, suffix=".partial")
-    staging = Path(name)
-    os.close(descriptor)
-    try:
-        download_wheel(wheel.url, staging, max_size=wheel.size)
-        if not _verify(staging, wheel):
-            raise ProvisionError(f"wheel hash or size mismatch: {wheel.filename}")
-        os.replace(staging, target)
-    finally:
-        staging.unlink(missing_ok=True)
-    return target
-
-
 def fetch_pack_wheels(plan: PackPlan, store: Path, *, offline: bool = False) -> tuple[Path, ...]:
     """Acquire only selected locked wheels, with actionable pack and source diagnostics."""
     plan.require_layering()
@@ -140,6 +103,8 @@ def provision_pack(
         parent_packages,
         variant=variant,
         own_environment_size=plan.own_environment_size,
+        wheel_store=wheel_store,
+        offline=offline,
     )
     current_plan.require_layering()
     if current_plan != plan:
@@ -338,7 +303,7 @@ def preflight_generation(
     errors: list[str] | None = None,
     facts: GenerationPackages | None = None,
 ) -> tuple[PackPlan, ...]:
-    """Plan all recorded packs without fetching wheels or changing either generation."""
+    """Plan recorded packs, verifying private-wheel metadata for shared version changes."""
     context.validate()
     if source_generation is None and (context.generation.parent.parent / "current").exists():
         raise ProvisionError("source generation is required for an existing project")
@@ -368,15 +333,20 @@ def preflight_generation(
     plans: list[PackPlan] = []
     for lock in sorted(recorded, key=lambda lock: lock.pack not in context.in_process_packs):
         plan = plan_pack(
-            lock, facts, variant=context.variant, own_environment_size=context.own_environment_size
+            lock,
+            facts,
+            variant=context.variant,
+            own_environment_size=context.own_environment_size,
+            wheel_store=context.wheel_store,
+            offline=context.offline,
         )
         plans.append(plan)
         if lock.pack in context.in_process_packs and not plan.conflicts:
             facts = replace(
                 facts,
                 versions={
-                    **facts.versions,
                     **{package.name: package.version for package in lock.packages},
+                    **facts.versions,
                 },
             )
     return tuple(plans)
@@ -578,7 +548,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             wheel.size
                             for wheel in plan.wheels
                             if not any(
-                                _verify(path, wheel)
+                                verify_wheel(path, wheel)
                                 for path in (
                                     context.wheel_store / wheel.sha256 / wheel.filename,
                                     context.wheel_store / wheel.filename,

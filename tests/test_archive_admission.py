@@ -169,8 +169,10 @@ def test_locked_admission_refuses_the_same_base_conflict_as_user_install(
     plan = plan_pack(
         lock, GenerationPackages.inspect(python), variant="linux-cpu", own_environment_size=0
     )
-    assert plan.conflicts == ("simpleeval: generation has 1.0.7, lock needs 1.0.8",)
-    with pytest.raises(ProvisionError, match="generation has 1.0.7, lock needs 1.0.8") as refused:
+    assert plan.conflicts == (
+        "simpleeval==1.0.8: simpleeval==1.0.7 does not satisfy the requirement",
+    )
+    with pytest.raises(ProvisionError, match="simpleeval==1.0.8.*simpleeval==1.0.7") as refused:
         provision_pack(
             plan,
             generation_python=python,

@@ -663,6 +663,68 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         assert not list((generation / "packs").rglob("torch*"))
 
 
+@pytest.mark.parametrize("rooted", [True, False])
+@pytest.mark.parametrize(
+    ("requirement", "transitive", "accepted"),
+    [
+        ("dinkster-inference", "dinkster-inference>=0.1.1", True),
+        ("dinkster-inference<0.1.2", "dinkster-inference", False),
+        ("dinkster-inference", "dinkster-inference<0.1.2", False),
+        ("dinkster-inference", 'dinkster-inference<0.1.2; sys_platform == "win32"', True),
+        ("dinkster-inference", 'dinkster-inference<0.1.2; extra == "limited"', True),
+        ("fixture-extra[limited]", 'dinkster-inference<0.1.2; extra == "limited"', False),
+    ],
+)
+def test_plan_checks_engine_requirements_instead_of_publication_versions(
+    tmp_path: Path, requirement: str, transitive: str, accepted: bool, rooted: bool
+) -> None:
+    private = _wheel(
+        tmp_path,
+        "fixture-extra",
+        "1.2",
+        "fixture_extra",
+        "VALUE = 1\n",
+        requires=(transitive,),
+    )
+    lock = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        (requirement, "fixture-extra==1.2") if rooted else (requirement,),
+        (),
+        (
+            LockedDistribution("dinkster-inference", "0.1.1", ()),
+            LockedDistribution("fixture-extra", "1.2", (private,)),
+        ),
+    )
+    facts = GenerationPackages(
+        {"dinkster-inference": "0.1.2"},
+        "3.12.0",
+        frozenset({Tag("py3", "none", "any")}),
+        {"sys_platform": "linux"},
+    )
+    plan = plan_pack(lock, facts, variant="linux-cpu", own_environment_size=100)
+    if accepted:
+        assert not plan.conflicts, plan.conflicts
+        assert plan.wheels == (private,)
+        store = tmp_path / "store"
+        fetch_wheel(private, store)
+        (tmp_path / private.filename).unlink()
+        assert (
+            plan_pack(
+                lock,
+                facts,
+                variant="linux-cpu",
+                own_environment_size=100,
+                wheel_store=store,
+                offline=True,
+            )
+            == plan
+        )
+    else:
+        assert any("dinkster-inference" in conflict for conflict in plan.conflicts)
+
+
 def test_plan_names_conflicts_and_own_environment_size(tmp_path: Path) -> None:
     torch = _wheel(tmp_path, "torch", "2.15", "torch", "")
     compiled = LockedWheel(
@@ -797,7 +859,7 @@ def test_helper_and_consumer_locks_layer_on_later_compatible_engine(
         "dinkster_test_helpers",
         "from importlib.metadata import version\n"
         "def engine_version(): return version('dinkster-api')\n",
-        requires=("dinkster-api", "torch"),
+        requires=("dinkster-api", "torch<2.15"),
     )
     _wheel(
         wheels,
@@ -1001,6 +1063,13 @@ def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path
     path = tmp_path / "pack-lock.json"
     lock.write(path)
     assert PackLock.read(path) == lock
+    parent = _generation(tmp_path / "generation", [stale])
+    plan = plan_pack(
+        lock, GenerationPackages.inspect(parent), variant="linux-cpu", own_environment_size=9
+    )
+    assert plan.conflicts
+    with pytest.raises(ProvisionError, match="does not satisfy the requirement"):
+        plan.require_layering()
 
 
 def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> None:
@@ -1471,8 +1540,10 @@ def test_in_process_dependencies_conflict_before_downloads(tmp_path: Path) -> No
     )
     plans = preflight_generation(context, locks=paths)
     assert plans[1].lock.pack == "isolated"
-    assert plans[1].conflicts == ("fixture-extra: generation has 1.2, lock needs 2.0",)
-    with pytest.raises(ProvisionError, match="fixture-extra.*1.2.*2.0"):
+    assert plans[1].conflicts == (
+        "fixture-extra==2.0: fixture-extra==1.2 does not satisfy the requirement",
+    )
+    with pytest.raises(ProvisionError, match="fixture-extra==2.0.*fixture-extra==1.2"):
         rebuild_generation(context, plans)
     assert not context.wheel_store.exists()
     assert not (target / "packs").exists()
