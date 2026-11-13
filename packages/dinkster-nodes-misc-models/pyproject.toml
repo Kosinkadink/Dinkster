@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-misc-models"
-version = "0.0.6"
+version = "0.0.7"
 description = "Dinkster misc-models nodes"
 requires-python = ">=3.12"
 dependencies = [

@@ -150,7 +150,10 @@ class ProcessFamily:
                             continue
                         if kernel.WaitForSingleObject(handle, 0) != 0:
                             if not kernel.TerminateProcess(handle, 0):
-                                raise ctypes.WinError(ctypes.get_last_error())
+                                error = ctypes.get_last_error()
+                                # A member can exit after the probe; the wait still proves its exit.
+                                if error != 5:
+                                    raise ctypes.WinError(error)
                         if kernel.WaitForSingleObject(handle, 5000) != 0:
                             raise RuntimeError("owned child exit is unproven")
                     finally:

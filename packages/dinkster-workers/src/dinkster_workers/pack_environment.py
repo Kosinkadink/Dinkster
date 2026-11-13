@@ -6,22 +6,24 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from dinkster_store import object_path, readable_label
-from dinkster_values import MEBIBYTE
+from packaging.requirements import Requirement
+from packaging.tags import parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .boundary import PROTOCOL_VERSION
 from .pack_lock import GenerationPackages, LockedWheel, PackLock, PackPlan, plan_pack
 from .provision import ProvisionError
+from .wheel_download import download_wheel
 
 
 def venv_python(directory: Path) -> Path:
@@ -89,14 +91,9 @@ def fetch_wheel(wheel: LockedWheel, store: Path, *, offline: bool = False) -> Pa
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(dir=target.parent, suffix=".partial")
     staging = Path(name)
+    os.close(descriptor)
     try:
-        with os.fdopen(descriptor, "wb") as output, urllib.request.urlopen(wheel.url) as source:
-            remaining = wheel.size
-            while block := source.read(min(MEBIBYTE, remaining + 1)):
-                remaining -= len(block)
-                if remaining < 0:
-                    raise ProvisionError(f"wheel exceeds locked size: {wheel.filename}")
-                output.write(block)
+        download_wheel(wheel.url, staging, max_size=wheel.size)
         if not _verify(staging, wheel):
             raise ProvisionError(f"wheel hash or size mismatch: {wheel.filename}")
         os.replace(staging, target)
@@ -195,7 +192,12 @@ def provision_pack(
                 {
                     "format": "dinkster.installed-wheels/1",
                     "wheels": [
-                        {"filename": wheel.filename, "size": wheel.size, "sha256": wheel.sha256}
+                        {
+                            "filename": wheel.filename,
+                            "size": wheel.size,
+                            "sha256": wheel.sha256,
+                            "registry": wheel.registry,
+                        }
                         for wheel in plan.wheels
                     ],
                     "inherited": sorted(
@@ -282,15 +284,25 @@ class GenerationContext:
 
 
 def _generation_locks(
-    source_generation: Path | None, overrides: Sequence[Path]
+    source_generation: Path | None,
+    overrides: Sequence[Path],
+    *,
+    errors: list[str] | None = None,
 ) -> tuple[PackLock, ...]:
     locks: dict[str, PackLock] = {}
-    replacements = {lock.pack: lock for path in overrides for lock in (PackLock.read(path),)}
-    if len(replacements) != len(overrides):
-        raise ProvisionError("more than one supplied dependency lock for the same pack")
+    failures: list[str] = []
+    replacements: dict[str, PackLock] = {}
+    for path in overrides:
+        try:
+            lock = PackLock.read(path)
+            if lock.pack in replacements:
+                raise ProvisionError("more than one supplied dependency lock for the same pack")
+            replacements[lock.pack] = lock
+        except (ProvisionError, OSError, ValueError) as exc:
+            failures.append(f"dependency lock {path}: {exc}")
     if source_generation is not None:
         if not source_generation.is_dir():
-            raise ProvisionError(f"source generation missing: {source_generation}")
+            failures.append(f"source generation missing: {source_generation}")
         packs = source_generation / "packs"
         if packs.is_dir():
             for directory in sorted(packs.iterdir()):
@@ -300,17 +312,20 @@ def _generation_locks(
                 if directory.name in replacements:
                     locks[directory.name] = replacements.pop(directory.name)
                 else:
-                    if not path.is_file():
-                        raise ProvisionError(
-                            f"pack {directory.name}: recorded dependency lock missing"
-                        )
-                    lock = PackLock.read(path)
-                    if lock.pack != directory.name:
-                        raise ProvisionError(
-                            f"pack {directory.name}: recorded lock names {lock.pack}"
-                        )
-                    locks[lock.pack] = lock
+                    try:
+                        if not path.is_file():
+                            raise ProvisionError("recorded dependency lock missing")
+                        lock = PackLock.read(path)
+                        if lock.pack != directory.name:
+                            raise ProvisionError(f"recorded lock names {lock.pack}")
+                        locks[lock.pack] = lock
+                    except (ProvisionError, OSError, ValueError) as exc:
+                        failures.append(f"pack {directory.name}: {exc}")
     locks.update(replacements)
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise ProvisionError("\n".join(failures))
     return tuple(locks[name] for name in sorted(locks))
 
 
@@ -319,20 +334,37 @@ def preflight_generation(
     *,
     source_generation: Path | None = None,
     locks: Sequence[Path] = (),
+    engine_only: bool = False,
+    errors: list[str] | None = None,
+    facts: GenerationPackages | None = None,
 ) -> tuple[PackPlan, ...]:
     """Plan all recorded packs without fetching wheels or changing either generation."""
     context.validate()
     if source_generation is None and (context.generation.parent.parent / "current").exists():
         raise ProvisionError("source generation is required for an existing project")
-    recorded = _generation_locks(source_generation, locks)
+    recorded = _generation_locks(source_generation, locks, errors=errors)
     missing = set(context.in_process_packs) - {lock.pack for lock in recorded}
     if missing:
-        raise ProvisionError(
-            f"in-process packs have no dependency lock: {', '.join(sorted(missing))}"
-        )
+        message = f"in-process packs have no dependency lock: {', '.join(sorted(missing))}"
+        if errors is None:
+            raise ProvisionError(message)
+        errors.append(message)
     if not recorded:
         return ()
-    facts = GenerationPackages.inspect(context.generation_python)
+    facts = facts if facts is not None else GenerationPackages.inspect(context.generation_python)
+    if engine_only:
+        versions: dict[str, str] = {}
+        for line in context.constraints.read_text().replace("\\\n", "").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            requirement = Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line))
+            if requirement.marker and not requirement.marker.evaluate(dict(facts.markers)):
+                continue
+            pins = list(requirement.specifier)
+            if requirement.url or len(pins) != 1 or pins[0].operator != "==":
+                raise ProvisionError("engine constraints require exact version pins")
+            versions[canonicalize_name(requirement.name)] = pins[0].version
+        facts = replace(facts, versions=versions)
     plans: list[PackPlan] = []
     for lock in sorted(recorded, key=lambda lock: lock.pack not in context.in_process_packs):
         plan = plan_pack(
@@ -409,7 +441,8 @@ def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "operation", choices=("preflight", "acquire", "rebuild", "doctor", "terminal", "references")
+        "operation",
+        choices=("preflight", "collect", "acquire", "rebuild", "doctor", "terminal", "references"),
     )
     parser.add_argument("--generation", type=Path, required=True)
     parser.add_argument("--generation-python", type=Path, required=True)
@@ -422,6 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--source-generation", type=Path)
+    parser.add_argument("--compatibility", type=json.loads)
     parser.add_argument("--lock", type=Path, action="append", default=[])
     parser.add_argument("--in-process-pack", action="append", default=[])
     parser.add_argument("--pack")
@@ -487,12 +521,36 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             changes = (str(python),)
         else:
+            errors: list[str] = []
+            facts = None
+            if args.compatibility is not None:
+                if args.operation != "collect":
+                    raise ProvisionError("recorded compatibility is only valid for collection")
+                compatibility = args.compatibility
+                facts = GenerationPackages(
+                    {},
+                    compatibility["markers"]["python_full_version"],
+                    frozenset(tag for text in compatibility["tags"] for tag in parse_tag(text)),
+                    compatibility["markers"],
+                )
             plans = preflight_generation(
                 context,
                 source_generation=args.source_generation,
                 locks=args.lock,
+                engine_only=args.operation == "collect",
+                errors=errors if args.operation == "collect" else None,
+                facts=facts,
             )
             code = int(any(plan.conflicts for plan in plans))
+            if args.operation == "collect":
+                for plan in plans:
+                    for wheel in plan.wheels:
+                        try:
+                            fetch_wheel(wheel, context.wheel_store, offline=context.offline)
+                        except (ProvisionError, OSError, ValueError) as exc:
+                            errors.append(f"pack {plan.lock.pack}: {wheel.filename}: {exc}")
+                if errors:
+                    raise ProvisionError("\n".join(errors))
             if not code and args.operation == "acquire":
                 _require_fresh_generation(context.generation)
                 errors: list[str] = []

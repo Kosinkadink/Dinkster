@@ -6,12 +6,11 @@ import argparse
 import email
 import hashlib
 import json
+import os
 import re
-import shutil
 import subprocess
 import tempfile
 import tomllib
-import urllib.request
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -28,6 +27,7 @@ from packaging.version import Version
 
 from .manifest import load_manifest
 from .provision import ProvisionError
+from .wheel_download import download_wheel
 
 OPENCV_ALIASES = {
     "opencv-python": "opencv-contrib-python-headless",
@@ -52,6 +52,7 @@ class LockedWheel:
     size: int
     sha256: str
     url: str
+    registry: str | None = None
 
     def __post_init__(self) -> None:
         if Path(self.filename).name != self.filename or "\\" in self.filename:
@@ -61,6 +62,19 @@ class LockedWheel:
             raise ProvisionError(f"invalid wheel hash or size: {self.filename}")
         if urlparse(self.url).scheme not in {"https", "http", "file"}:
             raise ProvisionError(f"unsupported wheel URL: {self.filename}")
+        if self.registry is not None:
+            registry = cast(object, self.registry)
+            issuer = urlparse(registry) if isinstance(registry, str) else None
+            if (
+                issuer is None
+                or issuer.scheme not in {"https", "http"}
+                or not issuer.hostname
+                or issuer.username
+                or issuer.password
+                or issuer.query
+                or issuer.fragment
+            ):
+                raise ProvisionError(f"invalid wheel issuing registry: {self.filename}")
 
 
 @dataclass(frozen=True)
@@ -86,8 +100,7 @@ def _wheel_requirements(wheel: LockedWheel) -> tuple[str, ...]:
     """Read dependency metadata from verified bytes, once per publication artifact."""
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-metadata-") as directory:
         path = Path(directory) / wheel.filename
-        with urllib.request.urlopen(wheel.url, timeout=30) as source, path.open("wb") as output:
-            shutil.copyfileobj(source, output)
+        download_wheel(wheel.url, path, max_size=wheel.size)
         with path.open("rb") as source:
             if (
                 path.stat().st_size != wheel.size
@@ -147,6 +160,10 @@ class PackLock:
 
     def to_json(self) -> str:
         data = asdict(self)
+        for package in data["packages"]:
+            for wheel in package["wheels"]:
+                if wheel["registry"] is None:
+                    wheel.pop("registry")
         data["format"] = (
             "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
         )
@@ -217,7 +234,7 @@ print(json.dumps({"versions": {d.metadata["Name"]: d.version for d in m.distribu
 """
         try:
             result = subprocess.run(
-                [str(python), "-I", "-c", script], capture_output=True, text=True
+                [str(python), "-I", "-B", "-c", script], capture_output=True, text=True
             )
         except OSError as exc:
             raise ProvisionError(f"cannot inspect generation interpreter {python}: {exc}") from exc
@@ -333,10 +350,12 @@ def resolve_pack_lock(
         output = root / "pylock.toml"
         sources = "".join(f"--find-links {path.resolve().as_uri()}\n" for path in find_links)
         source.write_text(sources + "\n".join(normalized) + "\n", encoding="ascii")
+        resolved_indexes = tuple(indexes) or (() if find_links else ("https://pypi.org/simple",))
         command = [
             uv,
             "pip",
             "compile",
+            "--no-config",
             str(source),
             "--python",
             str(python),
@@ -350,15 +369,40 @@ def resolve_pack_lock(
             str(output),
             "--no-header",
         ]
-        if indexes:
-            command.extend(["--default-index", indexes[0]])
-            for index in indexes[1:]:
+        if resolved_indexes:
+            command.extend(["--default-index", resolved_indexes[0]])
+            for index in resolved_indexes[1:]:
                 command.extend(["--index", index])
-        elif find_links:
+        else:
             command.append("--no-index")
-        result = subprocess.run(command, capture_output=True, text=True)
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "UV_INDEX",
+                "UV_INDEX_URL",
+                "UV_EXTRA_INDEX_URL",
+                "UV_DEFAULT_INDEX",
+                "UV_FIND_LINKS",
+                "UV_TORCH_BACKEND",
+                "UV_CONSTRAINT",
+                "UV_OVERRIDE",
+                "UV_CONFIG_FILE",
+            }
+        }
+        result = subprocess.run(command, capture_output=True, text=True, env=environment)
         if result.returncode:
             raise ProvisionError(f"pack {pack} dependency conflict: {result.stderr.strip()}")
+        index_origin = (
+            resolved_indexes[0]
+            if len(resolved_indexes) == 1
+            and not any(
+                line.lstrip().startswith("-") and not line.lstrip().startswith("--hash=")
+                for line in constraints.read_text(encoding="utf-8").splitlines()
+            )
+            else None
+        )
         data = tomllib.loads(output.read_text(encoding="utf-8"))
         packages: list[LockedDistribution] = []
         for item in cast("list[dict[str, Any]]", data.get("packages", [])):
@@ -382,8 +426,12 @@ def resolve_pack_lock(
                 digest = wheel.get("hashes", {}).get("sha256")
                 if size is None or digest is None or wheel in archives:
                     # uv omits integrity metadata for local find-links artifacts.
-                    with urllib.request.urlopen(url) as stream:
-                        content = stream.read()
+                    downloaded = root / "resolved-wheel"
+                    try:
+                        download_wheel(url, downloaded, max_size=size)
+                    except ProvisionError as exc:
+                        raise ProvisionError(f"pack {pack}: {exc}") from exc
+                    content = downloaded.read_bytes()
                     measured = hashlib.sha256(content).hexdigest()
                     if digest is not None and digest != measured:
                         raise ProvisionError(f"resolved wheel hash mismatch: {url}")
@@ -396,6 +444,10 @@ def resolve_pack_lock(
                         size,
                         digest,
                         url,
+                        # uv's pylock omits the index; only one configured index is unambiguous.
+                        index_origin
+                        if wheel not in archives and urlparse(url).scheme in {"https", "http"}
+                        else None,
                     )
                 )
             if not candidates:
@@ -423,7 +475,11 @@ def resolve_pack_lock(
             if package.name == "dinkster-api":
                 continue
             for wheel in package.wheels:
-                for text in _wheel_requirements(wheel):
+                try:
+                    wheel_requirements = _wheel_requirements(wheel)
+                except ProvisionError as exc:
+                    raise ProvisionError(f"pack {pack}: {exc}") from exc
+                for text in wheel_requirements:
                     if canonicalize_name(Requirement(text).name) == "dinkster-api":
                         api_requirements.add(normalize_requirement(text))
         normalized = tuple(dict.fromkeys((*normalized, *sorted(api_requirements))))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -12,6 +13,96 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+
+def read_scan_timings(database: str) -> list[dict]:
+    """Account for time between persisted claim and stage-completion boundaries."""
+    import importlib
+    import json
+    import sqlite3
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    postgres = database.startswith("postgresql://")
+    if postgres:
+        psycopg = importlib.import_module("psycopg")
+        connection = psycopg.connect(
+            database, autocommit=True, row_factory=importlib.import_module("psycopg.rows").dict_row
+        )
+    else:
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+
+    def rows(query, parameters=()):
+        for row in connection.execute(query.replace("?", "%s") if postgres else query, parameters):
+            yield {
+                key: value.isoformat()
+                if isinstance(value, datetime)
+                else value.hex
+                if isinstance(value, UUID)
+                else json.dumps(value)
+                if isinstance(value, dict)
+                else value
+                for key, value in dict(row).items()
+            }
+
+    try:
+        connection.execute(
+            "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY" if postgres else "BEGIN"
+        )
+        candidates = []
+        for candidate in rows(
+            "SELECT id, release_id, pack_name, status, submitted_at FROM release_candidates "
+            "ORDER BY submitted_at, id"
+        ):
+            claims = {
+                json.loads(row["data"])["attempt"]: row["created_at"]
+                for row in rows(
+                    "SELECT created_at, data FROM audit_events "
+                    "WHERE event_type = 'release_candidate.claimed' "
+                    "AND replace(subject_id, '-', '') = ? ORDER BY created_at, id",
+                    (candidate["id"],),
+                )
+            }
+            boundaries = dict(claims)
+            stages = []
+            for row in rows(
+                "SELECT stage, attempt, accepted, created_at FROM release_scan_runs "
+                "WHERE candidate_id = ? OR (release_id = ? AND stage = 'admission') "
+                "ORDER BY created_at, id",
+                (candidate["id"], candidate["release_id"]),
+            ):
+                start = boundaries.get(row["attempt"])
+                end = row["created_at"]
+                stages.append(
+                    {
+                        "stage": row["stage"],
+                        "attempt": row["attempt"],
+                        "accepted": bool(row["accepted"]),
+                        "intervalStartAt": start,
+                        "recordedAt": end,
+                        "intervalSeconds": (
+                            datetime.fromisoformat(end) - datetime.fromisoformat(start)
+                        ).total_seconds()
+                        if start is not None
+                        else None,
+                    }
+                )
+                boundaries[row["attempt"]] = end
+            candidates.append(
+                {
+                    "candidateId": candidate["id"],
+                    "pack": candidate["pack_name"],
+                    "status": candidate["status"],
+                    "submittedAt": candidate["submitted_at"],
+                    "claimedAt": claims,
+                    "stages": stages,
+                    "observedAt": datetime.now(UTC).isoformat(),
+                }
+            )
+        return candidates
+    finally:
+        connection.close()
 
 
 def verify_active(inputs: Path, rows: list[dict], timeout: float) -> None:
@@ -50,15 +141,29 @@ def check_publication(
     publisher_image: str,
     *,
     timeout: float = 600,
+    runtime_mirror: Path | None = None,
 ) -> dict:
     """Images and the complete dependency index must already exist locally."""
     start = time.monotonic()
     deadline = start + timeout
     name = "dinkster-publication-" + uuid.uuid4().hex
     containers: list[str] = []
+    runtime_volumes: list[str] = []
     network_created = volume_created = False
     token: str | None = None
     environment = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+    timings: dict = {"phases": [], "candidates": []}
+    phase = "startup"
+    phase_start = start
+    failed = False
+
+    def finish_phase() -> None:
+        nonlocal phase_start
+        end = time.monotonic()
+        timings["phases"].append(
+            {"phase": phase, "startSeconds": phase_start - start, "endSeconds": end - start}
+        )
+        phase_start = end
 
     def docker(*arguments: str, token: str | None = None) -> str:
         env = environment | ({"DINKSTER_REGISTRY_TOKEN": token} if token else {})
@@ -77,6 +182,7 @@ def check_publication(
 
     service_id = docker("image", "inspect", service_image, "--format", "{{.Id}}")
     publisher_id = docker("image", "inspect", publisher_image, "--format", "{{.Id}}")
+    database_id = docker("image", "inspect", "postgres:16-alpine", "--format", "{{.Id}}")
     bases = sorted(inputs.glob("bases/*/manifest.json"))
     locks = sorted(inputs.glob("locks/*.pack-lock.json"))
     if not bases or not locks or not (inputs / "sources/official-packs.lock").is_file():
@@ -115,7 +221,7 @@ def check_publication(
         ):
             raise ValueError("disposable API wheel differs from its engine manifest")
 
-    def run_container(role: str, image: str, *arguments: str) -> str:
+    def run_container(role: str, image: str, *arguments: str, command: tuple[str, ...] = ()) -> str:
         container = name + "-" + role
         # Register before starting so a failed start cannot leave an owned container behind.
         containers.append(container)
@@ -133,6 +239,7 @@ def check_publication(
             "127.0.0.1",
             *arguments,
             image,
+            *command,
         )
         return container
 
@@ -141,11 +248,32 @@ def check_publication(
         network_created = True
         docker("volume", "create", name)
         volume_created = True
+        for index in range(2):
+            volume = name + f"-runtime-{index}"
+            docker("volume", "create", volume)
+            runtime_volumes.append(volume)
+        database = run_container(
+            "database",
+            database_id,
+            "--tmpfs",
+            "/var/lib/postgresql/data",
+            "--env",
+            "POSTGRES_HOST_AUTH_METHOD=trust",
+            "--env",
+            "POSTGRES_DB=registry",
+        )
+        docker(
+            "exec",
+            database,
+            "sh",
+            "-c",
+            "until pg_isready -U postgres -d registry; do sleep .2; done",
+        )
         common = (
             "--mount",
             f"type=volume,src={name},dst=/data",
             "--env",
-            "DINKSTER_DATABASE_URL=sqlite:////data/registry.sqlite",
+            "DINKSTER_DATABASE_URL=postgresql+psycopg://postgres@database/registry",
             "--env",
             "DINKSTER_OBJECT_STORE_ROOT=/data/objects",
             "--env",
@@ -164,12 +292,53 @@ def check_publication(
                 "--env",
                 "DINKSTER_PROBE_ENGINE_RELEASE=/engine",
             )
+        runtime = runtime_mirror if runtime_mirror is not None else package_index / "runtime"
+        if runtime.is_dir():
+            common += (
+                "--mount",
+                f"type=bind,src={runtime.resolve()},dst=/runtime,readonly",
+                "--env",
+                "DINKSTER_ENV=development",
+                "--env",
+                "DINKSTER_PROBE_RUNTIME_MIRROR=/runtime",
+            )
+            for index, volume in enumerate(runtime_volumes):
+                if not (runtime / "wheels").is_dir():
+                    break
+                seed = name + f"-seed-{index}"
+                containers.append(seed)
+                docker(
+                    "run",
+                    "--rm",
+                    "--pull=never",
+                    "--name",
+                    seed,
+                    "--network",
+                    "none",
+                    "--user",
+                    "root",
+                    "--mount",
+                    f"type=volume,src={volume},dst=/data/objects/.probe-runtime",
+                    "--mount",
+                    f"type=bind,src={(runtime / 'wheels').resolve()},dst=/seed,readonly",
+                    "--entrypoint",
+                    "python",
+                    service_id,
+                    "-c",
+                    "import shutil; shutil.copytree('/seed', "
+                    "'/data/objects/.probe-runtime/wheels', dirs_exist_ok=True)",
+                )
         registry = run_container(
             "registry",
             service_id,
             *common,
             "--user",
             "root",
+            "--env",
+            "DINKSTER_SEED_FIXTURES=0",
+            "--entrypoint",
+            "/app/scripts/start-dev.sh",
+            command=("serve",),
         )
         wheels = name + "-wheels"
         containers.append(wheels)
@@ -228,32 +397,40 @@ def check_publication(
             "--expires",
             (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         )
-        scanner = name + "-scanner"
-        containers.append(scanner)
-        docker(
-            "run",
-            "--detach",
-            "--pull=never",
-            "--name",
-            scanner,
-            "--network",
-            name,
-            "--dns",
-            "127.0.0.1",
-            "--user",
-            "root",
-            "--privileged",
-            *common,
-            service_id,
-            "dinkster-registry",
-            "scanner",
-        )
+        scanners = []
+        for index, volume in enumerate(runtime_volumes):
+            scanner = name + f"-scanner-{index}"
+            containers.append(scanner)
+            scanners.append(scanner)
+            docker(
+                "run",
+                "--detach",
+                "--pull=never",
+                "--name",
+                scanner,
+                "--network",
+                name,
+                "--dns",
+                "127.0.0.1",
+                "--user",
+                "root",
+                "--privileged",
+                *common,
+                "--mount",
+                f"type=volume,src={volume},dst=/data/objects/.probe-runtime",
+                service_id,
+                "dinkster-registry",
+                "scanner",
+                "--worker-id",
+                scanner,
+            )
         publisher = name + "-publisher"
         containers.append(publisher)
         pythonpath = ":".join(
             [
                 "/source",
                 "/source/src",
+                "/candidate-security",
                 "/source/packages/dinkster-supervisor/shared",
                 *[
                     "/source/" + str(path.relative_to(root))
@@ -276,6 +453,10 @@ def check_publication(
             "--mount",
             f"type=bind,src={root.resolve()},dst=/source,readonly",
             "--mount",
+            "type=bind,src="
+            + str(root.resolve() / "packages/dinkster-supervisor/src/dinkster_supervisor/security")
+            + ",dst=/candidate-security/dinkster_security,readonly",
+            "--mount",
             f"type=bind,src={inputs.resolve()},dst=/inputs,readonly",
             "--env",
             "PYTHONPATH=" + pythonpath,
@@ -293,7 +474,7 @@ def check_publication(
             "except OSError: pass\n"
             "else: raise RuntimeError('external network is reachable')\n"
         )
-        for container in (registry, scanner, publisher, wheels):
+        for container in (registry, *scanners, publisher, wheels):
             docker("exec", container, "python", "-c", denied)
         arguments = [
             "--sources",
@@ -309,7 +490,9 @@ def check_publication(
         for path in locks:
             arguments.extend(["--pack-lock", "/inputs/" + str(path.relative_to(inputs))])
         submissions = []
+        finish_phase()
         for attempt in ("submitted", "already-active"):
+            phase = attempt
             submissions.append(
                 json.loads(
                     docker(
@@ -325,6 +508,8 @@ def check_publication(
                     )
                 )
             )
+            finish_phase()
+            phase = attempt + "-verify-active"
             verify = (
                 "import json,sys; from pathlib import Path; "
                 "from scripts.check_disposable_publication import verify_active; "
@@ -340,17 +525,23 @@ def check_publication(
                 str(max(1, deadline - time.monotonic())),
                 token=token,
             )
+            finish_phase()
         return {
             "serviceImage": service_id,
             "publisherImage": publisher_id,
+            "databaseImage": database_id,
             "externalNetworkDenied": True,
             "submissions": submissions,
             "elapsedSeconds": time.monotonic() - start,
+            "timings": timings,
         }
     except Exception:
+        failed = True
+        finish_phase()
+        phase = "failure-diagnostics"
         # Retain scanner diagnostics before deleting the disposable database.
         report = (
-            "import json,sqlite3; db=sqlite3.connect('/data/registry.sqlite'); "
+            "import json,psycopg; db=psycopg.connect('postgresql://postgres@database/registry'); "
             "print(json.dumps(db.execute('SELECT stage,operator_details,doctor "
             "FROM release_scan_runs ORDER BY created_at DESC LIMIT 10').fetchall()))"
         )
@@ -373,14 +564,52 @@ def check_publication(
             pass
         raise
     finally:
+        if failed:
+            finish_phase()
+        phase = "scan-timing-capture"
+        # Diagnostics have an independent bound, not more time for publication work.
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    name + "-registry",
+                    "python",
+                    "-c",
+                    inspect.getsource(read_scan_timings) + "\nimport json; "
+                    "print(json.dumps(read_scan_timings('postgresql://postgres@database/registry')))",
+                ],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if result.returncode == 0:
+                timings["candidates"] = json.loads(result.stdout)
+            else:
+                timings["captureError"] = "scan timing reader exited " + str(result.returncode)
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            timings["captureError"] = type(exc).__name__
+        finish_phase()
+        phase = "cleanup"
         # Cleanup has its own bound even when the publication deadline expired.
         deadline = time.monotonic() + 60
-        for container in reversed(containers):
-            subprocess.run(["docker", "rm", "--force", container], capture_output=True, timeout=15)
-        if volume_created:
-            docker("volume", "rm", name)
-        if network_created:
-            docker("network", "rm", name)
+        try:
+            for container in reversed(containers):
+                subprocess.run(
+                    ["docker", "rm", "--force", container], capture_output=True, timeout=15
+                )
+            for volume in reversed(runtime_volumes):
+                docker("volume", "rm", volume)
+            if volume_created:
+                docker("volume", "rm", name)
+            if network_created:
+                docker("network", "rm", name)
+        finally:
+            finish_phase()
+            if failed or sys.exc_info()[0] is not None:
+                print(json.dumps({"timings": timings}), flush=True)
 
 
 if __name__ == "__main__":

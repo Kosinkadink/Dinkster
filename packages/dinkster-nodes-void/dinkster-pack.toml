@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-void"
-version = "0.0.6"
+version = "0.0.8"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.void"]

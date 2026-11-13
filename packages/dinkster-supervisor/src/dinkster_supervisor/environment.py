@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from platform import machine
+from time import monotonic
 from typing import cast
 
 from dinkster_store import object_path, pack_archive_path
@@ -59,6 +60,7 @@ from .environment_generations import (
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_pack_install import apply_pack_install, plan_pack_install
+from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
     engine_assignments,
@@ -327,6 +329,9 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
+    offline = getattr(args, "offline", False)
+    if offline and (args.from_scratch or args.catalog_lock is None or not args.pack_lock):
+        raise EnvironmentError("offline setup requires published source and dependency locks")
     developing = args.operation == "develop"
     adopting = getattr(args, "adopt_from", None)
     if adopting is not None and (root.exists() or args.root.is_symlink()):
@@ -517,7 +522,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 ]
             )
     else:
-        catalog = discover(mirrors, channel, store=store)
+        catalog = discover(mirrors, channel, store=store, offline=offline)
         if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -798,6 +803,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     base_sources=(str(object_path(store / "downloads", base_id)),)
                     if custom is not None
                     else None,
+                    offline=offline,
                 )
 
                 def custom_locks(
@@ -978,7 +984,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     artifacts=source_artifacts,
                     source_kind="local" if local is not None else "published",
                     prepare_packs=prepare_packs,
-                    acquire_pack_wheels=local is None,
+                    acquire_pack_wheels=local is None and not offline,
                     artifact_sources={
                         "channel": catalog.document,
                         "engine": list(catalog.engine_sources),
@@ -1402,6 +1408,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_plan = commands.add_parser("packs-plan", help="retain exact additive software inputs")
     packs_plan.add_argument("packs", nargs="+", metavar="PACK@VERSION")
     packs_plan.add_argument("--output", type=Path, required=True)
+    packs_plan.add_argument(
+        "--progress", type=Path, help="atomically publish preparation observations"
+    )
     packs_apply = commands.add_parser("packs-apply", help="apply a retained software review once")
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
@@ -1410,6 +1419,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--repair", action="store_true", help="rebuild offline from the local store"
     )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
+    setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
 
     setup.add_argument(
         "--from-scratch", action="store_true", help="resolve locally; development only"
@@ -1451,6 +1461,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start = commands.add_parser("start", help="start the current generation's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
+    start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
@@ -1517,6 +1528,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
+    """Execute a parsed generation operation using the shared result contract."""
     result: dict[str, object] = {
         "format": "dinkster.environment-result/1",
         "operation": args.operation,
@@ -1540,7 +1552,32 @@ def run(args: argparse.Namespace) -> int:
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
         if args.operation == "packs-plan":
-            result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+            sequence = 0
+            last_write = 0.0
+            last_stage = ""
+
+            def progress(stage: str, completed: int, total: int) -> None:
+                nonlocal sequence, last_write, last_stage
+                sequence += 1
+                if args.progress is not None:
+                    if args.progress.with_name(args.progress.name + ".cancel").exists():
+                        raise EnvironmentError("pack preparation cancelled")
+                    now = monotonic()
+                    if stage == last_stage and now - last_write < 0.25 and completed != total:
+                        return
+                    write_document(
+                        args.progress,
+                        {
+                            "sequence": sequence,
+                            "stage": stage,
+                            "completed": completed,
+                            "total": total,
+                        },
+                    )
+                    last_write, last_stage = now, stage
+
+            with observe_preparation(progress):
+                result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
             code = 0
         elif args.operation == "packs-apply":
             result.update(apply_pack_install(args.root, args.input, args.approval))
@@ -1625,6 +1662,8 @@ def run(args: argparse.Namespace) -> int:
             print(change)
         if "error" in result:
             print(result["error"], file=sys.stderr)
+        if "url" in result:
+            print(f"Dinkster is available at {result['url']}", flush=True)
         if args.operation == "history" and code == 0:
             print(
                 json.dumps(result.get("entry", result.get("history")), indent=2, ensure_ascii=True)
@@ -1710,6 +1749,10 @@ def run(args: argparse.Namespace) -> int:
                     print(f"Warning: {warning}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
+    if code == 0 and "url" in result and args.operation == "start" and args.open_browser:
+        import webbrowser
+
+        webbrowser.open(cast("str", result["url"]))
     return code
 
 

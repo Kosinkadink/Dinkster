@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-sd"
-version = "0.0.6"
+version = "0.0.8"
 description = "Dinkster sd nodes"
 requires-python = ">=3.12"
 dependencies = [

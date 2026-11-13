@@ -11,8 +11,9 @@ design, enforced here so no caller can weaken them:
   private one). With multiple registries configured and no default,
   resolution refuses loudly and names the choices.
 - THE REGISTRY IS PROVENANCE, NEVER IDENTITY. Resolution records
-  ``registry:<name>`` (configured) or ``registry:<url>`` (ad-hoc) as the
-  entry's source; identity stays the artifact digest, and acquisition
+  ``registry:<url>`` as the entry's source, even when selected by a local
+  name, so later configuration cannot change its issuing registry.
+  Identity stays the artifact digest, and acquisition
   verifies the bytes against it, so even a lying index cannot
   substitute content - only refuse or confess.
 - CREDENTIALS ARE PER REGISTRY ENDPOINT, NEVER IN THE CONFIG FILE.
@@ -232,10 +233,8 @@ class NamedRegistry:
 
     @property
     def source(self) -> str:
-        """The provenance qualifier resolution records: the NAME when
-        configured (portable across machines that configure the same
-        label), the URL for ad-hoc endpoints."""
-        return f"registry:{self.name or self.endpoint}"
+        """Pin the issuing endpoint independently of mutable local labels."""
+        return f"registry:{self.endpoint}"
 
     @property
     def label(self) -> str:
@@ -528,7 +527,7 @@ class StaticPackIndex:
                     token=credential,
                 )
             schema = document.get("schemaVersion")
-            if type(schema) is not int or schema not in (1, 2):
+            if type(schema) is not int or schema != 2:
                 raise InstallError(
                     f"registry static index has unsupported schema {schema!r}; update Dinkster"
                 )
@@ -585,8 +584,6 @@ class StaticPackIndex:
         include_libraries: bool = False,
     ) -> tuple[dict[str, object], ...]:
         document = self._read(registry, "/static/packs/index.json", timeout, token)
-        if document["schemaVersion"] == 1:
-            return _static_releases(registry, document, include_libraries=include_libraries)
         entries: list[dict[str, object]] = []
         names: set[str] = set()
         for value in cast("list[object]", document["items"]):
@@ -626,14 +623,11 @@ class StaticPackIndex:
         catalog = self.catalog(
             registry, timeout=timeout, token=token, include_libraries=include_libraries
         )
-        document = self._read(registry, "/static/packs/index.json", timeout, token)
-        if document["schemaVersion"] == 1:
-            return tuple(row for row in catalog if row["name"] == pack)
         entry = next((row for row in catalog if row["name"] == pack), None)
         if entry is None:
             return ()
         document = self._read(registry, "/static/" + str(entry["url"]), timeout, token)
-        if document["schemaVersion"] != 2 or document.get("name") != pack:
+        if document.get("name") != pack:
             raise InstallError(f"registry static per-pack index identity differs for {pack}")
         releases = _static_releases(registry, document, include_libraries=include_libraries)
         if any(row["name"] != pack for row in releases):
@@ -641,6 +635,28 @@ class StaticPackIndex:
                 f"registry static per-pack index substitutes another pack for {pack}"
             )
         return releases
+
+    def release_manifest(self, registry: NamedRegistry, entry: LockedPack) -> dict[str, object]:
+        """Read active release constraints bound to the selected archive identity."""
+        if self._offline:
+            raise InstallError("offline release manifest is unavailable for security repair")
+        document = _index_get(
+            registry,
+            f"/v1/packs/{entry.pack}/versions/{entry.version}",
+            action="reading release constraints",
+            subject=f"{entry.pack}@{entry.version}",
+        )
+        artifact, manifest = document.get("artifact"), document.get("manifest")
+        if (
+            document.get("packName") != entry.pack
+            or document.get("version") != entry.version
+            or document.get("state") != "active"
+            or not isinstance(artifact, dict)
+            or artifact.get("digest") != entry.artifact_digest
+            or not isinstance(manifest, dict)
+        ):
+            raise InstallError("release constraints differ from selected active archive")
+        return cast("dict[str, object]", manifest)
 
 
 def _static_releases(
@@ -717,6 +733,7 @@ def static_release_wheel(
             cast("int", size),
             sha256,
             registry.endpoint + "/static/" + cast("str", relative),
+            registry.endpoint,
         )
         LockedDistribution(name, version, (wheel,))
     except (ValueError, ProvisionError) as exc:
@@ -994,10 +1011,7 @@ def prepare_registry_update_sources(
                 engine_version=engine_version,
                 index=index,
             )
-            entries.extend(
-                replace(updated, source=entry.source) if entry.source != "registry" else updated
-                for updated in lock.packs
-            )
+            entries.extend(lock.packs)
         except InstallError as exc:
             raise InstallError(
                 f"updating installed {entry.pack}@{entry.version} "
@@ -1015,6 +1029,7 @@ def read_registry_pack_locks(
     selected: NamedRegistry | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     index: StaticPackIndex | None = None,
+    errors: list[str] | None = None,
 ) -> tuple[PackLock, ...]:
     """Inspect every binding before staging; never resolve dependency ranges."""
     index = index or StaticPackIndex()
@@ -1024,7 +1039,7 @@ def read_registry_pack_locks(
     ):
         raise InstallError("published locks require a variant and exact sha256 base identity")
     locks: list[PackLock] = []
-    errors: list[str] = []
+    failures: list[str] = []
     for entry in sources.packs:
         subject = f"{entry.pack}@{entry.version} dependency lock for {variant}"
         try:
@@ -1081,9 +1096,11 @@ def read_registry_pack_locks(
             ProvisionError,
             http.client.HTTPException,
         ) as exc:
-            errors.append(f"{subject}: {exc}")
-    if errors:
-        raise InstallError("published dependency locks refused:\n" + "\n".join(errors))
+            failures.append(f"{subject}: {exc}")
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise InstallError("published dependency locks refused:\n" + "\n".join(failures))
     return tuple(locks)
 
 
@@ -1096,27 +1113,32 @@ def plan_registry_sources(
     variant: str,
     base_id: str,
     index: StaticPackIndex,
+    errors: list[str] | None = None,
 ) -> tuple[Lockfile, tuple[PackLock, ...]]:
     """Select sources and bound locks from metadata without acquiring pack archives."""
     entries: list[LockedPack] = []
-    errors: list[str] = []
+    failures: list[str] = []
     for pack, minimum in minimums.items():
         try:
             entries.append(
                 resolve_compatible_release(registry, pack, minimum, engine_version, index=index)
             )
         except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
-            errors.append(f"{pack}: {exc}")
+            failures.append(f"{pack}: {exc}")
     sources = Lockfile.of(entries)
-    locks: tuple[PackLock, ...] = ()
-    try:
-        locks = read_registry_pack_locks(
-            config, sources, variant=variant, base_id=base_id, selected=registry, index=index
-        )
-    except InstallError as exc:
-        errors.append(str(exc))
-    if errors:
-        raise InstallError("registry plan refused:\n" + "\n".join(errors))
+    locks = read_registry_pack_locks(
+        config,
+        sources,
+        variant=variant,
+        base_id=base_id,
+        selected=registry,
+        index=index,
+        errors=failures,
+    )
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise InstallError("registry plan refused:\n" + "\n".join(failures))
     return sources, locks
 
 
@@ -1131,6 +1153,7 @@ def plan_registry_changes(
     base_id: str,
     selected: NamedRegistry | None = None,
     index: StaticPackIndex,
+    errors: list[str] | None = None,
 ) -> tuple[Lockfile, tuple[PackLock, ...]]:
     """Inspect published replacements, retaining every unselected source verbatim."""
     if selections and updates is not None:
@@ -1163,7 +1186,7 @@ def plan_registry_changes(
         if not requested:
             raise InstallError("installation requires at least one exact selection")
     replacements: list[LockedPack] = []
-    errors: list[str] = []
+    failures: list[str] = []
     for name, version in requested.items():
         try:
             previous = current.get(name)
@@ -1187,21 +1210,23 @@ def plan_registry_changes(
                 entry = resolve_release(
                     registry, name, version, engine_version=engine_version, index=index
                 )
-            if previous is not None and previous.source.startswith("registry:"):
-                entry = replace(entry, source=previous.source)
             replacements.append(entry)
         except (InstallError, OSError, ValueError, http.client.HTTPException) as exc:
-            errors.append(f"{name}: {exc}")
+            failures.append(f"{name}: {exc}")
     sources = Lockfile.of(replacements)
-    locks: tuple[PackLock, ...] = ()
-    try:
-        locks = read_registry_pack_locks(
-            config, sources, variant=variant, base_id=base_id, selected=selected, index=index
-        )
-    except InstallError as exc:
-        errors.append(str(exc))
-    if errors:
-        raise InstallError("registry pack changes refused:\n" + "\n".join(errors))
+    locks = read_registry_pack_locks(
+        config,
+        sources,
+        variant=variant,
+        base_id=base_id,
+        selected=selected,
+        index=index,
+        errors=failures,
+    )
+    if errors is not None:
+        errors.extend(failures)
+    elif failures:
+        raise InstallError("registry pack changes refused:\n" + "\n".join(failures))
     return (
         Lockfile.of(
             [entry for entry in installed.packs if entry.pack not in requested] + replacements

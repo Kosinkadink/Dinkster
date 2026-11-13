@@ -32,13 +32,201 @@ from scripts.build_release import (
     select_dependency_wheels,
     validate_engine_wheels,
     versioned_sources,
-    wheel_metadata,
     workspace_projects,
     write_constraints,
 )
 from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_disposable_scan_timings_preserve_candidates_attempts_and_admission(tmp_path: Path) -> None:
+    import inspect
+    import sqlite3
+
+    from scripts.check_disposable_publication import read_scan_timings
+
+    database = tmp_path / "registry.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            "CREATE TABLE release_candidates (id, release_id, pack_name, status, submitted_at);"
+            "CREATE TABLE audit_events (id, event_type, subject_id, created_at, data);"
+            "CREATE TABLE release_scan_runs "
+            "(id, candidate_id, release_id, stage, attempt, accepted, created_at);"
+            "INSERT INTO release_candidates VALUES "
+            "('aabb', 'release-a', 'first', 'accepted', '2026-11-12 07:00:00'),"
+            "('ccdd', NULL, 'second', 'scanning', '2026-11-12 07:00:01');"
+            "INSERT INTO audit_events VALUES "
+            "(1, 'release_candidate.claimed', 'aa-bb', '2026-11-12 07:00:02', "
+            '\'{"attempt": 1, "secret": "must-not-appear"}\'),'
+            "(2, 'release_candidate.claimed', 'cc-dd', '2026-11-12 07:00:04', "
+            "'{\"attempt\": 1}'),"
+            "(3, 'release_candidate.claimed', 'cc-dd', '2026-11-12 07:00:12', "
+            "'{\"attempt\": 2}');"
+            "INSERT INTO release_scan_runs VALUES "
+            "(1, 'aabb', NULL, 'ingest_integrity', 1, 1, '2026-11-12 07:00:03'),"
+            "(2, 'ccdd', NULL, 'ingest_integrity', 1, 1, '2026-11-12 07:00:06'),"
+            "(3, 'aabb', NULL, 'executable_probe', 1, 1, '2026-11-12 07:00:10'),"
+            "(4, NULL, 'release-a', 'admission', 1, 1, '2026-11-12 07:00:11'),"
+            "(5, 'ccdd', NULL, 'ingest_integrity', 2, 0, '2026-11-12 07:00:15');"
+        )
+    before = database.read_bytes()
+    # Run the same self-contained reader sent to the container, without host imports.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            inspect.getsource(read_scan_timings)
+            + f"\nimport json; print(json.dumps(read_scan_timings({str(database)!r})))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    first, second = json.loads(result.stdout)
+    assert (first["pack"], second["pack"]) == ("first", "second")
+    assert [row["stage"] for row in first["stages"]] == [
+        "ingest_integrity",
+        "executable_probe",
+        "admission",
+    ]
+    assert [row["intervalSeconds"] for row in first["stages"]] == [1, 7, 1]
+    assert [row["intervalSeconds"] for row in second["stages"]] == [2, 3]
+    assert second["stages"][-1]["accepted"] is False
+    assert second["stages"][-1]["intervalStartAt"] == "2026-11-12 07:00:12"
+    assert "must-not-appear" not in result.stdout
+    assert database.read_bytes() == before
+
+
+def test_disposable_scan_timings_normalize_postgresql_values(monkeypatch) -> None:
+    import importlib
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    from scripts.check_disposable_publication import read_scan_timings
+
+    candidate_id = UUID("00000000-0000-0000-0000-0000000000aa")
+
+    class Connection:
+        def execute(self, query, parameters=()):
+            if query.startswith("SELECT id,"):
+                return [
+                    dict(
+                        id=candidate_id,
+                        release_id=None,
+                        pack_name="postgres-pack",
+                        status="scanning",
+                        submitted_at=datetime(2026, 11, 12, 7, tzinfo=UTC),
+                    )
+                ]
+            if query.startswith("SELECT created_at,"):
+                return [
+                    dict(
+                        created_at=datetime(2026, 11, 12, 7, 0, 2, tzinfo=UTC),
+                        data={"attempt": 2, "secret": "must-not-appear"},
+                    )
+                ]
+            if query.startswith("SELECT stage,"):
+                return [
+                    dict(
+                        stage="executable_probe",
+                        attempt=2,
+                        accepted=False,
+                        created_at=datetime(2026, 11, 12, 7, 0, 9, tzinfo=UTC),
+                    )
+                ]
+            return []
+
+        def close(self):
+            pass
+
+    adapter = SimpleNamespace(connect=lambda *args, **kwargs: Connection(), dict_row=object())
+    monkeypatch.setattr(importlib, "import_module", lambda name: adapter)
+    result = read_scan_timings("postgresql://postgres@database/registry")
+    assert result[0]["candidateId"] == candidate_id.hex
+    assert result[0]["stages"][0]["intervalSeconds"] == 7
+    assert result[0]["stages"][0]["accepted"] is False
+    assert "must-not-appear" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("failure", [None, "publication", "capture"])
+def test_disposable_publication_retains_timings_without_changing_verdict(
+    tmp_path: Path, monkeypatch, capsys, failure: str | None
+) -> None:
+    from scripts.check_disposable_publication import check_publication
+
+    inputs = tmp_path / "inputs"
+    for name in (
+        "bases/cpu/manifest.json",
+        "locks/cpu.pack-lock.json",
+        "sources/official-packs.lock",
+    ):
+        path = inputs / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+    index = tmp_path / "index"
+    index.mkdir()
+    (index / "runtime/wheels").mkdir(parents=True)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        stdout = ""
+        if "mint-token" in command:
+            stdout = "private-token"
+        elif "scripts.publish_official_packs" in command:
+            if failure == "publication":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            stdout = "[]"
+        elif "-c" in command and "def read_scan_timings" in command[-1]:
+            if failure == "capture":
+                return subprocess.CompletedProcess(command, 1, "", "private-token")
+            stdout = '[{"pack": "timed-candidate"}]'
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if failure == "publication":
+        with pytest.raises(subprocess.TimeoutExpired):
+            check_publication(tmp_path, inputs, index, "service", "publisher")
+        report = json.loads(capsys.readouterr().out)
+    else:
+        report = check_publication(tmp_path, inputs, index, "service", "publisher")
+        assert report["externalNetworkDenied"] is True
+        assert report["submissions"] == [[], []]
+    phases = report["timings"]["phases"]
+    assert phases[0]["phase"] == "startup"
+    assert phases[-1]["phase"] == "cleanup"
+    assert all(row["endSeconds"] >= row["startSeconds"] >= 0 for row in phases)
+    if failure == "capture":
+        assert report["timings"]["captureError"] == "scan timing reader exited 1"
+    else:
+        assert report["timings"]["candidates"] == [{"pack": "timed-candidate"}]
+    assert "private-token" not in json.dumps(report)
+    scanners = [command for command in commands if "scanner" in command]
+    assert len(scanners) == 2
+    mounts = [
+        [command[i + 1] for i, arg in enumerate(command) if arg == "--mount"]
+        for command in scanners
+    ]
+    shared = [next(mount for mount in row if mount.endswith("dst=/data")) for row in mounts]
+    private = [
+        next(mount for mount in row if mount.endswith("dst=/data/objects/.probe-runtime"))
+        for row in mounts
+    ]
+    assert shared[0] == shared[1]
+    assert private[0] != private[1]
+    for mount in private:
+        seeds = [
+            command
+            for command in commands
+            if mount in command and "/seed,readonly" in " ".join(command)
+        ]
+        assert len(seeds) == 1
+        assert str(index / "runtime/wheels") in " ".join(seeds[0])
+        volume = mount.split("src=", 1)[1].split(",", 1)[0]
+        assert ["docker", "volume", "rm", volume] in commands
 
 
 def _distribution_wheels(tmp_path: Path, project: str) -> tuple[Path, Path]:
@@ -85,6 +273,15 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
         assert set(actual.namelist()) == set(expected.namelist())
         for name in expected.namelist():
             assert actual.read(name) == expected.read(name), name
+        if project in {"dinkster-api", "dinkster-supervisor"}:
+            security = ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security"
+            for path in security.glob("*.py"):
+                assert actual.read(f"dinkster_security/{path.name}") == path.read_bytes()
+                if project == "dinkster-supervisor":
+                    assert (
+                        actual.read(f"dinkster_supervisor/security/{path.name}")
+                        == path.read_bytes()
+                    )
     if project not in {"dinkster", "dinkster-engine"}:
         subprocess.run(
             [
@@ -106,9 +303,10 @@ def test_source_distribution_rebuilds_the_complete_direct_wheel(
 
 
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")
-def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) -> None:
-    _, rebuilt = _distribution_wheels(tmp_path, "dinkster-api")
-    environment = tmp_path / "standalone-api"
+@pytest.mark.parametrize("project", ["dinkster-api", "dinkster-supervisor"])
+def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path, project: str) -> None:
+    _, rebuilt = _distribution_wheels(tmp_path, project)
+    environment = tmp_path / "standalone"
     subprocess.run(
         ["uv", "venv", "--python", sys.executable, str(environment)],
         cwd=tmp_path,
@@ -128,17 +326,56 @@ def test_rebuilt_api_wheel_installs_without_workspace_sources(tmp_path: Path) ->
         cwd=tmp_path,
         check=True,
     )
+    if project == "dinkster-api":
+        imports = (
+            "import importlib.util; "
+            "assert importlib.util.find_spec('dinkster_supervisor') is None; "
+            "from dinkster_api.v1 import Node; "
+            "print(Node.__name__); "
+        )
+        expected = "Node\nSecurityHost"
+    else:
+        imports = (
+            "from dinkster_supervisor.environment import main; "
+            "from dinkster_supervisor.security.host import SecurityHost; "
+            "from dinkster_supervisor.limits import SECURITY_FEED_LIMIT_BYTES; "
+            "assert SECURITY_FEED_LIMIT_BYTES == 33554432; "
+            "print(main.__name__, SecurityHost.__name__); "
+        )
+        expected = "main SecurityHost\nSecurityHost"
     result = subprocess.check_output(
         [
             str(python),
             "-I",
             "-c",
-            "from dinkster_api.v1 import Node; print(Node.__name__)",
+            imports + "from dinkster_security.host import SecurityHost; "
+            "print(SecurityHost.__name__)",
         ],
         cwd=tmp_path,
         text=True,
     )
-    assert result.strip() == "Node"
+    assert result.strip() == expected
+
+    if project == "dinkster-supervisor":
+        alias = tmp_path / "source-security"
+        shutil.copytree(
+            ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/security",
+            alias / "dinkster_security",
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                f"import sys; sys.path.insert(0, {str(alias)!r}); "
+                "from pathlib import Path; "
+                "import dinkster_security.host as host; "
+                f"assert Path(host.__file__).is_relative_to({str(alias)!r}); "
+                "assert host.SECURITY_FEED_LIMIT_BYTES == 33554432",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
@@ -930,6 +1167,25 @@ def test_windows_runtime_admits_the_pinned_interpreter_before_installing_depende
     assert setup_index < admission_index < sync_index
     assert "if" not in steps[admission_index]
 
+    action = yaml.safe_load((ROOT / ".github/actions/windows-python/action.yml").read_text())
+    restore, admission = action["runs"]["steps"]
+    assert restore["uses"] == "actions/cache@v4"
+    assert restore["with"]["path"] == "${{ runner.temp }}/dinkster-windows-python"
+    key = restore["with"]["key"]
+    for identity in (
+        "runner.os",
+        "runner.arch",
+        "scripts/prepare_windows_python.py",
+        "packages/dinkster-supervisor/src/dinkster_supervisor/sqlite_runtime.py",
+        ".github/actions/windows-python/action.yml",
+    ):
+        assert identity in key
+    assert "restore-keys" not in restore["with"]
+    assert "if" not in admission
+    assert "scripts/prepare_windows_python.py" in admission["run"]
+    assert '--output "$env:RUNNER_TEMP/dinkster-windows-python"' in admission["run"]
+    assert "--github-env" in admission["run"]
+
 
 def test_probe_jail_is_configured_before_live_tests_and_required_by_main() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
@@ -1180,11 +1436,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         helper = tomllib.loads(
             (staged / "packages/dinkster-pack-helpers/pyproject.toml").read_text()
         )["project"]
-        assert helper["version"] == "0.0.4"
+        assert helper["version"] == "0.0.5"
         models = tomllib.loads(
             (staged / "packages/dinkster-nodes-models/pyproject.toml").read_text()
         )["project"]
-        assert "dinkster-pack-helpers==0.0.4" in models["dependencies"]
+        assert "dinkster-pack-helpers==0.0.5" in models["dependencies"]
         for project in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
             subprocess.run(
                 ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
@@ -2052,6 +2308,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
     engine = {
         "version": "1.2.3",
         "label": "2026-10-31-1.2.3",
+        "repository": "Kosinkadink/Dinkster",
         "workerProtocol": 11,
         "artifacts": [{"name": filename, "size": wheel.stat().st_size, "sha256": digest}],
     }
@@ -2148,6 +2405,7 @@ def test_native_pack_lock_urls_do_not_depend_on_manifest_hash(
         )
     assert first_lock.packages[0].wheels[0].url == expected
     assert first_lock.packages[0].wheels[0].sha256 == digest
+    assert first_lock.packages[0].wheels[0].registry == "https://github.com/Kosinkadink/Dinkster"
     if published:
         assert hashlib.sha256(metadata.read_bytes()).hexdigest() == before
         return
@@ -2236,6 +2494,7 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
                 "size": 17,
                 "sha256": "b" * 64,
                 "url": "https://example.test/fixture.whl",
+                "index": "https://issuer.example.test/simple" if mode == "independent" else None,
             }
         ],
         "nvidia": None,
@@ -2291,6 +2550,9 @@ def test_native_pack_locks_preserve_independent_sources_and_legacy_release(
             lock = PackLock.read(path)
             assert lock.pack in expected and lock.variant == "fixture-base"
             assert lock.packages[0].wheels[0].url == "https://example.test/fixture.whl"
+            assert lock.packages[0].wheels[0].registry == (
+                "https://issuer.example.test/simple" if mode == "independent" else None
+            )
     assert {path: path.read_bytes() for path in before} == before
     assert not list(tmp_path.glob("release-pack-locks-*"))
 
@@ -3729,6 +3991,7 @@ def test_official_publication_refuses_missing_credential_before_submission(tmp_p
         "missing",
         "digest",
         "candidate",
+        "candidate-head",
         "index-commit",
         "index-digest",
         "index-path",
@@ -3792,7 +4055,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
         entry["path"] = "engine/" + "a" * 64
 
     def metadata(mirror, path):
-        assert problem != "candidate"
+        assert problem not in {"candidate", "candidate-head"}
         assert mirror == "https://releases.dinkster.org" and path == "engine/index.json"
         entries = [{**entry, "commit": "b" * 40}, entry]
         if problem == "index-duplicate":
@@ -3841,19 +4104,30 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(preparation, "fetch_artifact", fetch)
     candidate_dependencies = {"linux-cpu": {"base": "sha256:" + "a" * 64, "wheels": []}}
-    if problem == "candidate":
-        monkeypatch.setattr(preparation, "development_version", lambda root: "0.0.4.dev456")
-        monkeypatch.setattr(
-            preparation,
-            "versioned_sources",
-            lambda root, version: versioned_sources(ROOT, version),
-        )
+    if problem in {"candidate", "candidate-head"}:
+        pin = {"repository": "Kosinkadink/Dinkster-Frontend", "commit": "f" * 40}
+        (tmp_path / "scripts/release_sources.json").write_text(json.dumps(pin))
 
-        def candidate_wheels(root, uv, bases):
-            assert root == tmp_path and uv == "uv" and len(bases) == 2
-            return candidate_dependencies
+        def frontend(sources, destination):
+            assert sources == pin
+            destination.write_bytes(b"verified frontend artifact")
 
-        monkeypatch.setattr(preparation, "select_dependency_wheels", candidate_wheels)
+        def candidate_engine(root, destination, tag, frontend, *, base_manifests):
+            assert root == tmp_path and tag is None and len(base_manifests) == 2
+            assert frontend.read_bytes() == b"verified frontend artifact"
+            destination.mkdir()
+            (destination / "constraints.txt").write_bytes(b"pins")
+            result = {
+                **engine,
+                "commit": ("e" if problem == "candidate-head" else "c") * 40,
+                "version": "0.0.4.dev456",
+                "dependencies": candidate_dependencies,
+            }
+            (destination / "release-manifest.json").write_text(json.dumps(result))
+            return result
+
+        monkeypatch.setattr(preparation, "download_frontend", frontend)
+        monkeypatch.setattr(preparation, "build_release", candidate_engine)
     monkeypatch.setattr(
         preparation,
         "build",
@@ -3871,6 +4145,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                     tmp_path / ".official-publication",
                     "c" * 40,
                     ["dinkster-image"],
+                    candidate=problem == "candidate-head",
                 )
             assert not output.exists()
         else:
@@ -3879,7 +4154,7 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 tmp_path / ".official-publication",
                 "c" * 40,
                 ["dinkster-image"],
-                candidate=problem == "candidate",
+                candidate=problem in {"candidate", "candidate-head"},
             ) == [
                 {"variant": "linux-cpu", "runner": "ubuntu-latest"},
                 {"variant": "win-nvidia", "runner": "windows-latest"},
@@ -3890,20 +4165,12 @@ def test_official_publication_workflow_prepares_verified_published_engine_inputs
                 assert manifest["dependencies"] == candidate_dependencies
                 assert manifest["version"] == "0.0.4.dev456"
                 assert manifest["commit"] == "c" * 40
-                api = work / "engine/dinkster_api-0.0.4.dev456-py3-none-any.whl"
-                assert wheel_metadata(api) == ("dinkster-api", "0.0.4.dev456")
-                assert manifest["artifacts"] == [
-                    {
-                        "name": api.name,
-                        "size": api.stat().st_size,
-                        "sha256": hashlib.sha256(api.read_bytes()).hexdigest(),
-                    }
-                ]
+                assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             else:
                 assert (work / "engine/constraints.txt").read_bytes() == b"pins"
             catalog = Lockfile.from_record_json((work / "sources/official-packs.lock").read_text())
             assert [(pack.pack, pack.version) for pack in catalog.packs] == [
-                ("dinkster-image", "0.0.9")
+                ("dinkster-image", "0.0.10")
             ]
     finally:
         server.shutdown()

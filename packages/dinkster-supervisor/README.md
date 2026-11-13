@@ -28,7 +28,7 @@ ComfyUI or comfy-runner allocation.
 
 ## Signed security feed refresh
 
-The shared `dinkster_security.host.SecurityHost` reads independently provisioned
+The supervisor-owned `dinkster_supervisor.security.host.SecurityHost` reads independently provisioned
 trust from `<root>/security.sqlite3`. Refresh requests the complete signed
 `/v1/security/blocks` document from each trusted issuer. A local
 `<root>/security.toml` can select a mirror without changing the issuing identity:
@@ -43,6 +43,7 @@ refresh_interval_seconds = 60.0
 "https://registry.example.org" = "https://mirror.example.org/security/index.json"
 ```
 
+The API and supervisor wheels also expose the same source as `dinkster_security`.
 Overrides require independently provisioned trust for the exact issuer. Feed
 responses cannot provision keys. Refresh failures retain the accepted checkpoint
 and decisions; downloads are limited to 32 MiB and do not send registry bearer
@@ -285,6 +286,16 @@ from that discovery walk, not collected and sorted before being ignored. Pack
 environments have separate dependency checks. Recorded files remain checked even
 inside excluded directories; only unexpected files are sorted for diagnostics.
 Pack reviews retain their integrity checks before and after registry preparation.
+
+`packs-plan --progress /absolute/host-owned/progress.json` atomically publishes
+stage-local `{sequence, stage, completed, total}` observations without changing
+its JSON result on stdout. Integrity scans report batches of 128 checked files
+and discovered directories; runtime, registry and preflight transitions report
+their actual starts. This is not a timer heartbeat or overall percentage. Writes
+within a stage are coalesced to at most four per second, except stage completion.
+Creating `progress.json.cancel` requests cancellation at the next observation;
+it never authorizes apply. The host retains the scratch directory until the
+command has actually exited, including while an uninterruptible child finishes.
 
 The channel format is `dinkster.channel/1`, with
 `engine: {version, release, locations}`, `base: {variant: {id, locations}}`,

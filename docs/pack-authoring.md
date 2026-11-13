@@ -74,8 +74,8 @@ such as `packs/my-pack/index.json`. That per-pack file has `schemaVersion: 2`,
 Each release contains engine requirements, install lock pointers and a `wheels` array with
 `filename`, `sha256`, `url`, `size`, `digest` and `tags` on its single wheel.
 The host selects compatible tags and verifies the selected wheel's hashes.
-The reader also accepts the schema 1 all-releases catalog during the registry
-transition. Each operation caches its catalog and reads only selected per-pack
+Only schema 2 is supported; schema 1 all-releases indexes refuse.
+Each operation caches its catalog and reads only selected per-pack
 files; no dynamic API is needed, including on a static file-copy mirror.
 Managed preparation shares the snapshot between source selection and dependency
 lock acquisition in disposable scratch storage, removed when preparation ends.
@@ -299,7 +299,7 @@ declared settings returns 404. Unauthenticated requests return 401; PUT also
 requires `settings:write` and returns 403 without it. Unreadable stored data or
 a persistence failure returns 500.
 
-With `dinkster-serve --library-root <root>`, accepted values are atomically
+With `python -m dinkster.serve --library-root <root>`, accepted values are atomically
 stored by the host in `<root>/pack-settings/<packId>.json`, one complete JSON
 object per pack. Packs do not read or write these files themselves. Without a
 library root, values live in memory and reset when the server restarts. A pack

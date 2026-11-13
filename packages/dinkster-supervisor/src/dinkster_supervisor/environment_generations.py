@@ -19,7 +19,11 @@ from typing import cast
 from blake3 import blake3
 from dinkster_store import object_entries, object_path, pack_archive_path, pack_label
 
-from .environment_constraints import requirement_hashes, selected_wheel_requirements
+from .environment_constraints import (
+    installed_wheel_origins,
+    requirement_hashes,
+    selected_wheel_requirements,
+)
 from .environment_downloads import fetch_artifact
 from .environment_state import (
     EnvironmentError,
@@ -100,16 +104,21 @@ def pack_operation(
     worker_protocol: int,
     own_environment_size: int,
     source_generation: Path | None = None,
+    constraints: Path | None = None,
+    collection_python: Path | None = None,
+    compatibility: dict[str, object] | None = None,
     locks: tuple[Path, ...] = (),
     in_process_packs: tuple[str, ...] = (),
     offline: bool = False,
     uv: str = "uv",
 ) -> dict[str, object]:
-    """Invoke the generation-owned provisioner without importing engine packages."""
-    if operation not in {"preflight", "acquire", "rebuild", "doctor", "references"}:
+    """Run locked pack lifecycle tools without importing engine packages into the supervisor."""
+    if operation not in {"preflight", "collect", "acquire", "rebuild", "doctor", "references"}:
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
+    if operation != "collect" and (collection_python is not None or compatibility is not None):
+        raise EnvironmentError("host-owned diagnostics cannot construct pack environments")
     command = [
-        str(interpreter(generation)),
+        str(collection_python or interpreter(generation)),
         "-I",
         "-B",
         "-m",
@@ -120,7 +129,7 @@ def pack_operation(
         "--generation-python",
         str(interpreter(generation)),
         "--constraints",
-        str(generation / "constraints.txt"),
+        str(constraints if constraints is not None else generation / "constraints.txt"),
         "--variant",
         variant,
         "--worker-protocol",
@@ -136,6 +145,8 @@ def pack_operation(
     ]
     if source_generation is not None:
         command.extend(["--source-generation", str(source_generation)])
+    if compatibility is not None:
+        command.extend(["--compatibility", json.dumps(compatibility)])
     if offline:
         command.append("--offline")
     for lock in locks:
@@ -164,7 +175,11 @@ def pack_operation(
         messages = cast("list[object]", changes)
         if any(not isinstance(message, str) for message in messages):
             raise ValueError("changes must contain strings")
-        errors = list(cast("list[str]", messages)) if operation in {"doctor", "references"} else []
+        errors = (
+            list(cast("list[str]", messages))
+            if operation in {"doctor", "references", "collect"}
+            else []
+        )
         names: set[str] = set()
         for raw_pack in cast("list[object]", packs):
             if not isinstance(raw_pack, dict):
@@ -375,6 +390,7 @@ def restore_pack_sources(
     project: Path,
     store: Path,
     registry_arguments: tuple[str, ...] = (),
+    python: Path | None = None,
 ) -> None:
     """Acquire exact source bytes in scratch without provisioning or activating packs."""
     lock = read_document(catalog_lock)
@@ -394,7 +410,7 @@ def restore_pack_sources(
                 shutil.copyfile(archive, cache / f"{identity[7:]}.zip")
         completed = subprocess.run(
             [
-                str(interpreter(generation)),
+                str(python or interpreter(generation)),
                 "-I",
                 "-B",
                 "-c",
@@ -869,6 +885,18 @@ def build_generation(
             )
             if manifest_identity != engine_release:
                 raise EnvironmentError("retained engine manifest does not match engine release")
+        receipt = read_document(destination / "installed-wheels.json")
+        receipt["wheels"] = installed_wheel_origins(
+            cast("list[dict[str, object]]", receipt["wheels"]),
+            read_document(destination / "base-manifest.json")
+            if (destination / "base-manifest.json").is_file()
+            else {},
+            read_document(destination / "engine-manifest.json")
+            if (destination / "engine-manifest.json").is_file()
+            else {},
+            cast("str", (artifact_sources or {}).get("dependencyVariant", variant)),
+        )
+        write_document(destination / "installed-wheels.json", receipt)
         provisioned: set[str] = set()
         if (
             source_generation is not None

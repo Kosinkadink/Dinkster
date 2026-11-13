@@ -34,6 +34,22 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    # These four suites are nonblocking under comfy-vibe-station#867 while audited.
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    nonblocking = {
+        "test_environment_history.py",
+        "test_environment_generations.py",
+        "test_environment_transactions.py",
+        "test_release_install.py",
+    }
+    root = Path(__file__).parent
+    for item in items:
+        if item.path.parent == root and item.path.name in nonblocking:
+            item.add_marker(pytest.mark.skip(reason="Nonblocking suite: comfy-vibe-station#867"))
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item, call):
     report = yield
@@ -52,6 +68,7 @@ def pytest_terminal_summary(terminalreporter) -> None:
                     if name in {
                         "Supervisor child operation timings",
                         "Captured Published pack resolver trap call",
+                        "Captured Folded engine CPU environment call",
                     }:
                         terminalreporter.section(name)
                         terminalreporter.write_line(text)

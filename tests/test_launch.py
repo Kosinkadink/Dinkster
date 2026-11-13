@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import builtins
 import json
-import urllib.error
 from pathlib import Path
 from typing import cast
-from unittest.mock import Mock
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import MountDef, MountTable, dump_mounts, load_mounts, load_output_mount
 
-from dinkster import frontend, launch, serve, setup
+from dinkster import frontend, launch, setup
 from dinkster.cli import main as cli_main
 from dinkster.frontend import install_frontend
 from dinkster.mounts_api import MountService
@@ -31,12 +29,9 @@ def test_frontend_discovery_finds_a_sibling_development_build(tmp_path: Path, mo
     assert frontend.discover_frontend_bundle() == bundle
 
 
-def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-
-    assert setup.main([]) == 0
-
-    library, packs = setup.default_roots()
+def test_library_initialization_creates_default_mounts(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    setup.ensure_default_mounts(library)
     assert library.is_dir()
     assert (library / "output").is_dir()
     assert (library / "imports").is_dir()
@@ -45,8 +40,6 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
         MountDef(id="output", path=library / "output", mode="readwrite"),
     )
     assert load_output_mount(library / "mounts.toml") == "output"
-    assert (packs / "generations").is_dir()
-    assert "Run `dinkster`" in capsys.readouterr().out
     table = MountTable(output_mount="output")
     for mount in load_mounts(library / "mounts.toml"):
         table.add(mount)
@@ -63,6 +56,8 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
         "missing-locks",
         "no-defaults",
         "offline",
+        "offline-metadata",
+        "offline-registry",
         "corrupt-cache",
         "decline",
         "nonterminal",
@@ -79,7 +74,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     from dinkster_supervisor.environment_artifacts import acquire, discover
     from dinkster_workers.pack_lock import PackLock
     from test_environment_artifacts import _json, _mirror
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.registries import (
         NamedRegistry,
@@ -91,6 +86,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     mirror, store, root = tmp_path / "mirror", tmp_path / "store", tmp_path / "project"
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA", "DINKSTER_HOME"):
         monkeypatch.setenv(variable, str(tmp_path / variable))
+    monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
     monkeypatch.delenv("DINKSTER_REGISTRY", raising=False)
     monkeypatch.delenv("DINKSTER_REGISTRIES", raising=False)
     base, engine, channel = _mirror(mirror)
@@ -131,14 +127,14 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         )
         files["/static/" + path] = lock_bytes
         releases.append(row)
-    files["/static/packs/index.json"] = _json({"schemaVersion": 1, "items": releases})
+    files.update(_static_indexes(releases))
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
     endpoint = f"http://127.0.0.1:{server.server_port}"
     registry_file = tmp_path / "registries.toml"
     registry_file.write_text(f'[registries.private]\nendpoint = "{endpoint}"\ndefault = true\n')
     try:
-        if mode == "offline":
+        if mode.startswith("offline"):
             acquire(discover((str(mirror),), "main"), "fixture-cpu", store)
             registry = NamedRegistry("private", endpoint, default=True)
             plan_registry_sources(
@@ -150,6 +146,13 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 base_id=base["id"],
                 index=StaticPackIndex(store / "metadata" / "registry"),
             )
+            if mode == "offline-metadata":
+                for identity in (base["id"], channel["engine"]["release"]):
+                    (store / "metadata" / f"{identity[7:]}.json").unlink()
+            elif mode == "offline-registry":
+                for metadata in (store / "metadata/registry").rglob("*"):
+                    if metadata.is_file():
+                        metadata.unlink()
             files.clear()
             mirror.rename(tmp_path / "disconnected")
             requests.clear()
@@ -167,8 +170,6 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         arguments = [
             "setup",
             "--plan",
-            "--root",
-            str(root),
             "--data",
             str(store),
             "--mirror",
@@ -194,11 +195,18 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
             monkeypatch.setattr(builtins, "input", answer)
         if mode != "text":
             arguments.append("--json")
-        if mode == "offline":
+        if mode.startswith("offline"):
             arguments.append("--offline")
         code = cli_main(arguments)
         captured = capsys.readouterr()
-        if mode == "no-defaults":
+        if mode == "offline-metadata":
+            assert code == 1
+            assert base["id"] in captured.err
+            assert channel["engine"]["release"] in captured.err
+        elif mode == "offline-registry":
+            assert code == 1
+            assert "example-pack" in captured.err and "other-pack" in captured.err
+        elif mode == "no-defaults":
             assert code == 1
             assert "target engine has no default pack declaration" in captured.err
             assert requests == []
@@ -218,7 +226,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
             if mode == "text":
                 assert f"Engine: {engine['version']} (sha256:{release})" in captured.out
                 assert "Runtime: Python 3.14.10; fixture-cpu" in captured.out
-                assert "Pack: example-pack@1.2.3; registry:private" in captured.out
+                assert f"Pack: example-pack@1.2.3; registry:{endpoint}" in captured.out
                 assert "Dependency lock: other-pack; sha256:" in captured.out
                 assert "Pack payload upper bound: 22 bytes" in captured.out
             else:
@@ -228,7 +236,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 assert set(result["dependencyLocks"]) == set(defaults)
                 assert result["maximumPackPayloadBytes"] == 22
                 assert all(
-                    row["source"] == "registry:private" for row in result["sources"]["packs"]
+                    row["source"] == f"registry:{endpoint}" for row in result["sources"]["packs"]
                 )
                 if mode == "offline":
                     assert all(row["cached"] for row in result["runtimeInputs"])
@@ -236,7 +244,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 else:
                     assert all(value is None for value in result["cachedPackPayloads"].values())
         assert all(path.endswith(".json") for path, _ in requests)
-        if mode == "offline":
+        if mode.startswith("offline"):
             assert requests == []
         assert {p: p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
         assert not root.exists()
@@ -245,8 +253,12 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         server.server_close()
 
 
+@pytest.mark.parametrize(
+    "mode",
+    ["online", "offline", "offline-archive", "offline-missing", "offline-corrupt", "offline-lock"],
+)
 def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd, mode: str
 ) -> None:
     import hashlib
     import os
@@ -254,11 +266,14 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     import sys
 
     from dinkster_registry import LockedPack, artifact_digest
+    from dinkster_store import object_path
+    from dinkster_supervisor.environment_artifacts import acquire, discover, runtime_inputs
     from dinkster_workers.boundary import PROTOCOL_VERSION
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_environment import fetch_wheel
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
     from dinkster_workers.pack_wheel import build_pack_archive
     from test_environment_runtime import free_port
-    from test_installer import _serve_artifacts, _static_release
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
     from test_pack_wheel import wheel_pack
 
     from tests.fixtures.environments import build as publisher
@@ -298,6 +313,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     port = free_port()
     fixture = publisher.build(tmp_path / "release", "fixture-cpu", port)
     mirror, root, store = (Path(fixture[key]) for key in ("mirror", "root", "store"))
+    monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
     channel_path = mirror / "channels/main.json"
     channel = json.loads(channel_path.read_bytes())
     release = mirror / "engine" / channel["engine"]["release"][7:]
@@ -322,7 +338,48 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     entry = LockedPack("demo-nodes", "1.2.3", artifact_digest(payload), "demo", ())
     row = _static_release(entry, payload)
     row["engine"] = ">=0.0.2"
-    lock = PackLock("demo-nodes", "fixture-cpu", ">=3.12", (), (), ())
+    dependency = publisher.wheel(tmp_path / "pack-wheels", "demo_dependency", "2.0", 19)
+    dependency_bytes = dependency.read_bytes()
+    dependency_wheel = LockedWheel(
+        dependency.name,
+        len(dependency_bytes),
+        hashlib.sha256(dependency_bytes).hexdigest(),
+        dependency.as_uri(),
+    )
+    lock = PackLock(
+        "demo-nodes",
+        "fixture-cpu",
+        ">=3.12",
+        ("demo-dependency==2.0",),
+        (),
+        (
+            LockedDistribution(
+                "demo-dependency",
+                "2.0",
+                (
+                    LockedWheel(
+                        "demo_dependency-2.0-cp310-cp310-win32.whl",
+                        17,
+                        "a" * 64,
+                        "https://example.invalid/unselected.whl",
+                    ),
+                    dependency_wheel,
+                ),
+            ),
+            LockedDistribution(
+                "fixture-base",
+                "1.0",
+                (
+                    LockedWheel(
+                        "fixture_base-1.0-py3-none-any.whl",
+                        17,
+                        "b" * 64,
+                        "https://example.invalid/inherited.whl",
+                    ),
+                ),
+            ),
+        ),
+    )
     lock_bytes = lock.to_json().encode()
     lock_digest = artifact_digest(lock_bytes)
     lock_path = "locks/" + lock_digest.replace(":", "/") + ".json"
@@ -338,44 +395,140 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     }
     wheel_path = "/static/" + cast("list[dict[str, str]]", row["wheels"])[0]["url"]
     files = {
-        "/static/packs/index.json": canonical_json({"schemaVersion": 1, "items": [row]}),
+        **_static_indexes([row]),
         "/static/" + lock_path: lock_bytes,
         wheel_path: payload,
     }
     requests = []
     server = _serve_artifacts(files, requests)
     try:
-        assert (
-            cli_main(
-                [
-                    "setup",
-                    "--root",
-                    str(root),
-                    "--data",
-                    str(store),
-                    "--variant",
-                    "fixture-cpu",
-                    "--channel",
-                    "main",
-                    "--mirror",
-                    str(mirror),
-                    "--registry",
-                    f"http://127.0.0.1:{server.server_port}",
-                    "--port",
-                    str(port),
-                    "--yes",
-                    "--json",
-                ]
+        endpoint = f"http://127.0.0.1:{server.server_port}"
+        cached_pack: Path | None = None
+        missing_runtime: Path | None = None
+        if mode != "online":
+            from dinkster.registries import (
+                NamedRegistry,
+                RegistryConfig,
+                StaticPackIndex,
+                plan_registry_sources,
             )
-            == 0
-        ), json.loads(capfd.readouterr().out).get("error")
+
+            catalog = discover((str(mirror),), "main")
+            acquire(catalog, "fixture-cpu", store)
+            registry = NamedRegistry("fixture", endpoint, default=True)
+            _, locks = plan_registry_sources(
+                RegistryConfig((registry,)),
+                registry,
+                {"demo-nodes": "1.2.3"},
+                engine_version=engine["version"],
+                variant="fixture-cpu",
+                base_id=base["id"],
+                index=StaticPackIndex(store / "metadata/registry"),
+            )
+            cached_pack = fetch_wheel(locks[0].packages[-1].wheels[0], store / "wheels")
+            cached_dependency = fetch_wheel(dependency_wheel, store / "wheels")
+            missing_runtime = next(
+                Path(cast("str", item["path"]))
+                for item in runtime_inputs(catalog, "fixture-cpu", store)
+                if cast("str", item["path"]).endswith(".whl")
+            )
+            if mode == "offline-missing":
+                cached_pack.unlink()
+                cached_dependency.unlink()
+                missing_runtime.unlink()
+            elif mode == "offline-corrupt":
+                cached_pack.write_bytes(b"corrupt pack")
+                cached_dependency.write_bytes(b"corrupt dependency")
+                missing_runtime.write_bytes(b"corrupt runtime")
+            elif mode == "offline-lock":
+                for metadata in (store / "metadata/registry").rglob("*"):
+                    if metadata.is_file() and metadata.read_bytes() == lock_bytes:
+                        metadata.unlink()
+                missing_runtime.unlink()
+            elif mode == "offline-archive":
+                import shutil
+
+                shutil.rmtree(object_path(store / "bases", base["id"]))
+            files.clear()
+            mirror.rename(tmp_path / "disconnected")
+            requests.clear()
+            for variable in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                monkeypatch.setenv(variable, "http://127.0.0.1:9")
+            for variable in ("NO_PROXY", "no_proxy"):
+                monkeypatch.setenv(variable, "")
+            monkeypatch.setenv("UV_OFFLINE", "1")
+            monkeypatch.setattr("urllib.request._opener", None)
+        before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
+        if mode in {"offline-missing", "offline-corrupt", "offline-lock"}:
+            assert (
+                cli_main(
+                    [
+                        "setup",
+                        "--root",
+                        str(root),
+                        "--data",
+                        str(store),
+                        "--variant",
+                        "fixture-cpu",
+                        "--channel",
+                        "main",
+                        "--mirror",
+                        str(mirror),
+                        "--registry",
+                        endpoint,
+                        "--port",
+                        str(port),
+                        "--yes",
+                        "--offline",
+                    ]
+                )
+                == 1
+            )
+            error = capfd.readouterr().err.split("setup refused: ", 1)[-1]
+            assert error.startswith("offline setup inputs missing or corrupt:")
+            assert cached_pack is not None and missing_runtime is not None
+            assert missing_runtime.name in error
+            if mode == "offline-lock":
+                assert "dependency lock" in error
+            else:
+                assert cached_pack.name in error
+                assert dependency.name in error
+            assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before
+            assert not root.exists()
+            assert requests == []
+            return
+        code = cli_main(
+            [
+                "setup",
+                "--data",
+                str(store),
+                "--variant",
+                "fixture-cpu",
+                "--channel",
+                "main",
+                "--mirror",
+                str(mirror),
+                "--registry",
+                endpoint,
+                "--port",
+                str(port),
+                "--yes",
+                "--json",
+                *(["--offline"] if mode != "online" else []),
+            ]
+        )
+        captured = capfd.readouterr()
+        assert code == 0, captured.out + captured.err
         assert (root / "current").read_text().strip() == "1"
         selected = json.loads((root / "generations/1/dinkster.lock").read_text())
         assert selected["packs"][0]["artifactDigest"] == entry.artifact_digest
         retained = PackLock.read(root / "generations/1/packs/demo-nodes/pack-lock.json")
         assert retained.pack == "demo-nodes"
         assert retained.packages[-1].wheels[0].sha256 == hashlib.sha256(payload).hexdigest()
-        assert any(path == wheel_path for path, _ in requests)
+        if mode != "online":
+            assert requests == []
+        else:
+            assert any(path == wheel_path for path, _ in requests)
     finally:
         subprocess.run(
             [
@@ -397,14 +550,14 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
 
 def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
     library.mkdir(parents=True)
     alternate = library / "renders"
     alternate.mkdir()
     mounts = (MountDef("renders", alternate, "readwrite"),)
     (library / "mounts.toml").write_text(dump_mounts(mounts, output_mount="renders"), "utf-8")
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert load_output_mount(library / "mounts.toml") == "renders"
     assert load_mounts(library / "mounts.toml") == (
@@ -418,12 +571,12 @@ def test_setup_reuses_an_existing_mount_for_the_default_output_path(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
     library.mkdir(parents=True)
     existing = MountDef("existing-output", library / "output", "read")
     (library / "mounts.toml").write_text(dump_mounts((existing,)), "utf-8")
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert load_mounts(library / "mounts.toml") == (
         existing,
@@ -438,16 +591,16 @@ def test_setup_preserves_existing_offline_output_grants(
     tmp_path: Path, monkeypatch, custom_id: bool
 ) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
     library.mkdir(parents=True)
     root = library / "output" if custom_id else tmp_path / "offline-output"
     existing = MountDef("renders" if custom_id else "output", root, "read", priority=7)
     config = library / "mounts.toml"
     config.write_text(dump_mounts((existing,)), "utf-8")
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
     saved = config.read_bytes()
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert config.read_bytes() == saved
     assert existing in load_mounts(config)
@@ -458,14 +611,14 @@ def test_setup_preserves_existing_offline_output_grants(
 
 def test_setup_does_not_restore_a_removed_output_grant(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
+    setup.ensure_default_mounts(library)
     config = library / "mounts.toml"
     remaining = tuple(mount for mount in load_mounts(config) if mount.id != "output")
     config.write_text(dump_mounts(remaining), "utf-8")
     (library / "output").rmdir()
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert load_mounts(config) == remaining
     assert load_output_mount(config) is None
@@ -477,7 +630,7 @@ def test_setup_preserves_existing_import_grants(
     tmp_path: Path, monkeypatch, custom_id: bool
 ) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
     library.mkdir(parents=True)
     root = library / "imports" if custom_id else tmp_path / "offline-network-imports"
     existing = MountDef("plates" if custom_id else "imports", root, "read", priority=7)
@@ -490,9 +643,9 @@ def test_setup_preserves_existing_import_grants(
     projects.update("other", [], available=(existing.id,), output=None)
     preferences = json.loads(project_path.read_text("utf-8"))
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
     saved = config.read_bytes()
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert config.read_bytes() == saved
     assert existing in load_mounts(config)
@@ -505,14 +658,14 @@ def test_setup_preserves_existing_import_grants(
 
 def test_setup_does_not_restore_a_removed_import_grant(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
+    setup.ensure_default_mounts(library)
     config = library / "mounts.toml"
     remaining = tuple(mount for mount in load_mounts(config) if mount.id != "imports")
     config.write_text(dump_mounts(remaining, output_mount="output"), "utf-8")
     (library / "imports").rmdir()
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert load_mounts(config) == remaining
     assert not (library / "imports").exists()
@@ -523,7 +676,7 @@ def test_setup_adds_imports_to_existing_projects_without_resetting_preferences(
     tmp_path: Path, monkeypatch, interrupt_settings_write: bool
 ) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    library, _ = setup.default_roots()
+    library = tmp_path / "library"
     library.mkdir(parents=True)
     config = library / "mounts.toml"
     mounts = (
@@ -549,12 +702,12 @@ def test_setup_adds_imports_to_existing_projects_without_resetting_preferences(
         with monkeypatch.context() as patch:
             patch.setattr(setup.os, "replace", interrupt)
             with pytest.raises(OSError, match="project settings could not be published"):
-                setup.main([])
+                setup.ensure_default_mounts(library)
         assert any(mount.id == "imports" for mount in load_mounts(config))
         assert json.loads(project_path.read_text("utf-8")) == before
         assert not (library / ".imports-initialized").exists()
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     after = json.loads(project_path.read_text("utf-8"))
     assert after == {**before, "shared": ["output", "models", "imports"]}
@@ -569,7 +722,7 @@ def test_setup_adds_imports_to_existing_projects_without_resetting_preferences(
     service.projects.update("film", ["models"], available=service.mount_ids(), output=None)
     saved = project_path.read_bytes()
 
-    setup.main([])
+    setup.ensure_default_mounts(library)
 
     assert project_path.read_bytes() == saved
     restarted = MountService(table, config)
@@ -577,110 +730,109 @@ def test_setup_adds_imports_to_existing_projects_without_resetting_preferences(
     assert restarted.project_context("music").mounts == ("output", "models", "imports")
 
 
-def test_bare_cli_launches_one_origin_and_opens_browser(
-    tmp_path: Path, monkeypatch, capsys
+@pytest.mark.parametrize("arguments", [[], ["--no-browser"], ["serve"], ["serve-script"]])
+def test_public_launch_serves_the_active_generation_and_stops_it(
+    tmp_path: Path, monkeypatch, capsys, arguments: list[str]
 ) -> None:
-    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
-    bundle = tmp_path / "frontend"
-    bundle.mkdir()
-    (bundle / "index.html").write_text("editor")
-    serve_calls: list[list[str]] = []
-    browser_calls: list[str] = []
+    from urllib.request import urlopen
 
-    monkeypatch.setattr(launch, "discover_frontend_bundle", lambda: bundle)
-    monkeypatch.setattr(serve, "main", lambda argv: serve_calls.append(argv))
-    monkeypatch.setattr(launch, "_open_browser_when_ready", lambda url: browser_calls.append(url))
+    from test_environment_cli import _runtime_project
 
-    class ImmediateThread:
-        def __init__(self, *, target, args: tuple[str], daemon: bool) -> None:
-            assert daemon is True
-            self.callback = target
-            self.args = args
+    root = tmp_path / "state/project"
+    root.mkdir(parents=True)
+    port = _runtime_project(root)
+    monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
+    opened = []
 
-        def start(self) -> None:
-            self.callback(*self.args)
+    def open_browser(url: str) -> None:
+        with urlopen(url + "/api/health", timeout=5) as response:
+            assert json.load(response) == {"ok": True}
+        opened.append(url)
 
-    monkeypatch.setattr(launch.threading, "Thread", ImmediateThread)
-    output = Mock(wraps=builtins.print)
-    monkeypatch.setattr(builtins, "print", output)
-
-    assert cli_main(["--port", "4640"]) == 0
-
-    expected_url = "http://127.0.0.1:4640"
-    assert browser_calls == [expected_url]
-    assert f"Dinkster is available at {expected_url}" in capsys.readouterr().out
-    output.assert_any_call(f"Dinkster is available at {expected_url}", flush=True)
-    output.assert_any_call("Checking pack catalogs...", flush=True)
-    args = serve_calls[0]
-    assert args[args.index("--port") + 1] == "4640"
-    assert args[args.index("--frontend-root") + 1] == str(bundle)
-    assert "--prepare-stale-catalogs" in args
-    assert "--allow-mount-changes" in args
-    assert "--execution-python" not in args
+    monkeypatch.setattr("webbrowser.open", open_browser)
+    try:
+        if arguments == ["serve-script"]:
+            monkeypatch.setattr("sys.argv", ["dinkster-serve"])
+            assert launch.serve_main() == 0
+        else:
+            assert cli_main(arguments) == 0
+        assert opened == ([] if arguments else [f"http://127.0.0.1:{port}"])
+        assert f"http://127.0.0.1:{port}" in capsys.readouterr().out
+        with urlopen(f"http://127.0.0.1:{port}/api/generation", timeout=5) as response:
+            assert json.load(response) == {"generation": str(root / "generations/1")}
+    finally:
+        assert cli_main(["stop", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["engines"][0]["state"] == "stopped"
 
 
-def test_browser_waits_for_health_before_opening(monkeypatch) -> None:
-    attempts = 0
-    events: list[str] = []
-
-    class HealthyResponse:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args) -> None:
-            return None
-
-    def urlopen(_url: str, *, timeout: float):
-        nonlocal attempts
-        assert timeout == 0.5
-        attempts += 1
-        if attempts == 1:
-            raise urllib.error.URLError("not ready")
-        return HealthyResponse()
-
-    monkeypatch.setattr(launch.urllib.request, "urlopen", urlopen)
-    monkeypatch.setattr(launch.time, "sleep", lambda _seconds: events.append("sleep"))
-    monkeypatch.setattr(launch.webbrowser, "open", lambda url: events.append(url))
-
-    launch._open_browser_when_ready("http://127.0.0.1:4640")
-
-    assert attempts == 2
-    assert events == ["sleep", "http://127.0.0.1:4640"]
-
-
-def test_explicit_frontend_root_overrides_discovery(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
-    bundle = tmp_path / "managed frontend"
-    bundle.mkdir()
-    (bundle / "index.html").write_text("editor")
-    monkeypatch.setattr(launch, "discover_frontend_bundle", lambda: None)
-    calls = []
-    monkeypatch.setattr(serve, "main", lambda argv: calls.append(argv))
-    assert launch.main(["--no-browser", "--frontend-root", str(bundle)]) == 0
-    assert calls[0][calls[0].index("--frontend-root") + 1] == str(bundle)
-
-
-def test_no_browser_and_vite_proxy_are_the_only_alternate_launch_controls(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("command", [[], ["serve"], ["stop"], ["update"], ["rollback"]])
+def test_public_commands_without_setup_refuse_without_creating_state(
+    tmp_path: Path, monkeypatch, capsys, command: list[str]
 ) -> None:
-    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
-    calls: list[list[str]] = []
-    monkeypatch.setattr(serve, "main", lambda argv: calls.append(argv))
-    monkeypatch.setattr(
-        launch.webbrowser,
-        "open",
-        lambda _url: (_ for _ in ()).throw(AssertionError("browser must stay closed")),
-    )
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "absent"))
+    assert cli_main([*command, "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "error"
+    assert not (tmp_path / "absent").exists()
 
-    assert launch.main(["--no-browser", "--frontend-dev", "http://127.0.0.1:5199"]) == 0
-    args = calls[0]
-    assert args[args.index("--frontend-dev") + 1] == "http://127.0.0.1:5199"
-    assert "--frontend-root" not in args
+
+@pytest.mark.parametrize("command", [[], ["serve"], ["stop"]])
+def test_public_runtime_plan_leaves_the_project_unchanged(
+    tmp_path: Path, monkeypatch, capsys, command: list[str]
+) -> None:
+    from test_environment_cli import _runtime_project
+
+    root = tmp_path / "project"
+    root.mkdir()
+    _runtime_project(root)
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "wrong-default"))
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert cli_main([*command, "--root", str(root), "--plan", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "planned" and result["current"] == 1
+    assert result["engines"] == []
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    assert not (tmp_path / "wrong-default").exists()
+
+
+def test_public_update_and_rollback_rebuild_the_selected_project(
+    tmp_path: Path, monkeypatch, capfd
+) -> None:
+    import subprocess
+
+    from test_environment_runtime import free_port
+
+    from tests.fixtures.environments.build import build
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root = Path(fixture["root"])
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA", "DINKSTER_HOME"):
+        monkeypatch.setenv(name, str(tmp_path / "user-data"))
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    try:
+        subprocess.run(fixture["commands"]["setup"], check=True, capture_output=True, timeout=60)
+        assert cli_main(["stop", "--root", str(root), "--json"]) == 0
+        capfd.readouterr()
+        subprocess.run(fixture["commands"]["advance"], check=True, capture_output=True, timeout=30)
+        for operation, expected_version in (("update", "2.0"), ("rollback", "1.0")):
+            current = (root / "current").read_bytes()
+            assert cli_main([operation, "--root", str(root), "--plan", "--json"]) == 0
+            assert json.loads(capfd.readouterr().out)["status"] == "planned"
+            assert (root / "current").read_bytes() == current
+            assert cli_main([operation, "--root", str(root), "--yes", "--json"]) == 0
+            result = json.loads(capfd.readouterr().out)
+            assert result["status"] == "applied", result
+            generation = root / "generations" / str(result["current"])
+            assert (
+                json.loads((generation / "generation.json").read_text())["engine"]["version"]
+                == expected_version
+            )
+            assert cli_main(["stop", "--root", str(root), "--json"]) == 0
+            capfd.readouterr()
+        assert not (tmp_path / "user-data/project").exists()
+    finally:
+        cli_main(["stop", "--root", str(root), "--json"])
 
 
 def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, monkeypatch) -> None:

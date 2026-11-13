@@ -37,7 +37,7 @@ def wheel_compatibility(python: Path) -> dict[str, object]:
         "'markers': default_environment()}))"
     )
     result = subprocess.run(
-        [str(python), "-I", "-S", "-c", script, str(Path(packaging.__file__).parent.parent)],
+        [str(python), "-I", "-B", "-S", "-c", script, str(Path(packaging.__file__).parent.parent)],
         capture_output=True,
         text=True,
         timeout=60,
@@ -48,7 +48,11 @@ def wheel_compatibility(python: Path) -> dict[str, object]:
 
 
 def selected_wheel_rows(
-    requirements: str, wheels: list[dict[str, object]], compatibility: dict[str, object]
+    requirements: str,
+    wheels: list[dict[str, object]],
+    compatibility: dict[str, object],
+    *,
+    errors: list[str] | None = None,
 ) -> list[dict[str, object]]:
     """Select the same immutable wheel identities for preview and construction."""
     tags = {tag: rank for rank, tag in enumerate(cast("list[str]", compatibility["tags"]))}
@@ -93,12 +97,20 @@ def selected_wheel_rows(
             selected.append({"filename": filename, "size": row["size"], "sha256": sha})
             break
         else:
-            raise EnvironmentError(f"offline generation wheel missing or corrupt: {requirement}")
+            message = f"offline generation wheel missing or corrupt: {requirement}"
+            if errors is None:
+                raise EnvironmentError(message)
+            errors.append(message)
     return sorted(selected, key=lambda row: cast("str", row["filename"]))
 
 
 def selected_wheel_requirements(
-    python: Path, requirements: str, directories: list[Path]
+    python: Path,
+    requirements: str,
+    directories: list[Path],
+    *,
+    errors: list[str] | None = None,
+    compatibility: dict[str, object] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """Choose verified compatible bytes, then pin sync to those exact local URLs."""
     paths: dict[tuple[str, str], Path] = {}
@@ -112,17 +124,55 @@ def selected_wheel_requirements(
         if identity not in paths:
             paths[identity] = path
             rows.append({"filename": path.name, "size": path.stat().st_size, "sha256": sha})
-    selected = selected_wheel_rows(requirements, rows, wheel_compatibility(python))
+    selected = selected_wheel_rows(
+        requirements,
+        rows,
+        compatibility if compatibility is not None else wheel_compatibility(python),
+        errors=errors,
+    )
     pins: list[str] = []
     for row in selected:
         filename, sha = cast("str", row["filename"]), cast("str", row["sha256"])
         path = paths[filename, sha]
         with path.open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != sha:
-                raise EnvironmentError(f"offline generation wheel missing or corrupt: {filename}")
+                message = f"offline generation wheel missing or corrupt: {filename}"
+                if errors is None:
+                    raise EnvironmentError(message)
+                errors.append(message)
+                continue
         name = parse_wheel_filename(filename)[0]
         pins.append(f"{name} @ {path.resolve().as_uri()} --hash=sha256:{sha}")
     return "\n".join(pins) + "\n", selected
+
+
+def installed_wheel_origins(
+    wheels: list[dict[str, object]],
+    base: dict[str, object],
+    engine: dict[str, object],
+    variant: str,
+) -> list[dict[str, object]]:
+    """Bind selected bytes to manifest origins, never to their acquisition cache paths."""
+    origins: dict[tuple[object, object, object], object] = {}
+    for row in cast("list[dict[str, object]]", base.get("wheels", [])):
+        origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+    owned = set(cast("list[str]", base.get("replaces", [])))
+    selections = cast("dict[str, dict[str, object]]", engine.get("dependencies", {}))
+    for row in cast("list[dict[str, object]]", selections.get(variant, {}).get("wheels", [])):
+        if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned:
+            origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+    repository = engine.get("repository")
+    issuer = f"https://github.com/{repository}" if repository else None
+    for row in cast("list[dict[str, object]]", engine.get("artifacts", [])):
+        if (
+            str(row["name"]).endswith(".whl")
+            and parse_wheel_filename(cast("str", row["name"]))[0] not in owned
+        ):
+            origins[row["name"], row["size"], row["sha256"]] = issuer
+    return [
+        {**row, "registry": origins.get((row["filename"], row["size"], row["sha256"]))}
+        for row in wheels
+    ]
 
 
 def validate_base_requirements(

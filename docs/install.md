@@ -16,14 +16,51 @@ client. See the
 [Desktop guide](https://github.com/Kosinkadink/Dinkster-Desktop#readme)
 for platform artifacts and the unsigned Apple Silicon installation procedure.
 
+## Install from pip
+
+Install `dinkster` into a Python 3.12 or newer environment, then select the
+published runtime variant for your machine:
+
+```sh
+python -m pip install dinkster
+dinkster setup --variant linux-cpu --channel main
+dinkster
+```
+
+Use `win-cpu` on Windows or `mac-arm64` on Apple Silicon. Other published
+variants can be selected explicitly. Setup prints the engine, Python/base,
+default packs, exact source and dependency-lock identities, installation paths,
+payload sizes and cache reuse before asking for confirmation. It acquires the
+reviewed runtime and locked pack wheels only after confirmation. Declining
+changes nothing. `--plan` only inspects metadata; `--yes` prints and applies the
+plan without prompting for unattended deployment. Without a terminal, applying
+requires `--yes`. With runtime inputs, metadata, locks and selected wheels
+already cached, `--offline --yes` applies without network access. Missing or
+corrupt inputs are listed before installation state changes.
+
+The default project is `~/.dinkster/project`, or `$DINKSTER_HOME/project`.
+Pass `--root PATH` to each command to select a different project and `--data PATH`
+to setup for its shared software store. `dinkster` opens the healthy engine in
+the browser; `--no-browser` starts without opening it. `dinkster serve` and
+`dinkster-serve` start the active generation without opening a browser. Starting
+without setup refuses; it does not install anything. The supervisor keeps the
+engine running after the command returns. Use `dinkster stop` to stop it.
+
+Review a channel update with `dinkster update --plan`, then apply it with
+`dinkster update` or `dinkster update --yes`. Use `dinkster rollback --plan` to
+review the previous software snapshot, then `dinkster rollback` to restore it.
+An approximate restore requires its displayed proposal approval; `--yes` alone
+does not approve substitutions. These operations use the same generation
+management as Desktop and leave models, outputs and workflows untouched.
+
 ## Inspect a wheel release
 
 The `dinkster` wheel does not require torch or `dinkster-inference` by default.
 For trusted torch nodes hosted in the serving process, install `dinkster[inference]`
-from the same release. The extra pins the inference runtime; it does not change
-isolated pack provisioning. A plain pip installation keeps each isolated pack's
-own dependencies. Managed setup and Desktop instead install the extra into the
-generation, where packs share its inference and torch distributions.
+from the same release. The extra pins the inference runtime for explicit library
+or in-process use; it does not change public CLI setup or serving. Pip setup and
+Desktop build the same managed generation, where locked packs share the
+generation's inference and torch distributions.
 
 Each `vX.Y.Z` release contains:
 
@@ -52,6 +89,14 @@ index for updates; `update --package-index URL` changes it transactionally.
 This option is separate from `--mirror`, which selects channel, base and
 Dinkster release artifact locations. Warm shared-store wheels need no index
 access. Repair and move remain offline.
+
+For cached published setup, use `dinkster setup --offline --yes --variant VARIANT`
+with the same `--channel`, `--mirror`, `--registry` and `--data` selection used
+to populate the cache. Retained channel, release, registry and dependency-lock
+metadata, runtime payloads and locked pack wheels must all be available.
+Missing or corrupt inputs refuse before changing the project or store; the
+command does not fetch replacements. `--offline --plan` inspects cached inputs
+without creating or changing installation state.
 
 Download the three Dinkster wheels and `constraints.txt` from the same release.
 A manual installation for inspection can be created without Git credentials;
@@ -426,11 +471,12 @@ alone does not enable runtime mount editing. Managed local `dinkster-env`
 launches also enable operator folder editing; direct server launches remain
 opt-in. A deliberately unconfigured library can still report `outputMount: null`.
 
-`dinkster setup` creates `<DINKSTER_HOME>/library/mounts.toml`, which defaults
-to `~/.dinkster/library/mounts.toml` on Linux and macOS and
-`%USERPROFILE%\.dinkster\library\mounts.toml` on Windows. Download model files
-into a folder you control and grant that folder read-only access with an
-absolute path:
+The managed engine initializes `<project-root>/dinkster-library/mounts.toml`
+on first serve. With the default project this is
+`~/.dinkster/project/dinkster-library/mounts.toml` on Linux and macOS and
+`%USERPROFILE%\.dinkster\project\dinkster-library\mounts.toml` on Windows.
+Download model files into a folder you control and grant that folder read-only
+access with an absolute path:
 
 ```toml
 [mounts.models]
