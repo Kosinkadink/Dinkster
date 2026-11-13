@@ -8,8 +8,7 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -49,7 +48,6 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     CompatGateDiagnostic,
     ExportSnapshot,
-    ExtensionSnapshot,
     GraphCompilerRegistrySnapshot,
     KeyedContribution,
     PackSettingsSchema,
