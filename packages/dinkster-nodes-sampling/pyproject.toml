@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-sampling"
-version = "0.0.8"
+version = "0.0.9"
 description = "First-party Dinkster sampling nodes"
 requires-python = ">=3.12"
 dependencies = [
