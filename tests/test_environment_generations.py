@@ -329,6 +329,69 @@ def test_pack_lock_resolution_does_not_expand_wheel_sources(
         )
 
 
+def test_local_pack_locks_resolve_helpers_only_from_each_recorded_registry(tmp_path: Path) -> None:
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.pack_lock import PackLock
+    from test_installer import write_pack
+
+    from dinkster.generation_packs import prepare_pack_locks
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    (generation / "constraints.txt").write_text("")
+    entries, artifacts, servers = [], {}, []
+    try:
+        for name, version in (("first", "1.0"), ("second", "2.0")):
+            wheels = tmp_path / name
+            wheels.mkdir()
+            helper, digest = _wheel(wheels, "registry_helper", version, 73)
+            index = wheels / "static/linux-cpu/simple/registry-helper"
+            index.mkdir(parents=True)
+            (index / "index.html").write_text(
+                f'<a href="/{helper.name}#sha256={digest}">{helper.name}</a>'
+            )
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(wheels))
+            )
+            servers.append(server)
+            Thread(target=server.serve_forever, daemon=True).start()
+            source = write_pack(tmp_path / f"source-{name}", name)
+            manifest = source / "dinkster-pack.toml"
+            manifest.write_text(
+                manifest.read_text().replace(
+                    "[pack.entry]", 'requires = ["registry-helper>=1"]\n[pack.entry]'
+                )
+            )
+            archive = tmp_path / f"{name}.zip"
+            identity = build_artifact(source, archive)
+            entries.append(
+                LockedPack(
+                    name,
+                    "0.1.0",
+                    identity,
+                    "",
+                    (name,),
+                    f"registry:http://127.0.0.1:{server.server_port}",
+                )
+            )
+            artifacts[name] = archive
+        paths = prepare_pack_locks(
+            generation, Lockfile.of(entries), artifacts, tmp_path / "locks", variant="linux-cpu"
+        )
+        locks = [PackLock.from_json(path.read_text()) for path in paths]
+        assert {
+            lock.pack: [(package.name, package.version) for package in lock.packages]
+            for lock in locks
+        } == {"first": [("registry-helper", "1.0")], "second": [("registry-helper", "2.0")]}
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+
+
 def _standalone_tree(root: Path) -> None:
     source = Path(sys.base_prefix)
     if os.name == "nt":

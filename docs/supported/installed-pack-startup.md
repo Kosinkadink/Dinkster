@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Local setup resolves registry pack dependencies against that pack's recorded
+  registry index for the selected variant, alongside the selected base's package
+  indexes and retained wheels. It does not search other packs' registries.
+
 - A managed update, repair, restore or rollback can start its replacement on
   another OS-assigned port if the planned port is occupied. The recorded URL
   follows the actual listener. The previous engine keeps serving until the
