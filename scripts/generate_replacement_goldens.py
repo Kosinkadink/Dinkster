@@ -2,9 +2,8 @@
 
 Everything here goes through the real encoders (schema_to_wire, which calls
 rule_to_wire for carried rules) so the committed JSON is encoder-authored,
-never hand-written. tests/test_goldens.py imports build_goldens() and fails
-when the files on disk drift from what the current encoders produce; run
-this script to refresh them after an intentional encoder change.
+never hand-written. Run this script to refresh them after an intentional
+encoder change.
 
 The fixture content is the coverage set agreed with Dinkster-Frontend: every
 predicate/mapping/transform union member, deep predicate nesting,
