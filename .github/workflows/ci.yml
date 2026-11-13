@@ -28,7 +28,6 @@ jobs:
     outputs:
       docs: ${{ steps.paths.outputs.docs }}
       engine: ${{ steps.paths.outputs.engine }}
-      runtime: ${{ steps.paths.outputs.runtime }}
       packs: ${{ steps.paths.outputs.packs }}
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +56,7 @@ jobs:
 
   contributor-setup:
     needs: checks
-    if: ${{ needs.checks.outputs.engine == 'true' && inputs.simulate-fork != true && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ needs.checks.outputs.engine == 'true' && inputs.simulate-fork != true && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: main contributor setup (${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -105,7 +104,10 @@ jobs:
           print('Externally managed:', marker.exists())
           PY
           python scripts/develop.py run -- ruff --version
-          python scripts/develop.py run -- python -m pytest -q -n0 tests/test_environment_runtime.py::test_run_uses_active_interpreter_and_preserves_command_io_and_exit
+          python scripts/develop.py run -- python -m pytest -q -n0 \
+            tests/test_environment_runtime.py::test_run_uses_active_interpreter_and_preserves_command_io_and_exit \
+            tests/test_environment_cli.py::test_setup_plan_labels_cached_channel_without_mutating_project_or_store \
+            tests/test_environment_cli.py::test_development_plan_fingerprints_sources_and_refuses_changed_approval
 
   tests:
     needs: checks
@@ -140,6 +142,21 @@ jobs:
           uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
           python scripts/develop.py stop --yes
         if: needs.checks.outputs.docs != 'true'
+      - name: Verify the Linux generation uses CPU torch
+        if: needs.checks.outputs.docs != 'true'
+        run: |
+          python scripts/develop.py run -- python - <<'PY'
+          from importlib.metadata import distributions
+          import torch
+          import torchvision
+          print(f"torch {torch.__version__}, CUDA {torch.version.cuda}; torchvision {torchvision.__version__}")
+          assert torch.__version__.endswith('+cpu') and torch.version.cuda is None
+          assert torchvision.__version__.endswith('+cpu')
+          assert not any(
+              distribution.metadata['Name'].lower().startswith(('nvidia-', 'triton'))
+              for distribution in distributions()
+          )
+          PY
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
@@ -169,13 +186,14 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$volume"
           echo "DINKSTER_CLONE_TEST_ROOT=$volume" >> "$GITHUB_ENV"
           echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
-      - name: Require real Linux clone allocation coverage
+      - name: Install the CPU software shader renderer
         if: needs.checks.outputs.engine == 'true'
-        run: python scripts/develop.py run -- python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:
-          DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
+          CUDA_VISIBLE_DEVICES: ""
+          DINKSTER_ACCELERATOR: cpu
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
         run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
