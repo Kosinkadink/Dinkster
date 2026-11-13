@@ -287,9 +287,9 @@
   A missing lock, changed artifact or incompatible base refuses admission.
   Missing defaults, rejected packs and security review requirements fail the
   check without publishing any pack.
-- Selected-archive behavioral tests use each first-party pack's independent
-  distribution, including vision packs. They verify selected source provenance
-  and refuse checkout fallbacks or replacement of engine-owned tests.
+- First-party pack behavioral tests run in the standalone pack repository
+  against its selected wheels and published engine. Engine default-set admission
+  scans published archives without building pack sources or selecting pack tests.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks

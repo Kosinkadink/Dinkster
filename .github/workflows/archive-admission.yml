@@ -6,8 +6,6 @@ on:
     paths:
       - .github/workflows/archive-admission.yml
       - scripts/check_default_pack_admission.py
-      - scripts/run_selected_pack_tests.py
-      - scripts/_selected_pack_test_child.py
       - scripts/setup_probe_jail.sh
       - packages/dinkster-registry/src/dinkster_registry/*admission.py
       - packages/dinkster-workers/src/dinkster_workers/pack_wheel.py

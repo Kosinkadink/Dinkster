@@ -73,10 +73,9 @@ unchanged by parallel execution.
 Use `-n 0` to debug a test in one process, or `-n 2` to select two workers.
 Do not use retries to hide a parallel-only failure. Package suites launched
 from their own project directory retain that project's pytest settings.
-Selected-archive admission with multiple test files splits whole files between
-two serial pytest processes after shared catalog preparation. Each process
-tracks unavailable exports and executed tests with its inline plugin. Any test
-or collection failure fails admission, and at least one selected test must pass.
+First-party selected-wheel behavioral admission runs in the standalone pack
+repository. Engine default-pack admission resolves published archives and runs
+the scanner against the engine under test; it does not build or test pack sources.
 
 Full-validation jobs run serially inside each matrix shard with
 `PYTEST_ADDOPTS=-n0`: catalog caches and process-state fixtures share state
