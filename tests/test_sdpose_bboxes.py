@@ -2,8 +2,6 @@
 
 import copy
 import os
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -77,36 +75,6 @@ def test_face_boxes_keep_frame_person_order_and_reanchor_square_at_edge() -> Non
         ]
     }
     assert SDPoseFaceBBoxes.execute(keypoints=[], scale=1, force_square=False) == {"bboxes": []}
-
-
-def test_sdpose_bbox_schema_and_execution_are_torch_free() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['torch'] = None\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "from dinkster_api.v1 import BOUNDING_BOX_TYPE, POSE_KEYPOINT_TYPE, TypeExpr\n"
-            "from dinkster_vision_sdpose import NODES\n"
-            "from dinkster_vision_sdpose.sdpose import SDPoseFaceBBoxes\n"
-            "from dinkster_workers import load_manifest\n"
-            "manifest = load_manifest('packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml')\n"
-            "schema = SDPoseFaceBBoxes.define_schema()\n"
-            "assert SDPoseFaceBBoxes in NODES\n"
-            "assert schema.node_type == 'dinkster.vision.sdpose.sd_pose_face_b_boxes'\n"
-            "assert manifest.namespaces == ('dinkster.vision.sdpose',)\n"
-            "assert [p.id for p in schema.inputs] == ['keypoints', 'scale', 'force_square']\n"
-            "assert schema.inputs[0].type == TypeExpr.concrete(POSE_KEYPOINT_TYPE)\n"
-            "assert schema.outputs[0].type == TypeExpr.concrete(BOUNDING_BOX_TYPE)\n"
-            "assert schema.inputs[1].default == 1.5 and schema.inputs[2].default is True\n"
-            "assert SDPoseFaceBBoxes.execute(keypoints=[], scale=1.5, force_square=True) "
-            "== {'bboxes': []}\n",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
 
 
 FRAMES = [

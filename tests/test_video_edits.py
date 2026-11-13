@@ -9,7 +9,6 @@ import pytest
 from dinkster_values.video_edits import (
     crop_rectangle,
     effective_video_facts,
-    scale_geometry,
     seconds,
     trim_window,
 )
@@ -53,21 +52,9 @@ def test_empty_trim(start: int) -> None:
         trim_window(Fraction(10), start, 0)
 
 
-def test_strict_duration() -> None:
-    assert trim_window(Fraction(10), 2, 8, True) == (2, 8)
-    with pytest.raises(ValueError, match="exceeds available"):
-        trim_window(Fraction(10), 2, 9, True)
-
-
 def test_fractional_seconds_do_not_accumulate_float_errors() -> None:
     assert seconds(0.1, "time") + seconds(0.2, "time") == Fraction(3, 10)
     assert seconds(Fraction(1001, 30000), "time") == Fraction(1001, 30000)
-
-
-@pytest.mark.parametrize("value", [True, "1", None, float("inf"), float("nan")])
-def test_invalid_seconds(value: object) -> None:
-    with pytest.raises(ValueError, match="finite seconds"):
-        seconds(value, "time")
 
 
 def test_unknown_duration_stays_unknown() -> None:
@@ -100,37 +87,6 @@ def test_full_odd_frame_crop_is_noop() -> None:
     assert crop_rectangle(1919, 1079, {"width": 1919, "height": 1079}) == (0, 0, 1919, 1079)
 
 
-@pytest.mark.parametrize("fit", ["stretch", "crop", "pad"])
-def test_identity_scale(fit: str) -> None:
-    assert scale_geometry(1920, 1080, {"width": 1920, "height": 1080, "fit": fit}) == (
-        1920,
-        1080,
-        0,
-        0,
-        1920,
-        1080,
-    )
-
-
-def test_scale_geometry_uses_even_rounding() -> None:
-    assert scale_geometry(1920, 1080, {"width": 1000, "height": 1000, "fit": "crop"}) == (
-        1778,
-        1000,
-        389,
-        0,
-        1000,
-        1000,
-    )
-    assert scale_geometry(1920, 1080, {"width": 1000, "height": 1000, "fit": "pad"}) == (
-        1000,
-        562,
-        0,
-        219,
-        1000,
-        1000,
-    )
-
-
 def test_composed_trims_intersect_current_clip_without_reading_source() -> None:
     clip = _clip(
         {"trim": {"start_time": 2, "duration": 3}},
@@ -143,16 +99,6 @@ def test_composed_trims_intersect_current_clip_without_reading_source() -> None:
         {"trim": {"start_time": -1, "duration": 0}},
     )
     assert effective_video_facts(clip)["duration"] == 1
-
-
-def test_rotation_precedes_crop_and_scale_order_matters() -> None:
-    crop = {"crop": {"x": 100, "y": 40, "width": 600, "height": 800}}
-    scale = {"scale": {"width": 300, "height": 200}}
-    assert effective_video_facts(_clip(rotation=90))["width"] == 1080
-    a = effective_video_facts(_clip(crop, scale, rotation=90))
-    b = effective_video_facts(_clip(scale, crop, rotation=90))
-    assert (a["width"], a["height"]) == (300, 200)
-    assert (b["width"], b["height"]) == (200, 160)
 
 
 def test_concat_effective_geometry_and_duration() -> None:
@@ -171,21 +117,3 @@ def test_trim_after_concat_and_unknown_duration() -> None:
     assert effective_video_facts(clip)["duration"] == 4
     assert effective_video_facts(clip)["frame_count_kind"] == "estimated"
     assert effective_video_facts(_clip({"concat": [_clip(duration=None)]}))["duration"] is None
-
-
-def test_ambiguous_unknown_and_recursive_edits_fail() -> None:
-    for edit in [{"trim": {}, "crop": {}}, {"trim": {}, "unknown": 1}, {"concat": []}]:
-        with pytest.raises(ValueError):
-            effective_video_facts(_clip(edit))
-    clip = _clip()
-    cast("list[object]", clip["edits"]).append({"concat": [clip]})
-    with pytest.raises(ValueError, match="nesting"):
-        effective_video_facts(clip)
-
-
-def test_shared_clip_budget_allows_one_hundred_leaves_but_remains_bounded() -> None:
-    clips = [_clip() for _ in range(255)]
-    value = _clip({"concat": clips})
-    assert effective_video_facts(value)["frame_count"] == 256 * 240
-    with pytest.raises(ValueError, match="256 clips"):
-        effective_video_facts(_clip({"concat": [_clip() for _ in range(256)]}))

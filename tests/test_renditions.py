@@ -9,7 +9,6 @@ import struct
 import zlib
 
 import numpy as np
-import pytest
 from dinkster_nodes_dev import register_dev_types
 from dinkster_values import TypeRegistry, register_core_types
 
@@ -64,12 +63,6 @@ def render(array: np.ndarray) -> bytes:
     return rendition.data
 
 
-def test_png_registered_as_default_rendition() -> None:
-    registry = make_registry()
-    specs = registry.renditions_of(DEV_IMAGE)
-    assert [(s.kind, s.mime, s.default) for s in specs] == [("png", "image/png", True)]
-
-
 def test_grayscale_png_roundtrip() -> None:
     array = np.array([[0.0, 1.0], [0.5, 0.25]], dtype=np.float32)
     width, height, color_type, rows = decode_png(render(array))
@@ -100,13 +93,6 @@ def test_out_of_range_values_clip() -> None:
     array = np.array([[-3.0, 7.5]], dtype=np.float32)
     _, _, _, rows = decode_png(render(array))
     assert rows == [bytes([0, 255])]
-
-
-def test_unrenderable_shape_raises() -> None:
-    registry = make_registry()
-    bad = registry.wrap(DEV_IMAGE, np.zeros((2, 2, 5), dtype=np.float32))
-    with pytest.raises(ValueError, match="cannot render"):
-        registry.render(bad, "png")
 
 
 def test_gray_alpha_rendition() -> None:

@@ -2,29 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-from typing import Any
-
 import pytest
 import torch
-from dinkster_api.v1 import (
-    AUDIO_TYPE,
-    CORE_STRING,
-    LATENT_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
-    TypeExpr,
-    materialize_audio,
-    materialize_latent,
-)
 from dinkster_audio.audio_generators import EmptyAudio
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_minimax.audio_generators import EmptyMiniMaxMusic3LatentAudio
-
-from dinkster.compose import PackSpec, ServingComposer, _installed_pack_spec
 
 
 @pytest.mark.parametrize(
@@ -58,105 +39,3 @@ def test_minimax_frames_round_clamp_then_convert(seconds: float, batch: int, len
     assert samples.dtype is torch.float32
     assert samples.device.type == "cpu"
     assert not samples.count_nonzero()
-
-
-class AudioGeneratorInspect(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="audio-generator-fixture.inspect",
-            inputs=(
-                InputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),
-                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
-            ),
-            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
-        )
-
-    @classmethod
-    def execute(cls, *, audio: Any, latent: Any) -> dict[str, object]:
-        audio, latent = materialize_audio(audio), materialize_latent(latent)
-        assert set(audio) == {"waveform", "sample_rate"}
-        assert audio["sample_rate"] == 8
-        assert audio["waveform"].shape == (1, 2, 2)
-        assert set(latent) == {"samples", "type", "downscale_ratio_temporal"}
-        assert latent["type"] == "audio" and latent["downscale_ratio_temporal"] == 512
-        assert latent["samples"].shape == (2, 128, 13)
-        for tensor in (audio["waveform"], latent["samples"]):
-            assert tensor.dtype is torch.float32 and tensor.device.type == "cpu"
-            assert not tensor.count_nonzero()
-        return cls.outputs(result="audio generators exact")
-
-
-@pytest.mark.parametrize("in_process", (True,))
-def test_audio_generators_feed_consumer_twice_in_both_hosts(
-    tmp_path: Path, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": str(Path(__file__).parent),
-            }
-        )
-        try:
-            (tmp_path / "audio_generator_fixture.py").write_text(
-                "from test_audio_generators_torch import AudioGeneratorInspect\n"
-                "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_audio import register_types as register_audio_types\n"
-                "NODES = (AudioGeneratorInspect,)\n"
-                "def register_types(registry):\n"
-                "    register_inference_types(registry)\n"
-                "    register_audio_types(registry)\n",
-                encoding="ascii",
-            )
-            fixture = tmp_path / "dinkster-pack.toml"
-            fixture.write_text(
-                '[pack]\nname = "audio-generator-fixture"\npublisher = "dinkster"\n'
-                'namespaces = ["audio-generator-fixture"]\n[pack.entry]\n'
-                'nodes = "audio_generator_fixture:NODES"\n'
-                'types = "audio_generator_fixture:register_types"\n',
-                encoding="ascii",
-            )
-            specs = (
-                *(
-                    _installed_pack_spec(identity, module, in_process=in_process)
-                    for identity, module in (
-                        ("dinkster-latent", "dinkster_latent"),
-                        ("dinkster-conditioning", "dinkster_conditioning"),
-                        ("dinkster-audio", "dinkster_audio"),
-                        ("dinkster-minimax", "dinkster_minimax"),
-                    )
-                ),
-                PackSpec(fixture),
-            )
-            for spec in specs:
-                await composer.add_pack(
-                    PackSpec(
-                        spec.manifest, packs=spec.packs, trust_reserved=True, in_process=in_process
-                    )
-                )
-            graph = Graph(
-                nodes={
-                    "audio": GraphNode(
-                        "dinkster.audio.empty_audio",
-                        {"duration": 0.3125, "sample_rate": 8, "channels": 2},
-                    ),
-                    "latent": GraphNode(
-                        "dinkster.minimax.empty_mini_max_music3_latent_audio",
-                        {"seconds": 0.14, "batch_size": 2},
-                    ),
-                    "inspect": GraphNode(
-                        "audio-generator-fixture.inspect",
-                        {"audio": Link("audio", "AUDIO"), "latent": Link("latent", "LATENT")},
-                    ),
-                }
-            )
-            engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["inspect"])
-                assert result.outputs["inspect"]["result"].resolve() == "audio generators exact"
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())

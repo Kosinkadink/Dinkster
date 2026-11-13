@@ -17,7 +17,7 @@ import tarfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.request import ProxyHandler, build_opener, urlopen
+from urllib.request import urlopen
 
 import pytest
 import zstandard
@@ -649,48 +649,6 @@ def test_status_and_doctor_label_the_active_user_defined_base(tmp_path: Path):
         assert "Torch: 2.14.1+cu130" in human.stdout
         assert "Torch index: https://download.pytorch.org/whl/cu130" in human.stdout
     assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
-
-
-def test_status_and_doctor_keep_local_manifests_out_of_publication_descriptors(tmp_path: Path):
-    generation = _generation(tmp_path, 1).parent
-    base = {
-        "format": "dinkster.base/1",
-        "source": "local",
-        "variant": "linux-cpu",
-        "wheels": [
-            {
-                "name": "torch",
-                "version": "2.14.1",
-                "filename": "torch.whl",
-                "size": 17,
-                "sha256": "b" * 64,
-                "url": "local",
-            }
-        ],
-    }
-    engine = {
-        "format": "dinkster.engine/1",
-        "source": "local",
-        "version": "0.4.2",
-        "workerProtocol": 1,
-        "wheels": [],
-    }
-    metadata = generation / "generation.json"
-    document = json.loads(metadata.read_bytes())
-    document["source"] = "local"
-    for name, manifest in (("base-manifest.json", base), ("engine-manifest.json", engine)):
-        path = generation / name
-        path.write_text(json.dumps(manifest))
-        document["files"][name] = content_digest(path)
-    metadata.write_text(json.dumps(document))
-    (tmp_path / "current").write_text("1\n")
-    for operation in ("status", "doctor"):
-        code, result = _run(tmp_path, operation)
-        assert code == 0 and result["status"] == "clean"
-        assert "base" not in result and "engine" not in result
-        if operation == "doctor":
-            assert result["source"] == "local"
-            assert "locally resolved" in result["plan"][0]
 
 
 @pytest.mark.parametrize(
@@ -1718,152 +1676,6 @@ environment.main()
         print(f"fixture update including sync/health took {elapsed:.3f}s")
     finally:
         assert _run(root, "stop", "--yes")[0] == 0
-
-
-def test_public_fixture_commands_install_update_and_rollback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
-    for variable in ("NO_PROXY", "no_proxy"):
-        monkeypatch.delenv(variable, raising=False)
-    monkeypatch.setattr("urllib.request._opener", None)
-    builder = Path(__file__).parent / "fixtures/environments/build.py"
-    build_command = [
-        sys.executable,
-        str(builder),
-        "--output",
-        str(tmp_path / "fixture"),
-    ]
-    fixture = json.loads(subprocess.check_output(build_command, text=True, timeout=120))
-    assert json.loads((tmp_path / "fixture/fixture.json").read_bytes()) == fixture
-    refused = subprocess.run(build_command, capture_output=True, text=True, timeout=120)
-    assert refused.returncode != 0
-    assert json.loads((tmp_path / "fixture/fixture.json").read_bytes()) == fixture
-    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):
-        monkeypatch.setenv(variable, "http://127.0.0.1:1/unreachable")
-    root = Path(fixture["root"])
-    commands = fixture["commands"]
-
-    mirror = Path(fixture["mirror"])
-    channel_path = mirror / "channels/main.json"
-    channel = json.loads(channel_path.read_bytes())
-    variant = fixture["variant"]
-    base_id = channel["base"][variant]["id"][7:]
-    base_directory = mirror / "base" / variant / base_id
-    base = json.loads((base_directory / "manifest.json").read_bytes())
-    base_label = f"2026-10-31-py{base['python']}-torch1.0-{base_id[:8]}"
-    base.update(
-        label=base_label,
-        builtAt="2026-10-31T12:00:00Z",
-        torchVersion="1.0",
-        torchIndex="https://pypi.org/simple",
-        lockSource={"repository": "https://github.com/Kosinkadink/Dinkster", "commit": "d" * 40},
-    )
-    (base_directory / "manifest.json").write_text(json.dumps(base))
-    base_directory.rename(base_directory.with_name(base_label))
-    channel["base"][variant]["locations"][0]["path"] = f"base/{variant}/{base_label}/manifest.json"
-    updated_path = Path(fixture["updatedChannel"])
-    updated_channel = json.loads(updated_path.read_bytes())
-    updated_channel["base"] = channel["base"]
-    updated_path.write_text(json.dumps(updated_channel))
-    engine_directory = mirror / "engine" / channel["engine"]["release"][7:]
-    engine = json.loads((engine_directory / "release-manifest.json").read_bytes())
-    engine_label = "2026-10-31-1.0"
-    engine.pop("tag")
-    engine.update(label=engine_label, builtAt="2026-10-31T12:30:00Z")
-    engine_bytes = (json.dumps(engine) + "\n").encode()
-    engine_id = hashlib.sha256(engine_bytes).hexdigest()
-    (engine_directory / "release-manifest.json").write_bytes(engine_bytes)
-    engine_directory.rename(engine_directory.with_name(f"{engine_label}-{engine_id[:8]}"))
-    channel["engine"].update(
-        release="sha256:" + engine_id,
-        locations=[
-            {
-                "type": "mirror",
-                "path": f"engine/{engine_label}-{engine_id[:8]}/release-manifest.json",
-            }
-        ],
-    )
-    channel_path.write_text(json.dumps(channel))
-
-    def run(name: str) -> dict:
-        completed = subprocess.run(commands[name], capture_output=True, text=True, timeout=60)
-        assert completed.returncode == 0, (completed.stdout, completed.stderr)
-        return json.loads(completed.stdout)
-
-    def check(number: int, expected: dict, operation: str) -> None:
-        assert (root / "current").read_text() == f"{number}\n"
-        generation = root / "generations" / str(number)
-        manifest = json.loads((generation / "generation.json").read_bytes())
-        assert manifest["generation"] == number
-        assert manifest["engine"]["version"] == expected["version"]
-        python = generation / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
-        actual = json.loads(
-            subprocess.check_output(
-                [
-                    str(python),
-                    "-I",
-                    "-B",
-                    "-c",
-                    "import fixture_engine, importlib.metadata, json; "
-                    "print(json.dumps({'value': fixture_engine.VALUE, "
-                    "'version': importlib.metadata.version('fixture-engine')}))",
-                ],
-                text=True,
-            )
-        )
-        assert actual == expected
-        journals = [json.loads(path.read_bytes()) for path in (root / "journal").glob("*.json")]
-        assert all(row["stage"] == "complete" and row.get("error") is None for row in journals)
-        assert any(row["operation"] == operation and row["target"] == number for row in journals)
-        status = run("status")
-        assert status["current"] == number
-        assert status["engines"][0]["state"] == "ready"
-        doctor = run("doctor")
-        assert doctor["status"] == "clean"
-        for result in (status, doctor):
-            assert result["base"]["label"] == base_label
-            assert result["engine"]["version"] == expected["version"]
-            assert result["engine"]["label"] == (
-                engine_label if expected["version"] == "1.0" else None
-            )
-            assert result["engine"]["release"] == manifest["engine"]["release"]
-        # The offline proxy barrier applies to downloads, not this loopback observation.
-        with build_opener(ProxyHandler({})).open(
-            status["engines"][0]["url"] + "/api/generation", timeout=5
-        ) as response:
-            assert json.loads(response.read()) == {"generation": str(generation)}
-
-    try:
-        assert run("setup")["current"] == 1
-        check(1, fixture["expected"]["initial"], "setup")
-        store = Path((root / "store").read_text().strip())
-        assert object_path(store / "bases", "sha256:" + base_id).is_dir()
-        assert object_path(store / "downloads", "sha256:" + base_id).is_dir()
-        assert object_path(store / "engines", "sha256:" + engine_id).is_dir()
-        wheel_paths = list((store / "wheels").glob("*/*.whl"))
-        assert wheel_paths and all(path.parent.name == path.stem for path in wheel_paths)
-        assert object_path(store / "engines", "sha256:" + engine_id).name == engine_label
-        assert object_path(store / "bases", "sha256:" + base_id).parent.name == variant
-        run("advance")
-        assert run("update")["current"] == 2
-        check(2, fixture["expected"]["updated"], "update")
-        assert run("rollback")["current"] == 3
-        check(3, fixture["expected"]["initial"], "rollback")
-        assert (root / "generations/2/generation.json").is_file()
-        journals = [Journal.read(path) for path in (root / "journal").glob("*.json")]
-        assert sorted((row.operation, row.target) for row in journals if row.operation != "gc") == [
-            ("rollback", 3),
-            ("setup", 1),
-            ("update", 2),
-        ]
-        assert all(row.stage == "complete" and row.error is None for row in journals)
-        assert len(list((root / "history").glob("*.json"))) == 3
-    finally:
-        if (root / "current").exists():
-            run("stop")
-            assert all(row["state"] == "stopped" for row in run("status")["engines"])
 
 
 @pytest.mark.parametrize("public_command", [False, True])

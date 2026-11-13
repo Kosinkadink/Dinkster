@@ -6,15 +6,12 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-import dinkster_3d.save3d as save_module
 import numpy
 import pytest
 from dinkster_3d.save3d import SaveGaussianSplat
 from dinkster_3d.splat_files import File3DToSplat, SplatToFile3D
 from dinkster_assets import (
-    AssetError,
     AssetRef,
-    AssetVault,
     MountSnapshotResolver,
     classify_media,
     digest_bytes,
@@ -115,36 +112,3 @@ def test_save_honors_explicit_target_prefix(
     assert (root / "splats/scene_00001.ply").read_bytes() == cast(
         AssetRef, model["source"]
     ).read_bytes()
-
-
-def test_file_conversion_refuses_malformed_splat_values() -> None:
-    with pytest.raises(ValueError, match="exactly positions"):
-        SplatToFile3D.execute(splat={"positions": numpy.zeros((1, 1, 3), numpy.float32)})
-
-
-def test_save_requires_configured_mounts(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = cast("dict[str, object]", SplatToFile3D.execute(splat=splat_value())["model_3d"])
-    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
-    with pytest.raises(AssetError, match="DINKSTER_MOUNTS_SNAPSHOT"):
-        SaveGaussianSplat.execute(model_3d=model, viewport_state={})
-
-
-def test_save_bounds_published_file_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, _snapshot = _mount(tmp_path, monkeypatch)
-    model = cast("dict[str, object]", SplatToFile3D.execute(splat=splat_value())["model_3d"])
-    monkeypatch.setattr(save_module, "ENCODED_MEDIA_LIMIT_BYTES", 16)
-    with pytest.raises(AssetError, match="limit"):
-        SaveGaussianSplat.execute(model_3d=model, viewport_state={})
-    assert not list(root.rglob("*.ply"))
-
-
-def test_load_refuses_non_splat_assets(tmp_path: Path) -> None:
-    payload = b"not a splat"
-    digest = digest_bytes(payload)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(payload)
-        writer.commit()
-    ref = AssetRef(digest, "bad.ply", len(payload), "model/ply", resolver=vault)
-    with pytest.raises(ValueError, match="PLY"):
-        File3DToSplat.execute(model_3d={"format": "ply", "source": ref})

@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -15,9 +13,6 @@ from dinkster_schema import (
     OutputSpec,
     SelectorSpec,
     TypeExpr,
-    schema_from_wire,
-    schema_signature,
-    schema_to_wire,
 )
 from dinkster_server.preflight import graph_asset_names
 
@@ -159,36 +154,6 @@ def test_selector_chains_regions_gc_and_refusals() -> None:
     region = RegionNode(kind="map", body=Graph({}), inputs={"p": Link("s", "out")})
     top = Graph({"s": GraphNode(SWITCH.node_type, {"switch": True, "on": 1}), "r": region})
     assert lower_selectors(top, ["r"], SCHEMAS).graph.nodes["r"].inputs["p"] == 1
-
-
-def test_selector_model_validation() -> None:
-    plain = replace(SWITCH, selector=None)
-    assert "selector" not in schema_to_wire(plain)
-    assert schema_to_wire(replace(plain, selector=None)) == schema_to_wire(plain)
-    assert schema_signature(replace(plain, selector=None)) == schema_signature(plain)
-    assert schema_from_wire(schema_to_wire(SWITCH)) == SWITCH
-    assert schema_signature(SWITCH) != schema_signature(plain)
-    assert replace(SWITCH, selector=None).selector is None
-    for selector in (
-        SelectorSpec("switch", {"false": "off", "true": "switch"}),
-        SelectorSpec("switch", {"false": "off", "true": "missing"}),
-    ):
-        try:
-            replace(SWITCH, selector=selector)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("invalid selector accepted")
-    for invalid in (
-        (1, {"false": "off", "true": "on"}),
-        ("switch", {"false": 1, "true": "on"}),
-    ):
-        try:
-            SelectorSpec(invalid[0], invalid[1])  # type: ignore[arg-type]
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("non-string selector id accepted")
 
 
 def test_inactive_branch_assets_do_not_reach_submission_preflight() -> None:

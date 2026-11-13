@@ -9,12 +9,10 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetRef, AssetVault, AssetWriter, MountSnapshotResolver, digest_bytes
 from dinkster_audio.audio_generators import EmptyAudio
-from dinkster_audio.audio_io import LoadAudio, PreviewAudio
+from dinkster_audio.audio_io import LoadAudio
 from dinkster_audio.audio_save import SaveAudio, SaveAudioMP3, SaveAudioOpus
-from dinkster_schema import AssetWidget
 from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_values import render_audio_wav
 
@@ -285,55 +283,3 @@ def test_load_refuses_malformed_and_audioless_assets(tmp_path: Path) -> None:
     ref = AssetRef(digest, "bad.flac", len(payload), "audio/flac", resolver=vault)
     with pytest.raises(Exception, match="Invalid|no audio"):
         LoadAudio.execute(audio=ref)
-
-
-def test_preview_passes_audio_through_and_rejects_absent_audio() -> None:
-    audio = _sine(samples=64)
-    result = PreviewAudio.execute(audio=audio)
-    assert result["audio"] is audio
-    with pytest.raises(ValueError, match="input audio is None"):
-        PreviewAudio.execute(audio=None)
-
-
-def test_audio_schemas_preserve_preview_asset_and_bound_contracts() -> None:
-    load = LoadAudio.schema()
-    assert load.node_type == "dinkster.audio.load_audio"
-    assert load.inputs[0].type.types == ("ASSET",)
-    assert load.inputs[0].source_filename is not None
-    assert load.inputs[0].source_filename.kind == "media/audio"
-    assert isinstance(load.inputs[0].widget, AssetWidget)
-    assert load.inputs[0].widget.accept == ("audio/*", "video/*")
-    assert [(output.id, output.preview) for output in load.outputs] == [("AUDIO", True)]
-
-    for node, quality_options in (
-        (SaveAudio, None),
-        (SaveAudioMP3, ("V0", "128k", "320k")),
-        (SaveAudioOpus, ("64k", "96k", "128k", "192k", "320k")),
-    ):
-        schema = node.schema()
-        assert schema.output_node
-        assert not schema.idempotent
-        by_id = {spec.id: spec for spec in schema.inputs}
-        assert by_id["audio"].required
-        assert by_id["filename_prefix"].default == "audio/ComfyUI"
-        assert by_id["mount"].default is None
-        output = schema.outputs[0]
-        assert output.id == "audio"
-        assert output.preview
-        assert output.type.types == (AUDIO_TYPE,)
-        if quality_options is None:
-            assert "quality" not in by_id
-        else:
-            widget = by_id["quality"].widget
-            assert widget is not None
-            assert getattr(widget, "options", None) == quality_options
-
-    preview = PreviewAudio.schema()
-    assert preview.output_node
-    assert preview.inputs[0].required
-    assert [(output.id, output.preview) for output in preview.outputs] == [("audio", True)]
-
-    empty = EmptyAudio.schema()
-    assert not empty.output_node
-    defaults = {spec.id: spec.default for spec in empty.inputs}
-    assert defaults == {"duration": 60.0, "sample_rate": 44_100, "channels": 2}

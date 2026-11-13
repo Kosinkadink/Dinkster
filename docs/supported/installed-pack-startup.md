@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- A managed update, repair, restore or rollback can start its replacement on
+  another OS-assigned port if the planned port is occupied. The recorded URL
+  follows the actual listener. The previous engine keeps serving until the
+  replacement passes health checks; interrupted activation remains recoverable.
+  An explicit standalone start still uses its requested port.
+
 - Pack installation, retained rollback and serving selection enforce locally
   cached verified security notices. Known malicious artifacts and explicitly
   denied vulnerable releases refuse without deleting retained bytes or changing

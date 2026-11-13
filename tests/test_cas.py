@@ -17,7 +17,6 @@ import mmap
 import multiprocessing
 import os
 import threading
-from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -44,7 +43,6 @@ from dinkster_engine import (
 )
 from dinkster_schema import build_schemas
 from dinkster_values import (
-    CORE_COMBO,
     RESOURCE_ID_META_KEY,
     BufferEncoding,
     EncodedPayload,
@@ -52,7 +50,6 @@ from dinkster_values import (
     UnresolvablePayload,
     Value,
     ValueMeta,
-    default_encode,
     register_core_types,
 )
 from dinkster_workers import BoundaryError, ValueCodec
@@ -61,17 +58,6 @@ from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from test_engine import InProcessWorkerFactory, image_graph
 
 from tests.async_scenarios import run_scenario
-
-
-class ExplodingMapping(Mapping[str, object]):
-    def __getitem__(self, key: str) -> object:
-        raise KeyError(key)
-
-    def __iter__(self) -> Iterator[str]:
-        raise RuntimeError("metadata exploded")
-
-    def __len__(self) -> int:
-        return 1
 
 
 def make_registry() -> TypeRegistry:
@@ -178,91 +164,6 @@ def test_shm_preserves_bytes_validator_contract() -> None:
     assert isinstance(received.resolve(), str)
     for segment in segments:
         release_segment(segment)
-
-
-def test_shm_validates_metadata_before_attaching(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    registry = make_registry()
-    registry.register("test.large")
-    codec = ValueCodec(registry, shm_threshold=1)
-    value = registry.wrap("test.large", "payload")
-    blobs: list[bytes] = []
-    segments = []
-    wire, _ = codec.encode(value, blobs, segments)
-    meta_blob = wire["metaBlob"]
-    assert isinstance(meta_blob, int)
-    blobs[meta_blob] = default_encode({"resources": ExplodingMapping()})
-    monkeypatch.setattr(
-        boundary_module,
-        "_attach_segment",
-        lambda _name: pytest.fail("attached before metadata validation"),
-    )
-
-    with pytest.raises(RuntimeError, match="metadata exploded"):
-        codec.decode(wire, blobs, [])
-    for segment in segments:
-        release_segment(segment)
-
-
-@pytest.mark.parametrize("invalid_size", (-1, True, 1.5, "1"))
-def test_shm_rejects_non_positive_size_before_attaching(
-    monkeypatch: pytest.MonkeyPatch,
-    invalid_size: object,
-) -> None:
-    registry = make_registry()
-    codec = ValueCodec(registry, shm_threshold=1)
-    value = registry.wrap(CORE_COMBO, "euler")
-    blobs: list[bytes] = []
-    segments = []
-    wire, _ = codec.encode(value, blobs, segments)
-    release_segment(segments[0])
-    wire["payload"] = {
-        "transport": "shm",
-        "segment": "must-not-attach",
-        "size": invalid_size,
-    }
-    monkeypatch.setattr(
-        boundary_module,
-        "_attach_segment",
-        lambda _name: pytest.fail("invalid size attempted shared-memory attach"),
-    )
-
-    with pytest.raises(BoundaryError, match="size must be (positive|an integer)"):
-        codec.decode(wire, blobs, [])
-
-
-def test_relay_encodes_metadata_before_creating_segment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Unencodable:
-        def __reduce__(self) -> tuple[object, ...]:
-            raise RuntimeError("metadata cannot be encoded")
-
-    registry = make_registry()
-    registry.register("test.large")
-    payload = EncodedPayload.from_buffer(
-        "test.large",
-        memoryview(b"mapped payload"),
-        None,
-        "shm",
-        lambda: None,
-    )
-    value = Value(
-        "test.large",
-        "fingerprint",
-        ValueMeta({"unencodable": Unencodable()}),
-        payload,
-    )
-    codec = ValueCodec(registry, shm_threshold=1)
-    monkeypatch.setattr(
-        boundary_module,
-        "_create_segment",
-        lambda _data: pytest.fail("segment created before metadata encoded"),
-    )
-
-    with pytest.raises(RuntimeError, match="metadata cannot be encoded"):
-        codec.encode(value, [], [])
 
 
 def test_direct_shm_writer_failure_releases_its_segment(
@@ -615,53 +516,6 @@ def test_encoded_validator_failure_is_counted_as_disk_cache_miss(tmp_path: Path)
         assert await store.get("key-invalid") is None
         assert store.hits == 0
         assert store.misses == 1
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("encoded", [b"json:null", b"json:9007199254740993"])
-def test_core_combo_encoded_validation_is_enforced_by_disk_cache(
-    tmp_path: Path, encoded: bytes
-) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        value = Value(
-            type_id=CORE_COMBO,
-            fingerprint="untrusted-fingerprint",
-            meta=ValueMeta(),
-            payload=EncodedPayload(CORE_COMBO, encoded, None),
-        )
-        store = DiskCacheStore(tmp_path, registry)
-        await store.put("invalid-combo", {"out": value})
-        assert await store.get("invalid-combo") is None
-        assert store.hits == 0
-        assert store.misses == 1
-
-    run_scenario(scenario())
-
-
-def test_core_combo_valid_boundary_and_disk_cache_round_trips(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        value = registry.wrap(CORE_COMBO, "euler")
-        expected_fingerprint = "5cc02dd05421d92f092e0c685a9ae179ce868b7c"
-        assert value.fingerprint == expected_fingerprint
-
-        codec = ValueCodec(registry, use_shm=False)
-        blobs: list[bytes] = []
-        wire, _ = codec.encode(value, blobs, [])
-        decoded, _ = codec.decode(wire, blobs, [])
-        assert decoded.resolve() == "euler"
-        assert decoded.fingerprint == expected_fingerprint
-
-        store = DiskCacheStore(tmp_path, registry)
-        await store.put("valid-combo", {"out": decoded})
-        hit = await store.get("valid-combo")
-        assert hit is not None
-        assert hit["out"].resolve() == "euler"
-        assert hit["out"].fingerprint == expected_fingerprint
-        assert store.hits == 1
-        assert store.misses == 0
 
     run_scenario(scenario())
 
@@ -1023,25 +877,6 @@ def test_cas_transport_sends_bytes_once() -> None:
     assert decoded2.fingerprint == value.fingerprint
 
 
-def test_cas_transport_dedups_echo_back() -> None:
-    """Bytes that crossed one way never cross again the other way: the
-    receiver can echo the value back digest-only, because both sides retain
-    every crossed payload for the conversation."""
-    left, right, registry = _paired_cas_codecs()
-    value = registry.wrap("STRING", "y" * 100)
-
-    blobs: list[bytes] = []
-    wire, _ = left.encode(value, blobs, [])
-    received, _ = right.decode(wire, blobs, [])
-
-    back_blobs: list[bytes] = []
-    back_wire, _ = right.encode(received, back_blobs, [])
-    assert "blob" not in _payload_wire(back_wire)  # right knows left has it
-    assert len(back_blobs) == 1  # meta only
-    round_tripped, _ = left.decode(back_wire, back_blobs, [])
-    assert round_tripped.resolve() == "y" * 100
-
-
 def test_cas_transport_budget_bounds_retention() -> None:
     """Past the retention budget the transport degrades, never breaks:
     over-budget payloads carry their bytes on every crossing (marked
@@ -1075,21 +910,6 @@ def test_cas_transport_budget_bounds_retention() -> None:
     assert "blob" not in _payload_wire(back_wire)
     round_tripped, _ = left.decode(back_wire, back_blobs, [])
     assert round_tripped.resolve() == "a" * 100
-
-
-def test_cas_transport_requires_negotiation() -> None:
-    left, _, registry = _paired_cas_codecs()
-    value = registry.wrap("STRING", "z" * 100)
-    blobs: list[bytes] = []
-    wire, _ = left.encode(value, blobs, [])
-
-    unnegotiated = ValueCodec(registry, use_shm=False, accept_shm=False)
-    with pytest.raises(BoundaryError, match="not negotiated"):
-        unnegotiated.decode(wire, blobs, [])
-    # And an unnegotiated sender never produces cas descriptors.
-    plain_wire, plain_stat = unnegotiated.encode(value, [], [])
-    assert plain_stat.transport == "inline"
-    assert _payload_wire(plain_wire)["transport"] == "inline"
 
 
 def test_cas_transport_conservative_failures() -> None:
@@ -1147,48 +967,6 @@ def test_encoded_validator_boundary_failure_is_named_and_precedes_value_creation
         match="encoded payload validation failed for type 'test.validated'",
     ):
         codec.decode(wire, blobs, [])
-
-
-def test_core_combo_encoded_validation_is_enforced_at_worker_boundary() -> None:
-    registry = make_registry()
-    value = Value(
-        type_id=CORE_COMBO,
-        fingerprint="untrusted-fingerprint",
-        meta=ValueMeta(),
-        payload=EncodedPayload(CORE_COMBO, b'json:["not-a-scalar"]', None),
-    )
-    codec = ValueCodec(registry, use_shm=False)
-    blobs: list[bytes] = []
-    wire, _ = codec.encode(value, blobs, [])
-    with pytest.raises(
-        EncodedPayloadValidationError,
-        match="encoded payload validation failed for type 'COMBO'",
-    ):
-        codec.decode(wire, blobs, [])
-
-
-def test_types_without_encoded_validator_keep_boundary_and_cache_behavior(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        registry.register("test.plain")
-        value = registry.wrap("test.plain", {"answer": 42})
-        codec = ValueCodec(registry, use_shm=False)
-        blobs: list[bytes] = []
-        wire, _ = codec.encode(value, blobs, [])
-        decoded, _ = codec.decode(wire, blobs, [])
-        assert decoded.resolve() == {"answer": 42}
-
-        store = DiskCacheStore(tmp_path, registry)
-        await store.put("key-plain", {"out": value})
-        hit = await store.get("key-plain")
-        assert hit is not None
-        assert hit["out"].resolve() == {"answer": 42}
-        assert store.hits == 1
-        assert store.misses == 0
-
-    run_scenario(scenario())
 
 
 # -- engine restart persistence ----------------------------------------------

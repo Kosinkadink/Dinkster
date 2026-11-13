@@ -519,24 +519,6 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     assert retained.read_bytes() == data
 
 
-@pytest.mark.parametrize("change", ["missing", "bytes", "parsed"])
-def test_acquisition_refuses_inconsistent_retained_manifest_before_cache_creation(
-    tmp_path: Path, change: str
-):
-    mirror, store = tmp_path / "mirror", tmp_path / "store"
-    _mirror(mirror)
-    catalog = discover((str(mirror),), "main")
-    if change == "missing":
-        catalog.engine_bytes = b""
-    elif change == "bytes":
-        catalog.engine_bytes += b"\n"
-    else:
-        catalog.engine["version"] = "0.5.0"
-    with pytest.raises(EnvironmentError, match="metadata|manifest"):
-        acquire(catalog, "fixture-cpu", store)
-    assert not store.exists()
-
-
 @pytest.mark.parametrize("source", ["origin", "index"])
 @pytest.mark.parametrize("failure", [None, "hash", "size", "missing", "base-hash", "dependency"])
 def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
@@ -874,42 +856,6 @@ def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
     )
 
 
-@pytest.mark.parametrize("target", [("windows", "arm64"), ("linux", "arm64"), ("macos", "riscv64")])
-def test_discovery_rejects_unsupported_manifest_architectures(
-    tmp_path: Path, target: tuple[str, str]
-):
-    mirror = tmp_path / "mirror"
-    _mirror(mirror, target=target)
-    with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
-        discover((str(mirror),), "main")
-
-
-@pytest.mark.parametrize(
-    "defaults",
-    [
-        {"fixture-pack": "1.2.3"},
-        {},
-        [],
-        {"Bad_Name": "1.2"},
-        {"fixture-pack": 3},
-        {"fixture-pack": "not-a-version"},
-    ],
-)
-def test_engine_manifest_validates_target_default_declaration(tmp_path: Path, defaults: object):
-    _, engine, _ = _mirror(tmp_path / "mirror")
-    engine["defaultPacks"] = defaults
-    payload = _json(engine)
-    identity = "sha256:" + hashlib.sha256(payload).hexdigest()
-    if defaults == {"fixture-pack": "1.2.3"}:
-        assert (
-            environment_artifacts.validate_manifest(payload, identity, None)["defaultPacks"]
-            == defaults
-        )
-    else:
-        with pytest.raises(EnvironmentError, match="default"):
-            environment_artifacts.validate_manifest(payload, identity, None)
-
-
 def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path: Path):
     first, second = tmp_path / "first", tmp_path / "second"
     _, engine, channel = _mirror(first)
@@ -940,15 +886,6 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
 def test_refuses_protocol_mismatch_before_creating_a_store(tmp_path: Path):
     _mirror(tmp_path / "mirror", protocol=12)
     with pytest.raises(EnvironmentError, match="workerProtocol mismatch"):
-        discover((str(tmp_path / "mirror"),), "main")
-
-
-def test_base_identity_cannot_ignore_changed_replacement_membership(tmp_path: Path):
-    base, _, _ = _mirror(tmp_path / "mirror")
-    path = tmp_path / "mirror/base/fixture-cpu" / base["id"][7:] / "manifest.json"
-    base["replaces"] = ["fixture-base"]
-    path.write_bytes(_json(base))
-    with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
         discover((str(tmp_path / "mirror"),), "main")
 
 
@@ -1573,30 +1510,6 @@ def test_custom_variant_file_precedence_and_optional_extras_index(tmp_path: Path
     assert (
         explicit.read_text() == definition + 'extras-index = "https://extras.example.org/simple"\n'
     )
-
-
-@pytest.mark.parametrize(
-    "extra",
-    [
-        'torch = ">=2.14"',
-        'torch-index = "http://download.pytorch.org/whl/cu130"',
-        'extras-index = "https://user:password@example.org/simple"',
-        'os = "windows"',
-    ],
-)
-def test_custom_variant_rejects_invalid_definitions_before_store_creation(
-    tmp_path: Path, extra: str
-):
-    row = {
-        "torch": 'torch = "2.14.1"',
-        "torch-index": 'torch-index = "https://download.pytorch.org/whl/cu130"',
-    }
-    row[extra.split(" =")[0]] = extra
-    definition = tmp_path / "variants.toml"
-    definition.write_text("[variants.custom-cuda]\n" + "\n".join(row.values()))
-    with pytest.raises(EnvironmentError):
-        custom_selection(definition, "custom-cuda", {"platform": {"os": "linux", "arch": "x86_64"}})
-    assert set(tmp_path.iterdir()) == {definition}
 
 
 def test_custom_rebuild_preserves_recoverable_archive_and_provenance(

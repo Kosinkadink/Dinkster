@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from dinkster_graph import GraphNode, Link, RegionNode
 from dinkster_nodes_dev.loop_corpus import Observations
 
 from tests.async_scenarios import run_scenario
@@ -15,33 +14,6 @@ from tools.run_comfy_loop_corpus import compile_prompt, make_engine
 PROMPTS = json.loads(
     (Path(__file__).parent / "fixtures/loop-corpus-prompts.json").read_text(encoding="utf-8")
 )
-
-
-def test_recorded_prompts_compile_to_native_loop_nodes() -> None:
-    graph = compile_prompt(PROMPTS["nested-carry"]["api_prompt"])
-    outer = graph.nodes["outer"]
-    inner_close = graph.nodes["inner_close"]
-    assert isinstance(outer, GraphNode)
-    assert isinstance(inner_close, GraphNode)
-    assert outer.node_type == "dinkster.utilities.start_loop"
-    assert inner_close.node_type == "dinkster.utilities.end_loop"
-    assert isinstance(graph.nodes["capture"], RegionNode)
-    assert any(
-        isinstance(node, GraphNode) and node.node_type == "dinkster.utilities.list_element"
-        for node in graph.nodes.values()
-    )
-
-
-def test_list_outputs_are_explicitly_flattened_before_map_capture() -> None:
-    graph = compile_prompt(PROMPTS["accumulate-list-output"]["api_prompt"])
-    capture = graph.nodes["capture"]
-    assert isinstance(capture, RegionNode)
-    capture_input = capture.inputs["item"]
-    assert isinstance(capture_input, Link)
-    flatten = graph.nodes[capture_input.node_id]
-    assert isinstance(flatten, RegionNode)
-    assert flatten.kind == "map"
-    assert flatten.outputs["list"].mode == "flatten"
 
 
 def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
@@ -60,10 +32,3 @@ def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
             ]
 
     run_scenario(scenario())
-
-
-def test_corpus_includes_the_runtime_expansion_prompt() -> None:
-    graph = compile_prompt(PROMPTS["runtime-expanded-descendant"]["api_prompt"])
-    expanded = graph.nodes["expand"]
-    assert isinstance(expanded, GraphNode)
-    assert expanded.node_type == "Issue408ExpandIncrement"

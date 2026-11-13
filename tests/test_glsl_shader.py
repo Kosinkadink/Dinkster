@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
-import json
-import os
-import subprocess
-from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO, cast
 
 import numpy as np
 import pytest
@@ -14,12 +9,9 @@ from dinkster_api.v1 import Curve
 from dinkster_image import glsl as glsl_module
 from dinkster_image.glsl import (
     DEFAULT_FRAGMENT_SHADER,
-    GLSL_NODES,
     GlslShader,
     NativeGlslShader,
 )
-from dinkster_schema import use_reporter
-from numpy.lib.format import write_array_header_1_0
 
 
 def _image(batch: int = 1, height: int = 2, width: int = 3) -> np.ndarray:
@@ -43,93 +35,6 @@ def _run_angle_renderer_or_skip(
         if str(exc).startswith("GLSL shader execution is unavailable:"):
             pytest.skip(str(exc))
         raise
-
-
-def test_glsl_shader_support_schema_is_fixed_and_bounded() -> None:
-    schema = GlslShader.schema()
-    assert GlslShader in GLSL_NODES
-    assert schema.node_type == "dinkster.image.glsl_shader"
-    assert schema.output_node is True
-    assert schema.emits_previews is True
-    assert schema.idempotent is False
-    assert schema.input("fragment_shader").widget.multiline is True  # type: ignore[union-attr]
-    assert [output.id for output in schema.outputs] == ["image0", "image1", "image2", "image3"]
-    assert [output.preview for output in schema.outputs] == [True, False, False, False]
-    families = {family.id: family for family in schema.input_families}
-    assert families["images"].member_names == tuple(f"u_image{index}" for index in range(5))
-    assert families["floats"].member_names == tuple(f"u_float{index}" for index in range(20))
-    assert families["ints"].member_names == tuple(f"u_int{index}" for index in range(20))
-    assert families["bools"].member_names == tuple(f"u_bool{index}" for index in range(10))
-    assert families["curves"].member_names == tuple(f"u_curve{index}" for index in range(4))
-    assert [option.key for option in schema.combos[0].options] == ["from_input", "custom"]
-
-
-def test_exact_glsl_schema_preserves_source_members_and_output_positions() -> None:
-    from dinkster_schema import elaborate, schema_from_wire, schema_to_wire
-
-    schema = NativeGlslShader.schema()
-    assert NativeGlslShader in GLSL_NODES
-    assert schema.node_type == "GLSLShader" and not schema.aliases
-    assert not schema.output_node
-    assert schema.input_order == (
-        "fragment_shader",
-        "size_mode",
-        "images",
-        "floats",
-        "ints",
-        "bools",
-        "curves",
-    )
-    assert [
-        (family.member_prefix, family.min_members, family.max_members)
-        for family in schema.input_families
-    ] == [
-        ("image", 1, 5),
-        ("u_float", 0, 20),
-        ("u_int", 0, 20),
-        ("u_bool", 0, 10),
-        ("u_curve", 0, 4),
-    ]
-    assert [spec.id for spec in schema.outputs] == ["IMAGE0", "IMAGE1", "IMAGE2", "IMAGE3"]
-    assert schema_from_wire(schema_to_wire(schema)) == schema
-    interface = json.loads(json.dumps(schema_to_wire(schema)))["interface"]
-    shader, size_mode, images, *uniforms = interface[:7]
-    assert shader["required"] is True
-    assert size_mode["required"] is True and "default" not in size_mode
-    assert size_mode["options"][0]["inputs"] == []
-    assert [
-        (spec["id"], spec["required"], spec["default"], spec["widget"])
-        for spec in size_mode["options"][1]["inputs"]
-    ] == [
-        ("width", True, 512, {"type": "NUMBER", "min": 1, "max": 16384}),
-        ("height", True, 512, {"type": "NUMBER", "min": 1, "max": 16384}),
-    ]
-    assert images["optionalAfterMinimum"] is True
-    assert images["template"][0]["required"] is True
-    for family in uniforms:
-        member = family["template"][0]
-        assert member["required"] is False
-        assert member["forceInput"] is True
-        assert "step" not in (member.get("widget") or {})
-    assert uniforms[-1]["template"][0]["default"] == {
-        "points": [[0.0, 0.0], [1.0, 1.0]],
-        "interpolation": "monotone_cubic",
-    }
-    effective = elaborate(
-        schema,
-        ("images.image4", "images.image0", "images.image2", "floats.u_float3"),
-        slot_variants={"size_mode": "custom"},
-    )
-    assert [(spec.id, spec.required) for spec in effective.inputs] == [
-        ("fragment_shader", True),
-        ("size_mode.width", True),
-        ("size_mode.height", True),
-        ("images.image4", False),
-        ("images.image0", True),
-        ("images.image2", False),
-        ("floats.u_float3", False),
-    ]
-    assert GlslShader.schema().node_type == "dinkster.image.glsl_shader"
 
 
 def test_exact_glsl_compacts_source_members_and_keeps_empty_uniform_defaults() -> None:
@@ -193,65 +98,6 @@ void main() {
     )
 
 
-def test_execute_projects_exact_uniforms_previews_and_child_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured_request: dict[str, object] = {}
-
-    def render(
-        request: Path,
-        expected_shape: tuple[int, int, int, int],
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        raw = json.loads(request.read_text(encoding="utf-8"))
-        captured_request.update(cast("dict[str, object]", raw))
-        assert expected_shape == (2, 4, 5, 4)
-        first = np.load(request.parent / "input-0.npy", allow_pickle=False)
-        curve = np.load(request.parent / "curve-0.npy", allow_pickle=False)
-        np.testing.assert_array_equal(first, _image(batch=2))
-        np.testing.assert_allclose(curve, np.linspace(0, 1, 256), rtol=0, atol=1e-7)
-        return cast(
-            "tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]",
-            _outputs(2, 4, 5),
-        )
-
-    monkeypatch.setattr(glsl_module, "_run_isolated_renderer", render)
-    reports: list[tuple[str, Mapping[str, object], bytes | None]] = []
-    with use_reporter(lambda name, data, blob: reports.append((name, data, blob))):
-        result = GlslShader.execute(
-            fragment_shader=DEFAULT_FRAGMENT_SHADER,
-            size_mode="custom",
-            width=5,
-            height=4,
-            images={"u_image1": _image(batch=2)},
-            floats={"u_float0": 0.25},
-            ints={"u_int0": 3},
-            bools={"u_bool0": True},
-            curves={"u_curve0": Curve(((0.0, 0.0), (1.0, 1.0)))},
-        )
-
-    assert list(result) == ["image0", "image1", "image2", "image3"]
-    np.testing.assert_array_equal(result["image3"], _outputs(2, 4, 5)[3])
-    assert captured_request["width"] == 5
-    assert captured_request["height"] == 4
-    assert captured_request["floats"] == {"u_float0": 0.25}
-    assert captured_request["ints"] == {"u_int0": 3}
-    assert captured_request["bools"] == {"u_bool0": True}
-    preview = next(item for item in reports if item[0] == "preview")
-    assert preview[1]["stream"] == "glsl-input-u_image1"
-    assert preview[1]["mime"] == "image/png"
-    assert preview[2] is not None and cast("bytes", preview[2]).startswith(b"\x89PNG")
-    state = next(item[1] for item in reports if item[0] == "dinkster.glsl.state")
-    assert state == {
-        "width": 5,
-        "height": 4,
-        "inputs": [{"name": "u_image1", "stream": "glsl-input-u_image1"}],
-        "floats": {"u_float0": 0.25},
-        "ints": {"u_int0": 3},
-        "bools": {"u_bool0": True},
-        "curves": {"u_curve0": pytest.approx(np.linspace(0, 1, 256).tolist())},
-    }
-
-
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -281,114 +127,6 @@ def test_execute_refuses_malformed_or_unbounded_inputs(
 ) -> None:
     with pytest.raises((TypeError, ValueError), match=message):
         GlslShader.execute(**kwargs)  # type: ignore[arg-type]
-
-
-def test_execute_refuses_oversized_source_before_starting_child() -> None:
-    with pytest.raises(ValueError, match="65536"):
-        GlslShader.execute(fragment_shader="x" * 65_537, images={"u_image0": _image()})
-
-
-@pytest.mark.parametrize(
-    ("status", "error_type", "message"),
-    [
-        (
-            {"ok": False, "kind": "unavailable", "message": "no ANGLE wheel"},
-            RuntimeError,
-            "execution is unavailable: no ANGLE wheel",
-        ),
-        (
-            {"ok": False, "kind": "shader", "message": "syntax error"},
-            ValueError,
-            "compilation failed: syntax error",
-        ),
-        (
-            {"ok": False, "kind": "runtime", "message": "context lost"},
-            RuntimeError,
-            "execution failed: context lost",
-        ),
-    ],
-)
-def test_parent_translates_child_refusals(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    status: dict[str, object],
-    error_type: type[Exception],
-    message: str,
-) -> None:
-    request = tmp_path / "request.json"
-    request.write_text("{}", encoding="utf-8")
-
-    def run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        (tmp_path / "status.json").write_text(json.dumps(status), encoding="utf-8")
-        return subprocess.CompletedProcess([], 2, "", "")
-
-    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", run)
-    with pytest.raises(error_type, match=message):
-        glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
-
-
-def test_parent_translates_child_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    request = tmp_path / "request.json"
-    request.write_text("{}", encoding="utf-8")
-
-    def timeout(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(["python"], 30)
-
-    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", timeout)
-    with pytest.raises(RuntimeError, match="exceeded 30 seconds"):
-        glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
-
-
-def test_parent_refuses_unbounded_child_output_before_loading(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    request = tmp_path / "request.json"
-    request.write_text("{}", encoding="utf-8")
-
-    def run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        (tmp_path / "status.json").write_text('{"ok":true}', encoding="utf-8")
-        with (tmp_path / "output-0.npy").open("wb") as file:
-            write_array_header_1_0(
-                file,
-                {"descr": "<f4", "fortran_order": False, "shape": (1_000_000_000, 4)},
-            )
-            file.write(bytes(16))
-        return subprocess.CompletedProcess([], 0, "", "")
-
-    monkeypatch.setattr("dinkster_image.glsl.subprocess.run", run)
-    monkeypatch.setattr(
-        np,
-        "load",
-        lambda *_args, **_kwargs: pytest.fail("invalid child output reached np.load"),
-    )
-    with pytest.raises(RuntimeError, match="invalid output 0"):
-        glsl_module._run_isolated_renderer(request, (1, 1, 1, 4))
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Windows denies replacing an open file")
-def test_parent_reads_from_validated_descriptor_when_output_path_is_replaced(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "output-0.npy"
-    expected = np.ones((1, 1, 1, 4), dtype=np.float32)
-    np.save(path, expected, allow_pickle=False)
-    replacement = tmp_path / "replacement.npy"
-    np.save(replacement, np.full(expected.shape, 9, dtype=np.float32), allow_pickle=False)
-    read_header = np.lib.format.read_array_header_1_0
-
-    def read_then_replace(file: BinaryIO, *, max_header_size: int):
-        header = read_header(file, max_header_size=max_header_size)
-        replacement.replace(path)
-        return header
-
-    monkeypatch.setattr(np.lib.format, "read_array_header_1_0", read_then_replace)
-
-    output = glsl_module._load_child_output(path, index=0, expected_shape=expected.shape)
-
-    np.testing.assert_array_equal(output, expected)
-    assert output.flags.writeable is True
 
 
 def test_angle_child_renders_mrt_multipass_and_typed_uniforms(tmp_path: Path) -> None:

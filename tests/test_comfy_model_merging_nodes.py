@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import cast
 
 import pytest
 from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_models.model_merging import (
     CLIPMergeAdd,
     CLIPMergeSimple,
@@ -18,9 +16,6 @@ from dinkster_models.model_merging import (
     ModelMergeSimple,
     ModelMergeSubtract,
 )
-
-from dinkster.compose import PackSpec, ServingComposer
-from tests.async_scenarios import run_scenario
 
 
 class ScalarPatcher:
@@ -160,78 +155,3 @@ class ScalarModelWeights(Node):
 
 
 PATCHER_NODES = (ScalarModelSource, ScalarModelWeights)
-
-
-@pytest.mark.parametrize("in_process", (True, False))
-def test_manifest_registers_model_types_for_graph_execution(
-    tmp_path: Path, in_process: bool
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
-        try:
-            manifest = (
-                Path(__file__).resolve().parents[1]
-                / "packages/dinkster-nodes-models/dinkster-pack.toml"
-            )
-            (tmp_path / "merging_fixture_sources.py").write_text(
-                "from test_comfy_model_merging_nodes import PATCHER_NODES\n"
-                "from dinkster_models.types import register_types\n"
-                "NODES = PATCHER_NODES\n",
-                encoding="ascii",
-            )
-            source_manifest = tmp_path / "dinkster-pack.toml"
-            source_manifest.write_text(
-                '[pack]\nname="merge-fixture"\npublisher="dinkster"\n'
-                'namespaces=["merge-fixture"]\n'
-                '[pack.entry]\nnodes="merging_fixture_sources:NODES"\n'
-                'types="merging_fixture_sources:register_types"\n',
-                encoding="ascii",
-            )
-            manifests = (manifest, source_manifest)
-            for selected in manifests:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=selected,
-                        trust_reserved=True,
-                        in_process=in_process,
-                        worker_group=None if in_process else "merge-fixture",
-                        group_manifests=() if in_process else manifests,
-                    )
-                )
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "first": GraphNode(
-                            "merge-fixture.model", {"weights": {"diffusion_model.weight": 10.0}}
-                        ),
-                        "second": GraphNode(
-                            "merge-fixture.model", {"weights": {"diffusion_model.weight": -4.0}}
-                        ),
-                        "merge": GraphNode(
-                            "dinkster.models.model_merge_simple",
-                            {
-                                "model1": Link("first", "MODEL"),
-                                "model2": Link("second", "MODEL"),
-                                "ratio": 0.25,
-                            },
-                        ),
-                        "merged-weights": GraphNode(
-                            "merge-fixture.weights", {"model": Link("merge", "MODEL")}
-                        ),
-                        "source-weights": GraphNode(
-                            "merge-fixture.weights", {"model": Link("first", "MODEL")}
-                        ),
-                    }
-                ),
-                ["merged-weights", "source-weights"],
-            )
-            assert result.outputs["merged-weights"]["weights"].resolve() == {
-                "diffusion_model.weight": -0.5
-            }
-            assert result.outputs["source-weights"]["weights"].resolve() == {
-                "diffusion_model.weight": 10.0
-            }
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())

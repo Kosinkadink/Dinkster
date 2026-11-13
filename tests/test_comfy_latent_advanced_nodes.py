@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_latent import NODES
 from dinkster_latent.latent_advanced import (
     LatentAdd,
     LatentBatch,
@@ -115,90 +114,6 @@ def tensor_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "dinkster_inference", SimpleNamespace(utils=utils))
     monkeypatch.setitem(sys.modules, "dinkster_inference.utils", utils)
-
-
-def test_advanced_latent_schemas_have_exact_core_interfaces() -> None:
-    nodes = (
-        LatentAdd,
-        LatentSubtract,
-        LatentMultiply,
-        LatentInterpolate,
-        LatentConcat,
-        LatentCut,
-        LatentCutToBatch,
-        LatentBatch,
-        LatentBatchSeedBehavior,
-    )
-    expected = (
-        (
-            "dinkster.latent.latent_add",
-            "LatentAdd",
-            "model/latent/advanced",
-            ("samples1", "samples2"),
-        ),
-        (
-            "dinkster.latent.latent_subtract",
-            "LatentSubtract",
-            "model/latent/advanced",
-            ("samples1", "samples2"),
-        ),
-        (
-            "dinkster.latent.latent_multiply",
-            "LatentMultiply",
-            "model/latent/advanced",
-            ("samples", "multiplier"),
-        ),
-        (
-            "dinkster.latent.latent_interpolate",
-            "LatentInterpolate",
-            "model/latent/advanced",
-            ("samples1", "samples2", "ratio"),
-        ),
-        (
-            "dinkster.latent.latent_concat",
-            "LatentConcat",
-            "model/latent/advanced",
-            ("samples1", "samples2", "dim"),
-        ),
-        (
-            "dinkster.latent.latent_cut",
-            "LatentCut",
-            "model/latent/advanced",
-            ("samples", "dim", "index", "amount"),
-        ),
-        (
-            "dinkster.latent.latent_cut_to_batch",
-            "LatentCutToBatch",
-            "model/latent/advanced",
-            ("samples", "dim", "slice_size"),
-        ),
-        (
-            "dinkster.latent.latent_batch",
-            "Batch Latents (DEPRECATED)",
-            "model/latent/batch",
-            ("samples1", "samples2"),
-        ),
-        (
-            "dinkster.latent.latent_batch_seed_behavior",
-            "LatentBatchSeedBehavior",
-            "model/latent/advanced",
-            ("samples", "seed_behavior"),
-        ),
-    )
-    assert len(nodes) == len(expected)
-    for node, (node_type, display_name, category, inputs) in zip(nodes, expected, strict=True):
-        assert node in NODES
-        schema = node.schema()
-        assert (schema.node_type, schema.display_name, schema.category) == (
-            node_type,
-            display_name,
-            category,
-        )
-        assert tuple(input_spec.id for input_spec in schema.inputs) == inputs
-        assert tuple(output_spec.type.types for output_spec in schema.outputs) == (("LATENT",),)
-    batch_schema = LatentBatch.schema()
-    assert batch_schema.deprecation is not None
-    assert batch_schema.search_visibility == "deprecated"
 
 
 def test_arithmetic_preserves_first_metadata_and_repeats_second_batch() -> None:

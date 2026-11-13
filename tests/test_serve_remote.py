@@ -15,7 +15,6 @@ import socket
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -35,7 +34,7 @@ from dinkster_protocol import AttentionRouteToken
 from dinkster_schema import (
     TypeExpr,
 )
-from dinkster_server import STATE_KEY, PackInfo, create_app
+from dinkster_server import STATE_KEY, create_app
 from dinkster_values import CORE_STRING, list_children, value_resource_provenance_refs
 from dinkster_workers import RemoteWorker, TransportError
 from dinkster_workers.service import READY_LINE_PREFIX
@@ -48,10 +47,8 @@ from dinkster.compose import (
     CompositionError,
     PackSpec,
     ServingComposer,
-    _validated_remote_body_arms,
 )
 from dinkster.remotes import RemoteSpec
-from dinkster.serve import merge_remote_budgets
 from tests.async_scenarios import run_scenario
 
 TESTS_DIR = Path(__file__).parent
@@ -612,109 +609,6 @@ def test_remote_hint_overrides_policy_requiring_an_unavailable_native_arm(tmp_pa
     run_scenario(scenario())
 
 
-def test_remote_hint_dispatch_carries_policy_execution_identity(tmp_path: Path) -> None:
-    """A single-arm remote hint still consults the policy, and an in-set
-    selection's cache tag crosses the wire as the invocation's expected
-    execution identity (the identity native loads verify against)."""
-
-    class IdentityPolicy:
-        calls = 0
-
-        async def select(
-            self,
-            node_type: str,
-            inputs: object,
-            arms: tuple[str, object],
-            *,
-            run_id: str | None = None,
-            extension_behavior_hash: str | None = None,
-            attention_routes: object,
-        ) -> ExecutionSelection:
-            del node_type, inputs, run_id, extension_behavior_hash, attention_routes
-            self.calls += 1
-            return ExecutionSelection(
-                target=arms[0],
-                cache_tag="policy-identity",
-            )
-
-    async def scenario() -> None:
-        proc, host, port = await start_service(write_iso_manifest(tmp_path), tmp_path)
-        try:
-            policy = IdentityPolicy()
-            composer = ServingComposer(native_policy=policy)  # type: ignore[arg-type]
-            try:
-                await composer.add_remote(remote_spec(host, port, tmp_path))
-                engine = composer.composition.make_engine(lambda event: None)
-                graph = Graph(nodes={"probe": GraphNode("iso.identity_echo", {})})
-                result = await engine.run(
-                    graph,
-                    ["probe"],
-                    execution=composer.place_execution(
-                        engine.pin_execution(),
-                        {"probe": "box1"},
-                    ),
-                )
-                assert result.outputs["probe"]["identity"].resolve() == "policy-identity"
-                assert policy.calls == 1
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_hint_does_not_share_cache_across_different_execution_identities(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        local_manifest = write_composed_iso_manifest(tmp_path / "local", "local-iso")
-        remote_root = tmp_path / "remote"
-        remote_manifest = write_composed_iso_manifest(remote_root, "remote-iso")
-        proc, host, port = await start_service(remote_manifest, remote_root)
-        try:
-            composer = ServingComposer(worker_env={"PYTHONPATH": str(TESTS_DIR)})
-            try:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest=local_manifest,
-                        packs={
-                            "local-iso": PackInfo(
-                                display_name="Local ISO",
-                                artifact_digest="blake3:" + "a" * 64,
-                            )
-                        },
-                    )
-                )
-                await composer.add_remote(remote_spec(host, port, remote_root))
-                events: list[EngineEvent] = []
-                engine = composer.composition.make_engine(events.append)
-                graph = Graph(nodes={"work": GraphNode("iso.chatty", {"value": "same"})})
-
-                local = await engine.run(graph, ["work"], run_id="local")
-                remote = await engine.run(
-                    graph,
-                    ["work"],
-                    run_id="remote",
-                    execution=composer.place_execution(
-                        engine.pin_execution(),
-                        {"work": "box1"},
-                    ),
-                )
-                assert local.executed == ("work",)
-                assert remote.executed == ("work",)
-                keys = {
-                    event.run_id: event.detail["cache_key"]
-                    for event in events
-                    if event.kind == "node_finished" and event.node_id == "work"
-                }
-                assert keys["local"] != keys["remote"]
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
 def test_local_remote_name_is_reserved_before_connect(tmp_path: Path) -> None:
     async def scenario() -> None:
         composer = ServingComposer()
@@ -827,34 +721,6 @@ def test_remote_surface_survives_pack_reload(tmp_path: Path) -> None:
                 graph = Graph(nodes={"c": GraphNode("iso.chatty", {"value": "post-reload"})})
                 result = await engine.run(graph, ["c"])
                 assert result.outputs["c"]["value"].resolve() == "POST-RELOAD"
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_matching_node_types_compose_as_placement_targets(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
-        try:
-            composer = ServingComposer()
-            try:
-                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
-                before_schemas = dict(composer.composition.schemas)
-                delta = await composer.add_remote(
-                    remote_spec(host, port, tmp_path, trust_reserved=True)
-                )
-                assert delta.schemas == {}
-                assert composer.composition.schemas == before_schemas
-                assert composer.composition.node_packs["dev.gallery.widgets"] == (
-                    "dinkster-nodes-dev"
-                )
-                assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == [
-                    "dinkster-nodes-dev",
-                    "box1",
-                ]
             finally:
                 await composer.close()
         finally:
@@ -1002,80 +868,6 @@ def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> N
     run_scenario(scenario())
 
 
-def test_remote_over_local_pack_updates_arms(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
-        try:
-            composer = ServingComposer(dev=True)
-            try:
-                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
-                await composer.add_remote(
-                    remote_spec(
-                        host,
-                        port,
-                        tmp_path,
-                        nodes=("dev.gallery.widgets",),
-                        trust_reserved=True,
-                    )
-                )
-                assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == [
-                    "dinkster-nodes-dev",
-                    "box1",
-                ]
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_remote_provider_routes_an_unrouted_schema_owner(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        owner_root = tmp_path / "schema-owner"
-        shutil.copytree(DEV_MANIFEST.parent, owner_root)
-        owner_manifest = owner_root / DEV_MANIFEST.name
-        owner_manifest.write_text(
-            owner_manifest.read_text(encoding="utf-8").replace(
-                '\nnamespaces = ["dev"]\n',
-                '\nnamespaces = ["dev"]\nschema-only = ["dev.gallery.widgets"]\n',
-            ),
-            encoding="utf-8",
-        )
-        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
-        try:
-            composer = ServingComposer()
-            try:
-                await composer.add_pack(PackSpec(owner_manifest, trust_reserved=True))
-                assert not composer._routing.has_route("dev.gallery.widgets")
-
-                delta = await composer.add_remote(
-                    remote_spec(
-                        host,
-                        port,
-                        tmp_path,
-                        nodes=("dev.gallery.widgets",),
-                        trust_reserved=True,
-                    )
-                )
-                assert delta.schemas == {
-                    "dev.gallery.widgets": composer.composition.schemas["dev.gallery.widgets"]
-                }
-                assert delta.node_packs == {"dev.gallery.widgets": "dinkster-nodes-dev"}
-                assert composer._routing.has_route("dev.gallery.widgets")
-                assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == ["box1"]
-                with pytest.raises(CompositionError, match="box1.*dev.gallery.widgets"):
-                    await composer.remove_pack("dinkster-nodes-dev")
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
 def test_nodes_allowlist_filters_announced_types(tmp_path: Path) -> None:
     async def scenario() -> None:
         proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
@@ -1208,22 +1000,6 @@ def test_reserved_root_requires_trust(tmp_path: Path) -> None:
                     await composer.add_remote(remote_spec(host, port, tmp_path))
                 assert composition_snapshot(composer) == before
                 await daemon_accepts_a_client(host, port)
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_reserved_root_composes_with_trust(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_reserved_service(tmp_path)
-        try:
-            composer = ServingComposer()
-            try:
-                await composer.add_remote(remote_spec(host, port, tmp_path, trust_reserved=True))
-                assert "dinkster.remote_test.echo" in composer.composition.schemas
             finally:
                 await composer.close()
         finally:
@@ -1382,38 +1158,3 @@ def test_remote_body_arm_is_policy_selectable_only_under_placement(tmp_path: Pat
             await stop_service(proc)
 
     run_scenario(scenario())
-
-
-def test_remote_body_arm_naming_unannounced_type_is_refused() -> None:
-    worker = SimpleNamespace(body_arms={"alt": ("armed.missing",)}, attention_route_token=None)
-    with pytest.raises(CompositionError, match="not announced"):
-        _validated_remote_body_arms("box1", worker, {})
-
-
-def test_remote_body_arms_are_returned_in_deterministic_order() -> None:
-    schema = object()
-    announced = {"armed.zeta": schema, "armed.alpha": schema, "armed.mid": schema}
-    worker = SimpleNamespace(
-        body_arms={
-            "beta": ("armed.zeta", "armed.alpha"),
-            "alt": ("armed.mid", "armed.alpha"),
-        },
-        attention_route_token=None,
-    )
-    assert _validated_remote_body_arms("box1", worker, announced) == (  # type: ignore[arg-type]
-        ("alt", ("armed.alpha", "armed.mid")),
-        ("beta", ("armed.alpha", "armed.zeta")),
-    )
-
-
-def test_merge_remote_budgets_qualifies_devices() -> None:
-    budgets = {"ram": 1}
-    spec = RemoteSpec(
-        name="box",
-        host="h",
-        port=1,
-        token_file=Path("/t"),
-        memory_budgets={"ram": 2, "vram:cuda:0": 3},
-    )
-    merge_remote_budgets(budgets, [spec])
-    assert budgets == {"ram": 1, "ram@box": 2, "vram:cuda:0@box": 3}

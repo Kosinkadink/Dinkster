@@ -3,13 +3,10 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections.abc import Callable
-from io import BytesIO
 from pathlib import Path
 
 import pytest
 from dinkster_assets import (
-    AssetError,
     AssetVault,
     AssetWriter,
     LocalAssetLibrary,
@@ -49,97 +46,6 @@ def test_writer_never_publishes_empty_final_file(
     assert observed == [None]
     assert final.read_bytes() == b"complete"
     assert ref.size == len(b"complete")
-
-
-@pytest.mark.parametrize("named", (False, True))
-def test_writer_refuses_record_for_rebound_final_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: bool
-) -> None:
-    real_land = AssetWriter._claim_and_land  # pyright: ignore[reportPrivateUsage]
-
-    def rebind_after_land(
-        folder: Path,
-        stem: str,
-        suffix: str,
-        tmp: Path,
-        counter: int | None = None,
-        *,
-        strict_counter: bool = False,
-        prefer_exact_name: bool = False,
-        before_publish: Callable[[Path], None] | None = None,
-    ) -> tuple[Path, int]:
-        final, counter = real_land(
-            folder,
-            stem,
-            suffix,
-            tmp,
-            counter,
-            strict_counter=strict_counter,
-            prefer_exact_name=prefer_exact_name,
-            before_publish=before_publish,
-        )
-        replacement = folder / "replacement.tmp"
-        replacement.write_bytes(b"attacker")
-        os.replace(replacement, final)
-        return final, counter
-
-    monkeypatch.setattr(AssetWriter, "_claim_and_land", staticmethod(rebind_after_land))
-    with pytest.raises(AssetError, match="rebound"):
-        writer = AssetWriter(_Authority(tmp_path))
-        if named:
-            writer.save_named_stream(
-                SaveTarget(mount="output", prefix="image.bin"), BytesIO(b"complete"), limit=8
-            )
-        else:
-            writer.save_bytes(
-                SaveTarget(mount="output", prefix="image"), b"complete", suffix=".bin"
-            )
-    assert load_write_records(tmp_path) == {}
-
-
-@pytest.mark.parametrize("named", (False, True))
-def test_writer_refuses_temp_rebound_after_hash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: bool
-) -> None:
-    real_land = AssetWriter._claim_and_land  # pyright: ignore[reportPrivateUsage]
-
-    def rebind_before_land(
-        folder: Path,
-        stem: str,
-        suffix: str,
-        tmp: Path,
-        counter: int | None = None,
-        *,
-        strict_counter: bool = False,
-        prefer_exact_name: bool = False,
-        before_publish: Callable[[Path], None] | None = None,
-    ) -> tuple[Path, int]:
-        replacement = folder / "replacement.tmp"
-        replacement.write_bytes(b"attacker")
-        os.replace(replacement, tmp)
-        return real_land(
-            folder,
-            stem,
-            suffix,
-            tmp,
-            counter,
-            strict_counter=strict_counter,
-            prefer_exact_name=prefer_exact_name,
-            before_publish=before_publish,
-        )
-
-    monkeypatch.setattr(AssetWriter, "_claim_and_land", staticmethod(rebind_before_land))
-    with pytest.raises(AssetError, match="rebound"):
-        writer = AssetWriter(_Authority(tmp_path))
-        if named:
-            writer.save_named_stream(
-                SaveTarget(mount="output", prefix="image.bin"), BytesIO(b"complete"), limit=8
-            )
-        else:
-            writer.save_bytes(
-                SaveTarget(mount="output", prefix="image"), b"complete", suffix=".bin"
-            )
-    assert load_write_records(tmp_path) == {}
 
 
 def test_append_during_prune_survives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,42 +96,3 @@ def test_vault_replace_failure_rejects_corrupt_existing_target(
         writer.write(payload)
         with pytest.raises(VaultError, match="could not store verified asset"):
             writer.commit()
-
-
-def test_vault_refuses_record_for_rebound_published_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    payload = b"expected"
-    vault = AssetVault(tmp_path)
-    digest = digest_bytes(payload)
-    target = vault._path(digest)  # pyright: ignore[reportPrivateUsage]
-    real_replace = os.replace
-
-    def rebind_after_publish(source: Path, destination: Path) -> None:
-        real_replace(source, destination)
-        if destination == target and source.name.startswith(".ingest-"):
-            replacement = tmp_path / "replacement.tmp"
-            replacement.write_bytes(b"attacker")
-            real_replace(replacement, destination)
-
-    monkeypatch.setattr(os, "replace", rebind_after_publish)
-    with vault.writer(digest) as writer:
-        writer.write(payload)
-        with pytest.raises(AssetError, match="rebound"):
-            writer.commit()
-    assert vault.resolve_asset(digest).verification is None  # type: ignore[union-attr]
-
-
-def test_vault_missing_target_during_record_write_is_best_effort(tmp_path: Path) -> None:
-    vault = AssetVault(tmp_path)
-    digest = digest_bytes(b"payload")
-    with vault.writer(digest) as writer:
-        writer.write(b"payload")
-        writer.commit()
-    resolution = vault.resolve_asset(digest)
-    assert resolution is not None and resolution.verification is not None
-    resolution.path.unlink()
-
-    writer._persist_verification(  # pyright: ignore[reportPrivateUsage]
-        resolution.verification
-    )

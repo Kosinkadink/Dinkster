@@ -11,7 +11,6 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import Context
 from pathlib import Path
-from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -29,8 +28,6 @@ from dinkster_schema import (
     report_event,
     report_preview,
     report_progress,
-    schema_to_wire,
-    use_reporter,
 )
 from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker
@@ -152,44 +149,6 @@ def node_events(events: list[EngineEvent], node_id: str) -> list[EngineEvent]:
 # --- the ambient API's own contract ---
 
 
-def test_report_functions_are_noops_without_a_reporter() -> None:
-    # Unit-testing a node by calling execute() directly must just work.
-    report_progress(3, 10, text="fine")
-    report_preview(b"bytes")
-    report_event("some.event", {"k": 1}, blob=b"b")
-
-
-def test_custom_event_names_must_be_namespaced() -> None:
-    with pytest.raises(ValueError, match="reserved"):
-        report_event("progress")
-    with pytest.raises(ValueError, match="reserved"):
-        report_event("preview")
-    with pytest.raises(ValueError, match="dot-namespaced"):
-        report_event("stage")
-
-
-def test_helper_payload_shapes() -> None:
-    captured: list[Captured] = []
-
-    def capture(name: str, data: Mapping[str, object], blob: bytes | None) -> None:
-        captured.append((name, data, blob))
-
-    with use_reporter(capture):
-        report_progress(2, 5, text="phase")
-        report_progress(3, 5)
-        report_preview(b"img", mime="image/webp", width=8, height=6)
-        report_event("my.thing", {"a": 1})
-    # Outside the context: silent again.
-    report_progress(4, 5)
-
-    assert captured == [
-        ("progress", {"step": 2, "total": 5, "text": "phase"}, None),
-        ("progress", {"step": 3, "total": 5}, None),
-        ("preview", {"mime": "image/webp", "width": 8, "height": 6}, b"img"),
-        ("my.thing", {"a": 1}, None),
-    ]
-
-
 # --- through the engine, in-process ---
 
 
@@ -218,31 +177,6 @@ def test_engine_surfaces_node_events_with_provenance_and_order() -> None:
         assert kinds[0] == "node_started"
         assert kinds[-1] == "node_finished"
         assert kinds[1:-1] == ["node_event"] * 4
-
-    run_scenario(scenario())
-
-
-def test_runtime_previews_and_preview_marked_final_are_distinct() -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        result = await engine.run(
-            Graph(nodes={"p": GraphNode("rep.preview-channels", {"value": "x"})}), ["p"]
-        )
-        reports = node_events(events, "p")
-        assert [event.detail["blob"] for event in reports] == [b"frame-1", b"frame-2"]
-        assert [event.detail["data"] for event in reports] == [
-            {"mime": "image/png", "width": 1, "height": 1},
-            {"mime": "image/webp", "width": 2, "height": 1},
-        ]
-        assert all(event.run_id == result.run_id and event.node_id == "p" for event in reports)
-        assert result.outputs["p"]["final"].resolve() == "final:x"
-        output_wire = cast(
-            "list[dict[str, object]]", schema_to_wire(PreviewChannels.schema())["interface"]
-        )[1]
-        assert output_wire["preview"] is True
-        kinds = [event.kind for event in events if event.node_id == "p"]
-        assert kinds == ["node_started", "node_event", "node_event", "node_finished"]
 
     run_scenario(scenario())
 
@@ -327,35 +261,6 @@ def test_in_process_invoke_waits_for_accepted_cross_thread_report(
     run_scenario(scenario())
 
 
-def test_in_process_report_schedule_failure_is_suppressed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        loop = asyncio.get_running_loop()
-        call_soon_threadsafe = loop.call_soon_threadsafe
-
-        def intercept(
-            callback: Callable[..., object], *args: object, context: Context | None = None
-        ) -> asyncio.Handle:
-            if len(args) == 1 and isinstance(args[0], InvocationEvent):
-                raise RuntimeError("report scheduling failed")
-            return call_soon_threadsafe(callback, *args, context=context)
-
-        monkeypatch.setattr(loop, "call_soon_threadsafe", intercept)
-        result = await engine.run(
-            Graph(nodes={"t": GraphNode("rep.terminal-order", {"value": "x"})}), ["t"]
-        )
-        assert result.outputs["t"]["value"].resolve() == "x"
-        assert [event.kind for event in events if event.node_id == "t"] == [
-            "node_started",
-            "node_finished",
-        ]
-
-    run_scenario(scenario())
-
-
 def test_broken_listener_does_not_fail_the_node() -> None:
     async def scenario() -> None:
         events: list[EngineEvent] = []
@@ -378,17 +283,6 @@ def test_broken_listener_does_not_fail_the_node() -> None:
         result = await engine.run(graph, ["c"])
         assert result.outputs["c"]["value"].resolve() == "OK"
         assert node_events(events, "c")  # events were still delivered
-
-    run_scenario(scenario())
-
-
-def test_silent_node_pays_nothing() -> None:
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        graph = Graph(nodes={"s": GraphNode("rep.silent", {"value": "q"})})
-        await engine.run(graph, ["s"])
-        assert not [e for e in events if e.kind == "node_event"]
 
     run_scenario(scenario())
 

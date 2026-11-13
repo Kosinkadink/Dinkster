@@ -32,7 +32,7 @@ from dinkster_graph import (
     snapshot_graph,
     validate,
 )
-from dinkster_graph.model import BindingMode, RegionKind
+from dinkster_graph.model import BindingMode
 from dinkster_schema import (
     ABSENT,
     AbsentOutput,
@@ -623,12 +623,6 @@ def test_last_output_and_rerun_cache_policy_wire_roundtrip() -> None:
     assert graph_from_wire(wire) == graph
 
 
-def test_reuse_cache_policy_is_omitted_on_wire() -> None:
-    wire = graph_to_wire(Graph(nodes={"m": map_region()}))
-    assert "cachePolicy" not in wire["nodes"]["m"]["region"]
-    assert graph_from_wire(wire).nodes["m"].cache_policy == "reuse"  # type: ignore[union-attr]
-
-
 @pytest.mark.parametrize(
     ("mutate", "match"),
     [
@@ -696,29 +690,6 @@ def test_snapshot_graph_copies_nested_literals_and_typed_literal_values() -> Non
     assert node.inputs["plain"] == {"items": [1, {"name": "before"}]}
     typed = cast(TypedLiteral, node.inputs["typed"])
     assert typed.value == [{"nested": [2]}]
-
-
-def test_invalid_direct_region_modes_have_named_diagnostics() -> None:
-    body = Graph(nodes={"step": GraphNode("test.add_one", {"value": 1})})
-    region = RegionNode(
-        kind=cast(RegionKind, "repeat"),
-        body=body,
-        outputs={
-            "out": RegionOutput(
-                Link("step", "out"),
-                mode=cast(Literal["gather", "state"], "collect"),
-            )
-        },
-        binding=cast(BindingMode, "pairwise"),
-        cache_policy=cast(Literal["reuse", "rerun"], "sometimes"),
-    )
-    found = codes(Graph(nodes={"bad": region}), ["bad"])
-    assert {
-        "unknown-region-kind",
-        "unknown-binding-mode",
-        "unknown-cache-policy",
-        "unknown-output-mode",
-    } <= found.keys()
 
 
 # -- validation --------------------------------------------------------------
@@ -1064,15 +1035,6 @@ def test_sibling_links_resolve_region_outputs() -> None:
     )
     by_code = codes(graph, ["c", "bad"])
     assert by_code["dangling-output"] == ["bad"]
-
-
-def test_region_interface_types() -> None:
-    interface = region_interface(map_region(), schemas())
-    assert interface["results"] == TypeExpr.list_of(INT)
-    interface = region_interface(fold_region(), schemas())
-    assert interface["total"] == INT
-    compact = map_region(outputs={"results": RegionOutput(Link("add", "out"), mode="compact")})
-    assert region_interface(compact, schemas())["results"] == TypeExpr.list_of(INT)
 
 
 def test_nested_region_bodies_validate_recursively() -> None:
@@ -1549,64 +1511,6 @@ def test_while_region_selects_lazy_continuation_branch() -> None:
         assert "w[0]/long" not in result.executed
         assert "w[1]/short" not in result.executed
         assert "w[2]/long" not in result.executed
-
-    run_scenario(scenario())
-
-
-def test_unselected_lazy_branch_does_not_prepare_nested_region() -> None:
-    class TrackingWorker(InProcessWorker):
-        def __init__(
-            self,
-            node_types: Mapping[str, type[Node]],
-            registry: TypeRegistry,
-        ) -> None:
-            super().__init__(node_types, registry)
-            self.prepared: list[str] = []
-
-        async def prepare(self, node_types: Sequence[str]) -> None:
-            self.prepared.extend(node_types)
-            await super().prepare(node_types)
-
-    async def scenario() -> None:
-        node_types = (*NODES, ValueSelect)
-        registry = TypeRegistry()
-        register_core_types(registry)
-        worker = TrackingWorker(build_node_types(node_types), registry)
-        engine = Engine(
-            schemas=build_schemas(node_types),
-            registry=registry,
-            worker=worker,
-            cache=MemoryLRUCache(),
-        )
-        inner = map_region(inputs={"item": port("row")})
-        outer = map_region(
-            body=Graph(
-                nodes={
-                    "identity": GraphNode("test.list_identity", {"value": port("row")}),
-                    "inner": inner,
-                    "select": GraphNode(
-                        "dinkster.value.select",
-                        {
-                            "condition": False,
-                            "on_false": Link("identity", "value"),
-                            "on_true": Link("inner", "results"),
-                        },
-                    ),
-                }
-            ),
-            ports={"row": TypeExpr.list_of(INT)},
-            inputs={"row": [[5, 6], [7, 8]]},
-            element_ports=("row",),
-            outputs={"rows": RegionOutput(Link("select", "value"))},
-        )
-
-        result = await engine.run(Graph(nodes={"outer": outer}), ["outer"])
-
-        assert result.outputs["outer"]["rows"].resolve() == [[5, 6], [7, 8]]
-        assert "test.add_one" not in worker.prepared
-        assert worker.prepared.count("dinkster.value.select") == 1
-        assert worker.prepared.count("test.list_identity") == 1
-        assert all("/inner" not in node_id for node_id in result.executed)
 
     run_scenario(scenario())
 

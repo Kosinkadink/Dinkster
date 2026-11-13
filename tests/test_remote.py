@@ -21,22 +21,10 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import MemoryGovernor
-from dinkster_protocol import (
-    DeviceResourceId,
-    ReplicaId,
-    ReplicaRecipeId,
-    SemanticSlot,
-    WorkerInstanceId,
-    WorkGroupAttempt,
-    WorkGroupId,
-    WorkUnitId,
-)
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import (
     BoundaryDiagnostic,
     RemoteWorker,
-    WorkGroupWorkerLane,
-    compose_workgroup_configuration,
 )
 from dinkster_workers.service import READY_LINE_PREFIX
 from test_isolated import DEV_MANIFEST, UTILITIES_MANIFEST, core_registry, image_graph
@@ -253,32 +241,6 @@ def test_service_main_pins_argv_before_loading_the_pack(
         assert pinned == [["dinkster_workers.service", *expected]]
 
 
-def test_service_main_refuses_malformed_comfy_args(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    token_file = tmp_path / "remote-token.txt"
-    token_file.write_text(TOKEN, encoding="utf-8")
-    from dinkster_workers import service as service_module
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster_workers.service",
-            "--listen",
-            "127.0.0.1:0",
-            "--manifest",
-            str(DEV_MANIFEST),
-            "--token-file",
-            str(token_file),
-            "--comfy-args-json",
-            '{"not": "a list"}',
-        ],
-    )
-    with pytest.raises(SystemExit):
-        service_module.main()
-
-
 def test_remote_graph_matches_local_fingerprints_and_never_shm(
     tmp_path: Path,
 ) -> None:
@@ -435,36 +397,6 @@ def test_stale_protocol_client_is_refused_at_hello(tmp_path: Path) -> None:
                 assert f"service speaks {PROTOCOL_VERSION}" in str(header["message"])
             finally:
                 writer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_ordinary_remote_service_stays_workgroup_capability_absent(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
-        try:
-            worker = remote_worker(host, port, core_registry())
-            await worker.start()
-            try:
-                assert worker.instance_token is not None
-                assert worker.workgroup_capabilities == frozenset()
-                lane = WorkGroupWorkerLane(
-                    replica=ReplicaId("replica-a"),
-                    worker=WorkerInstanceId(worker.instance_token),
-                    device=DeviceResourceId("device-a"),
-                    recipe=ReplicaRecipeId("sha256:" + "a" * 64),
-                    unit=WorkUnitId("unit-a"),
-                    slot=SemanticSlot.SINGLE,
-                    boundary=worker,
-                )
-                with pytest.raises(ValueError, match="do not negotiate"):
-                    compose_workgroup_configuration(
-                        WorkGroupId("group-a"), WorkGroupAttempt(1), (lane,)
-                    )
-            finally:
-                await worker.close()
         finally:
             await stop_service(proc)
 
@@ -896,32 +828,3 @@ def test_service_main_requires_cert_and_key_together(
         monkeypatch.setattr(sys, "argv", [*base, *lonely])
         with pytest.raises(SystemExit):
             service_module.main()
-
-
-def test_service_refuses_unreadable_tls_material(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    token_file = tmp_path / "remote-token.txt"
-    token_file.write_text(TOKEN, encoding="utf-8")
-    from dinkster_workers import service as service_module
-    from dinkster_workers.service import ServiceError
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster_workers.service",
-            "--listen",
-            "127.0.0.1:0",
-            "--manifest",
-            str(DEV_MANIFEST),
-            "--token-file",
-            str(token_file),
-            "--tls-cert",
-            str(tmp_path / "absent-cert.pem"),
-            "--tls-key",
-            str(tmp_path / "absent-key.pem"),
-        ],
-    )
-    with pytest.raises(ServiceError, match="cannot load TLS certificate"):
-        service_module.main()

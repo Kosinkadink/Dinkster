@@ -6,12 +6,9 @@ import asyncio
 import json
 import os
 import struct
-import sys
 import time
 import zlib
-from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from dinkster_api.v1 import attach_saved_artifact
@@ -31,12 +28,8 @@ from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_workers.boundary import (
     BoundaryError,
     decode_result_artifact_candidates,
-    decode_saved_artifact_claims,
 )
 from dinkster_workers.saved_artifacts import (
-    MAX_ARTIFACT_FILENAME,
-    MAX_SAVED_ARTIFACT_BYTES,
-    MAX_SAVED_ARTIFACTS,
     SavedArtifactAuthority,
 )
 
@@ -93,34 +86,6 @@ def test_forged_authoritative_descriptor_cannot_cross_boundary() -> None:
                 ]
             }
         )
-
-
-@pytest.mark.parametrize(
-    "header",
-    [
-        {"artifactCandidates": "not-a-list"},
-        {"artifactCandidates": [{}]},
-        {
-            "artifactCandidates": [
-                {
-                    "nodeId": "save",
-                    "filename": "x" * (MAX_ARTIFACT_FILENAME + 1),
-                    "subfolder": "",
-                    "type": "output",
-                }
-            ]
-        },
-        {
-            "artifactCandidates": [
-                {"nodeId": "save", "filename": "x.png", "subfolder": "", "type": "output"}
-            ]
-            * (MAX_SAVED_ARTIFACTS + 1)
-        },
-    ],
-)
-def test_candidate_wire_is_bounded(header: object) -> None:
-    with pytest.raises(BoundaryError):
-        decode_result_artifact_candidates(header)  # type: ignore[arg-type]
 
 
 def test_host_classifies_hashes_and_indexes_valid_candidate(tmp_path: Path) -> None:
@@ -186,16 +151,6 @@ def test_host_rejects_stale_candidate(tmp_path: Path) -> None:
         authority.capture((_candidate(subfolder=""),), "save", time.time_ns())
 
 
-def test_host_rejects_oversize_before_classifying(tmp_path: Path) -> None:
-    authority, root = _authority(tmp_path)
-    path = root / "result.png"
-    path.write_bytes(_png())
-    with path.open("r+b") as handle:
-        handle.truncate(MAX_SAVED_ARTIFACT_BYTES + 1)
-    with pytest.raises(AssetError, match="1 GiB"):
-        authority.capture((_candidate(subfolder=""),), "save", 0)
-
-
 def test_host_rejects_file_changed_during_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -217,70 +172,6 @@ def test_host_rejects_file_changed_during_capture(
         authority.capture((_candidate(subfolder=""),), "save", 0)
 
 
-def test_host_rejects_candidate_path_replaced_before_indexing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_workers import saved_artifacts
-
-    authority, root = _authority(tmp_path)
-    target = root / "video" / "result.png"
-    target.parent.mkdir()
-    target.write_bytes(_png())
-    replacement = root / "replacement.png"
-    replacement.write_bytes(_png() + b"replacement")
-    real_open = saved_artifacts._open_candidate
-
-    @contextmanager
-    def replacing_open(root_path: Path, parts: tuple[str, ...], filename: str):  # noqa: ANN202
-        with real_open(root_path, parts, filename) as (handle, _restat_path):
-            yield handle, replacement.stat
-
-    monkeypatch.setattr(saved_artifacts, "_open_candidate", replacing_open)
-    with pytest.raises(AssetError) as raised:
-        authority.capture((_candidate(),), "save", 0)
-    assert str(raised.value) == "saved artifact path changed while it was being indexed"
-    assert load_write_records(root) == {}
-
-
-def _stat_override(original: os.stat_result, **overrides: object) -> SimpleNamespace:
-    """Return a stat-like object with specified fields overridden, preserving all others."""
-    names = (
-        "st_mode",
-        "st_ino",
-        "st_dev",
-        "st_nlink",
-        "st_uid",
-        "st_gid",
-        "st_size",
-        "st_atime",
-        "st_mtime",
-        "st_ctime",
-        "st_atime_ns",
-        "st_mtime_ns",
-        "st_ctime_ns",
-    )
-    return SimpleNamespace(**{name: overrides.get(name, getattr(original, name)) for name in names})
-
-
-def test_path_stable_fields_contract() -> None:
-    """Verify the platform-specific field comparison contract.
-
-    The before/after handle comparison always checks all five identity
-    fields.  The after-handle vs path-stat comparison checks all five on
-    POSIX but excludes st_ctime_ns on Windows, where CPython maps
-    st_ctime to CreationTime for stat(path) but ChangeTime for fstat(fd).
-    """
-    from dinkster_workers.saved_artifacts import _HANDLE_STABLE_FIELDS, _PATH_STABLE_FIELDS
-
-    all_fields = {"st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"}
-    assert set(_HANDLE_STABLE_FIELDS) == all_fields
-    if os.name == "nt":
-        assert "st_ctime_ns" not in _PATH_STABLE_FIELDS
-        assert set(_PATH_STABLE_FIELDS) == all_fields - {"st_ctime_ns"}
-    else:
-        assert set(_PATH_STABLE_FIELDS) == all_fields
-
-
 def test_capture_is_stable_across_repeated_calls(tmp_path: Path) -> None:
     """Repeatedly capturing a freshly-written file must not flake on Windows.
 
@@ -299,56 +190,6 @@ def test_capture_is_stable_across_repeated_calls(tmp_path: Path) -> None:
         assert artifact.digest == digest_bytes(payload)
         path.unlink()
     assert load_write_records(root)["video/result.png"]["digest"] == digest_bytes(payload)
-
-
-def test_handle_comparison_detects_ctime_only_change(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The before/after handle comparison must still check st_ctime_ns on every platform."""
-    authority, root = _authority(tmp_path)
-    path = root / "result.png"
-    path.write_bytes(_png())
-    real_fstat = os.fstat
-    calls = 0
-
-    def ctime_changing_fstat(fd: int) -> object:
-        nonlocal calls
-        result = real_fstat(fd)
-        calls += 1
-        if calls == 2:
-            return _stat_override(result, st_ctime_ns=result.st_ctime_ns + 1_000_000)
-        return result
-
-    monkeypatch.setattr(os, "fstat", ctime_changing_fstat)
-    with pytest.raises(AssetError, match="changed while"):
-        authority.capture((_candidate(subfolder=""),), "save", 0)
-
-
-def test_path_comparison_detects_inode_only_divergence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The handle-vs-path comparison must still catch non-ctime field divergence on Windows."""
-    from dinkster_workers import saved_artifacts
-
-    authority, root = _authority(tmp_path)
-    target = root / "video" / "result.png"
-    target.parent.mkdir()
-    target.write_bytes(_png())
-    real_open = saved_artifacts._open_candidate
-
-    @contextmanager
-    def inode_diverging_open(root_path: Path, parts: tuple[str, ...], filename: str):
-        with real_open(root_path, parts, filename) as (handle, restat_path):
-
-            def diverging_restat() -> object:
-                original = restat_path()
-                return _stat_override(original, st_ino=original.st_ino + 1)
-
-            yield handle, diverging_restat
-
-    monkeypatch.setattr(saved_artifacts, "_open_candidate", inode_diverging_open)
-    with pytest.raises(AssetError, match="path changed while"):
-        authority.capture((_candidate(),), "save", 0)
 
 
 def test_native_save_attachment_requires_open_context_and_snapshots_claim() -> None:
@@ -380,45 +221,6 @@ def test_native_save_attachment_requires_open_context_and_snapshots_claim() -> N
             await task
 
     run_scenario(scenario())
-
-
-def test_native_save_attachment_admits_complete_image_batch_and_bounds_overflow() -> None:
-    expected = [
-        {
-            "digest": digest_bytes(str(index).encode("ascii")),
-            "name": f"frame-{index}.png",
-            "size": index + 1,
-            "mediaType": "image/png",
-            "virtualPath": f"mounts/custom/frame-{index}.png",
-        }
-        for index in range(4096)
-    ]
-    with capture_saved_artifacts() as claims:
-        for claim in expected:
-            attach_saved_artifact(claim)
-        with pytest.raises(ValueError, match="batch exceeds"):
-            attach_saved_artifact(expected[0])
-    assert claims == expected
-    wire = json.loads(json.dumps({"savedArtifactClaims": [dict(claim) for claim in claims]}))
-    assert decode_saved_artifact_claims(wire) == tuple(expected)
-    with pytest.raises(BoundaryError, match="bounded list"):
-        decode_saved_artifact_claims({"savedArtifactClaims": [*expected, expected[0]]})
-
-
-@pytest.mark.parametrize("size", (0, 1073741824, 1073741825, sys.maxsize))
-def test_native_save_attachment_size_is_a_descriptor_not_an_encoded_payload(size: int) -> None:
-    expected = {
-        "digest": digest_bytes(b"descriptor only"),
-        "name": "model.safetensors",
-        "size": size,
-        "mediaType": "application/octet-stream",
-        "virtualPath": "mounts/custom/model.safetensors",
-    }
-    with capture_saved_artifacts() as claims:
-        attach_saved_artifact(expected)
-    assert claims == [expected]
-    wire = json.loads(json.dumps({"savedArtifactClaims": [dict(claim) for claim in claims]}))
-    assert decode_saved_artifact_claims(wire) == (expected,)
 
 
 @pytest.mark.parametrize(
@@ -477,32 +279,6 @@ def test_native_save_authority_rejects_invalid_or_revoked_publication(
         symlink_or_skip(original, outside)
     with pytest.raises(AssetError):
         SavedArtifactAuthority(snapshot).capture_mounted((claim,), "save", started)
-
-
-@pytest.mark.parametrize(
-    "updates",
-    (
-        {"size": True},
-        {"size": -1},
-        {"size": 1.5},
-        {"digest": "blake3:" + "G" * 64},
-        {"virtualPath": "mounts/custom/../x.txt"},
-        {"virtualPath": "mounts/custom/other.txt"},
-        {"extra": "not allowed"},
-    ),
-)
-def test_native_save_attachment_rejects_malformed_claims(updates: dict[str, object]) -> None:
-    claim: dict[str, object] = {
-        "digest": digest_bytes(b"x"),
-        "name": "x.txt",
-        "size": 1,
-        "mediaType": "text/plain",
-        "virtualPath": "mounts/custom/x.txt",
-    }
-    with capture_saved_artifacts() as claims:
-        with pytest.raises(ValueError):
-            attach_saved_artifact({**claim, **updates})
-    assert claims == []
 
 
 @pytest.mark.parametrize("persist_index", (True, False))

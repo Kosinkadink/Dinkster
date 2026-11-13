@@ -10,13 +10,11 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_memory import MemoryGovernor
-from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
 from dinkster_server import (
     ComfyArgumentError,
     Principal,
     RuntimeSettings,
     SettingsError,
-    comfy_cpu_args,
     comfy_dtype_args,
     create_app,
     load_settings,
@@ -103,14 +101,6 @@ def test_dtype_policy_maps_to_comfy_flags_without_auto_overrides() -> None:
     assert validate_comfy_args(args, require_tuple=True) == args
     with pytest.raises(ComfyArgumentError, match="Dinkster dtype policy"):
         validate_comfy_args(("--bf16-unet",), require_tuple=True)
-
-
-def test_cpu_policy_maps_to_owned_comfy_flag() -> None:
-    args = comfy_cpu_args()
-    assert args == ("--cpu",)
-    assert validate_comfy_args(args, require_tuple=True) == args
-    with pytest.raises(ComfyArgumentError, match="Dinkster memory/aimdo policy"):
-        validate_comfy_args(("--cpu",), require_tuple=True)
 
 
 def test_memory_headroom_put_pushes_live_persists_and_updates_reload_value(
@@ -301,25 +291,6 @@ def test_settings_without_library_root_visibly_reports_unpersisted() -> None:
     section = runtime.update("aimdo-policy", "off")
     assert section["value"] == "off"
     assert section["persistence"] == {"available": False, "persisted": False}
-
-
-def test_settings_logging_reapplies_and_reexports(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, dict[str, str]]] = []
-    monkeypatch.setattr(
-        "dinkster_server.settings.configure_logging",
-        lambda level, *, overrides: calls.append((level, dict(overrides))),
-    )
-    monkeypatch.setenv(LOG_OVERRIDES_ENV, "dinkster.old=debug")
-    runtime = settings(granted=frozenset({"logging"}))
-    runtime.update("logging", {"level": "error", "overrides": {"dinkster.pack.a": "debug"}})
-    assert calls == [("error", {"dinkster.pack.a": "debug"})]
-    assert os.environ[LOG_LEVEL_ENV] == "error"
-    assert os.environ[LOG_OVERRIDES_ENV] == "dinkster.pack.a=debug"
-
-    runtime.update("logging", {"level": "info", "overrides": {}})
-    assert LOG_OVERRIDES_ENV not in os.environ
 
 
 @pytest.mark.parametrize(

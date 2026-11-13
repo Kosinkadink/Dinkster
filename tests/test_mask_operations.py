@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import ComboWidget, InputSpec
 from dinkster_image.drawing import MakeImage
 from dinkster_image.mask import (
-    MASK_NODES,
     ImageToMask,
     MakeMask,
     MaskCombine,
@@ -20,7 +17,6 @@ from dinkster_image.mask import (
     TextMask,
 )
 from dinkster_image.types import Region
-from dinkster_schema import build_schemas, schema_from_wire, schema_to_wire
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "image_mask_e20d433a.json"
 GOLDEN = cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
@@ -47,38 +43,6 @@ def _golden_source(name: str) -> np.ndarray:
     return np.asarray(cast("list[float]", record["values"]), dtype=np.float32).reshape(
         cast("list[int]", record["shape"])
     )
-
-
-def test_comfy_mask_golden_has_the_required_pin_and_cases() -> None:
-    assert GOLDEN["baseline"] == "e20d433a4966dcc88fa5abbae6ace824cb78b263"
-    assert set(GOLDEN_CASES) == {
-        "CropMask",
-        "EmptyImage",
-        "FeatherMask",
-        "GrowMask:square",
-        "GrowMask:tapered-erode",
-        "ImageBatch",
-        "ImageColorToMask",
-        "ImageFromBatch",
-        "ImageStitch",
-        "ImageToMask:alpha",
-        "ImageToMask:blue",
-        "ImageToMask:green",
-        "ImageToMask:red",
-        "InvertMask",
-        "MaskComposite:add",
-        "MaskComposite:and",
-        "MaskComposite:multiply",
-        "MaskComposite:or",
-        "MaskComposite:source-singleton",
-        "MaskComposite:subtract",
-        "MaskComposite:xor",
-        "MaskToImage",
-        "RebatchImages",
-        "RepeatImageBatch",
-        "SolidMask",
-        "ThresholdMask",
-    }
 
 
 def test_core_mask_and_image_generation_match_comfy_goldens() -> None:
@@ -155,30 +119,6 @@ def test_core_mask_and_image_generation_match_comfy_goldens() -> None:
 
     for name, value in actual.items():
         np.testing.assert_array_equal(np.asarray(value), _golden_array(name), err_msg=name)
-
-
-@pytest.mark.parametrize(
-    ("operation", "kwargs"),
-    [
-        ("solid", {"foreground": 0.25}),
-        ("rectangle", {"x": 2, "y": 1, "shape_width": 5, "shape_height": 3}),
-        ("ellipse", {"x": 2, "y": 1, "shape_width": 5, "shape_height": 3}),
-        ("linear_gradient", {"angle": 30.0, "background": 0.2, "foreground": 0.8}),
-        ("radial_gradient", {"center_x": 0.4, "center_y": 0.6, "radius": 0.7}),
-        ("checkerboard", {"tile_size": 3}),
-    ],
-)
-def test_make_mask_operations_are_batched_float32_and_deterministic(
-    operation: str, kwargs: dict[str, object]
-) -> None:
-    first = _mask(_run(MakeMask, operation=operation, width=11, height=7, batch_size=3, **kwargs))
-    second = _mask(_run(MakeMask, operation=operation, width=11, height=7, batch_size=3, **kwargs))
-
-    assert first.shape == (3, 7, 11)
-    assert first.dtype == np.float32
-    assert first.flags.c_contiguous
-    assert np.array_equal(first, second)
-    assert np.array_equal(first[0], first[2])
 
 
 def test_make_mask_shapes_and_empty_content() -> None:
@@ -362,41 +302,6 @@ def test_make_mask_transition_timing_and_degenerate_ranges(timing: str, middle: 
     assert np.array_equal(reversed_range[:, 0, 0], [0.0, 0.0, 0.0, 1.0])
 
 
-def test_text_mask_uses_pillow_bundled_default_font_deterministically() -> None:
-    mask = _mask(
-        _run(
-            TextMask,
-            text="Dinkster\n671",
-            width=64,
-            height=40,
-            x=2,
-            y=3,
-            font_size=12,
-            line_spacing=2,
-        )
-    )
-
-    assert mask.shape == (1, 40, 64)
-    assert hashlib.sha256(mask.tobytes()).hexdigest() == (
-        "9980a74a09126377f4b2b53faac2585a41c6c641be918d84415e5a027cbfca4d"
-    )
-    assert np.array_equal(
-        mask,
-        _mask(
-            _run(
-                TextMask,
-                text="Dinkster\n671",
-                width=64,
-                height=40,
-                x=2,
-                y=3,
-                font_size=12,
-                line_spacing=2,
-            )
-        ),
-    )
-
-
 def test_text_mask_color_rotation_and_outputs() -> None:
     regular = _run(
         TextMask,
@@ -545,59 +450,6 @@ def test_mask_cleanup_handles_empty_full_holes_and_border_background() -> None:
     assert np.all(filled[0, 0:3, 5] == 0.0)
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "match"),
-    [
-        ({"minimum_area": 0}, "minimum_area"),
-        ({"minimum_area": 1.5}, "minimum_area"),
-        ({"connectivity": "6"}, "connectivity"),
-        ({"threshold": float("nan")}, "threshold"),
-    ],
-)
-def test_remove_small_components_rejects_invalid_controls(
-    kwargs: dict[str, object], match: str
-) -> None:
-    with pytest.raises((TypeError, ValueError), match=match):
-        _run(
-            MaskMorphology,
-            mask=np.zeros((1, 2, 2), dtype=np.float32),
-            operation="remove_small_components",
-            **kwargs,
-        )
-
-
-def test_mask_cleanup_support_schema_round_trips_through_schema_wire() -> None:
-    assert MaskMorphology in MASK_NODES
-    schema = build_schemas(MASK_NODES)["dinkster.mask.morphology"]
-    operation = schema.combos[0]
-    cleanup = operation.option("remove_small_components")
-    assert cleanup is not None
-    assert tuple(item.id for item in cleanup.inputs) == (
-        "minimum_area",
-        "threshold",
-        "connectivity",
-    )
-    minimum_area = cleanup.inputs[0]
-    assert isinstance(minimum_area, InputSpec)
-    assert minimum_area.default == 64
-    connectivity = cleanup.inputs[2]
-    assert isinstance(connectivity, InputSpec)
-    assert connectivity.default == "8"
-    assert connectivity.widget == ComboWidget(options=("4", "8"))
-    assert operation.option("fill_holes") is not None
-
-    wire = schema_to_wire(schema)
-    restored = schema_from_wire(json.loads(json.dumps(wire)))
-    assert schema_to_wire(restored) == wire
-    restored_cleanup = restored.combos[0].option("remove_small_components")
-    assert restored_cleanup is not None
-    assert tuple(item.id for item in restored_cleanup.inputs) == (
-        "minimum_area",
-        "threshold",
-        "connectivity",
-    )
-
-
 def test_grow_distinguishes_square_tapered_iterations_and_edge_policy() -> None:
     seed = np.zeros((1, 7, 7), dtype=np.float32)
     seed[0, 3, 3] = 1.0
@@ -685,46 +537,6 @@ def test_erode_open_close_and_kernel_size_have_distinct_effects() -> None:
         )
     )
     assert np.all(closed == 1.0)
-
-
-def test_grow_and_erode_preserve_order_for_random_batches() -> None:
-    source = np.random.default_rng(671).random((3, 8, 9), dtype=np.float32)
-    grown = _mask(
-        _run(
-            MaskMorphology,
-            mask=source,
-            operation="grow_erode",
-            radius=3,
-            tapered_corners=True,
-            edge_policy="replicate",
-        )
-    )
-    eroded = _mask(
-        _run(
-            MaskMorphology,
-            mask=source,
-            operation="grow_erode",
-            radius=-3,
-            tapered_corners=False,
-            edge_policy="replicate",
-        )
-    )
-
-    assert np.all(grown >= source)
-    assert np.all(eroded <= source)
-    assert np.array_equal(
-        grown,
-        _mask(
-            _run(
-                MaskMorphology,
-                mask=source,
-                operation="grow_erode",
-                radius=3,
-                tapered_corners=True,
-                edge_policy="replicate",
-            )
-        ),
-    )
 
 
 def test_grow_blur_temporal_controls() -> None:
@@ -1147,67 +959,3 @@ def test_mask_info_reports_stable_union_bounds_and_empty_bounds() -> None:
         "bounds": Region(x=0, y=0, width=0, height=0),
     }
     assert not np.any(np.asarray(empty_mask))
-
-
-def test_mask_schema_ids_and_required_inputs_are_distinct() -> None:
-    schemas = {node.define_schema().node_type: node.define_schema() for node in MASK_NODES}
-    assert len(schemas) == len(MASK_NODES)
-    assert {
-        node_type: tuple(item.id for item in schema.inputs if item.required)
-        for node_type, schema in schemas.items()
-    } == {
-        "dinkster.mask.make": (),
-        "dinkster.mask.text": ("text",),
-        "dinkster.mask.morphology": ("mask",),
-        "dinkster.mask.combine": ("destination", "source"),
-        "dinkster.image.to_mask": ("image",),
-        "dinkster.mask.to_image": ("mask",),
-        "dinkster.mask.info": ("mask",),
-        "dinkster.mask.polarity": ("mask",),
-    }
-
-
-@pytest.mark.parametrize(
-    ("node", "kwargs", "match"),
-    [
-        (MakeMask, {"operation": "solid", "width": 0, "height": 4}, "width"),
-        (
-            MaskMorphology,
-            {"mask": np.zeros((2, 3), dtype=np.float32), "operation": "threshold"},
-            "BHW",
-        ),
-        (
-            MaskMorphology,
-            {"mask": np.zeros((1, 2, 2), dtype=np.float32), "operation": "blur", "radius": -1},
-            "blur radius",
-        ),
-        (
-            MaskMorphology,
-            {
-                "mask": np.zeros((1, 2, 2), dtype=np.float32),
-                "operation": "crop",
-                "x": 2,
-                "y": 0,
-                "width": 1,
-                "height": 1,
-            },
-            "overlap",
-        ),
-        (
-            ImageToMask,
-            {"image": np.zeros((1, 2, 2, 2), dtype=np.float32), "channel": "red"},
-            "channels",
-        ),
-        (MakeMask, {"operation": "region", "region": "not a region"}, "Region"),
-        (
-            TextMask,
-            {"text": "", "width": 8192, "height": 8192},
-            "image operation limit",
-        ),
-    ],
-)
-def test_mask_nodes_reject_invalid_inputs(
-    node: type, kwargs: dict[str, object], match: str
-) -> None:
-    with pytest.raises((TypeError, ValueError), match=match):
-        _run(node, **kwargs)

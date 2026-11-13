@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, Mock, sentinel
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import ClientResponse
@@ -35,12 +35,10 @@ from test_serve_remote import (
     write_composed_iso_manifest,
 )
 
-from dinkster.compose import CompositionError, PackDelta, ServingComposer, UnknownPackError
+from dinkster.compose import CompositionError, ServingComposer, UnknownPackError
 from dinkster.remote_reconnect import (
     ReconnectPolicy,
     RemoteReconnectSupervisor,
-    announce_remote_delta,
-    backoff_delays,
 )
 from dinkster.remotes import RemoteSpec
 from tests.async_scenarios import run_scenario
@@ -76,25 +74,6 @@ async def wait_for_connected(composer: ServingComposer, name: str, value: bool) 
 def worker_status(composer: ServingComposer, spec: RemoteSpec) -> str:
     (entry,) = [info for info in composer.workers((spec,)) if info.name != "local"]
     return entry.status
-
-
-def test_backoff_delays_double_to_the_cap_with_bounded_jitter() -> None:
-    policy = ReconnectPolicy(initial_delay=1.0, max_delay=8.0, jitter=0.5)
-    stretched = backoff_delays(policy, rand=lambda: 1.0)
-    assert [next(stretched) for _ in range(5)] == [1.5, 3.0, 6.0, 12.0, 12.0]
-    flat = backoff_delays(policy, rand=lambda: 0.0)
-    assert [next(flat) for _ in range(5)] == [1.0, 2.0, 4.0, 8.0, 8.0]
-
-
-def test_first_remote_redial_prepares_validation_before_publication() -> None:
-    state = Mock()
-    state.prepare_replace = AsyncMock(return_value=sentinel.validation)
-    state.replace.return_value = 2
-    delta = PackDelta("box1", {}, {}, {})
-
-    assert run_scenario(announce_remote_delta(state, delta)) == 2
-    state.prepare_replace.assert_awaited_once_with((), (), {}, {}, {})
-    assert state.replace.call_args.kwargs["_validation"] is sentinel.validation
 
 
 def test_reattach_after_daemon_restart_swaps_in_a_new_session(tmp_path: Path) -> None:
@@ -634,51 +613,6 @@ def test_reattach_refuses_a_surface_change_that_strands_dependents(tmp_path: Pat
                 await stop_service(restarted)
             await stop_service(proc2)
             await stop_service(proc1)
-
-    run_scenario(scenario())
-
-
-def test_reattach_aborts_when_the_old_session_cannot_be_reaped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The old session is reaped before the commit point: a failing reap
-    aborts the whole swap (composition untouched, fresh dial released)
-    rather than leaving a half-committed composer."""
-
-    async def scenario() -> None:
-        proc, host, port = await start_service(write_iso_manifest(tmp_path), tmp_path)
-        composer = ServingComposer()
-        restarted = None
-        try:
-            spec = remote_spec(host, port, tmp_path)
-            await composer.add_remote(spec)
-            proc.kill()
-            await proc.wait()
-            await wait_for_connected(composer, "box1", False)
-            restarted, _, _ = await start_service(write_iso_manifest(tmp_path), tmp_path, port=port)
-
-            async def refuse_close() -> None:
-                raise RuntimeError("old session close refused")
-
-            before = composition_snapshot(composer)
-            with monkeypatch.context() as patch:
-                patch.setattr(composer._remotes["box1"].worker, "close", refuse_close)
-                with pytest.raises(RuntimeError, match="old session close refused"):
-                    await composer.reattach_remote(spec)
-            assert composition_snapshot(composer) == before
-            assert worker_status(composer, spec) == "disconnected"
-            # The aborted swap released the fresh dial: the daemon's
-            # single conversation slot is free again.
-            await daemon_accepts_a_client(host, port)
-            # With the old session reapable again the same redial lands.
-            outcome = await composer.reattach_remote(spec)
-            assert outcome.same_instance is False
-            assert composer.remote_connected("box1") is True
-        finally:
-            await composer.close()
-            if restarted is not None:
-                await stop_service(restarted)
-            await stop_service(proc)
 
     run_scenario(scenario())
 

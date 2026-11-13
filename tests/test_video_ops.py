@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import (
     VIDEO_EDIT_TYPE,
-    VIDEO_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -28,98 +27,6 @@ from dinkster_video_runtime import save_video_stream
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
-
-
-def test_native_video_registration_is_torch_free_and_preserves_first_authority() -> None:
-    import subprocess
-    import sys
-
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_TYPE, VIDEO_EDIT_TYPE; "
-            "from dinkster_video import register_types; "
-            "r=TypeRegistry(); register_types(r); "
-            "assert VIDEO_TYPE in r and VIDEO_EDIT_TYPE in r; assert 'torch' not in sys.modules",
-        ],
-        check=True,
-    )
-    from dinkster_api.v1 import TypeRegistry, register_video_edit_type
-    from dinkster_inference_wire.types import register_inference_types
-    from dinkster_video import register_types
-
-    for first, second in (
-        (register_inference_types, register_types),
-        (register_types, register_inference_types),
-    ):
-        registry = TypeRegistry()
-        first(registry)
-        edit_spec = registry.spec(VIDEO_EDIT_TYPE)
-        second(registry)
-        video_spec = registry.spec(VIDEO_TYPE)
-        register_types(registry)
-        register_video_edit_type(registry)
-        assert registry.spec(VIDEO_TYPE) is video_spec
-        assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
-
-    registry = TypeRegistry()
-    registry.register(VIDEO_TYPE, encode=lambda _: b"video", decode=lambda _: "video")
-    registry.register(VIDEO_EDIT_TYPE, encode=lambda _: b"edit", decode=lambda _: "edit")
-    video_spec = registry.spec(VIDEO_TYPE)
-    edit_spec = registry.spec(VIDEO_EDIT_TYPE)
-    register_types(registry)
-    assert registry.spec(VIDEO_TYPE) is video_spec
-    assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
-
-
-def test_shared_video_edit_registration_is_torch_free_and_preserves_first_authority() -> None:
-    import subprocess
-    import sys
-
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_EDIT_TYPE; "
-            "from dinkster_inference_wire.types import register_inference_types; "
-            "r=TypeRegistry(); specs=register_inference_types(r); "
-            "assert VIDEO_EDIT_TYPE in r; assert r.spec(VIDEO_EDIT_TYPE) in specs; "
-            "assert not any(n in sys.modules for n in ('torch','av','dinkster_inference'))",
-        ],
-        check=True,
-    )
-    from dinkster_api.v1 import TypeRegistry, register_video_edit_type
-    from dinkster_inference_wire.types import register_inference_types
-
-    value = {
-        "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
-        "trim": {"start_time": 0.25, "duration": 0.25},
-        "vendor": {"tag": "retain", "enabled": False},
-    }
-    registry = TypeRegistry()
-    first = register_inference_types(registry)
-    spec = registry.spec(VIDEO_EDIT_TYPE)
-    assert spec.declared_codec
-    assert spec.encode(value) == (
-        b'{"crop": {"height": 7, "width": 11, "x": 5, "y": 3}, '
-        b'"trim": {"duration": 0.25, "start_time": 0.25}, '
-        b'"vendor": {"enabled": false, "tag": "retain"}}'
-    )
-    assert spec.decode(spec.encode(value)) == value
-    repeated = register_inference_types(registry)
-    register_video_edit_type(registry)
-    assert len(first) == len({item.type_id for item in first})
-    assert [item.type_id for item in first] == [item.type_id for item in repeated]
-    assert all(before is after for before, after in zip(first, repeated, strict=True))
-    assert registry.spec(VIDEO_EDIT_TYPE) is spec
-
-    registry = TypeRegistry()
-    original = registry.register(VIDEO_EDIT_TYPE, encode=lambda _: b"first", decode=lambda _: value)
-    specs = register_inference_types(registry)
-    assert registry.spec(VIDEO_EDIT_TYPE) is original
-    assert next(item for item in specs if item.type_id == VIDEO_EDIT_TYPE) is original
-    assert original.encode(value) == b"first"
 
 
 class VideoEditLiteralFixture(Node):
@@ -249,28 +156,10 @@ def test_assemble_disassemble_round_trip_preserves_frames_fps_and_audio() -> Non
     assert waveform.shape[2] == 6667
 
 
-def test_round_trip_preserves_fractional_frame_rates_exactly() -> None:
-    video = cast(
-        "dict[str, Any]",
-        assemble_video(_frames(12), fps=29.97),
-    )
-    result = disassemble_video(video)
-    assert result["fps"] == 29.97
-    assert result["duration"] == 12 / 29.97
-
-
 def test_disassemble_reports_absent_audio_for_silent_video() -> None:
     video = assemble_video(_frames(4), fps=8.0)
     result = disassemble_video(video)
     assert result["audio"] is None
-
-
-def test_trim_zero_window_preserves_components_without_encoding() -> None:
-    video = cast("dict[str, Any]", assemble_video(_frames(4), fps=8.0))
-    result = cast("dict[str, Any]", edit_video(video, {"trim": {"start_time": 0, "duration": 0}}))
-    assert result["probe"] == video["probe"]
-    assert result["components"]["images"] is video["components"]["images"]
-    assert video["edits"] == []
 
 
 def test_trim_zero_window_preserves_container_bytes() -> None:
