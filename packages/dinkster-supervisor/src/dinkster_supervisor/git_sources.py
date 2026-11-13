@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -66,9 +67,9 @@ def _isolated_config() -> Generator[str | None]:
         except (KeyError, OSError, pygit2.GitError):
             pass
         levels = (
-            pygit2.GIT_CONFIG_LEVEL_SYSTEM,
-            pygit2.GIT_CONFIG_LEVEL_XDG,
-            pygit2.GIT_CONFIG_LEVEL_GLOBAL,
+            pygit2.enums.ConfigLevel.SYSTEM,
+            pygit2.enums.ConfigLevel.XDG,
+            pygit2.enums.ConfigLevel.GLOBAL,
         )
         previous = {level: pygit2.settings.search_path[level] for level in levels}
         try:
@@ -103,30 +104,42 @@ def fetched_git_source(value: str) -> Generator[tuple[Path, dict[str, object]]]:
         checkout = Path(directory) / "checkout"
         with _isolated_config() as proxy:
             callbacks = pygit2.RemoteCallbacks(certificate_check=lambda _cert, valid, _host: valid)
+            repository = None
             try:
                 repository = pygit2.init_repository(checkout)
                 remote = repository.remotes.create("origin", url)
                 repository.config["http.followRedirects"] = "false"
                 if proxy is not None:
                     repository.config["http.proxy"] = proxy
-                remote.fetch(
-                    ["+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"]
-                    if ref is None
-                    else [f"+{ref}:refs/dinkster/selected"],
-                    callbacks=callbacks,
-                    proxy=proxy or True,
-                )
+                advertised = {
+                    row.name: row.oid
+                    for row in remote.list_heads(callbacks=callbacks, proxy=proxy or True)
+                    if row.name is not None
+                }
                 if ref is None:
-                    head = next(
-                        row
-                        for row in remote.list_heads(callbacks=callbacks, proxy=proxy or True)
-                        if row.name == "HEAD"
-                    )
-                    commit = repository[head.oid].peel(pygit2.Commit)
+                    selected_ref = "HEAD"
+                elif re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+                    selected_ref = ref.lower()
                 else:
-                    commit = repository.revparse_single("refs/dinkster/selected").peel(
-                        pygit2.Commit
+                    selected_ref = next(
+                        name
+                        for name in (f"refs/heads/{ref}", f"refs/tags/{ref}", ref)
+                        if name in advertised
                     )
+                refspecs = (
+                    [f"+{selected_ref}:refs/dinkster/selected"]
+                    if selected_ref in advertised
+                    else ["+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"]
+                )
+                remote.fetch(refspecs, callbacks=callbacks, proxy=proxy or True)
+                target = advertised.get(selected_ref, selected_ref)
+                if target not in repository:
+                    remote.fetch(
+                        [f"+{selected_ref}:refs/dinkster/selected"],
+                        callbacks=callbacks,
+                        proxy=proxy or True,
+                    )
+                commit = repository[target].peel(pygit2.Commit)
                 tree = commit.tree
                 if subdirectory != ".":
                     tree = tree[subdirectory]
@@ -135,11 +148,13 @@ def fetched_git_source(value: str) -> Generator[tuple[Path, dict[str, object]]]:
                 _check_tree(tree)
                 if os.name == "nt":
                     repository.config["core.symlinks"] = False
-                repository.checkout_tree(commit, strategy=pygit2.GIT_CHECKOUT_FORCE)
                 repository.set_head(commit.id)
-            except EnvironmentError:
-                raise
-            except (pygit2.GitError, KeyError, ValueError, StopIteration):
+                repository.reset(commit.id, pygit2.enums.ResetMode.HARD)
+            except (pygit2.GitError, KeyError, ValueError, StopIteration) as error:
+                if repository is not None:
+                    repository.free()
+                if isinstance(error, EnvironmentError):
+                    raise
                 raise EnvironmentError(
                     "cannot fetch public git source or resolve its ref/subdirectory; "
                     "check the public HTTPS URL and ref (credentials are not supported)"

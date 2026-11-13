@@ -2559,10 +2559,16 @@ def _commit(repo: Path, message: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-def test_lock_git_pack_pins_the_commit(tmp_path: Path) -> None:
-    repo = make_git_repo(tmp_path / "repo")
+@pytest.fixture
+def public_git_pack(tmp_path: Path, git_server):
+    repo = make_git_repo(git_server["root"] / tmp_path.name)
+    git_server["config"].write_text("")
+    return repo, git_server["url"].replace("source.git", f"{repo.name}/.git")
+
+
+def test_lock_git_pack_pins_the_commit(tmp_path: Path, public_git_pack) -> None:
+    repo, url = public_git_pack
     head = _git(repo, "rev-parse", "HEAD")
-    url = f"file://{repo}"
     entry, archive = lock_git_pack(url, tmp_path / "artifacts")
     assert entry.pack == "demo"
     assert entry.publisher == "local"
@@ -2574,24 +2580,23 @@ def test_lock_git_pack_pins_the_commit(tmp_path: Path) -> None:
     assert rebuilt == entry.artifact_digest
 
 
-def test_lock_git_pack_ref_selects_history(tmp_path: Path) -> None:
-    repo = make_git_repo(tmp_path / "repo")
+def test_lock_git_pack_ref_selects_history(tmp_path: Path, public_git_pack) -> None:
+    repo, url = public_git_pack
     _git(repo, "tag", "v1")
     (repo / "demo_nodes.py").write_text("NODES = [2]\n")
     _commit(repo, "change")
-    url = f"file://{repo}"
     at_tag, _ = lock_git_pack(url, tmp_path / "artifacts", ref="v1")
     at_head, _ = lock_git_pack(url, tmp_path / "artifacts")
     assert at_tag.artifact_digest != at_head.artifact_digest
     assert at_tag.source.endswith(_git(repo, "rev-parse", "v1"))
 
 
-def test_lock_git_pack_fails_loudly(tmp_path: Path) -> None:
-    with pytest.raises(InstallError, match="git clone failed"):
+def test_lock_git_pack_fails_loudly(tmp_path: Path, public_git_pack) -> None:
+    _repo, url = public_git_pack
+    with pytest.raises(InstallError, match="public HTTPS URL"):
         lock_git_pack(f"file://{tmp_path}/nowhere", tmp_path / "artifacts")
-    repo = make_git_repo(tmp_path / "repo")
-    with pytest.raises(InstallError, match="git checkout failed"):
-        lock_git_pack(f"file://{repo}", tmp_path / "artifacts", ref="no-such-ref")
+    with pytest.raises(InstallError, match="cannot fetch"):
+        lock_git_pack(url, tmp_path / "artifacts", ref="no-such-ref")
 
 
 # ---------------------------------------------------------------------------
@@ -2632,13 +2637,15 @@ def test_acquire_refuses_changed_or_vanished_local_source(tmp_path: Path) -> Non
         installer.acquire(entry)
 
 
-def test_acquire_refetches_git_source_at_the_recorded_commit(tmp_path: Path) -> None:
+def test_acquire_refetches_git_source_at_the_recorded_commit(
+    tmp_path: Path, public_git_pack
+) -> None:
     """git: provenance pins the exact commit, so re-acquisition succeeds
     even after the branch moves on - the recorded commit is checked out,
     not HEAD."""
     installer = make_installer(tmp_path)
-    repo = make_git_repo(tmp_path / "repo")
-    entry, archive = lock_git_pack(f"file://{repo}", installer.artifacts_dir)
+    repo, url = public_git_pack
+    entry, archive = lock_git_pack(url, installer.artifacts_dir)
     (repo / "demo_nodes.py").write_text("NODES = [2]\n")
     _commit(repo, "moved on")
     archive.unlink()
@@ -3133,10 +3140,11 @@ def test_cli_published_restore_routes_require_managed_generation(
     assert {p: p.read_bytes() for p in source_root.rglob("*") if p.is_file()} == before
 
 
-def test_cli_git_install_and_update(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_git_install_and_update(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], public_git_pack
+) -> None:
     root = str(tmp_path / "root")
-    repo = make_git_repo(tmp_path / "repo")
-    url = f"file://{repo}"
+    repo, url = public_git_pack
 
     run_cli("--root", root, "install", "--no-venv", "--yes", f"git+{url}")
     out = capsys.readouterr().out

@@ -489,11 +489,15 @@ def lock_git_pack(
     """Archive an explicit public git pack with the shared bundled fetcher."""
     from urllib.parse import urlencode
 
+    from dinkster_supervisor.environment_state import EnvironmentError
     from dinkster_supervisor.git_sources import fetched_git_source
 
     specification = url + ("#" + urlencode({"ref": ref}) if ref is not None else "")
-    with fetched_git_source(specification) as (checkout, origin):
-        manifest, digest, archive = _archive_pack(checkout, artifacts_dir)
+    try:
+        with fetched_git_source(specification) as (checkout, origin):
+            manifest, digest, archive = _archive_pack(checkout, artifacts_dir)
+    except EnvironmentError as error:
+        raise InstallError(str(error)) from None
     return _unpublished_entry(manifest, digest, f"git:{origin['url']}@{origin['commit']}"), archive
 
 
