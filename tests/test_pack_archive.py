@@ -1392,7 +1392,7 @@ def test_official_publication_requires_complete_supported_base_bindings(
                 "7.4.0rc1",
                 module.name,
                 "VALUE = 1\n",
-                requires=("dinkster-inference==0.1.1",),
+                requires=("dinkster-inference==0.1.2",),
             )
             published_helper = (tmp_path / old.filename).read_bytes()
             _wheel(

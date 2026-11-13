@@ -1531,8 +1531,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert f"Requires-Dist: dinkster-engine=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.1\n" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.1; extra == 'inference'\n" in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.2\n" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.2; extra == 'inference'\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [
@@ -2010,7 +2010,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
             'dependencies = ["dinkster-engine==1.2.3"]\n'
-            '[project.optional-dependencies]\ninference = ["dinkster-inference==0.1.1"]\n'
+            '[project.optional-dependencies]\ninference = ["dinkster-inference==0.1.2"]\n'
             "[tool.uv.workspace]\n"
             'members = ["packages/dinkster-api", "packages/dinkster-engine", '
             '"packages/dinkster-supervisor"]\n'
