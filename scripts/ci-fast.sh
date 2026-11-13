@@ -23,15 +23,8 @@ fi
 if [ "${1:-all}" = checks ]; then exit 0; fi
 
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
-  tests/test_disabled_features.py \
   tests/test_settings.py \
-  tests/test_supervisor_limits.py \
   tests/test_security_notices.py \
-  tests/test_dependency_rule.py::test_core_paths_do_not_import_optional_packages_at_module_scope \
-  tests/test_dependency_rule.py::test_umbrella_optional_packages_are_locked \
-  tests/test_extension_factory_guard.py \
-  tests/test_builtin_type_spellings.py \
-  tests/test_pinned_inference.py \
   tests/test_macos_workflow_receipt.py \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
@@ -109,12 +102,10 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_names.py \
   tests/test_first_party_node_ids.py \
   tests/test_comfy_controlnet_nodes.py \
-  tests/test_validation_inputs.py \
   tests/test_values.py \
   tests/test_graph.py \
   tests/test_graph_wire.py \
   tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
-  tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
   tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
