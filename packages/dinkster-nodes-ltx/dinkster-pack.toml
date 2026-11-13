@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-ltx"
-version = "0.0.8"
+version = "0.0.9"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.ltx"]

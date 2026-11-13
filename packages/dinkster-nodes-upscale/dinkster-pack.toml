@@ -1,6 +1,6 @@
 [pack]
 name = "dinkster-upscale"
-version = "0.0.4"
+version = "0.0.5"
 engine = ">=0.0.3,<0.1"
 publisher = "dinkster"
 namespaces = ["dinkster.upscale"]

@@ -114,6 +114,7 @@ from dinkster_assets import (
 from dinkster_assets.model import LocalAssetResolver
 from dinkster_image_document import decode_document
 from dinkster_protocol import AssetFolderContext, SavedArtifact
+from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
     MEBIBYTE,
@@ -265,6 +266,13 @@ class ServerLibrary:
                 continue
         return False
 
+    async def publish_image_documents(
+        self, node_id: str, claims: Sequence[ImageDocumentArtifact]
+    ) -> tuple[SavedArtifact, ...]:
+        from .image_document import publish_original_documents
+
+        return await publish_original_documents(self, node_id, claims)
+
     def record_saved_outputs(self, job: Job, result: RunResult) -> RunResult:
         """Retain required encoded attachments and catalog saves before completion."""
 
@@ -293,7 +301,17 @@ class ServerLibrary:
                 artifact.media_type,
                 artifact.virtual_path,
             )
-            if artifact.virtual_path.startswith("previews/"):
+            if artifact.virtual_path.startswith("documents/"):
+                if (
+                    artifact.name != "original.dinkster-image"
+                    or artifact.media_type != IMAGE_DOCUMENT_MEDIA_TYPE
+                    or artifact.virtual_path
+                    != f"documents/{ref.digest[7:]}/original.dinkster-image"
+                ):
+                    raise AssetError("original document does not name its published vault bytes")
+                ref = replace(ref, virtual_path="")
+                prepare(ref, artifact.node_id, journal)
+            elif artifact.virtual_path.startswith("previews/"):
                 if artifact.virtual_path != f"previews/{ref.digest[7:]}/{ref.name}":
                     raise AssetError("encoded output does not name its published vault bytes")
                 if self.upload_writer is None or self.project_folders_for is None:

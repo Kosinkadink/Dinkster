@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     apply_commands,
     coerce_delta,
     digest_bytes,
+    publish_image_document,
 )
 
 from .compositor_types import (
@@ -35,6 +36,7 @@ def prepare_compositor(source: object, obj: object) -> tuple[ImageDocument, str,
                     source, canvas_width=legacy.canvas_width, canvas_height=legacy.canvas_height
                 )
     input_document = migrate_layers(native)
+    publish_image_document(input_document.data)
     document, stale = replay_compositor(input_document, obj, source)
     return document, digest_bytes(input_document.data), stale
 

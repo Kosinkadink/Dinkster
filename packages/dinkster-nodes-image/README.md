@@ -90,7 +90,9 @@ can wrap literals before starting the isolated image worker.
 The `dinkster.compositor.state` event's `documentDigest` identifies the canonical
 input document, before commands or color-space overrides. Its `document` is
 the post-edit preview. Apply sends the input digest with commands relative to
-that input; preview edits do not change the replay identity.
+that input; preview edits do not change the replay identity. Both compositor
+nodes attach the original canonical bytes to successful execution for host
+validation and digest-based retrieval, without exporting to an output folder.
 
 GLSL Shader executes GLSL ES 3.00 fragment shaders in a fresh ANGLE child
 process so shader compilation and driver failures cannot corrupt the engine

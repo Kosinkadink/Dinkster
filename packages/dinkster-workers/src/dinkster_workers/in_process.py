@@ -90,6 +90,7 @@ from dinkster_schema import (
 )
 from dinkster_schema.media import media_diagnostics
 from dinkster_schema.reporting import (
+    capture_image_documents,
     capture_preview_artifacts,
     capture_saved_artifacts,
     capture_value_diagnostics,
@@ -109,7 +110,7 @@ from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
 from .preview_artifacts import capture_saved_file_previews
-from .produced_assets import ProducedAssetAuthority
+from .produced_assets import ProducedAssetAuthority, image_document_values
 from .run_control import PreparedRunContext
 from .saved_artifacts import SavedArtifactAuthority
 
@@ -446,6 +447,9 @@ class InProcessWorker:
                     result = replace(result, outputs=cast("dict[str, Value]", outputs))
                 if authority is not None and result.outputs is not None:
                     await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
+                    if result.image_documents:
+                        documents = await _run_sync(image_document_values, result.image_documents)
+                        await _run_sync(authority.capture, documents, None, invocation.inputs)
                 return result
             except (AssetError, OSError) as error:
                 return InvocationResult(
@@ -719,6 +723,7 @@ class InProcessWorker:
                 reporter,
                 capture,
                 capture_value_diagnostics() as pack_diagnostics,
+                capture_image_documents() as image_documents,
                 capture_preview_artifacts() as preview_artifacts,
                 capture_saved_artifacts() as saved_artifact_claims,
                 capture_saved_file_previews(
@@ -770,6 +775,7 @@ class InProcessWorker:
                 result = replace(
                     result,
                     artifact_candidates=tuple(artifact_candidates),
+                    image_documents=tuple(image_documents),
                     preview_artifacts=tuple(preview_artifacts),
                     saved_artifact_claims=tuple(saved_artifact_claims),
                     saved_file_previews=tuple(saved_file_previews),

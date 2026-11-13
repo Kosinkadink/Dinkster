@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-text"
-version = "0.0.3"
+version = "0.0.4"
 description = "Dinkster text manipulation and file output nodes"
 requires-python = ">=3.12"
 dependencies = [

@@ -58,7 +58,7 @@ from dinkster_protocol import (
     validate_preview_mode,
 )
 from dinkster_schema import schema_from_wire, schema_to_wire
-from dinkster_schema.reporting import EncodedPreviewArtifact
+from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     CONVERSATION_CAS_BUDGET_BYTES,
     WORKER_FRAME_HEADER_LIMIT_BYTES,
@@ -98,12 +98,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 12
+PROTOCOL_VERSION = 13
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v13: original image document attachments and source closure in successful results;
 v12: explicit mounted saved-file attachments in successful invocation results;
 v11: encoded preview artifacts in successful invocation results;
 v10: invocation-scoped run-control relay;
@@ -1102,6 +1103,8 @@ def encode_result(
     result: InvocationResult,
     invocation_id: str,
     execute_ms: float,
+    *,
+    document_sources: Mapping[str, Value] | None = None,
 ) -> tuple[dict[str, object], list[bytes], list[SharedMemory]]:
     from .saved_artifacts import MAX_SAVED_ARTIFACTS, validate_candidate
 
@@ -1117,6 +1120,16 @@ def encode_result(
         "invocationId": invocation_id,
         "executeMs": execute_ms,
     }
+    if (
+        result.error is None
+        and document_sources is not None
+        and (result.image_documents or document_sources)
+    ):
+        if set(document_sources) != {str(index) for index in range(len(result.image_documents))}:
+            raise BoundaryError("image document sources do not match the attachment batch")
+        header["imageDocumentSources"] = {
+            key: value.meta.get("asset_refs", []) for key, value in document_sources.items()
+        }
     if result.artifact_candidates:
         header["artifactCandidates"] = [
             {
@@ -1148,6 +1161,7 @@ def encode_result(
         )
         header.update(algebra_header)
         _encode_preview_artifacts(header, blobs, result.preview_artifacts)
+        _encode_image_documents(header, blobs, result)
         return header, blobs, segments
     blobs: list[bytes] = []
     segments: list[SharedMemory] = []
@@ -1184,7 +1198,48 @@ def encode_result(
     header["outputs"] = outputs_wire
     header["outputStats"] = stats_wire
     _encode_preview_artifacts(header, blobs, result.preview_artifacts)
+    _encode_image_documents(header, blobs, result)
     return header, blobs, segments
+
+
+def _encode_image_documents(
+    header: dict[str, object], blobs: list[bytes], result: InvocationResult
+) -> None:
+    if not result.image_documents:
+        return
+    claims: list[dict[str, object]] = []
+    for artifact in result.image_documents:
+        claims.append({"blob": len(blobs)})
+        blobs.append(artifact.data)
+    header["imageDocuments"] = claims
+    _decode_image_documents(header, blobs)
+
+
+def _decode_image_documents(
+    header: Mapping[str, Any], blobs: Sequence[bytes]
+) -> tuple[ImageDocumentArtifact, ...]:
+    from dinkster_schema.reporting import capture_image_documents, publish_image_document
+    from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT
+
+    claims = header.get("imageDocuments", [])
+    if type(claims) is not list or len(claims) > SAVED_ARTIFACT_CLAIM_LIMIT:
+        raise BoundaryError("invalid image document attachment batch")
+    try:
+        with capture_image_documents() as artifacts:
+            for position, claim in enumerate(claims):
+                if type(claim) is not dict or set(claim) != {"blob"}:
+                    raise BoundaryError("invalid image document attachment fields")
+                index = claim["blob"]
+                if (
+                    type(index) is not int
+                    or not 0 <= index < len(blobs)
+                    or index != len(blobs) - len(claims) + position
+                ):
+                    raise BoundaryError("invalid image document attachment blob index")
+                publish_image_document(blobs[index])
+            return tuple(artifacts)
+    except ValueError as exc:
+        raise BoundaryError(str(exc)) from exc
 
 
 def _encode_preview_artifacts(
@@ -1200,7 +1255,7 @@ def _encode_preview_artifacts(
 
 
 def _decode_preview_artifacts(
-    header: Mapping[str, Any], blobs: Sequence[bytes]
+    header: Mapping[str, Any], blobs: Sequence[bytes], *, trailing_blobs: int = 0
 ) -> tuple[EncodedPreviewArtifact, ...]:
     from dinkster_schema.reporting import capture_preview_artifacts, publish_preview_artifact
 
@@ -1216,7 +1271,7 @@ def _decode_preview_artifacts(
                 if (
                     type(index) is not int
                     or not 0 <= index < len(blobs)
-                    or index != len(blobs) - len(claims) + position
+                    or index != len(blobs) - trailing_blobs - len(claims) + position
                 ):
                     raise BoundaryError("invalid preview artifact blob index")
                 publish_preview_artifact(
@@ -1851,11 +1906,15 @@ def decode_result(
     consumed: list[str],
 ) -> tuple[InvocationResult, dict[str, TransferStat]]:
     """Decode ordinary values or one scalar expansion onto the same handoff path."""
+    documents = _decode_image_documents(header, blobs)
     if "resultAlgebra" not in header:
         outputs, stats = decode_result_outputs(codec, header, blobs, consumed)
         return InvocationResult(
             outputs=outputs,
-            preview_artifacts=_decode_preview_artifacts(header, blobs),
+            preview_artifacts=_decode_preview_artifacts(
+                header, blobs, trailing_blobs=len(documents)
+            ),
+            image_documents=documents,
             saved_artifact_claims=decode_saved_artifact_claims(header),
             saved_file_previews=decode_saved_file_previews(header),
         ), stats
@@ -1872,14 +1931,16 @@ def decode_result(
             "attemptId",
             "artifactCandidates",
             "previewArtifacts",
+            "imageDocuments",
+            "imageDocumentSources",
             "savedArtifactClaims",
             "savedFilePreviews",
         }
     ):
         raise BoundaryError("invalid invocation expansion frame fields")
     payload = {key: header[key] for key in fields if key in header}
-    previews = _decode_preview_artifacts(header, blobs)
-    value_blobs = blobs[: len(blobs) - len(previews)]
+    previews = _decode_preview_artifacts(header, blobs, trailing_blobs=len(documents))
+    value_blobs = blobs[: len(blobs) - len(previews) - len(documents)]
     if "blobs" in payload:
         lengths = payload["blobs"]
         if type(lengths) is not list or lengths != [len(blob) for blob in blobs]:
@@ -1895,6 +1956,7 @@ def decode_result(
     return InvocationResult(
         expansion=outcome.batch.units[0],
         preview_artifacts=previews,
+        image_documents=documents,
         saved_artifact_claims=decode_saved_artifact_claims(header),
         saved_file_previews=decode_saved_file_previews(header),
     ), {name: stat for (_, name), stat in stats.items()}
