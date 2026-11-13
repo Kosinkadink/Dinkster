@@ -120,8 +120,10 @@ Setup prepares its catalogs before sealing. After stopping its assigned backend,
 the current checkout engine serves the generation's admitted packs and runtimes;
 it does not substitute the published engine catalog or checkout defaults.
 An unavailable default pack or an empty default catalog fails the export.
-There is no hand-picked file list, network-marker exclusion
-or changed-path runtime deselection. The four audited environment suites retain
+There is no hand-picked file list, network-marker exclusion,
+forced offline mode, or changed-path runtime deselection. Real install tests
+acquire their dependencies; tests of offline behavior control their own inputs.
+The four audited environment suites retain
 their existing nonblocking policy under #867.
 
 `tools/ci_selection.py` additionally selects changed packs' behavioral tests;

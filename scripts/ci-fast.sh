@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Dependency and build-backend provisioning belongs to setup, not the gate.
-export UV_OFFLINE=1
-
 if [ "${1:-all}" != tests ]; then
 python scripts/develop.py run -- python tools/gen_extension_contribution_kinds.py --check
 python scripts/develop.py run -- python scripts/check_extension_factories.py \
