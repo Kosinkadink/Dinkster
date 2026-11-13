@@ -27,10 +27,6 @@ _EXCLUDED = frozenset(
         ".hg",
         ".svn",
         ".amp",
-        ".run",
-        ".evidence-source",
-        ".coverage-inputs",
-        ".frontend-validation",
         ".venv",
         ".tox",
         ".pytest_cache",
@@ -144,13 +140,12 @@ def development_selection(
     live_engine: bool = False,
     live_packs: tuple[Path, ...] = (),
     live_libraries: tuple[Path, ...] = (),
-    contributor: bool = False,
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
-    if not packs and not contributor:
+    if not packs:
         raise EnvironmentError("development requires at least one explicit --pack-source")
     live_paths: dict[str, set[Path]] = {
-        "engine": {source.resolve()} if live_engine or contributor else set(),
+        "engine": {source.resolve()} if live_engine else set(),
         "pack": {path.resolve() for path in live_packs},
         "library": {path.resolve() for path in live_libraries},
     }
@@ -185,22 +180,12 @@ def development_selection(
                     "kind": kind,
                     "path": str(root),
                     "live": root in live_paths[kind],
-                    "packageRoots": (
-                        [
-                            ".",
-                            *[
-                                project.parent.relative_to(root).as_posix()
-                                for project in sorted(root.glob("packages/*/pyproject.toml"))
-                            ],
-                        ]
-                        if contributor
-                        else [
-                            ".",
-                            "packages/dinkster-api",
-                            "packages/dinkster-engine",
-                            "packages/dinkster-supervisor",
-                        ]
-                    )
+                    "packageRoots": [
+                        ".",
+                        "packages/dinkster-api",
+                        "packages/dinkster-engine",
+                        "packages/dinkster-supervisor",
+                    ]
                     if kind == "engine"
                     else ["."],
                     "contentDigest": _identity(files),
@@ -216,11 +201,7 @@ def development_selection(
                     ),
                 }
             )
-    return {
-        "format": "dinkster.development-sources/1",
-        "sources": rows,
-        "contributor": contributor,
-    }
+    return {"format": "dinkster.development-sources/1", "sources": rows}
 
 
 def verify_development_sources(selection: dict[str, Any]) -> None:

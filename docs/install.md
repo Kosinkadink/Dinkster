@@ -215,38 +215,52 @@ and the [registry client guide](../packages/dinkster-registry/README.md#use).
 
 ## Develop from source
 
-Run `./run.sh` on Linux/macOS or `.\run.ps1` on Windows. The launcher builds
-the pinned frontend and prepares a contributor generation with a live engine.
-For setup and tools without a frontend build:
+The run scripts above are the default source installation path. For a manual
+development setup, clone the backend and frontend as sibling directories, then run:
 
 ```sh
-uv run --no-project python scripts/develop.py setup --yes
-python scripts/develop.py run -- python -m pytest -q
-python scripts/develop.py run -- ruff check .
-python scripts/develop.py run -- pyright
+uv run --no-project python scripts/setup_envs.py
+cd ../Dinkster-Frontend
+pnpm install --frozen-lockfile
+pnpm --filter @dinkster/app build
+cd ../Dinkster
+uv run --no-sync python -m dinkster.serve --watch-packs --library-root .run/library --allow-mount-changes --prepare-stale-catalogs --frontend-root ../Dinkster-Frontend/packages/app/dist
 ```
 
-Setup creates a sibling `.<checkout-name>-development` project, not a root
-`.venv`. `run` executes commands in its active generation, preserves the working
-directory, forwards input/output and returns the command's exit status. Plain
-`uv run` and `uv sync` in the checkout cannot replace that generation's torch.
-Rerun setup after dependency changes. Source-only engine edits need a stop/start:
-`python scripts/develop.py stop`, then `python scripts/develop.py start`.
-Use `python scripts/develop.py --root /absolute/project ...` to select another
-project consistently for setup, tools and runtime commands.
+Open `http://127.0.0.1:3639` in the browser. This explicitly selects live checkout
+development, not published setup: the terminal and served catalog label it as
+unreviewed and not reproducible from dependency ranges. Changes reload from the
+selected source folders. For a captured development generation instead, use
+[`dinkster develop`](#development-packs-from-local-folders).
+Do not expose the engine directly
+to the Internet; read [authentication](auth.md) before configuring shared
+access.
 
-CPU is the default on Linux and Windows. Select `--variant linux-nvidia` or
-`--variant win-nvidia` explicitly for an NVIDIA development runtime. Apple Silicon
-uses `mac-arm64` with MPS; Intel macOS is unsupported. Development resolves the
-checkout's locked requirements against the selected variant's torch index,
-records the resulting inventory and uses the generation's isolated interpreter.
-It does not change published setup or channel selection.
+The shared Python setup installs only one runtime in `.venv`: the published
+Linux NVIDIA/CPU base, a Windows NVIDIA/CPU base compatible with the detected
+hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
+Exact Python and torch versions come from the verified base manifest,
+not a local version override. `scripts/base_bundles.json` selects published
+content identities from Dinkster-Environments. Setup checks the variant's
+`index.json` first and prefers the unique labelled publication for that exact
+pinned id, verifying its manifest before acquiring its archives. It falls back
+to the legacy full-id directory only if the index is absent or has no labelled
+match.
+The index never selects a newer base or overrides a failed verification.
+Hash-locked workspace dependencies
+and editable packages are installed on top without resolving torch again.
+Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
+does not install CUDA wheels. Rerun setup after checkout or dependency changes;
+`--force` rebuilds its `.venv`, retaining the verified bundle store.
 
-The terminal and served catalog label live development as unreviewed and not
-reproducible from dependency ranges. For captured development instead, use
-[`dinkster develop`](#development-packs-from-local-folders). Do not expose the
-engine directly to the Internet; read [authentication](auth.md) before configuring
-shared access.
+`linux-nvidia` supplies the cu132 torch family and its complete Linux CUDA
+closure. It requires Linux x86_64 with glibc 2.28+, NVIDIA driver 580+ and
+compute capability 7.5+. Use `--variant linux-nvidia` to request it explicitly;
+an incompatible machine is refused rather than resolving another CUDA runtime.
+
+The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
+torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
+an explicit message; it never falls back to a separate dependency resolution.
 
 ### Apple Silicon macOS
 
@@ -269,11 +283,18 @@ Apple signing and notarization are tracked separately in
 [Apple signing](https://github.com/Kosinkadink/comfy-vibe-station/issues/501);
 they are not prerequisites for the tools or engine environment.
 
-A maintainer evidence checkout is optional. Select its acceptance package with
-`--library-source /absolute/evidence/packages/dinkster-acceptance` during
-contributor setup. `python scripts/develop.py run -- COMMAND` sets
-`DINKSTER_EXECUTION_PYTHON` to the active generation's interpreter automatically.
-The generation includes Dinkster's pinned `dinkster_inference` runtime.
+A maintainer evidence checkout is optional. If `DINKSTER_EVIDENCE_ROOT` selects
+one, setup also installs its `dinkster-acceptance` package. The run scripts set
+`DINKSTER_EXECUTION_PYTHON` automatically; for manual launch use:
+
+| Platform | Execution interpreter |
+| --- | --- |
+| Linux NVIDIA or CPU | `$PWD/.venv/bin/python` |
+| Apple Silicon macOS (`mac-arm64`) | `$PWD/.venv/bin/python` |
+| Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
+
+The selected execution environment installs Dinkster's pinned `dinkster_inference`
+runtime when the native or compatibility worker is provisioned.
 
 ### User-defined environment variants
 
@@ -378,8 +399,8 @@ With `--from-scratch`, `--variants /absolute/variants.toml` selects the
 interpreter and variant definitions used for checkout-local resolution;
 without it, the same option selects the supported custom-base rows above.
 
-Contributor setup uses this local resolution through `python scripts/develop.py
-setup --variant linux-cpu --yes`, with the same `--python`/`--variants` overrides.
+Contributor setup exposes the same opt-in with `python scripts/setup_envs.py
+--from-scratch --variant linux-cpu` and the same `--python`/`--variants` overrides.
 Neither Desktop nor channel updates choose it automatically. Local generations
 are marked `source: local`; doctor reports their local origin and checks their
 recorded inventory. Channel update refuses them: install a fresh published
@@ -404,13 +425,15 @@ A version string cannot distinguish the patched library. Acquisition and bundle
 extraction require a functional WAL read and integrity check with the mapping
 held open, followed by a released-mapping control.
 
-Contributor setup prepares the patched interpreter privately before constructing
-the generation. The selected environment must pass the functional check,
-including when reusing cached interpreter artifacts:
+`scripts/setup_envs.py` installs the published base into its private store and
+uses it for `.venv`. On Windows the selected environment must pass the functional
+check and use that exact private base, including when reusing an existing store
+or environment. Use `--force` to recreate an environment using a different base.
+For manual root-only setup from the checkout:
 
 ```powershell
-uv run --no-project python scripts/develop.py setup --variant win-cpu --yes
-python scripts/develop.py run -- python -m pytest -q
+uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py --output .run/windows-python
+uv sync --python .run/windows-python/python/python.exe --all-packages --frozen
 ```
 
 Preparation verifies immutable Dinkster-Environments source pins, the original

@@ -1007,8 +1007,8 @@ uv run ruff format --check .
 uv run pyright
 uv build --wheel
 uv pip install --no-deps --reinstall dist/*.whl
-uv run --no-project --python .venv python -m pytest -q
-uv run --no-project --python .venv dinkster-doctor .
+uv run --no-sync pytest -q
+uv run --no-sync dinkster-doctor .
 ```
 
 Tests call nodes directly over plain values; doctor runs independently.
@@ -1053,7 +1053,7 @@ def test_shout():
     assert out == {"shouted": "HEY!HEY!"}
 ```
 
-Gate CI on `uv run --no-project --python .venv dinkster-doctor .` as its own step (see the
+Gate CI on `uv run --no-sync dinkster-doctor .` as its own step (see the
 [template workflow](https://github.com/Kosinkadink/dinkster-pack-template/blob/main/.github/workflows/ci.yml)).
 Don't import the doctor from your tests: tests live in the pack
 directory, so they hold to the same one-door rule as the rest of your code,

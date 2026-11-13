@@ -147,6 +147,8 @@ faulthandler_timeout = 600
 
 [tool.pyright]
 pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
 include = ["packages", "src", "tests"]
 extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 # Torch execution modules are checked in their isolated worker environment.

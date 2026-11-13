@@ -19,20 +19,14 @@ runs:
         evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
         coverage: "false"
     - uses: astral-sh/setup-uv@v5
-    - name: Prepare the CPU contributor generation
+    - name: Install the published CPU base and locked workspace
       shell: bash
-      run: |
-        uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
-        python scripts/develop.py stop --yes
-        if [ -n "${DINKSTER_EVIDENCE_ROOT:-}" ]; then
-          python scripts/develop.py run -- python -c 'import subprocess, sys; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
-            "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
-        fi
+      run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
     - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
         grep -m1 'model name' /proc/cpuinfo
-        python scripts/develop.py run -- python - <<'PY'
+        .venv/bin/python - <<'PY'
         import torch
         capability = torch.backends.cpu.get_cpu_capability()
         print(f"torch {torch.__version__} ATen CPU capability: {capability}")
@@ -47,14 +41,14 @@ runs:
             *-vision-*|*-dev|*-remote) continue ;;
           esac
           if [ -d "$package/tests" ]; then
-            python scripts/develop.py run -- python -m pytest -q "$package/tests" ${{ inputs.comfy-pytest-args }}
+            .venv/bin/python -m pytest -q "$package/tests" ${{ inputs.comfy-pytest-args }}
           fi
         done
-        python scripts/develop.py run -- python -m pytest --import-mode=importlib -q tests/first_party_runtime tests/test_comfy_vae_nodes.py ${{ inputs.comfy-pytest-args }}
+        .venv/bin/python -m pytest --import-mode=importlib -q tests/first_party_runtime tests/test_comfy_vae_nodes.py ${{ inputs.comfy-pytest-args }}
     - name: Check vision types
       if: inputs.suite != 'comfy'
       shell: bash
-      run: python scripts/develop.py run -- pyright packages/dinkster-nodes-vision-*/src
+      run: .venv/bin/pyright packages/dinkster-nodes-vision-*/src
     - name: Test CPU vision and root contracts
       if: inputs.suite != 'comfy'
       shell: bash
@@ -63,16 +57,16 @@ runs:
       run: |
         for package in packages/dinkster-nodes-vision-*; do
           if [ -d "$package/tests" ]; then
-            python scripts/develop.py run -- python -m pytest -q "$package/tests"
+            .venv/bin/python -m pytest -q "$package/tests"
           fi
         done
-        python scripts/develop.py run -- python -m pytest -v \
+        .venv/bin/python -m pytest -v \
           tests/test_audio_materializer.py \
           tests/test_cpu_pack_composition.py \
           tests/workers/test_attention.py \
           tests/test_fork_loader_torch.py \
           tests/workers/test_legacy_sources.py \
           tests/test_compose.py::test_full_free_releases_tensors_held_by_memory_execution_cache
-        python scripts/develop.py run -- python -m pytest -v \
+        .venv/bin/python -m pytest -v \
           .evidence-source/h3-parity/test_run_comparison.py \
           .evidence-source/model-family-comparison/test_validate.py

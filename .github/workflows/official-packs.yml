@@ -163,7 +163,7 @@ jobs:
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           ENGINE_PUBLISHED: ${{ steps.engine_release.outputs.published }}
         run: |
-          uv run --no-project --python .venv python - <<'PY'
+          uv run --no-sync python - <<'PY'
           import json, os, subprocess
           from pathlib import Path
           from scripts.select_official_packs import publication_selection, pull_request_selection, select_packs
@@ -198,7 +198,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PACKS: ${{ steps.select.outputs.packs }}
-        run: uv run --no-project --python .venv python -m scripts.recover_official_publication --run "${{ github.run_id }}" --packs "$PACKS"
+        run: uv run --no-sync python -m scripts.recover_official_publication --run "${{ github.run_id }}" --packs "$PACKS"
 
   sources:
     needs: select
@@ -225,7 +225,7 @@ jobs:
           ENGINE_COMMIT: ${{ needs.select.outputs.engine }}
           CANDIDATE: ${{ github.event_name != 'workflow_run' && github.event_name != 'workflow_dispatch' }}
         run: |
-          uv run --no-project --python .venv python - <<'PY'
+          uv run --no-sync python - <<'PY'
           import json, os
           from pathlib import Path
           from scripts.prepare_official_publication import prepare_inputs
@@ -280,7 +280,7 @@ jobs:
         if: github.event_name == 'workflow_run'
         env:
           ORIGINAL_HEAD: ${{ needs.select.outputs.recovery_head }}
-        run: uv run --no-project --python .venv python -m scripts.recover_official_publication --validate .official-publication --head "$ORIGINAL_HEAD"
+        run: uv run --no-sync python -m scripts.recover_official_publication --validate .official-publication --head "$ORIGINAL_HEAD"
       - uses: actions/upload-artifact@v4
         with:
           name: official-publication-inputs
@@ -331,7 +331,7 @@ jobs:
         env:
           VARIANT: ${{ matrix.variant }}
         run: |
-          uv run --no-project --python .venv python -m scripts.build_release_pack_locks \
+          uv run --no-sync python -m scripts.build_release_pack_locks \
             --release .official-publication/engine --sources .official-publication/sources \
             --base-manifest ".official-publication/bases/$VARIANT/manifest.json" \
             --output ".official-publication/locks/$VARIANT"
@@ -361,9 +361,9 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers --package dinkster-supervisor
       - name: Stage the complete scanner dependency index
-        run: uv run --no-project --python .venv python -m scripts.stage_publication_probe_index --sources .official-publication/sources --engine .official-publication/engine --bases .official-publication/bases --output .probe-index
+        run: uv run --no-sync python -m scripts.stage_publication_probe_index --sources .official-publication/sources --engine .official-publication/engine --bases .official-publication/bases --output .probe-index
       - name: Prepare publisher ordering and dependency controls before isolation
-        run: uv run --no-project --python .venv python -m scripts.check_publication_controls prepare --bases .official-publication/bases --engine .official-publication/engine --runtime-mirror .probe-index/runtime --output .publication-controls
+        run: uv run --no-sync python -m scripts.check_publication_controls prepare --bases .official-publication/bases --engine .official-publication/engine --runtime-mirror .probe-index/runtime --output .publication-controls
       - uses: actions/upload-artifact@v4
         with:
           name: disposable-probe-index
@@ -471,7 +471,7 @@ jobs:
           if [ "$CANDIDATE" != true ] || [ "$PULL_REQUEST" = true ]; then arguments+=(--check-published); fi
           for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
-          uv run --no-project --python .venv python -m scripts.publish_official_packs \
+          uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
             --engine-manifest .official-publication/engine/release-manifest.json \
             --output .official-publication/preflight || {
@@ -493,7 +493,7 @@ jobs:
           arguments=()
           for base in .official-publication/bases/*/manifest.json; do arguments+=(--base-manifest "$base"); done
           for lock in .official-publication/locks/*.pack-lock.json; do arguments+=(--pack-lock "$lock"); done
-          timeout --kill-after=30s 12m uv run --no-project --python .venv python -m scripts.publish_official_packs \
+          timeout --kill-after=30s 12m uv run --no-sync python -m scripts.publish_official_packs \
             --sources .official-publication/sources "${arguments[@]}" \
             --engine-manifest .official-publication/engine/release-manifest.json \
             --output .official-publication/submitted --publish

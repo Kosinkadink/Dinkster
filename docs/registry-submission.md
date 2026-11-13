@@ -105,8 +105,8 @@ PY
 uv sync --python 3.12
 uv build --wheel
 uv pip install --no-deps --reinstall dist/*.whl
-uv run --no-project --python .venv python -m pytest -q
-uv run --no-project --python .venv dinkster-doctor .
+uv run --no-sync pytest -q
+uv run --no-sync dinkster-doctor .
 ```
 
 Expect one passing test and doctor `healthy: 0 error(s), 0 warning(s)`.
@@ -159,7 +159,7 @@ automation uses your registry's HTTPS origin and publisher token.
 
 <!-- registry-command: submit -->
 ```sh
-uv run --no-project --python .venv python - <<'PY'
+uv run --no-sync python - <<'PY'
 import json
 import os
 import time
