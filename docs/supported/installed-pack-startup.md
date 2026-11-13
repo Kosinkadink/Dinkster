@@ -907,7 +907,7 @@ bootstraps only the supervisor, then uses that same contributor generation build
 The default project is the checkout's sibling `.<checkout-name>-development`,
 not its root `.venv`. Use `python scripts/develop.py run -- python -m pytest`
 for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
-`run.sh` or `run.cmd` builds the pinned frontend and selects it on the contributor
+`run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
 generation. The CPU variant is the default; pass `--variant NAME` to setup for
 another host-compatible variant.
 
@@ -961,8 +961,7 @@ of its last inputs can make exact recovery unavailable.
 Source paths, package roots, content digests and available Git commit/dirty state
 describe the captured working bytes, including selected untracked edits. Recovery
 does not reset, clean, overwrite or back up author folders. Workflows, models,
-outputs and other project data are not recovered by software restore. No bundled
-Git or Git-URL fetching is provided by this operation. Contributor commands
-run in their selected generation, separately from any checkout-managed uv
+outputs and other project data are not recovered by software restore. Contributor
+commands run in their selected generation, separately from any checkout-managed uv
 environment. That separation does not make live edits recoverable; omit live
 marks when an exactly restorable capture is needed.
