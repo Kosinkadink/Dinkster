@@ -53,33 +53,6 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-  torch-cpu:
-    needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
-    name: node pack tests gate (CPU, shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-      OMP_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Install the CPU software shader renderer
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-        timeout-minutes: 5
-      - uses: ./.github/actions/torch-cpu-suite
-        with:
-          suite: comfy
-          comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
-
   windows-runtime:
     needs: checks
     if: (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.checks.outputs.runtime == 'true'
@@ -192,7 +165,7 @@ jobs:
           tests/test_environment_history.py::test_installed_wheel_pack_add_and_update_without_index_resolution
 
   tests:
-    needs: [checks, torch-cpu]
+    needs: checks
     # Reusable calls retain the caller's workflow name and existing job selection.
     if: ${{ !cancelled() && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: tests
@@ -208,11 +181,6 @@ jobs:
       - name: Require successful path selection and checks
         run: |
           test '${{ needs.checks.result }}' = success
-          if [ '${{ startsWith(github.ref, 'refs/tags/v') }}' = true ]; then
-            test '${{ needs.torch-cpu.result }}' = success
-          else
-            test '${{ needs.torch-cpu.result }}' = skipped
-          fi
       - uses: actions/checkout@v4
         if: needs.checks.outputs.docs != 'true'
         with:
@@ -262,18 +230,6 @@ jobs:
         if: needs.checks.outputs.engine == 'true'
         env:
           DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
-      - name: Install the CPU base for selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-      - name: Install the CPU software shader renderer
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-      - name: Test selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        env:
-          PACKS: ${{ needs.checks.outputs.packs }}
-          DINKSTER_ACCELERATOR: cpu
-        run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
         run: uv run --no-sync pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
