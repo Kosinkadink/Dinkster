@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import errno
 import ipaddress
 import logging
 import os
@@ -83,7 +84,7 @@ import socket
 import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -688,6 +689,8 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)
+    parser.add_argument("--activation-journal", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--activation-name", help=argparse.SUPPRESS)
     parser.add_argument(
         "--allow-host",
         action="append",
@@ -748,6 +751,10 @@ def main() -> None:
         args.process_state is None or not args.environment_root.is_absolute()
     ):
         parser.error("--environment-root requires --process-state and an absolute project path")
+    if args.activation_journal is not None and (
+        args.environment_root is None or not args.activation_name
+    ):
+        parser.error("--activation-journal requires --environment-root and --activation-name")
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
     command = list(args.engine)
@@ -792,9 +799,59 @@ def main() -> None:
         app.on_cleanup.append(stop_engine)
         runner = web.AppRunner(app)
         maintenance: asyncio.Task[None] | None = None
+        listener: socket.socket | None = None
         try:
+            if args.activation_journal is not None:
+                from .environment_state import EnvironmentError, Journal, write_document
+
+                journal = Journal.read(args.activation_journal)
+                if (
+                    args.activation_journal.parent != args.environment_root / "journal"
+                    or journal.stage != "starting"
+                    or not any(
+                        row["name"] == args.activation_name and row["targetPort"] == args.port
+                        for row in journal.bindings
+                    )
+                ):
+                    raise EnvironmentError("activation listener does not match its journal")
+                try:
+                    listener = socket.create_server((args.host, args.port))
+                except OSError as exc:
+                    if exc.errno != errno.EADDRINUSE and not (
+                        os.name == "nt"
+                        and (exc.errno == errno.EACCES or getattr(exc, "winerror", None) == 10013)
+                    ):
+                        raise
+                    other_ports = {
+                        row["targetPort"]
+                        for row in journal.bindings
+                        if row["name"] != args.activation_name
+                    }
+                    with contextlib.ExitStack() as reservations:
+                        while True:
+                            listener = socket.create_server((args.host, 0))
+                            if listener.getsockname()[1] not in other_ports:
+                                break
+                            reservations.enter_context(listener)
+                port = listener.getsockname()[1]
+                replace(
+                    journal,
+                    bindings=tuple(
+                        row | {"targetPort": port} if row["name"] == args.activation_name else row
+                        for row in journal.bindings
+                    ),
+                ).write(args.activation_journal)
+                # Recovery can find the owned listener even if its launcher exits now.
+                write_document(
+                    args.process_state / "listener.json",
+                    {"instance": args.instance, "port": port},
+                )
             await runner.setup()
-            site = web.TCPSite(runner, args.host, args.port)
+            site = (
+                web.SockSite(runner, listener)
+                if listener is not None
+                else web.TCPSite(runner, args.host, args.port)
+            )
             await site.start()
             if args.environment_root is not None:
                 from .environment_collection import maintain_generations
@@ -812,7 +869,11 @@ def main() -> None:
                 try:
                     await runner.cleanup()
                 finally:
-                    await engine.close()
+                    try:
+                        await engine.close()
+                    finally:
+                        if listener is not None:
+                            listener.close()
             if args.process_state is not None:
                 complete_process(args.process_state, args.instance, descendants=family.proven)
 
