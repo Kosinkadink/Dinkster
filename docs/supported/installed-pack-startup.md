@@ -14,6 +14,27 @@
   pinned work from a retired composition remains subject to the same policy.
   Unrelated workers continue. Pending vulnerable work continues until denied.
   A signed lift clears the classification without resuming a stopped worker.
+  Runtime security status names the affected release digest and issuing registry,
+  exact notice details and decision, last successful verification, and separate
+  cached, expired, not-received and not-provisioned feed states. Expired evidence
+  is not a refusal unless an explicit maximum-age policy requires one. Recovery
+  status distinguishes policy allowance from execution and never claims an
+  unreviewed repair is compatible or automatically resumes stopped work.
+  Public environment commands accept exact-notice approval/disapproval changes
+  after unattended start and authenticated signed-feed file import. Rejected
+  imports preserve cached evidence and answers; neither operation resumes work.
+  Operators can read or explicitly change vulnerability refusal and maximum feed
+  age through `security --json policy`. Policy reads do not fetch feeds or create
+  configuration. Changes preserve mirror/timing settings and accepted evidence;
+  invalid values leave the previous policy intact. A new host reads configured
+  policy before assessment, and a running host reloads it on refresh.
+  `security --json list` inspects the current sealed generation, and
+  `security --json details --pack PACK` selects one installed pack. Either can
+  inspect a retained `--generation N`. Results include transitive dependency
+  findings, exact generation/software identity and cached verification details,
+  even when security policy refuses execution. Inspection does not refresh feeds,
+  import pack code, acquire payloads, alter evidence or resume work. Unknown packs
+  and changed sealed inputs refuse; offline work inventory is explicitly unavailable.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
@@ -43,6 +64,20 @@
   Planning downloads metadata only: it does not import packs, acquire payloads,
   change current software or approve an installation. An offer requires a separate
   host-owned approval plan; no compatible offer leaves the refusal in effect.
+  `security --json fix-one --pack PACK` previews a repair for the current
+  generation, including a pending vulnerable pack. `--output DIR` prepares the
+  exact offered source and dependency locks for review rather than resolving
+  the release again. Applying retained inputs requires `--input DIR --approval
+  DIGEST` and uses the existing generation build and activation checks.
+  `security --json fix-all` reviews one jointly compatible selection for all
+  flagged packs, not independent changes that can conflict when combined.
+  If no joint selection clears every target, nothing is retained or applied.
+  Search considers at most 512 combinations; exhaustion reports
+  `search-incomplete`, not absence of a compatible fix. CLI metadata search
+  stops after 120 seconds without changing the selected generation.
+  Both repair commands accept `--progress FILE`; a sibling `FILE.cancel`
+  cancels preparation before the next progress boundary, including before
+  activation. Cancellation does not select the replacement generation.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.
@@ -828,8 +863,10 @@ dinkster develop --root /absolute/project --source /absolute/engine --pack-sourc
 Replace the example branch, pull request, fork and package directory with the
 source you want to run. Review the plan, then repeat it with `--approve` and
 `--yes` as above. This explicitly runs unreviewed development code. Private
-repositories, credentials in URLs, non-HTTPS URLs, submodules and LFS pointers
-in selected content are refused. Ambient git rewrites and TLS settings do not
+repositories, credentials in URLs, non-HTTPS URLs, symlinks, submodules and LFS
+pointers in selected content are refused. Git sources are captured inputs, not
+live folders; live local inputs can be mixed with captured git inputs.
+Ambient git rewrites and TLS settings do not
 apply; a configured HTTP proxy is honored. History records the credential-free
 URL, requested ref, resolved commit, selected subdirectory and content digest.
 Restore uses the retained wheels, not the current remote branch; running develop
@@ -840,11 +877,29 @@ folders or wheels. Omit library inputs when none are needed. Choose a base varia
 matching the host; `--python /absolute/python` explicitly selects an existing
 interpreter instead of the configured standalone interpreter. Use `--port PORT`
 when the default listener is occupied. Project and store directories must be
-outside selected source folders. Building uses verified copies, never editable
-installs into author folders. Selected helper wheels participate in engine
+outside selected source folders. Unmarked sources build from verified copies.
+Use `--live-engine`, `--live-pack /absolute/pack`, or
+`--live-library /absolute/helper` on both plan and apply commands to run from
+explicitly selected local folders instead. A live folder must also be a source
+in that command; wheels are not live. Live packs run isolated and reload after
+code edits without restarting the server. Engine and library edits, including
+inference edits, take effect after stop/start without another `develop` build.
+Dependency or manifest changes require a new build. Live engine and library
+installs belong to generation interpreters, not the checkout's tooling environment.
+Status and doctor show current live library versions and git commits. History,
+status and cleanup descriptions name the live folders and say that the generation
+changes with them and cannot be restored exactly. Restore and rollback refuse a
+live snapshot; omit all live marks to capture a restorable generation.
+
+Selected helper wheels participate in engine
 resolution before packs are built, including replacements for engine dependencies
-whose real versions still satisfy the declared constraints. Explicitly selected
-first-party packs may use their reserved namespaces only in this development
+whose real versions still satisfy the declared constraints. The exception is an
+explicitly selected local `dinkster-inference`: `develop` may override the engine's
+exact inference pin, reports the pinned and local versions, and retains the local
+wheel for restore. For example, add `--library-source /absolute/dinkster-inference`
+to both commands above. Other dependencies and non-development installs keep
+their declared constraints; this does not loosen the published inference pin.
+Explicitly selected first-party packs may use their reserved namespaces only in this development
 capture; this does not grant registry admission. Missing sources, changed plan inputs, incompatible
 API ranges and dependency conflicts refuse rather than inventing versions or
 dropping constraints.

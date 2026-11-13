@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 from contextlib import ExitStack
@@ -16,6 +17,7 @@ from pathlib import Path
 from platform import machine
 from time import monotonic
 from typing import cast
+from uuid import UUID
 
 from dinkster_store import object_path, pack_archive_path
 
@@ -47,7 +49,7 @@ from .environment_custom import (
     prepare_custom_pack_locks,
     variant_file,
 )
-from .environment_development import DEVELOPMENT_DESCRIPTION
+from .environment_development import development_description, live_source_status
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -59,7 +61,7 @@ from .environment_generations import (
 )
 from .environment_history import activation_entries, attempts, history, import_generation
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
-from .environment_pack_install import apply_pack_install, plan_pack_install
+from .environment_pack_install import apply_pack_install, inspect_pack_install, plan_pack_install
 from .environment_progress import observe_preparation
 from .environment_restore import restore_entry
 from .environment_runtime import (
@@ -78,6 +80,7 @@ from .environment_state import (
     atomic_write,
     content_digest,
     generation_number,
+    interpreter,
     read_current,
     read_document,
     write_document,
@@ -137,7 +140,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         for entry in entries:
             snapshot = cast("dict[str, object]", entry["snapshot"])
             if "development-sources.json" in cast("dict[str, str]", snapshot["metadata"]):
-                entry["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+                entry["sourceDescription"] = development_description(
+                    json.loads(
+                        cast("dict[str, str]", snapshot["metadata"])["development-sources.json"]
+                    )
+                )
         if args.history_action == "show":
             selected = next((entry for entry in entries if entry["id"] == args.entry), None)
             if selected is None:
@@ -152,7 +159,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
         if "development-sources.json" in dict(generation.files):
-            result["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+            development = read_document(generation_root / "development-sources.json")
+            result["sourceDescription"] = development_description(development)
+            result["liveSources"] = live_source_status(development)
         manifest = generation_root / "base-manifest.json"
         if generation.source != "local" and manifest.is_file():
             base = read_document(manifest)
@@ -228,10 +237,13 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
             missing = missing_inputs(snapshots[-1], store, offline=True)
-            result["exactRecovery"] = {"available": not missing, "missing": missing}
+            live = bool(result["liveSources"])
+            result["exactRecovery"] = {"available": not live and not missing, "missing": missing}
             result["plan"] = [
-                DEVELOPMENT_DESCRIPTION,
-                "exact recovery artifacts retained"
+                cast("str", result["sourceDescription"]),
+                "live sources cannot be restored exactly; run develop without live marks to capture"
+                if live
+                else "exact recovery artifacts retained"
                 if not missing
                 else "exact recovery artifacts missing; restore will refuse",
             ]
@@ -488,7 +500,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 args.source,
                 tuple(args.pack_source),
                 tuple(args.library_source),
-                getattr(args, "git_origins", None),
+                git_origins=getattr(args, "git_origins", None),
+                live_engine=args.live_engine,
+                live_packs=tuple(args.live_pack),
+                live_libraries=tuple(args.live_library),
             )
             for row in development["sources"]:
                 source = Path(row["path"])
@@ -527,12 +542,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if development is not None:
             plan.extend(
                 [
-                    DEVELOPMENT_DESCRIPTION,
+                    development_description(development),
                     *[
-                        f"capture {row['kind']} {row['path']} ({row['contentDigest']})"
+                        f"{'live' if row.get('live') else 'capture'} {row['kind']} "
+                        f"{row['path']} ({row['contentDigest']})"
                         for row in development["sources"]
                     ],
-                    "restore recovers the captured runtime only; author folders stay untouched",
+                    "author folders stay untouched; only captured generations restore exactly",
                 ]
             )
     else:
@@ -1397,12 +1413,187 @@ def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
+    from .limits import SECURITY_FEED_LIMIT_BYTES
+    from .security.host import HostSettings, SecurityHost
+
+    if not (args.root / "security.sqlite3").is_file():
+        raise EnvironmentError("security operation requires an independently provisioned install")
+    host = SecurityHost(args.root)
+    if args.security_action in {"fix-one", "fix-all"}:
+        if args.input is not None:
+            if args.approval is None or args.pack is not None or args.output is not None:
+                raise EnvironmentError("apply a repair with only --input and its exact --approval")
+            result.update(apply_pack_install(args.root, args.input, args.approval))
+        else:
+            all_packs = args.security_action == "fix-all"
+            if (args.pack is None) != all_packs or args.approval is not None:
+                raise EnvironmentError("fix-one requires --pack; fix-all does not accept --pack")
+            if args.output is None:
+                result.update(status="planned")
+                result.update(
+                    inspect_pack_install(
+                        args.root, (), security_pack=args.pack, security_all=all_packs
+                    )
+                )
+            else:
+                result.update(
+                    plan_pack_install(
+                        args.root, (), args.output, security_pack=args.pack, security_all=all_packs
+                    )
+                )
+        return 0
+    if args.security_action in {"list", "details"}:
+        number = args.generation if args.generation is not None else read_current(args.root)
+        if number is None:
+            raise EnvironmentError("security inspection requires a selected generation")
+        generation = args.root / "generations" / str(generation_number(number))
+        software = content_digest(generation / "generation.json")
+        record = Generation.read(generation / "generation.json")
+        if (
+            record.number != number
+            or record.drift(generation)
+            or any(
+                path.is_symlink() or path.is_junction()
+                for path in (generation / "generation.json", generation, *generation.parents)
+            )
+        ):
+            raise EnvironmentError("security inspection requires intact sealed software")
+        command = [
+            str(interpreter(generation)),
+            "-I",
+            "-B",
+            "-m",
+            "dinkster.manager",
+            "--root",
+            str(args.root),
+            "security-status",
+            "--generation",
+            str(generation),
+        ]
+        if args.security_action == "details":
+            command.extend(["--pack", args.pack])
+        completed = subprocess.run(command, capture_output=True, text=True)
+        if completed.returncode:
+            raise EnvironmentError(
+                "security inspection refused: " + (completed.stderr.strip() or "engine failed")
+            )
+        raw: object = json.loads(completed.stdout)
+        if not isinstance(raw, dict):
+            raise EnvironmentError("security inspection requires an engine report object")
+        report = cast("dict[str, object]", raw)
+        if (
+            report.get("software") != software
+            or report.get("generation") != number
+            or content_digest(generation / "generation.json") != software
+            or record.drift(generation)
+            or (args.generation is None and read_current(args.root) != number)
+        ):
+            raise EnvironmentError("selected software changed during security inspection")
+        result.update(current=read_current(args.root), security=report)
+        return 0
+    if args.security_action == "policy":
+        changed = (
+            args.refuse_vulnerable is not None
+            or args.maximum_feed_age_seconds is not None
+            or args.no_maximum_feed_age
+        )
+        if changed:
+            with writer_lock(args.root):
+                host.load_settings()
+                values = host.settings.model_dump()
+                if args.refuse_vulnerable is not None:
+                    values["refuse_vulnerable"] = args.refuse_vulnerable
+                if args.maximum_feed_age_seconds is not None or args.no_maximum_feed_age:
+                    values["maximum_feed_age_seconds"] = args.maximum_feed_age_seconds
+                settings = HostSettings.model_validate(values)
+                text = (
+                    f"refresh_interval_seconds = {settings.refresh_interval_seconds}\n"
+                    f"request_timeout_seconds = {settings.request_timeout_seconds}\n"
+                    f"refuse_vulnerable = {json.dumps(settings.refuse_vulnerable)}\n"
+                )
+                if settings.maximum_feed_age_seconds is not None:
+                    text += f"maximum_feed_age_seconds = {settings.maximum_feed_age_seconds}\n"
+                text += "\n[feed_urls]\n" + "".join(
+                    f"{json.dumps(issuer)} = {json.dumps(str(url))}\n"
+                    for issuer, url in settings.feed_urls.items()
+                )
+                atomic_write(args.root / "security.toml", text)
+                host.settings = settings
+        result.update(
+            policy={
+                "refuseVulnerable": host.settings.refuse_vulnerable,
+                "maximumFeedAgeSeconds": host.settings.maximum_feed_age_seconds,
+            },
+            status="applied" if changed else "clean",
+            automaticResume=False,
+        )
+        return 0
+    if args.security_action == "import":
+        with args.file.open("rb") as stream:
+            data = stream.read(SECURITY_FEED_LIMIT_BYTES + 1)
+        if len(data) > SECURITY_FEED_LIMIT_BYTES:
+            raise EnvironmentError("security feed exceeds maximum document size")
+        document = host.store.import_feed(args.registry, data)
+        result.update(registry=args.registry, revision=document.revision)
+    else:
+        host.store.answer(
+            args.registry,
+            args.notice,
+            args.revision,
+            approved=args.security_action == "approve",
+        )
+        result.update(
+            registry=args.registry,
+            notice=str(args.notice),
+            revision=args.revision,
+            decision=host.store.decision(args.registry, args.notice, args.revision),
+        )
+    result.update(status="applied", automaticResume=False)
+    return 0
+
+
 def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, required=True, help="absolute prospective project root"
     )
     commands = parser.add_subparsers(dest="operation", required=True)
+    security = commands.add_parser(
+        "security", help="inspect notices, change answers/policy or import signed evidence"
+    )
+    security.add_argument("--json", action="store_true", help="emit exactly one result object")
+    security_actions = security.add_subparsers(dest="security_action", required=True)
+    security_list = security_actions.add_parser("list", help="inspect selected generation notices")
+    security_details = security_actions.add_parser("details", help="inspect one installed pack")
+    security_details.add_argument("--pack", required=True)
+    for inspection in (security_list, security_details):
+        inspection.add_argument("--generation", type=int, help="inspect a retained generation")
+    for action in ("fix-one", "fix-all"):
+        fix = security_actions.add_parser(
+            action, help="preview or explicitly apply a reviewed repair"
+        )
+        fix.add_argument("--pack")
+        retained = fix.add_mutually_exclusive_group()
+        retained.add_argument("--output", type=Path, help="retain exact repair inputs for review")
+        retained.add_argument("--input", type=Path, help="apply retained repair inputs")
+        fix.add_argument("--approval", help="digest of the exact retained plan being approved")
+        fix.add_argument(
+            "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
+        )
+    policy = security_actions.add_parser("policy", help="read or explicitly change local policy")
+    policy.add_argument("--refuse-vulnerable", action=argparse.BooleanOptionalAction, default=None)
+    age = policy.add_mutually_exclusive_group()
+    age.add_argument("--maximum-feed-age-seconds", type=int)
+    age.add_argument("--no-maximum-feed-age", action="store_true")
+    for action in ("approve", "disapprove"):
+        answer = security_actions.add_parser(action, help="change an exact vulnerability answer")
+        answer.add_argument("--registry", required=True)
+        answer.add_argument("--notice", type=UUID, required=True)
+        answer.add_argument("--revision", type=int, required=True)
+    feed_import = security_actions.add_parser("import", help="verify a signed file before import")
+    feed_import.add_argument("--registry", required=True)
+    feed_import.add_argument("--file", type=Path, required=True)
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "main"))
@@ -1451,6 +1642,21 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.add_argument("--source", required=True, help="engine folder or HTTPS git URL")
     develop.add_argument("--pack-source", action="append", required=True)
     develop.add_argument("--library-source", action="append", default=[])
+    develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
+    develop.add_argument(
+        "--live-pack",
+        type=Path,
+        action="append",
+        default=[],
+        help="watch this selected pack folder for edits",
+    )
+    develop.add_argument(
+        "--live-library",
+        type=Path,
+        action="append",
+        default=[],
+        help="import this selected library folder; restart after edits",
+    )
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
@@ -1567,7 +1773,9 @@ def run(args: argparse.Namespace) -> int:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
-        if args.operation == "packs-plan":
+        if args.operation == "packs-plan" or (
+            args.operation == "security" and args.security_action in {"fix-one", "fix-all"}
+        ):
             sequence = 0
             last_write = 0.0
             last_stage = ""
@@ -1593,8 +1801,13 @@ def run(args: argparse.Namespace) -> int:
                     last_write, last_stage = now, stage
 
             with observe_preparation(progress):
-                result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
-            code = 0
+                if args.operation == "security":
+                    code = _security(args, result)
+                else:
+                    result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+                    code = 0
+        elif args.operation == "security":
+            code = _security(args, result)
         elif args.operation == "packs-apply":
             result.update(apply_pack_install(args.root, args.input, args.approval))
             code = 0
@@ -1768,6 +1981,9 @@ def run(args: argparse.Namespace) -> int:
             ):
                 for warning in cast("list[str]", report[key]):
                     print(f"Warning: {warning}")
+        if args.operation == "security" and code == 0:
+            if "security" in result or "policy" in result:
+                print(json.dumps(result.get("security", result.get("policy")), indent=2))
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     if code == 0 and "url" in result and args.operation == "start" and args.open_browser:

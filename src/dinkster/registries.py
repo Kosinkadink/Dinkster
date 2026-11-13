@@ -487,6 +487,7 @@ class StaticPackIndex:
     ) -> None:
         self._documents: dict[tuple[str, str, str], dict[str, object]] = {}
         self._locks: dict[tuple[str, str, str], bytes] = {}
+        self._releases: dict[tuple[str, str, str, bool], tuple[dict[str, object], ...]] = {}
         self._directory = directory
         self._offline = offline
         self._read_only = read_only
@@ -620,13 +621,17 @@ class StaticPackIndex:
         token: str | None = None,
         include_libraries: bool = False,
     ) -> tuple[dict[str, object], ...]:
+        credential = registry.token() if token is None else token
+        key = (registry.endpoint, credential, pack, include_libraries)
+        if key in self._releases:
+            return self._releases[key]
         catalog = self.catalog(
-            registry, timeout=timeout, token=token, include_libraries=include_libraries
+            registry, timeout=timeout, token=credential, include_libraries=include_libraries
         )
         entry = next((row for row in catalog if row["name"] == pack), None)
         if entry is None:
             return ()
-        document = self._read(registry, "/static/" + str(entry["url"]), timeout, token)
+        document = self._read(registry, "/static/" + str(entry["url"]), timeout, credential)
         if document.get("name") != pack:
             raise InstallError(f"registry static per-pack index identity differs for {pack}")
         releases = _static_releases(registry, document, include_libraries=include_libraries)
@@ -634,6 +639,7 @@ class StaticPackIndex:
             raise InstallError(
                 f"registry static per-pack index substitutes another pack for {pack}"
             )
+        self._releases[key] = releases
         return releases
 
     def release_manifest(self, registry: NamedRegistry, entry: LockedPack) -> dict[str, object]:

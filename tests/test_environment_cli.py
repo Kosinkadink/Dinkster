@@ -2013,10 +2013,23 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     ]
     assert main([*changed, "--approve", plan["sourceApproval"]]) == 1
     assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+    live_code = main([*arguments, "--live-engine"])
+    live_plan = json.loads(capsys.readouterr().out)
+    if git_kind == "engine":
+        assert live_code == 1 and "requires a local folder" in live_plan["error"]
+    else:
+        assert live_code == 0
+        assert live_plan["development"]["sources"][0]["live"] is True
     assert not (tmp_path / "project").exists()
 
 
-def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_path: Path):
+@pytest.mark.parametrize("live", [False, True])
+def test_development_doctor_separates_runtime_drift_from_missing_recovery(
+    tmp_path: Path, live: bool
+):
+    live_pack = tmp_path / "live-pack"
+    live_pack.mkdir()
+    sources = [{"kind": "pack", "path": str(live_pack), "live": True}] if live else []
     generation = _generation(tmp_path, 1).parent
     store = tmp_path / "capture"
     base = {
@@ -2042,7 +2055,10 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
     for name, document in (
         ("base-manifest.json", base),
         ("engine-manifest.json", engine),
-        ("development-sources.json", {"format": "dinkster.development-sources/1", "sources": []}),
+        (
+            "development-sources.json",
+            {"format": "dinkster.development-sources/1", "sources": sources},
+        ),
     ):
         path = generation / name
         path.write_text(json.dumps(document))
@@ -2059,6 +2075,7 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
                 "id": 1,
                 "generation": 1,
                 "snapshot": {
+                    "format": "dinkster.install-snapshot/1",
                     "source": "local",
                     "metadata": metadata,
                     "base": {"id": base_id, "variant": "linux-cpu"},
@@ -2073,9 +2090,29 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
         code, result = _run(tmp_path, operation)
         assert code == 0, result
         described = result["history"][0] if operation == "history" else result
-        assert "not reviewed by the registry" in described["sourceDescription"]
+        assert ("cannot be restored exactly" if live else "not reviewed by the registry") in (
+            described["sourceDescription"]
+        )
         if operation == "doctor":
-            assert result["exactRecovery"] == {"available": True, "missing": []}
+            assert result["exactRecovery"] == {"available": not live, "missing": []}
+    if live:
+        author_file = live_pack / "node.py"
+        author_file.write_text("VALUE = 37\n")
+        (tmp_path / "project.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "stable",
+                    "variant": "linux-cpu",
+                    "mirrors": [],
+                    "port": 58980,
+                }
+            )
+        )
+        code, refused = _run(tmp_path, "restore", "1", "--plan")
+        assert code == 1 and "cannot be restored exactly" in refused["error"], refused
+        assert author_file.read_text() == "VALUE = 37\n"
+        assert (tmp_path / "current").read_text() == "1\n"
     runtime.unlink()
     code, missing = _run(tmp_path, "doctor")
     assert code == 0 and missing["status"] == "clean", missing
@@ -2084,4 +2121,6 @@ def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_pa
     (generation / "python/module.py").write_text("ANSWER = 99\n")
     code, damaged = _run(tmp_path, "doctor")
     assert code == 1 and damaged["status"] == "drift", damaged
-    assert "not reviewed by the registry" in damaged["sourceDescription"]
+    assert ("cannot be restored exactly" if live else "not reviewed by the registry") in (
+        damaged["sourceDescription"]
+    )
