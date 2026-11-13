@@ -3,9 +3,7 @@
 Encoder-authored wire fixtures for the schema wire's lifecycle metadata
 (deprecation, searchVisibility, replacement rules), generated through the
 REAL `schema_to_wire` / `rule_to_wire` - never hand-written. Dinkster-Frontend
-consumes these to lock its decoder against encoder drift; the backend test
-`tests/test_goldens.py` regenerates them in-memory on every run and fails if
-the committed files differ from what the current encoders produce.
+consumes these to lock its decoder against encoder drift.
 
 Regenerate after intentional encoder changes:
 
