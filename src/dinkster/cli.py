@@ -30,6 +30,7 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=True,
         summary="start the active managed generation (alias: dinkster-serve)",
     ),
+    "run": _Command("dinkster.launch", True, "run a command in the active generation"),
     "stop": _Command("dinkster.launch", True, "stop the active generation's engine"),
     "update": _Command("dinkster.launch", True, "plan and apply a generation update"),
     "rollback": _Command("dinkster.launch", True, "restore the previous software snapshot"),

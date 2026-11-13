@@ -503,7 +503,15 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 live_engine=args.live_engine,
                 live_packs=tuple(args.live_pack),
                 live_libraries=tuple(args.live_library),
+                contributor=args.contributor,
             )
+            if args.frontend_root is not None:
+                if not args.contributor:
+                    raise EnvironmentError("--frontend-root requires --contributor")
+                frontend = args.frontend_root.resolve()
+                if not (frontend / "index.html").is_file():
+                    raise EnvironmentError("contributor frontend bundle requires index.html")
+                development["frontendRoot"] = str(frontend)
             for row in development["sources"]:
                 source = Path(row["path"])
                 if store.is_relative_to(source) or root.is_relative_to(source):
@@ -1626,7 +1634,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     develop = commands.add_parser("develop", help="capture and build explicit local sources")
     develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
-    develop.add_argument("--pack-source", type=Path, action="append", required=True)
+    develop.add_argument("--pack-source", type=Path, action="append", default=[])
+    develop.add_argument(
+        "--contributor", action="store_true", help="run the live engine with development tools"
+    )
     develop.add_argument("--library-source", type=Path, action="append", default=[])
     develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
     develop.add_argument(
@@ -1643,6 +1654,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         default=[],
         help="import this selected library folder; restart after edits",
     )
+    develop.add_argument("--frontend-root", type=Path, help="contributor editor bundle folder")
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
@@ -1670,6 +1682,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
+    execute = commands.add_parser("run", help="run a command in the active generation")
+    execute.add_argument("command", nargs=argparse.REMAINDER)
+    execute.set_defaults(json=False)
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
@@ -1746,6 +1761,10 @@ def run(args: argparse.Namespace) -> int:
         "status": "clean",
     }
     try:
+        if args.operation == "run":
+            from .environment_runtime import run_generation
+
+            return run_generation(args.root, args.command)
         current = read_current(args.root)
         if current is not None and (args.root / "generations" / f"{current}.json").is_file():
             raise EnvironmentError(

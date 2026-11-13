@@ -854,6 +854,23 @@ matching the host; `--python /absolute/python` explicitly selects an existing
 interpreter instead of the configured standalone interpreter. Use `--port PORT`
 when the default listener is occupied. Project and store directories must be
 outside selected source folders. Unmarked sources build from verified copies.
+`develop --contributor` includes the checkout's development tools and inference
+extra in the generation and uses the engine's working folders live. Pack inputs
+are optional in contributor mode; explicitly selected pack and library folders
+keep the same live/captured rules. Run tools with
+`dinkster run --root /absolute/project -- python -m pytest` (or another command
+after `--`). The command inherits the terminal and working directory, returns
+the tool's exit status, and uses the active generation's interpreter and tools.
+It holds that generation against collection until the command exits.
+From an unprepared checkout, `uv run --no-project python scripts/develop.py setup --yes`
+bootstraps only the supervisor, then uses that same contributor generation builder.
+The default project is the checkout's sibling `.<checkout-name>-development`,
+not its root `.venv`. Use `python scripts/develop.py run -- python -m pytest`
+for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
+`run.sh` or `run.cmd` builds the pinned frontend and selects it on the contributor
+generation. The CPU variant is the default; pass `--variant NAME` to setup for
+another host-compatible variant.
+
 Use `--live-engine`, `--live-pack /absolute/pack`, or
 `--live-library /absolute/helper` on both plan and apply commands to run from
 explicitly selected local folders instead. A live folder must also be a source

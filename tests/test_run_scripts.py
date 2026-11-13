@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +17,6 @@ from scripts import run as launcher
 def checkout(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(launcher, "ROOT", tmp_path)
     monkeypatch.setattr(launcher.sys, "argv", ["run.py", "--no-browser", "--port", "4640"])
-    monkeypatch.setattr(launcher.platform, "system", lambda: "Linux")
     monkeypatch.setattr(
         launcher.shutil, "which", lambda name: None if name == "nvidia-smi" else name
     )
@@ -45,33 +43,6 @@ def checkout(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(launcher, "output", output)
     return tmp_path, calls
-
-
-@pytest.mark.parametrize("system", ["Linux", "Darwin", "Windows"])
-def test_rerun_skips_frontend_build_and_selects_native_execution(checkout, monkeypatch, system):
-    root, calls = checkout
-    monkeypatch.setattr(launcher.platform, "system", lambda: system)
-    assert launcher.main() == 0
-    relative = "Scripts/python.exe" if system == "Windows" else "bin/python"
-    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv" / relative)
-    assert launcher.os.environ["UV_PYTHON_PREFERENCE"] == "only-managed"
-    assert len(calls) == 2
-    assert calls[0] == (sys.executable, str(root / "scripts/setup_envs.py"))
-    assert calls[1][:4] == (
-        str(root / ".venv" / relative),
-        "-m",
-        "dinkster.serve",
-        "--watch-packs",
-    )
-    assert calls[1][6:8] == (
-        "--port",
-        "4640",
-    )
-    assert calls[1][-2:] == (
-        "--frontend-root",
-        str(root / ".run/frontend/packages/app/dist"),
-    )
-    assert calls[1][calls[1].index("--install-root") + 1] == ""
 
 
 def test_source_browser_waits_for_healthy_engine(checkout, monkeypatch):

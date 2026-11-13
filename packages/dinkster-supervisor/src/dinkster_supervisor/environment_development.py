@@ -27,6 +27,7 @@ _EXCLUDED = frozenset(
         ".hg",
         ".svn",
         ".amp",
+        ".run",
         ".venv",
         ".tox",
         ".pytest_cache",
@@ -117,7 +118,7 @@ def development_selection(
     contributor: bool = False,
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
-    if not packs:
+    if not packs and not contributor:
         raise EnvironmentError("development requires at least one explicit --pack-source")
     live_paths: dict[str, set[Path]] = {
         "engine": {source.resolve()} if live_engine or contributor else set(),
@@ -153,12 +154,22 @@ def development_selection(
                     "kind": kind,
                     "path": str(root),
                     "live": root in live_paths[kind],
-                    "packageRoots": [
-                        ".",
-                        "packages/dinkster-api",
-                        "packages/dinkster-engine",
-                        "packages/dinkster-supervisor",
-                    ]
+                    "packageRoots": (
+                        [
+                            ".",
+                            *[
+                                project.parent.relative_to(root).as_posix()
+                                for project in sorted(root.glob("packages/*/pyproject.toml"))
+                            ],
+                        ]
+                        if contributor
+                        else [
+                            ".",
+                            "packages/dinkster-api",
+                            "packages/dinkster-engine",
+                            "packages/dinkster-supervisor",
+                        ]
+                    )
                     if kind == "engine"
                     else ["."],
                     "contentDigest": _identity(files),

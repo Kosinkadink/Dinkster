@@ -263,6 +263,7 @@ def prepare_local(
             with tarfile.open(archive) as payload:
                 payload.extractall(work / "runtime", filter="data")
             python = work / "runtime" / definition["executable"]
+        contributor = selection.get("development", {}).get("contributor", False)
         exported = work / "export.txt"
         run_local_command(
             [
@@ -270,7 +271,7 @@ def prepare_local(
                 "export",
                 "--locked",
                 "--all-packages",
-                "--no-dev",
+                *(["--extra", "inference"] if contributor else ["--no-dev"]),
                 "--group",
                 "engine-base",
                 "--no-emit-workspace",
@@ -391,6 +392,8 @@ def prepare_local(
         engine_requirements = work / "engine.in"
         engine_requirements.write_text(
             "\n".join(str(path) for path in (*sorted(built.glob("*.whl")), *library_wheels))
+            + "\n"
+            + (engine_constraints if contributor else "")
         )
         engine = _resolve(
             engine_requirements,
