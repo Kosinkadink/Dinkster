@@ -505,15 +505,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 live_engine=args.live_engine,
                 live_packs=tuple(args.live_pack),
                 live_libraries=tuple(args.live_library),
-                contributor=args.contributor,
             )
-            if args.frontend_root is not None:
-                if not args.contributor:
-                    raise EnvironmentError("--frontend-root requires --contributor")
-                frontend = args.frontend_root.resolve()
-                if not (frontend / "index.html").is_file():
-                    raise EnvironmentError("contributor frontend bundle requires index.html")
-                development["frontendRoot"] = str(frontend)
             for row in development["sources"]:
                 source = Path(row["path"])
                 if store.is_relative_to(source) or root.is_relative_to(source):
@@ -1451,6 +1443,13 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
                         args.root, (), args.output, security_pack=args.pack, security_all=all_packs
                     )
                 )
+        result["workInventory"] = {
+            "status": "unavailable",
+            "reason": (
+                "Workflow impacts are unavailable offline; inspect submitted work through "
+                "runtime /api/security. A compatible install is not proof of workflow behavior."
+            ),
+        }
         return 0
     if args.security_action in {"list", "details"}:
         number = args.generation if args.generation is not None else read_current(args.root)
@@ -1650,10 +1649,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "develop", help="capture and build explicit local or public git sources"
     )
     develop.add_argument("--source", required=True, help="engine folder or HTTPS git URL")
-    develop.add_argument("--pack-source", action="append", default=[])
-    develop.add_argument(
-        "--contributor", action="store_true", help="run the live engine with development tools"
-    )
+    develop.add_argument("--pack-source", action="append", required=True)
     develop.add_argument("--library-source", action="append", default=[])
     develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
     develop.add_argument(
@@ -1670,7 +1666,6 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         default=[],
         help="import this selected library folder; restart after edits",
     )
-    develop.add_argument("--frontend-root", type=Path, help="contributor editor bundle folder")
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
@@ -1698,9 +1693,6 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
-    execute = commands.add_parser("run", help="run a command in the active generation")
-    execute.add_argument("command", nargs=argparse.REMAINDER)
-    execute.set_defaults(json=False)
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="rebuild the previous successful snapshot")
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
@@ -1777,10 +1769,6 @@ def run(args: argparse.Namespace) -> int:
         "status": "clean",
     }
     try:
-        if args.operation == "run":
-            from .environment_runtime import run_generation
-
-            return run_generation(args.root, args.command)
         current = read_current(args.root)
         if current is not None and (args.root / "generations" / f"{current}.json").is_file():
             raise EnvironmentError(
@@ -2026,8 +2014,101 @@ def run(args: argparse.Namespace) -> int:
                 for warning in cast("list[str]", report[key]):
                     print(f"Warning: {warning}")
         if args.operation == "security" and code == 0:
-            if "security" in result or "policy" in result:
-                print(json.dumps(result.get("security", result.get("policy")), indent=2))
+            security_report = cast("dict[str, object]", result.get("security", {}))
+            if security_report:
+                print(
+                    f"Generation: {security_report['generation']} ({security_report['software']})"
+                )
+                for finding in cast("list[dict[str, object]]", security_report["findings"]):
+                    details = cast("dict[str, object]", finding["details"])
+                    print(
+                        f"{finding['pack']}=={finding['version']}: {finding['state']}, "
+                        f"decision {finding['decision']}, "
+                        f"execution {'allowed' if finding['allowed'] else 'refused'}"
+                    )
+                    print(f"  Digest: {finding['artifactDigest']}; registry: {finding['registry']}")
+                    print(
+                        f"  Notice: {finding['notice']} revision {finding['revision']} "
+                        f"from {finding['noticeRegistry']}; incident: {details['incident']}"
+                    )
+                    print(f"  Last verified: {finding['lastVerifiedAt'] or 'not received'}")
+                    print(
+                        "  Notice details: "
+                        + json.dumps(details, sort_keys=True, ensure_ascii=True)
+                    )
+                    advice = cast("dict[str, object]", finding["recovery"])
+                    print(f"  Recovery: {advice['status']}. {advice['action']}")
+                    print(
+                        f"  Compatible fix: {advice['repair']}; "
+                        f"preview with security fix-one --pack {finding['pack']} or fix-all."
+                    )
+                if not security_report["findings"]:
+                    print("No active notices match the inspected software in received evidence.")
+                for feed in cast("list[dict[str, object]]", security_report["feeds"]):
+                    print(
+                        f"Feed {feed['registry']}: {feed['status']}; "
+                        f"last verified {feed['lastVerifiedAt'] or 'not received'}; "
+                        f"explicit age refusal {'on' if feed['ageRefused'] else 'off'}"
+                    )
+                    if feed["refreshError"]:
+                        print(
+                            f"  Refresh unavailable: {feed['refreshError']}; cached blocks remain."
+                        )
+                inventory = cast("dict[str, object]", security_report["workInventory"])
+                print(f"Work: {inventory['reason']}")
+                recovery = cast("dict[str, object]", security_report["recovery"])
+                print(f"Activation recovery: {recovery['state']}. {recovery['action']}")
+            if "policy" in result or security_report:
+                policy = cast(
+                    "dict[str, object]", result.get("policy", security_report.get("policy", {}))
+                )
+                print(f"Vulnerability refusal: {'on' if policy['refuseVulnerable'] else 'off'}")
+                age = policy["maximumFeedAgeSeconds"]
+                print(
+                    f"Maximum feed age: {str(age) + ' seconds' if age is not None else 'not set'}"
+                )
+            if "decision" in result:
+                print(
+                    f"Notice {result['notice']} revision {result['revision']} "
+                    f"from {result['registry']}: {result['decision']}"
+                )
+                print("The recorded answer can be changed; stopped work is not resumed.")
+            if args.security_action == "import":
+                print(f"Verified feed from {result['registry']}, revision {result['revision']}.")
+            if args.security_action in {"fix-one", "fix-all"}:
+                metadata = cast(
+                    "dict[str, object]", result.get("metadata", result.get("packPlan", {}))
+                )
+                if metadata:
+                    print("Reviewed release selection:")
+                    print(json.dumps(metadata["sources"], indent=2, ensure_ascii=True))
+                    print("Exact dependency locks:")
+                    print(json.dumps(metadata["dependencyLocks"], indent=2, ensure_ascii=True))
+                    print(
+                        "Engine and base are retained; "
+                        "unselected locks and placement are unchanged."
+                    )
+                inventory = cast("dict[str, object]", result["workInventory"])
+                print(inventory["reason"])
+                if "approval" in result:
+                    print(f"Retained inputs: {args.output}")
+                    print(f"Approval digest: {result['approval']}")
+                    print("Apply only the reviewed inputs with --input DIR --approval DIGEST.")
+                if "securityRepair" in result:
+                    repair = cast("dict[str, object]", result["securityRepair"])
+                    if repair["status"] == "no-compatible-fix":
+                        print(
+                            "No compatible fix exists among the reviewed candidates; "
+                            "nothing changed."
+                        )
+                    elif repair["status"] == "search-incomplete":
+                        print(
+                            "Compatible-fix search is incomplete; no absence of a fix is claimed."
+                        )
+                    else:
+                        print("No repair is required for the selected packs in received evidence.")
+                    for reason in cast("list[str]", repair.get("reasons", [])):
+                        print(f"  {reason}")
         if args.operation == "catalog" and code == 0:
             print(json.dumps(result["variants"], indent=2, ensure_ascii=True))
     if code == 0 and "url" in result and args.operation == "start" and args.open_browser:

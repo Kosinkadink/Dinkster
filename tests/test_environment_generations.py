@@ -30,16 +30,14 @@ from dinkster_supervisor.environment_state import (
 )
 
 
-def _wheel(
-    directory: Path, name: str, version: str, value: int, *, metadata_headers: str = ""
-) -> tuple[Path, str]:
+def _wheel(directory: Path, name: str, version: str, value: int) -> tuple[Path, str]:
     path = directory / f"{name}-{version}-py3-none-any.whl"
     metadata = f"{name}-{version}.dist-info"
     with zipfile.ZipFile(path, "w") as wheel:
         wheel.writestr(f"{name}.py", f"VALUE = {value}\n")
         wheel.writestr(
             f"{metadata}/METADATA",
-            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n{metadata_headers}",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
         )
         wheel.writestr(
             f"{metadata}/WHEEL",
@@ -185,9 +183,9 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         server.shutdown()
 
 
-@pytest.mark.parametrize("mode", ["captured", "live", "contributor"])
+@pytest.mark.parametrize("live", [False, True])
 def test_development_inference_override_runs_selected_library_but_ordinary_install_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, mode: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, live: bool
 ) -> None:
     """Developers can run their local inference version without loosening ordinary installs."""
     from dinkster_supervisor.environment_development import (
@@ -208,29 +206,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     for path in (index, source, library, pack, store):
         path.mkdir()
     _wheel(index, "fixture_base", "1.0", 37)
-    _wheel(index, "fixture_tool", "1.0", 59)
     _wheel(index, "dinkster_inference", "0.1.1", 11)
-    universal_index = tmp_path / "universal-index"
-    shutil.copytree(index, universal_index)
-    _wheel(
-        universal_index,
-        "fixture_base",
-        "1.0",
-        37,
-        metadata_headers="Requires-Dist: fixture-toolkit[accelerator]==1.0\n",
-    )
-    _wheel(
-        universal_index,
-        "fixture_toolkit",
-        "1.0",
-        41,
-        metadata_headers=(
-            'Provides-Extra: accelerator\nRequires-Dist: fixture-gpu==1.0; extra == "accelerator"\n'
-        ),
-    )
-    _wheel(universal_index, "fixture_gpu", "1.0", 43)
-    live = mode != "captured"
-    contributor = mode == "contributor"
     monkeypatch.setenv("UV_NO_INDEX", "1")
     monkeypatch.setenv("UV_FIND_LINKS", str(index))
     monkeypatch.setenv("UV_OFFLINE", "1")
@@ -251,8 +227,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         "dinkster",
         "1.0",
         'dependencies=["dinkster-inference==0.1.1"]\n'
-        "[project.optional-dependencies]\ninference=[]\n"
-        '[dependency-groups]\nengine-base=["fixture-base==1.0"]\ndev=["fixture-tool==1.0"]\n'
+        '[dependency-groups]\nengine-base=["fixture-base==1.0"]\n'
         '[tool.uv.workspace]\nmembers=["packages/*"]\n',
     )
     for name in ("dinkster-api", "dinkster-engine", "dinkster-supervisor", "dinkster-workers"):
@@ -260,15 +235,10 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
     boundary.parent.mkdir(parents=True)
     boundary.write_text("PROTOCOL_VERSION = 1\n")
-    monkeypatch.setenv("UV_FIND_LINKS", str(universal_index))
     subprocess.run(["uv", "lock", "--offline"], cwd=source, check=True, capture_output=True)
-    monkeypatch.setenv("UV_FIND_LINKS", str(index))
     lock = source / "uv.lock"
-    # Retain universal wheel metadata while selecting the CPU-only fixture index.
-    locked = lock.read_text().replace(
-        f'registry = "{universal_index.as_posix()}"', f'registry = "{index.as_posix()}"'
-    )
-    for wheel in universal_index.glob("*.whl"):
+    locked = lock.read_text()
+    for wheel in index.glob("*.whl"):
         locked = locked.replace(
             f'path = "{wheel.as_posix()}"',
             f'path = "{wheel.as_posix()}", hash = "{content_digest(wheel)}"',
@@ -281,11 +251,10 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     selection["packages"] = ["fixture-base"]
     selection["development"] = development_selection(
         source,
-        () if contributor else (pack,),
+        (pack,),
         (library,),
-        live_engine=mode == "live",
+        live_engine=live,
         live_libraries=(library,) if live else (),
-        contributor=contributor,
     )
     with captured_development_sources(selection["development"], store) as (engine, _, wheels):
         inputs = prepare_local(engine, selection, store, library_wheels=wheels)
@@ -302,24 +271,6 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
             text=True,
         )
         assert output.strip() == "83"
-        subprocess.run(
-            [
-                str(python),
-                "-I",
-                "-c",
-                "import importlib.util; assert importlib.util.find_spec('fixture_gpu') is None",
-            ],
-            check=True,
-        )
-        tool = subprocess.run(
-            [str(python), "-I", "-c", "import fixture_tool; print(fixture_tool.VALUE)"],
-            capture_output=True,
-            text=True,
-        )
-        if contributor:
-            assert tool.returncode == 0 and tool.stdout.strip() == "59"
-        else:
-            assert tool.returncode != 0 and "No module named" in tool.stderr
         install_live_sources(generation, selection["development"])
         (library / "dinkster_inference/__init__.py").write_text("VALUE = 149\n")
         (source / "dinkster/__init__.py").write_text("VALUE = 257\n")

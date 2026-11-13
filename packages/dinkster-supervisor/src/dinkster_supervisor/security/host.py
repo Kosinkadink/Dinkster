@@ -183,7 +183,11 @@ class SecurityHost:
                         ),
                         "repair": "not-reviewed",
                         "action": (
-                            "Review a compatible repair; approval cannot bypass this block."
+                            "Review a compatible repair; approval cannot bypass this block. "
+                            "Blocking is not cleanup and cannot undo theft, persistence or "
+                            "output changes. Isolate the affected environment as appropriate, "
+                            "rotate credentials from a trusted machine, assess exposure and "
+                            "rebuild from trusted inputs. Preserve incident evidence."
                             if item.decision == "blocked"
                             else (
                                 "Import or refresh an authentic feed within the explicit age limit."
