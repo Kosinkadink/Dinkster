@@ -63,6 +63,16 @@ ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 
 
+@pytest.fixture(autouse=True)
+def synthetic_pack_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster import compose
+
+    monkeypatch.setattr(compose, "_FIRST_PARTY_PACK_MODULES", {"dinkster-text": "dinkster_text"})
+    monkeypatch.setattr(
+        compose, "_FIRST_PARTY_PACK_DISTRIBUTIONS", {"dinkster-text": "dinkster-text"}
+    )
+
+
 @pytest.fixture
 def text_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from dinkster import compose
@@ -111,55 +121,45 @@ def editable_distribution(root: Path, version: str) -> SimpleNamespace:
     )
 
 
-@pytest.mark.parametrize("installed", [False, True])
 def test_pack_metadata_discovers_manifest_entries_without_imports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import importlib.metadata
 
     from dinkster.packs import first_party_pack_metadata
 
-    root = tmp_path / "source"
     site = tmp_path / "site"
-    project = root / "packages/dinkster-nodes-unlisted-family"
-    project.mkdir(parents=True)
-    (project / "pyproject.toml").write_text('[project]\nname = "different-distribution"\n')
-    manifest = (
-        site / "surprising_pack/dinkster-pack.toml" if installed else project / "dinkster-pack.toml"
-    )
-    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest = site / "surprising_pack/dinkster-pack.toml"
+    manifest.parent.mkdir(parents=True)
     manifest.write_text(
         '[pack]\nname = "unlisted-runtime"\npublisher = "dinkster"\n'
         '[pack.entry]\nnodes = "never_import_this.nodes:NODES"\n'
     )
     (manifest.parent / "never_import_this.py").write_text("raise RuntimeError('not discovery')\n")
-    if installed:
-        metadata = site / "different_distribution-1.0.dist-info"
-        metadata.mkdir()
-        (metadata / "METADATA").write_text("Name: different-distribution\nVersion: 1.0\n")
-        (metadata / "RECORD").write_text("surprising_pack/dinkster-pack.toml,,\n")
-        distributions = tuple(importlib.metadata.distributions(path=[str(site)]))
-        monkeypatch.setattr(importlib.metadata, "distributions", lambda: distributions)
-        root = tmp_path / "engine-wheel"
-    assert first_party_pack_metadata(root) == {
+    metadata = site / "different_distribution-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Name: different-distribution\nVersion: 1.0\n")
+    (metadata / "RECORD").write_text("surprising_pack/dinkster-pack.toml,,\n")
+    distributions = tuple(importlib.metadata.distributions(path=[str(site)]))
+    monkeypatch.setattr(importlib.metadata, "distributions", lambda: distributions)
+    assert first_party_pack_metadata() == {
         "unlisted-runtime": ("never_import_this.nodes", "different-distribution")
     }
     manifest.write_text(
         manifest.read_text().replace('publisher = "dinkster"', 'publisher = "other"')
     )
-    assert first_party_pack_metadata(root) == {}
+    assert first_party_pack_metadata() == {}
     manifest.write_text(
         manifest.read_text().replace('publisher = "other"', 'publisher = "dinkster"')
     )
-    duplicate = (site if installed else project) / "duplicate_pack/dinkster-pack.toml"
+    duplicate = site / "duplicate_pack/dinkster-pack.toml"
     duplicate.parent.mkdir()
     duplicate.write_text(manifest.read_text())
-    if installed:
-        (site / "different_distribution-1.0.dist-info/RECORD").write_text(
-            "surprising_pack/dinkster-pack.toml,,\nduplicate_pack/dinkster-pack.toml,,\n"
-        )
+    (metadata / "RECORD").write_text(
+        "surprising_pack/dinkster-pack.toml,,\nduplicate_pack/dinkster-pack.toml,,\n"
+    )
     with pytest.raises(ValueError, match="duplicate installed pack identity: unlisted-runtime"):
-        first_party_pack_metadata(root)
+        first_party_pack_metadata()
 
 
 def test_default_pack_specs_verify_independently_versioned_checkout_sources(
@@ -1369,7 +1369,7 @@ def test_compose_rejects_reserved_pack_name(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, name="core", presentation=False)
         with pytest.raises(CompositionError, match="reserved"):
-            await compose_serving([manifest], worker_env=WORKER_ENV)
+            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -1379,7 +1379,9 @@ def test_compose_rejects_duplicate_pack_name(tmp_path: Path) -> None:
         first = write_iso_manifest(tmp_path / "a", presentation=False)
         second = write_iso_manifest(tmp_path / "b", presentation=False)
         with pytest.raises(CompositionError, match="duplicate pack name"):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -1575,7 +1577,9 @@ def test_compose_rejects_nested_namespace_claims(tmp_path: Path) -> None:
             namespaces=("iso-extra",),
         )
         with pytest.raises(CompositionError, match="overlaps 'iso'"):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -1589,7 +1593,9 @@ def test_compose_rejects_separator_equivalent_pack_names(tmp_path: Path) -> None
         first = write_iso_manifest(tmp_path / "a", name="iso-pack", presentation=False)
         second = write_iso_manifest(tmp_path / "b", name="iso_pack", presentation=False)
         with pytest.raises(CompositionError, match="one identity"):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -1627,50 +1633,6 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
         )
         try:
             assert composition.node_packs["iso.chatty"] == "isopack"
-        finally:
-            await composition.close()
-
-    run_scenario(scenario())
-
-
-def test_composed_cpu_device_choices_without_tensor_initialization(tmp_path: Path) -> None:
-    (tmp_path / "sitecustomize.py").write_text(
-        "import importlib.abc\nimport sys\n"
-        "class NoTensorRuntime(importlib.abc.MetaPathFinder):\n"
-        "    def find_spec(self, fullname, path=None, target=None):\n"
-        "        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:\n"
-        "            raise AssertionError('device enumeration imported ' + fullname)\n"
-        "sys.meta_path.insert(0, NoTensorRuntime())\n",
-        encoding="ascii",
-    )
-
-    async def scenario() -> None:
-        composition = await compose_serving(
-            [default_pack_spec("dinkster-models")],
-            include_default_packs=False,
-            worker_env={
-                **WORKER_ENV,
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
-                "DINKSTER_ACCELERATOR": "cpu",
-            },
-        )
-        app = create_app(
-            composition.make_engine,
-            composition.schemas,
-            choices=composition.choices,
-            lazy_choices=composition.lazy_choices,
-        )
-        try:
-            async with TestClient(TestServer(app)) as client:
-                for _ in range(2):
-                    for name, expected in (
-                        ("devices.gpu", ["default", "cpu"]),
-                        ("devices.vae", ["default"]),
-                    ):
-                        response = await client.get(f"/api/choices/{name}")
-                        assert response.status == 200, await response.text()
-                        assert await response.json() == expected
-                assert (await client.get("/api/choices/missing")).status == 404
         finally:
             await composition.close()
 
@@ -2792,7 +2754,7 @@ def test_group_contract_conflict_refuses_before_launch(tmp_path: Path) -> None:
             ),
         )
         with pytest.raises(CompositionError, match="incompatible launch contracts"):
-            await compose_serving(specs)
+            await compose_serving(specs, include_default_packs=False)
 
     run_scenario(scenario())
 

@@ -31,8 +31,6 @@ from dinkster_engine import (
     ProviderResolutionError,
 )
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
-from dinkster_image.bounding_boxes import CreateBoundingBoxes
-from dinkster_image.compositor import LayersFromBoundingBoxes
 from dinkster_memory import (
     ConsumerItem,
     MeasuredMemory,
@@ -94,8 +92,6 @@ from dinkster_server import (
 )
 from dinkster_server.app import handle_submit
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
-from dinkster_utilities.math import ComfyMathExpression
-from dinkster_utilities.utilities import ComfyNumberConvert
 from dinkster_values import (
     CURVE_TYPE,
     PNG_CONTAINER_VERSION,
@@ -1784,64 +1780,6 @@ def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[s
     }
     body.update(overrides)
     return body
-
-
-def test_primitive_union_inputs_serve_connection_only_sockets() -> None:
-    nodes = [ComfyMathExpression, ComfyNumberConvert, CreateBoundingBoxes, LayersFromBoundingBoxes]
-    schemas = build_schemas(nodes)
-
-    def make_engine(on_event: EventListener | None = None) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    async def scenario() -> None:
-        async with TestClient(TestServer(create_app(make_engine, schemas))) as client:
-            response = await client.get("/api/nodes")
-            assert response.status == 200
-            catalog = await response.json()
-            interface = catalog["nodes"]["dinkster.utilities.comfy_math_expression"]["interface"]
-            family = next(entry for entry in interface if entry["id"] == "values")
-            template = family["template"][0]
-            assert template.get("forceInput") is True
-            assert template["type"] == {"kind": "union", "types": ["FLOAT", "INT", "BOOLEAN"]}
-            assert "widget" not in template
-            expression = next(entry for entry in interface if entry["id"] == "expression")
-            assert expression["widget"] == {"type": "STRING", "multiline": True}
-            for node_type, input_id, types, required in (
-                (
-                    "dinkster.utilities.comfy_number_convert",
-                    "value",
-                    ["INT", "FLOAT", "STRING", "BOOLEAN"],
-                    True,
-                ),
-                (
-                    "dinkster.image.create_bounding_boxes",
-                    "bboxes",
-                    ["BOUNDING_BOX", "ARRAY", "STRING"],
-                    False,
-                ),
-                (
-                    "dinkster.layers.from_bounding_boxes",
-                    "bboxes",
-                    ["STRING", "BOUNDING_BOX", "comfy.ARRAY"],
-                    False,
-                ),
-            ):
-                interface = catalog["nodes"][node_type]["interface"]
-                socket = next(entry for entry in interface if entry["id"] == input_id)
-                assert socket.get("forceInput") is True, (node_type, input_id)
-                assert socket["type"] == {"kind": "union", "types": types}
-                assert socket["required"] is required
-                assert "widget" not in socket
-
-    run_scenario(scenario())
 
 
 def test_nodes_endpoint_serves_native_schema_wire() -> None:

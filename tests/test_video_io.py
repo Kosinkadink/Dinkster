@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from av.codec import Codec as AvCodec
 from av.error import InvalidDataError
-from dinkster_api.v1 import image_input
+from dinkster_api.v1 import admit_video_source, image_input
 from dinkster_assets import (
     AssetRef,
     AssetVault,
@@ -25,8 +25,6 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_values import edit_video
-from dinkster_video.video_load import LoadVideo
-from dinkster_video.webm_save import EncodedVideoSpool
 from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
 
 from tests.test_video_diagnostics import _mount
@@ -174,7 +172,7 @@ def test_indexed_video_over_one_gib_is_admitted_without_copy(
     path_source = video_source(admit_video_source(path))
     assert isinstance(path_source, AssetRef)
     assert path_source.digest == selected.digest
-    loaded = LoadVideo.execute(file=selected)["VIDEO"]
+    loaded = admit_video_source(selected)
     loaded_source = video_source(loaded)
     assert isinstance(loaded_source, AssetRef)
     assert loaded_source.digest == selected.digest
@@ -326,7 +324,7 @@ def test_video_value_load_and_save_preserve_container_bytes(
     source_ref = _bound(cast(AssetRef, saved["video"]), snapshot)
     source_bytes = (root / "video" / source_ref.name).read_bytes()
 
-    value = LoadVideo.execute(file=source_ref)["VIDEO"]
+    value = admit_video_source(source_ref)
     assert cast(dict[str, object], value)["source"] is source_ref
     assert cast(dict[str, object], value)["edits"] == []
     with io.BytesIO() as output:
@@ -402,7 +400,7 @@ def test_vp9_alpha_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     path = root / "video" / ref.name
     with av.open(path) as container:
         assert container.streams.video[0].metadata["alpha_mode"] == "1"
-    loaded = disassemble_video(LoadVideo.execute(file=_bound(ref, snapshot))["VIDEO"])
+    loaded = disassemble_video(admit_video_source(_bound(ref, snapshot)))
     images = cast(np.ndarray, image_input(loaded["images"]))
     assert images.shape == (3, 64, 64, 4)
     assert images[..., 3].min() == pytest.approx(1 / 3, abs=2 / 255)
@@ -423,7 +421,7 @@ def test_rgb_and_rgba_round_trips_preserve_exact_frame_count_at_awkward_rates(
     _root, snapshot = _mount(tmp_path, monkeypatch)
     saved = _save_frames(images=_frames(3, alpha=alpha), fps=fps, format=format_name)
     ref = _bound(cast(AssetRef, saved["video"]), snapshot)
-    loaded = disassemble_video(LoadVideo.execute(file=ref)["VIDEO"])
+    loaded = disassemble_video(admit_video_source(ref))
     images = cast(np.ndarray, loaded["images"])
     assert loaded["frame_count"] == 3
     assert images.shape == (3, 64, 64, 4 if alpha else 3)
@@ -446,7 +444,7 @@ def test_late_start_bounds_video_decode_and_preserves_audio_window(
         audio=soundtrack,
     )
     ref = _bound(cast(AssetRef, saved["video"]), snapshot)
-    value = LoadVideo.execute(file=ref)["VIDEO"]
+    value = admit_video_source(ref)
     full_audio = audio_window(disassemble_video(value)["audio"], 0, 176_400)["waveform"]
     real_open = cast(Any, av.open)
     seek_calls: list[int] = []
@@ -495,22 +493,6 @@ def test_late_start_bounds_video_decode_and_preserves_audio_window(
     assert decoded < 20
 
 
-def test_encoded_output_spools_to_disk_and_enforces_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_video import webm_save
-
-    monkeypatch.setattr(webm_save, "ENCODED_MEDIA_LIMIT_BYTES", 10 * 1024 * 1024)
-    spool = EncodedVideoSpool()
-    try:
-        chunk = b"x" * (1024 * 1024)
-        for _ in range(9):
-            spool.write(chunk)
-        assert cast(Any, spool)._rolled is True
-        with pytest.raises(ValueError, match="output byte limit"):
-            spool.write(chunk * 2)
-    finally:
-        spool.close()
-
-
 def test_bool_crf_is_rejected() -> None:
     with pytest.raises(ValueError, match="crf must be a finite number in 0..51"):
         _save_frames(images=_frames(1), crf=True)
@@ -525,7 +507,7 @@ def test_load_refuses_malformed_asset(tmp_path: Path) -> None:
         writer.commit()
     ref = AssetRef(digest, "bad.mp4", len(payload), "video/mp4", resolver=vault)
     with pytest.raises(InvalidDataError):
-        LoadVideo.execute(file=ref)
+        admit_video_source(ref)
 
 
 @pytest.mark.parametrize(

@@ -35,7 +35,7 @@ from dinkster_schema.wire import SCHEMA_WIRE_VERSION, schema_to_wire
 from dinkster_server import create_app
 from dinkster_workers.manifest import load_pack_templates
 
-from dinkster.compose import Composition, PackSpec, compose_serving, default_pack_ids
+from dinkster.compose import Composition, PackSpec, compose_serving
 from tests.async_scenarios import run_scenario
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -262,7 +262,7 @@ def test_gallery_explicit_pack_surface(
         async with defaults as plain:
             assert not any(t.startswith("dev.") for t in plain.schemas)
             assert plain.choices == {}
-            assert set(plain.packs) == set(default_pack_ids())
+            assert not plain.packs
 
     runner.run(scenario())
 

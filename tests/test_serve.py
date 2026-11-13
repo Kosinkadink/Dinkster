@@ -63,7 +63,7 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(
     from dinkster.compose import default_pack_ids
     from dinkster.packs import first_party_pack_metadata
 
-    metadata = first_party_pack_metadata(TESTS_DIR.parent)
+    metadata = first_party_pack_metadata()
     packages = sorted({metadata[pack_id][1] for pack_id in default_pack_ids()})
     environment = tmp_path / "core-environment"
     requirements = subprocess.check_output(

@@ -44,29 +44,15 @@ __all__ = [
 ]
 
 
-def first_party_pack_metadata(root: Path) -> dict[str, tuple[str, str]]:
-    """Read checkout or wheel entry modules and distribution names without importing nodes."""
-    candidates: list[tuple[Path, str]] = []
-    for project_path in sorted((root / "packages").glob("dinkster-nodes-*/pyproject.toml")):
-        package = project_path.parent
-        if package.name == "dinkster-nodes-dev":
-            continue
-        project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
-        manifests = [
-            package / "dinkster-pack.toml",
-            *sorted(package.glob("*_pack/dinkster-pack.toml")),
-        ]
-        for path in manifests:
-            if path.is_file():
-                candidates.append((path, project["name"]))
-    if not (root / "packages").is_dir():
-        seen_paths: set[Path] = set()
-        for distribution, path in installed_pack_manifests():
-            if path not in seen_paths:
-                candidates.append((path, distribution.metadata["Name"]))
-                seen_paths.add(path)
+def first_party_pack_metadata() -> dict[str, tuple[str, str]]:
+    """Read installed wheel entry modules and distribution names without importing nodes."""
     result: dict[str, tuple[str, str]] = {}
-    for path, distribution_name in candidates:
+    seen_paths: set[Path] = set()
+    for distribution, path in installed_pack_manifests():
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        distribution_name = distribution.metadata["Name"]
         pack = tomllib.loads(path.read_text(encoding="utf-8"))["pack"]
         if pack.get("publisher") != "dinkster":
             continue

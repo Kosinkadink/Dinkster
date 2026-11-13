@@ -301,7 +301,7 @@ _PACK_SCRATCH_ENV = "DINKSTER_PACK_SCRATCH"
 _ATTENTION_POLICY_ENV = "DINKSTER_ATTENTION_POLICY"
 
 
-_FIRST_PARTY_PACK_METADATA = first_party_pack_metadata(Path(__file__).resolve().parents[2])
+_FIRST_PARTY_PACK_METADATA = first_party_pack_metadata()
 _FIRST_PARTY_PACK_MODULES = MappingProxyType(
     {pack: module for pack, (module, _) in _FIRST_PARTY_PACK_METADATA.items()}
 )

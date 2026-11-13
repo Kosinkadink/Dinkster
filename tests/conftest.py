@@ -294,7 +294,7 @@ def shared_default_composition() -> Iterator[
     from dinkster.compose import compose_serving
 
     with asyncio.Runner() as runner:
-        composition = runner.run(compose_serving())
+        composition = runner.run(compose_serving(include_default_packs=False))
         try:
             yield runner, nullcontext(composition)
         finally:
