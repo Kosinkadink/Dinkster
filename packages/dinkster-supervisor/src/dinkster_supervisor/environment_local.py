@@ -301,14 +301,21 @@ def prepare_local(
             packages.setdefault(package["name"], []).append(package)
         # All backend-specific descendants must be replaced, including remove-only CUDA rows.
         replaces: set[str] = set()
-        pending = list(selection["packages"])
+        visited: set[tuple[str, tuple[str, ...]]] = set()
+        pending: list[tuple[str, tuple[str, ...]]] = [(name, ()) for name in selection["packages"]]
         while pending:
-            name = pending.pop()
-            if name in replaces:
+            name, extras = pending.pop()
+            if (name, extras) in visited:
                 continue
+            visited.add((name, extras))
             replaces.add(name)
             for package in packages.get(name, []):
-                pending.extend(dep["name"] for dep in package.get("dependencies", []))
+                dependencies = list(package.get("dependencies", []))
+                for extra in extras:
+                    dependencies.extend(package.get("optional-dependencies", {}).get(extra, []))
+                pending.extend(
+                    (dep["name"], tuple(sorted(dep.get("extra", [])))) for dep in dependencies
+                )
         pins = work / "pins.txt"
         pins.write_text(
             "\n".join(
