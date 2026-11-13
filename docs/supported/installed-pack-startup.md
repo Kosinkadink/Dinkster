@@ -44,6 +44,17 @@
   even when security policy refuses execution. Inspection does not refresh feeds,
   import pack code, acquire payloads, alter evidence or resume work. Unknown packs
   and changed sealed inputs refuse; offline work inventory is explicitly unavailable.
+  Without `--json`, list/details describe classifications, exact notices and
+  issuing files, decisions, feed age/verification, policy and recovery in text.
+  Human repair previews show exact release/dependency locks and explain absent
+  or incomplete compatible fixes; retained plans print their approval digest.
+  Both output modes explicitly mark offline workflow impacts unavailable rather
+  than equating install compatibility with workflow behavior. Human answer
+  commands confirm the durable decision without resuming stopped work.
+  Malicious and affected incident guidance explains that blocking is not cleanup
+  and cannot undo theft, persistence or output changes. It recommends appropriate
+  isolation, credential rotation from a trusted machine, exposure assessment and
+  rebuilding from trusted inputs while preserving evidence.
 - Managed engine and pack environments retain the exact selected wheel identities and
   distinguish them from unused lock alternatives and inherited dependencies.
   The records are sealed with the generation and preserved in software snapshots.
