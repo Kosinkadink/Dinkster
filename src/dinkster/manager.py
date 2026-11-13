@@ -1778,7 +1778,11 @@ def main() -> None:
         help="compute an approval-required repair without acquiring payloads",
     )
     repair.add_argument("--generation", type=Path, required=True)
-    repair.add_argument("--pack", required=True)
+    repair_target = repair.add_mutually_exclusive_group(required=True)
+    repair_target.add_argument("--pack")
+    repair_target.add_argument(
+        "--all", action="store_true", help="plan one joint repair for all flagged packs"
+    )
     repair.set_defaults(handler=_cmd_plan_security_repair)
 
     source_plan = commands.add_parser(

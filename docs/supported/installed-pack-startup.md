@@ -69,6 +69,15 @@
   exact offered source and dependency locks for review rather than resolving
   the release again. Applying retained inputs requires `--input DIR --approval
   DIGEST` and uses the existing generation build and activation checks.
+  `security --json fix-all` reviews one jointly compatible selection for all
+  flagged packs, not independent changes that can conflict when combined.
+  If no joint selection clears every target, nothing is retained or applied.
+  Search considers at most 512 combinations; exhaustion reports
+  `search-incomplete`, not absence of a compatible fix. CLI metadata search
+  stops after 120 seconds without changing the selected generation.
+  Both repair commands accept `--progress FILE`; a sibling `FILE.cancel`
+  cancels preparation before the next progress boundary, including before
+  activation. Cancellation does not select the replacement generation.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.

@@ -1393,20 +1393,27 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not (args.root / "security.sqlite3").is_file():
         raise EnvironmentError("security operation requires an independently provisioned install")
     host = SecurityHost(args.root)
-    if args.security_action == "fix-one":
+    if args.security_action in {"fix-one", "fix-all"}:
         if args.input is not None:
             if args.approval is None or args.pack is not None or args.output is not None:
                 raise EnvironmentError("apply a repair with only --input and its exact --approval")
             result.update(apply_pack_install(args.root, args.input, args.approval))
         else:
-            if args.pack is None or args.approval is not None:
-                raise EnvironmentError("security repair preview requires --pack")
+            all_packs = args.security_action == "fix-all"
+            if (args.pack is None) != all_packs or args.approval is not None:
+                raise EnvironmentError("fix-one requires --pack; fix-all does not accept --pack")
             if args.output is None:
                 result.update(status="planned")
-                result.update(inspect_pack_install(args.root, (), security_pack=args.pack))
+                result.update(
+                    inspect_pack_install(
+                        args.root, (), security_pack=args.pack, security_all=all_packs
+                    )
+                )
             else:
                 result.update(
-                    plan_pack_install(args.root, (), args.output, security_pack=args.pack)
+                    plan_pack_install(
+                        args.root, (), args.output, security_pack=args.pack, security_all=all_packs
+                    )
                 )
         return 0
     if args.security_action in {"list", "details"}:
@@ -1535,14 +1542,18 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     security_details.add_argument("--pack", required=True)
     for inspection in (security_list, security_details):
         inspection.add_argument("--generation", type=int, help="inspect a retained generation")
-    fix = security_actions.add_parser(
-        "fix-one", help="preview or explicitly apply a reviewed repair"
-    )
-    fix.add_argument("--pack")
-    retained = fix.add_mutually_exclusive_group()
-    retained.add_argument("--output", type=Path, help="retain exact repair inputs for review")
-    retained.add_argument("--input", type=Path, help="apply retained repair inputs")
-    fix.add_argument("--approval", help="digest of the exact retained plan being approved")
+    for action in ("fix-one", "fix-all"):
+        fix = security_actions.add_parser(
+            action, help="preview or explicitly apply a reviewed repair"
+        )
+        fix.add_argument("--pack")
+        retained = fix.add_mutually_exclusive_group()
+        retained.add_argument("--output", type=Path, help="retain exact repair inputs for review")
+        retained.add_argument("--input", type=Path, help="apply retained repair inputs")
+        fix.add_argument("--approval", help="digest of the exact retained plan being approved")
+        fix.add_argument(
+            "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
+        )
     policy = security_actions.add_parser("policy", help="read or explicitly change local policy")
     policy.add_argument("--refuse-vulnerable", action=argparse.BooleanOptionalAction, default=None)
     age = policy.add_mutually_exclusive_group()
@@ -1716,9 +1727,9 @@ def run(args: argparse.Namespace) -> int:
             if getattr(args, "yes", False):
                 recover_moves(args.root)
             raise EnvironmentError(f"project moved to {destination}")
-        if args.operation == "security":
-            code = _security(args, result)
-        elif args.operation == "packs-plan":
+        if args.operation == "packs-plan" or (
+            args.operation == "security" and args.security_action in {"fix-one", "fix-all"}
+        ):
             sequence = 0
             last_write = 0.0
             last_stage = ""
@@ -1744,8 +1755,13 @@ def run(args: argparse.Namespace) -> int:
                     last_write, last_stage = now, stage
 
             with observe_preparation(progress):
-                result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
-            code = 0
+                if args.operation == "security":
+                    code = _security(args, result)
+                else:
+                    result.update(plan_pack_install(args.root, tuple(args.packs), args.output))
+                    code = 0
+        elif args.operation == "security":
+            code = _security(args, result)
         elif args.operation == "packs-apply":
             result.update(apply_pack_install(args.root, args.input, args.approval))
             code = 0

@@ -148,9 +148,12 @@ def inspect_pack_install(
     registry_arguments: tuple[str, ...] = (),
     diagnostic_python: Path | None = None,
     security_pack: str | None = None,
+    security_all: bool = False,
 ) -> dict[str, object]:
     """Inspect published metadata against sealed target identities without acquiring payloads."""
     root = root.resolve()
+    if security_pack is not None and security_all:
+        raise EnvironmentError("security repair selects one pack or all packs, not both")
     source, generation, store = _current(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
     )
@@ -185,7 +188,7 @@ def inspect_pack_install(
         "--base-id",
         generation.base,
     ]
-    if security_pack is not None:
+    if security_pack is not None or security_all:
         if selections or updates is not None or diagnostic_python is not None:
             raise EnvironmentError("security repair cannot be combined with other pack changes")
         command = [
@@ -200,8 +203,7 @@ def inspect_pack_install(
             "plan-security-repair",
             "--generation",
             str(source),
-            "--pack",
-            security_pack,
+            *(["--pack", security_pack] if security_pack is not None else ["--all"]),
         ]
     for selection in selections:
         command.extend(["--add", selection])
@@ -221,7 +223,7 @@ def inspect_pack_install(
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-metadata-") as directory:
         for flag, name in (
             ()
-            if security_pack is not None
+            if security_pack is not None or security_all
             else (
                 ("--engine-manifest", "engine-manifest.json"),
                 ("--installed-lock", "dinkster.lock"),
@@ -234,12 +236,38 @@ def inspect_pack_install(
                 ).encode("utf-8")
             )
             command[command.index(flag) + 1] = str(path)
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        if security_pack is not None or security_all:
+            with subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            ) as process:
+                deadline = time.monotonic() + 120
+                try:
+                    while True:
+                        preparation_progress("checking-registry-metadata")
+                        try:
+                            stdout, stderr = process.communicate(timeout=0.25)
+                            break
+                        except subprocess.TimeoutExpired:
+                            if time.monotonic() >= deadline:
+                                raise EnvironmentError(
+                                    "Security repair search timed out; no change was made."
+                                ) from None
+                except BaseException:
+                    process.kill()
+                    process.communicate()
+                    raise
+                result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        else:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            )
     if result.returncode:
         errors.append(result.stderr.strip() or result.stdout.strip())
         raise EnvironmentError("published pack review refused:\n" + "\n".join(errors))
@@ -248,12 +276,16 @@ def inspect_pack_install(
         if not isinstance(raw, dict):
             raise ValueError("expected an object")
         metadata = cast("dict[str, object]", raw)
-        if security_pack is not None:
+        if security_pack is not None or security_all:
             repair = metadata
             if repair.get("pack") != security_pack:
                 raise ValueError("target engine returned another security repair")
             if repair.get("status") != "approval-required":
-                if repair.get("status") not in {"not-required", "no-compatible-fix"}:
+                if repair.get("status") not in {
+                    "not-required",
+                    "no-compatible-fix",
+                    "search-incomplete",
+                }:
                     raise ValueError("target engine returned an invalid security repair status")
                 if (
                     _project_inputs(root) != inputs
@@ -437,10 +469,16 @@ def plan_pack_install(
     registry_arguments: tuple[str, ...] = (),
     diagnostic_python: Path | None = None,
     security_pack: str | None = None,
+    security_all: bool = False,
 ) -> dict[str, object]:
     """Retain verified inputs in a new host-owned disposable directory, without activation."""
     root, output = root.resolve(), output.absolute()
-    if security_pack is None and updates is None and (not selections or len(selections) > 64):
+    if (
+        security_pack is None
+        and not security_all
+        and updates is None
+        and (not selections or len(selections) > 64)
+    ):
         raise EnvironmentError("pack installation requires 1 to 64 exact selections")
     source, generation, store = _current(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
@@ -454,6 +492,7 @@ def plan_pack_install(
         registry_arguments=registry_arguments,
         diagnostic_python=diagnostic_python,
         security_pack=security_pack,
+        security_all=security_all,
     )
     if "metadata" not in review:
         return review
@@ -672,7 +711,7 @@ print(Lockfile.of(entries).record_json())
         "current": generation.number,
         "status": "planned",
         "plan": cast("list[str]", metadata["plan"])
-        if security_pack is not None
+        if security_pack is not None or security_all
         else [f"select {selection}" for selection in selections]
         + ["retain engine, base, unselected pack locks and placement; preserve project data"],
         "packPlan": record,
@@ -763,6 +802,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
 
     with writer_lock(store), writer_lock(root):
         target = next_generation(root)
+        preparation_progress("checking-reviewed-inputs")
         revalidate()
         if time.time() >= cast("float", record["expires"]) or (inputs / "consumed").exists():
             raise EnvironmentError("pack installation confirmation expired or was already used")
@@ -798,6 +838,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
                 if (source / "artifact-sources.json").exists()
                 else None,
             )
+            preparation_progress("activating-reviewed-generation")
             activate(root, journal, revalidate=revalidate)
         except Exception as exc:
             replace(Journal.read(journal), error=str(exc)).write(journal)

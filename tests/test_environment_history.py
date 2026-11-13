@@ -800,12 +800,16 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         review_temp.cleanup()
 
 
-@pytest.mark.parametrize("notice_state", ["vulnerable", "malicious"])
+@pytest.mark.parametrize(
+    ("notice_state", "repair_action"),
+    [("vulnerable", "fix-one"), ("vulnerable", "fix-all"), ("malicious", "fix-one")],
+)
 def test_managed_pack_install_requires_exact_security_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     notice_state: str,
+    repair_action: str,
 ):
     import tomllib
     from uuid import UUID
@@ -997,6 +1001,9 @@ def test_managed_pack_install_requires_exact_security_approval(
         ).encode()
 
         def repair(*arguments: str):
+            if repair_action == "fix-all" and "--pack" in arguments:
+                assert arguments[:2] == ("--pack", "healthy")
+                arguments = arguments[2:]
             completed = subprocess.run(
                 [
                     sys.executable,
@@ -1006,7 +1013,7 @@ def test_managed_pack_install_requires_exact_security_approval(
                     str(root),
                     "security",
                     "--json",
-                    "fix-one",
+                    repair_action,
                     *arguments,
                 ],
                 capture_output=True,
@@ -1076,7 +1083,30 @@ def test_managed_pack_install_requires_exact_security_approval(
             registry_path.write_bytes(registry_bytes)
         assert not (repaired_review / "consumed").exists()
         assert (root / "current").read_text() == "4\n"
-        code, applied = repair("--input", str(repaired_review), "--approval", planned["approval"])
+        progress = tmp_path / "repair-progress.json"
+        cancellation = progress.with_name(progress.name + ".cancel")
+        cancellation.write_text("cancel")
+        code, cancelled = repair(
+            "--input",
+            str(repaired_review),
+            "--approval",
+            planned["approval"],
+            "--progress",
+            str(progress),
+        )
+        assert code != 0 and "cancelled" in cancelled["error"], cancelled
+        assert (root / "current").read_text() == "4\n"
+        assert not (root / "generations/5").exists()
+        assert not (repaired_review / "consumed").exists()
+        cancellation.unlink()
+        code, applied = repair(
+            "--input",
+            str(repaired_review),
+            "--approval",
+            planned["approval"],
+            "--progress",
+            str(progress),
+        )
         assert code == 0 and applied["current"] == 5, applied
         selected = Lockfile.from_record_json((root / "generations/5/dinkster.lock").read_text())
         selected_pack = selected.get("healthy")

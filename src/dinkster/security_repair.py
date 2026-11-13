@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 from dataclasses import dataclass, replace
+from itertools import combinations, product
 from pathlib import Path
 from typing import Any, cast
 
@@ -178,7 +179,7 @@ def generation_security_status(generation: Path, pack: str | None = None) -> dic
 
 def plan_security_repair(
     generation: Path,
-    pack: str,
+    pack: str | None,
     config: RegistryConfig,
     *,
     index: StaticPackIndex,
@@ -195,7 +196,7 @@ def plan_security_repair(
     record, software, installed = inventory.record, inventory.software, inventory.installed
     libraries, manifests, locks = inventory.libraries, inventory.manifests, inventory.locks
     entries = {entry.pack: entry for entry in installed.packs}
-    if pack not in entries:
+    if pack is not None and pack not in entries:
         raise InstallError("security repair requires an installed pack")
     hosting = record.in_process_packs
     constraints = {name: manifest.dependencies for name, manifest in manifests.items()}
@@ -223,48 +224,69 @@ def plan_security_repair(
     )
     before = security.assess(_artifacts(installed, libraries, constraints))
     affected = {item.artifact.release.pack for item in before.findings}
-    if pack not in affected:
-        return {"status": "not-required", "pack": pack, "offer": None}
+    targets = (pack,) if pack is not None else tuple(sorted(affected))
+    if not targets or (pack is not None and pack not in affected):
+        return {"status": "not-required", "pack": pack, "packs": list(targets), "offer": None}
     refused_files = {
         item.notice.release.artifact_digest
         for item in before.findings
         if item.notice.state == "malicious"
     } | {digest for item in before.findings for digest in item.notice.causes}
-    candidates_to_change = [pack]
+    candidates_to_change = list(targets)
     for name in candidates_to_change:
         for dependency in constraints[name]:
             if dependency.pack not in candidates_to_change:
                 candidates_to_change.append(dependency.pack)
-    candidates_to_change.extend(name for name in hosting if name not in candidates_to_change)
+    # A replacement can introduce constraints on any already installed pack.
+    candidates_to_change.extend(name for name in entries if name not in candidates_to_change)
     failures: list[str] = []
+    attempts = 0
+    options: dict[str, list[str]] = {}
     for name in candidates_to_change:
         entry = entries[name]
         if not entry.source.startswith(("registry:http://", "registry:https://")):
             continue
         try:
             registry = config.registry_for(entry)
-            candidates = sorted(
-                {cast("str", row["version"]) for row in index.releases(registry, name)},
+            options[name] = sorted(
+                {
+                    cast("str", row["version"])
+                    for row in index.releases(registry, name)
+                    if Version(cast("str", row["version"])) >= Version(entry.version)
+                },
                 key=Version,
                 reverse=True,
             )
         except (InstallError, OSError, ValueError) as exc:
             failures.append(f"{name}: {exc}")
-            continue
-        for version in candidates:
-            if Version(version) < Version(entry.version):
-                continue
+    for count in range(1, len(options) + 1):
+        selections = (
+            tuple(f"{name}@{version}" for name, version in zip(names, versions, strict=True))
+            for names in combinations(options, count)
+            for versions in product(*(options[name] for name in names))
+        )
+        for selection in selections:
+            # Registry metadata must not turn an interactive preview into an
+            # unbounded Cartesian search. Exhaustion is not proof of no fix.
+            if attempts >= 512:
+                return {
+                    "status": "search-incomplete",
+                    "pack": pack,
+                    "packs": list(targets),
+                    "offer": None,
+                    "reasons": ["Repair search exceeded 512 combinations; no change was made."],
+                }
+            attempts += 1
             try:
                 sources, replacements = plan_registry_changes(
                     config,
                     installed,
-                    selections=(f"{name}@{version}",),
+                    selections=selection,
                     engine_version=record.engine_version,
                     variant=record.variant,
                     base_id=record.base,
                     index=index,
                 )
-                candidate = cast("LockedPack", sources.get(name))
                 requirements = dict(constraints)
                 python_requirements = {
                     key: tuple(
@@ -272,63 +294,72 @@ def plan_security_repair(
                     )
                     for key, manifest in manifests.items()
                 }
-                if (candidate.version, candidate.artifact_digest) != (
-                    entry.version,
-                    entry.artifact_digest,
-                ):
-                    manifest = index.release_manifest(registry, candidate)
-                    engine_range = manifest.get("dinkster")
-                    if not isinstance(engine_range, str) or not SpecifierSet(engine_range).contains(
-                        record.engine_version, prereleases=True
-                    ):
-                        raise InstallError("candidate manifest has incompatible engine constraints")
-                    raw = manifest.get("dependencies")
-                    if not isinstance(raw, list):
-                        raise InstallError("candidate release has no pack dependency constraints")
-                    requirements[name] = tuple(
-                        PackDependency(item["packName"], item["versionRange"]) for item in raw
-                    )
-                    raw_python = manifest.get("pythonRequirements")
-                    if not isinstance(raw_python, list) or any(
-                        not isinstance(value, str) for value in raw_python
-                    ):
-                        raise InstallError("candidate release has no Python dependency constraints")
-                    extras = manifest.get("pythonExtraRequirements")
-                    if not isinstance(extras, dict) or any(
-                        not isinstance(values, list)
-                        or any(not isinstance(value, str) for value in values)
-                        for values in extras.values()
-                    ):
-                        raise InstallError(
-                            "candidate release has no accelerator dependency constraints"
-                        )
-                    python_requirements[name] = tuple(
-                        normalize_requirement(value)
-                        for value in [*raw_python, *extras.get(accelerator, [])]
-                    )
-                else:
-                    candidate = replace(candidate, claims=entry.claims)
-                    sources = Lockfile.of(
-                        [candidate if item.pack == name else item for item in sources.packs]
-                    )
-                for key, retained in manifests.items():
-                    if key == name and (candidate.version, candidate.artifact_digest) != (
+                changed_releases: set[str] = set()
+                changed_locks = {lock.pack: lock for lock in replacements}
+                for name in changed_locks:
+                    entry = entries[name]
+                    candidate = cast("LockedPack", sources.get(name))
+                    if (candidate.version, candidate.artifact_digest) != (
                         entry.version,
                         entry.artifact_digest,
                     ):
-                        continue
-                    if retained.compatibility is not None:
+                        changed_releases.add(name)
+                        manifest = index.release_manifest(config.registry_for(candidate), candidate)
+                        engine_range = manifest.get("dinkster")
+                        if not isinstance(engine_range, str) or not SpecifierSet(
+                            engine_range
+                        ).contains(record.engine_version, prereleases=True):
+                            raise InstallError(
+                                "candidate manifest has incompatible engine constraints"
+                            )
+                        raw = manifest.get("dependencies")
+                        if not isinstance(raw, list):
+                            raise InstallError(
+                                "candidate release has no pack dependency constraints"
+                            )
+                        requirements[name] = tuple(
+                            PackDependency(item["packName"], item["versionRange"]) for item in raw
+                        )
+                        raw_python = manifest.get("pythonRequirements")
+                        if not isinstance(raw_python, list) or any(
+                            not isinstance(value, str) for value in raw_python
+                        ):
+                            raise InstallError(
+                                "candidate release has no Python dependency constraints"
+                            )
+                        extras = manifest.get("pythonExtraRequirements")
+                        if not isinstance(extras, dict) or any(
+                            not isinstance(values, list)
+                            or any(not isinstance(value, str) for value in values)
+                            for values in extras.values()
+                        ):
+                            raise InstallError(
+                                "candidate release has no accelerator dependency constraints"
+                            )
+                        python_requirements[name] = tuple(
+                            normalize_requirement(value)
+                            for value in [*raw_python, *extras.get(accelerator, [])]
+                        )
+                    else:
+                        candidate = replace(candidate, claims=entry.claims)
+                        sources = Lockfile.of(
+                            [candidate if item.pack == name else item for item in sources.packs]
+                        )
+                for key, retained in manifests.items():
+                    if key not in changed_releases and retained.compatibility is not None:
                         retained.compatibility.require_engine(key, record.engine_version)
-                replacement = replacements[0]
                 if any(
                     "sha256:" + wheel.sha256 in refused_files
+                    for replacement in replacements
                     for package in replacement.packages
                     for wheel in package.wheels
                 ):
                     raise InstallError("candidate lock still includes a refused file")
-                if replacement == locks[name] and candidate == entry:
+                if not changed_releases and all(
+                    lock == locks[name] for name, lock in changed_locks.items()
+                ):
                     continue
-                proposed = {**locks, name: replacement}
+                proposed = {**locks, **changed_locks}
                 facts = parent
                 selected_libraries: dict[str, tuple[Dependency, ...]] = {}
                 shared = list(root_dependencies)
@@ -372,10 +403,12 @@ def plan_security_repair(
                 }
                 proposed_artifacts = _artifacts(sources, dependencies, requirements)
                 result = security.assess(proposed_artifacts)
-                changed = tuple(item for item in proposed_artifacts if item.release.pack == name)
+                changed = tuple(
+                    item for item in proposed_artifacts if item.release.pack in changed_locks
+                )
                 if (
                     not result.allowed
-                    or any(item.artifact.release.pack == pack for item in result.findings)
+                    or any(item.artifact.release.pack in targets for item in result.findings)
                     or not security.assess(changed, installing=True).allowed
                 ):
                     raise InstallError(
@@ -388,10 +421,13 @@ def plan_security_repair(
                 return {
                     "status": "approval-required",
                     "pack": pack,
+                    "packs": list(targets),
                     "offer": {
                         "sources": json.loads(sources.record_json()),
                         "previousSources": json.loads(installed.record_json()),
-                        "dependencyLocks": {name: json.loads(replacement.to_json())},
+                        "dependencyLocks": {
+                            name: json.loads(lock.to_json()) for name, lock in changed_locks.items()
+                        },
                         "engineVersion": record.engine_version,
                         "engineRelease": record.engine_release,
                         "variant": record.variant,
@@ -402,11 +438,15 @@ def plan_security_repair(
                             for item in sources.packs
                         },
                         "plan": [
-                            f"repair {pack} by selecting {name}@{candidate.version} "
-                            f"({candidate.artifact_digest}) with the reviewed dependency lock",
-                            "retain engine, base, other pack locks and placement",
-                        ],
-                        "changedPack": name,
+                            f"select {item.release.pack}@{item.release.version} "
+                            f"({item.release.artifact_digest}) with the reviewed dependency lock"
+                            for item in changed
+                        ]
+                        + ["retain engine, base, other pack locks and placement"],
+                        "changedPacks": list(changed_locks),
+                        "changedPack": next(iter(changed_locks))
+                        if len(changed_locks) == 1
+                        else None,
                         "approvalRequired": True,
                         "generation": record.number,
                         "software": software,
@@ -414,5 +454,19 @@ def plan_security_repair(
                     },
                 }
             except (InstallError, ProvisionError, OSError, ValueError, KeyError, TypeError) as exc:
-                failures.append(f"{name}@{version}: {exc}")
-    return {"status": "no-compatible-fix", "pack": pack, "offer": None, "reasons": failures}
+                failures.append(f"{', '.join(selection)}: {exc}")
+    return {
+        "status": "no-compatible-fix",
+        "pack": pack,
+        "packs": list(targets),
+        "offer": None,
+        "reasons": failures,
+        "targets": [
+            {
+                "pack": name,
+                "status": "no-compatible-fix",
+                "reason": "No compatible joint repair was found; nothing was changed.",
+            }
+            for name in targets
+        ],
+    }

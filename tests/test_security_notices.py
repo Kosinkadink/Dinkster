@@ -1845,6 +1845,10 @@ def test_generation_selection_uses_sealed_installed_dependency_bytes(
         "pending-retained",
         "unnormalized-retained",
         "pending-fix",
+        "joint",
+        "joint-conflict",
+        "new-dependency",
+        "search-incomplete",
     ],
 )
 def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
@@ -1893,7 +1897,8 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
         LockedPack(name, "1.0.0", "blake3:" + digest * 64, "publisher", (), "registry:" + endpoint)
         for name, digest in (
             (("consumer", "c"), ("provider", "d"), ("unrelated", "9"))
-            if case in {"other-blocked", "pending-retained"}
+            if case
+            in {"other-blocked", "pending-retained", "joint", "joint-conflict", "new-dependency"}
             else (("consumer", "c"), ("provider", "d"))
         )
     ]
@@ -2022,9 +2027,13 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     record.write(generation / "generation.json")
     rows = []
     for version, sha in (
-        ("1.0.0", good_sha if case == "lock" else bad_sha),
-        ("1.1.0", bad_sha if case == "rehost" else good_sha),
-        ("1.2.0", bad_sha),
+        [(f"1.{number}.0", bad_sha) for number in range(600)]
+        if case == "search-incomplete"
+        else [
+            ("1.0.0", good_sha if case == "lock" else bad_sha),
+            ("1.1.0", bad_sha if case == "rehost" else good_sha),
+            ("1.2.0", bad_sha),
+        ]
     ):
         if case == "lock" and version != "1.0.0":
             continue
@@ -2086,7 +2095,46 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     ),
                     "dependencies": [{"packName": "absent", "versionRange": ">=1"}]
                     if case == "outgoing"
+                    else [{"packName": "unrelated", "versionRange": ">=1.1"}]
+                    if case == "new-dependency" and version == "1.1.0"
                     else [],
+                },
+            }
+        ).encode()
+    if case in {"joint", "joint-conflict", "new-dependency"}:
+        repaired = replace(entries[2], version="1.1.0", artifact_digest="blake3:" + "3" * 64)
+        row = _static_release(repaired, b"unrelated fixed")
+        row["engine"] = ">=1,<2"
+        payload = PackLock("unrelated", "fixture-cpu", ">=3.12", (), (), ()).to_json().encode()
+        digest = artifact_digest(payload)
+        url = "locks/" + digest.replace(":", "/") + ".json"
+        row["installLocks"] = {
+            "fixture-cpu": {
+                "baseId": record.base,
+                "artifactDigest": repaired.artifact_digest,
+                "digest": digest,
+                "size": len(payload),
+                "url": url,
+            }
+        }
+        rows.append(row)
+        documents["/static/" + url] = payload
+        documents["/v1/packs/unrelated/versions/1.1.0"] = json.dumps(
+            {
+                "packName": "unrelated",
+                "version": "1.1.0",
+                "state": "active",
+                "artifact": {"digest": repaired.artifact_digest},
+                "manifest": {
+                    "dinkster": ">=1,<2",
+                    "pythonRequirements": [],
+                    "pythonExtraRequirements": {},
+                    "dependencies": [
+                        {
+                            "packName": "provider",
+                            "versionRange": "<1.1" if case == "joint-conflict" else ">=1.1",
+                        }
+                    ],
                 },
             }
         ).encode()
@@ -2095,7 +2143,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
     store = _store(tmp_path, key)
     feed = _feed("vulnerable" if case == "pending-fix" else "malicious")
     feed["notices"][0]["release"].update(pack="bad-library", version="1.0")
-    if case in {"other-blocked", "pending-retained"}:
+    if case in {"other-blocked", "pending-retained", "joint", "joint-conflict"}:
         other = copy.deepcopy(feed["notices"][0])
         other["id"] = "636d54c0-ef6b-44cb-9ee3-bf7381bf0ed8"
         other["release"]["pack"] = "other-library"
@@ -2223,7 +2271,7 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 pointer.unlink()
         result = plan_security_repair(
             generation,
-            "consumer",
+            None if case in {"joint", "joint-conflict"} else "consumer",
             RegistryConfig(),
             index=StaticPackIndex(read_only=True),
             security=host,
@@ -2240,14 +2288,30 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 "pending-retained",
                 "unnormalized-retained",
                 "pending-fix",
+                "joint",
+                "new-dependency",
             }
+            else "search-incomplete"
+            if case == "search-incomplete"
             else "no-compatible-fix"
         ), result
         if result["status"] == "approval-required":
             offer = cast("dict[str, Any]", result["offer"])
             assert offer["approvalRequired"] is True
             assert offer["accelerator"] == "cpu"
-            assert offer["changedPack"] == "provider"
+            if case in {"joint", "new-dependency"}:
+                assert set(offer["changedPacks"]) == {"provider", "unrelated"}
+                assert set(offer["dependencyLocks"]) == {"provider", "unrelated"}
+                assert [
+                    (item["name"], item["version"])
+                    for item in offer["dependencyLocks"]["unrelated"]["packages"]
+                ] == [("unrelated", "1.1.0")]
+                assert (
+                    offer["dependencyLocks"]["unrelated"]["packages"][0]["wheels"][0]["sha256"]
+                    == hashlib.sha256(b"unrelated fixed").hexdigest()
+                )
+            else:
+                assert offer["changedPack"] == "provider"
             proposed = Lockfile.from_record_json(json.dumps(offer["sources"]))
             provider = proposed.get("provider")
             assert provider is not None
