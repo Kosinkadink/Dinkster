@@ -8,24 +8,26 @@ and optional remote workers. Model execution is supplied by the pinned
 optional ComfyUI checkout adds compatibility for node packs that have not been
 ported.
 
-To run Dinkster from source, clone Dinkster and Dinkster-Frontend beside each
-other, build the frontend, install the locked Python workspace, and launch:
+To run Dinkster from a source checkout, use the launcher. It builds the pinned
+frontend and creates a contributor development generation with a live engine:
 
 ```sh
-cd Dinkster-Frontend
-pnpm install --frozen-lockfile
-pnpm --filter @dinkster/app build
-cd ../Dinkster
-uv run --no-project python scripts/setup_envs.py
-uv run --no-sync dinkster setup
-uv run --no-sync dinkster
+./run.sh
+```
+
+On Windows, use `.\run.ps1`. For setup and tests without building the frontend:
+
+```sh
+uv run --no-project python scripts/develop.py setup --yes
+python scripts/develop.py run -- python -m pytest
 ```
 
 The editor opens at `http://127.0.0.1:3639`. See the
 [browser editor quickstart](docs/quickstart.md) for model folders, execution
 environments, and the first-image walkthrough.
-On Windows, use the [verified Windows interpreter setup](docs/install.md#windows-interpreter)
-instead of the floating Python selector above.
+Contributor setup prepares the [verified Windows interpreter](docs/install.md#windows-interpreter)
+automatically. On Linux, use `python3` in place of `python` if your shell does
+not provide the latter command.
 
 Packs are independently installable Python distributions with a
 `dinkster-pack.toml` manifest. A pack declares its schemas, runtime entry
@@ -59,28 +61,26 @@ workflows and ComfyUI-compatibility workflows run through the same typed graph,
 server, and worker boundaries. The exact model, node, dtype, training, and
 compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). Run
-`uv run --no-project python scripts/setup_envs.py` to install the machine's
-verified Dinkster-Environments base and locked editable workspace in `.venv`.
-The base manifest owns Python, torch and its dependency closure. Linux selects
-`linux-nvidia` for compatible NVIDIA hardware or `linux-cpu`; Windows selects
-a compatible NVIDIA base or `win-cpu` from the manifest's hardware bounds.
-Apple Silicon on macOS 14 or newer selects
-`mac-arm64` from PyPI with MPS support; Intel macOS is unsupported.
-Use `--variant linux-cpu` or `--variant win-cpu` to select CPU explicitly.
-
-Use `uv run --no-sync` after setup. Project `uv sync` would replace the selected
-base's platform-specific wheels with the universal lock's defaults. Rerun setup
-after dependency changes; `--force` rebuilds only its `.venv`.
+`uv run --no-project python scripts/develop.py setup --yes` to build a
+contributor generation in the sibling `.<checkout-name>-development` project.
+CPU is the default on Linux/Windows; `--variant linux-nvidia`, `--variant
+win-nvidia`, or another host-compatible variant explicitly selects another
+torch build. Apple Silicon uses `mac-arm64`; Intel macOS is unsupported.
+The generation owns its Python, dependencies and tools. Ordinary `uv run` or
+`uv sync` in the checkout does not target that runtime. Rerun setup after
+dependency changes; source-only engine edits need only a stop/start.
 
 Maintainers running the full root suite must first run
-`uv run --no-sync python scripts/prepare_validation_inputs.py`. This prepares
+`uv run --no-project python scripts/prepare_validation_inputs.py`. This prepares
 the exact private evidence revision used by hosted full validation; ordinary
-installation and runtime use do not require that checkout.
+installation and runtime use do not require that checkout. Select its acceptance
+library with `--library-source ../.dinkster-evidence-source/packages/dinkster-acceptance`
+on the contributor setup command.
 
-- `uv run --no-sync pytest` - test suite (incl. the one-way dependency rule, hazard H6)
-- `uv run --no-sync pyright` - static type checking (strict for `packages/`, standard
+- `python scripts/develop.py run -- pytest` - test suite (incl. the one-way dependency rule, hazard H6)
+- `python scripts/develop.py run -- pyright` - static type checking (strict for `packages/`, standard
   for `src/` and `tests/`)
-- `uv run --no-sync ruff check .` - lint
+- `python scripts/develop.py run -- ruff check .` - lint
 - `python -B tools/replay_node_constants.py <ComfyUI checkout> <node test>` -
   replay explicitly annotated ComfyUI node assertions on demand. A supported
   assertion has an immediately preceding `# comfy-replay:` JSON object with
@@ -100,15 +100,15 @@ installation and runtime use do not require that checkout.
   source return value already equals the asserted literal. Otherwise `result`
   explicitly maps each decimal source result slot to an asserted output name;
   the tool never guesses output names or projections.
-- `uv run --no-sync dinkster demo` - demo: toy graph through the real engine; shows caching,
+- `python scripts/develop.py run -- dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
 - `dinkster-pack prepare-registry-sources` and `prepare-registry-locks` prepare
   reviewed installation inputs without loading serving composition. Serving specs
   and pack presentation are loaded only when the installer prepares a serving host.
-- `uv run --no-sync dinkster-pack prepare-catalogs --defaults` - prepare installed
+- `python scripts/develop.py run -- dinkster-pack prepare-catalogs --defaults` - prepare installed
   default-pack dependencies and persist their schemas before serving; run it
   after installation and rerun it after checkout or dependency changes
-- `uv run --no-sync dinkster-serve` - native protocol server (binds a zero-node diagnostic
+- `python scripts/develop.py run -- dinkster-serve` - native protocol server (binds a zero-node diagnostic
   host, then announces installed catalogs with exact provenance without
   starting pack workers; workers activate on demand. Each repeatable
   `--pack path/to/dinkster-pack.toml` runs isolated
@@ -174,12 +174,12 @@ installation and runtime use do not require that checkout.
 
   Cursor pages omit `folders`. Invalid/traversing paths and malformed or
   filter-mismatched cursors return 400; unknown mounts return 404.
-- `uv run --no-sync dinkster-isolated` - isolation demo: the image pack runs out-of-process
+- `python scripts/develop.py run -- dinkster-isolated` - isolation demo: the image pack runs out-of-process
   behind IsolatedWorker; the parent never imports it (schemas arrive over
   the wire), image payloads cross via shared memory, and per-edge boundary
-  diagnostics print live (`DINKSTER_SLOW_TESTS=1 uv run --no-sync pytest` also covers
+  diagnostics print live (`DINKSTER_SLOW_TESTS=1 python scripts/develop.py run -- pytest` also covers
   provisioning a real per-pack venv with uv)
-- `uv run --no-sync dinkster-port <legacy-pack> --name my-pack` - generate a doctor-clean
+- `python scripts/develop.py run -- dinkster-port <legacy-pack> --name my-pack` - generate a doctor-clean
   native pack skeleton from a ComfyUI pack (v1 `NODE_CLASS_MAPPINGS`, V3
   `comfy_entrypoint`, or a mixed pack shipping both): real translated schemas
   (source names kept as aliases), loud `execute()` stubs carrying the source

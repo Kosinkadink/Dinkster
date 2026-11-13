@@ -29,28 +29,26 @@ If uv is missing, the script installs it using the
 in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), without sudo,
 administrator rights, or shell-profile changes. Linux needs curl or wget
 for this download. The installed uv is available immediately to the script.
-The script installs the machine's verified Dinkster-Environments Python/torch
-bundle and locked workspace into `.venv`, builds the pinned frontend,
-creates local state, and opens the
-editor. It does not need the Desktop app or a separate frontend checkout.
-Windows checks the selected runtime's [SQLite mapped-shm recovery](install.md#windows-interpreter)
-and private-base identity before installing workspace dependencies.
+The script builds the pinned frontend and prepares a contributor development
+generation in the sibling `.<checkout-name>-development` project, then opens the
+editor. Its Python, torch and tools are separate from the checkout's uv environment.
+It does not need the Desktop app or a separate frontend checkout. Windows verifies
+the runtime's [SQLite mapped-shm recovery](install.md#windows-interpreter).
 The first run downloads dependencies and can take several minutes.
-Windows NVIDIA machines select a bundle using its manifest's driver and
-compute-capability bounds; otherwise Windows uses its CPU bundle. Linux uses
-the published Linux CPU bundle; Apple Silicon uses `mac-arm64` with MPS.
-An empty `CUDA_VISIBLE_DEVICES` (or `-1`)
-forces CPU selection. There is no second local torch pin or fallback resolve.
+Linux and Windows default to CPU; Apple Silicon uses `mac-arm64` with MPS.
+For another host-compatible variant, run `python scripts/develop.py setup
+--variant NAME --yes` explicitly and start that project with the development
+commands rather than rerunning the CPU-default launcher.
 
 The scripts create the local library under `~/.dinkster`
 (`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before launch to
 choose another writable location. They preserve model mounts and output files.
-They explicitly select watched checkout development, not published setup or
-standalone installed packs. The terminal and served node catalog label this
-mode as unreviewed and not reproducible from dependency ranges. Contributor
-environment setup remains locked; live pack sources are not registry-reviewed
-release inputs. For captured development generations with runtime recovery,
-see [development packs](install.md#development-packs-from-local-folders).
+They select a live contributor engine, not published setup or standalone
+installed packs. The terminal and served node catalog label this mode as
+unreviewed and not exactly restorable. Dependency changes require setup again;
+engine source edits need only a stop/start. For explicit live pack/library inputs
+and captured generations that can be restored, see
+[development packs](install.md#development-packs-from-local-folders).
 
 ## Launch
 
@@ -63,17 +61,14 @@ are refreshed and the frontend rebuilds when its pin changes. The private
 `.run/frontend` directory is script-managed; do not edit it.
 
 The editor opens at `http://127.0.0.1:3639`. Its application, API, and event
-connections all use that origin. The default pack suite includes the
-foundation, media, and vision nodes. The default Dinkster install also includes
-the independently installable `dinkster-collab` collaboration routes and
-`dinkster-supervisor` process supervisor. The command above starts the engine
-directly with collaboration enabled; peer-to-peer discovery is disabled for
-the local launch.
-The first launch prepares pack catalogs and normally takes 25 to 35 seconds before the editor
-answers. The terminal reports each completed pack and the total preparation time. Later launches
-skip catalog preparation unless pack code has changed.
+connections all use that origin. The launcher selects no packs, so an empty
+editor with zero node schemas is healthy. To run nodes, select the required
+pack folders through [development setup](install.md#development-packs-from-local-folders);
+pack locations do not have to be inside the engine checkout. Published setup
+still selects its registry defaults separately.
+The process supervisor keeps the engine running after the launcher returns.
 
-Use Ctrl+C in the terminal to stop the engine. If the default port is busy,
+Use `python scripts/develop.py stop --yes` to stop the engine. If the default port is busy,
 run `./run.sh --port 4640` (`.\run.ps1 --port 4640` on Windows).
 Use `--no-browser` on a headless machine and
 open the printed URL from a browser on that machine.
@@ -83,13 +78,9 @@ For a manual source launch without the script, see
 generations, use the environment commands rather than the source launcher.
 
 An embedded or headless core installation may omit both optional packages.
-From a source checkout, remove them from the environment and disable automatic
-sync while launching so the default meta-package does not restore them:
-
-```sh
-uv pip uninstall --python .venv dinkster-collab dinkster-supervisor
-uv run --no-sync python -m dinkster.serve --watch-packs
-```
+Use a separate environment for that installation. Contributor tools and the
+source launcher use the active development generation, not the checkout's
+root environment.
 
 Installers that select capabilities explicitly can use the `dinkster[collab]`
 and `dinkster[supervisor]` extras. The default `dinkster` install selects both.

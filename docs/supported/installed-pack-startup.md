@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- A managed update, repair, restore or rollback can start its replacement on
+  another OS-assigned port if the planned port is occupied. The recorded URL
+  follows the actual listener. The previous engine keeps serving until the
+  replacement passes health checks; interrupted activation remains recoverable.
+  An explicit standalone start still uses its requested port.
+
 - Pack installation, retained rollback and serving selection enforce locally
   cached verified security notices. Known malicious artifacts and explicitly
   denied vulnerable releases refuse without deleting retained bytes or changing
@@ -894,6 +900,23 @@ matching the host; `--python /absolute/python` explicitly selects an existing
 interpreter instead of the configured standalone interpreter. Use `--port PORT`
 when the default listener is occupied. Project and store directories must be
 outside selected source folders. Unmarked sources build from verified copies.
+`develop --contributor` includes the checkout's development tools and inference
+extra in the generation and uses the engine's working folders live. Pack inputs
+are optional in contributor mode; explicitly selected pack and library folders
+keep the same live/captured rules. Run tools with
+`dinkster run --root /absolute/project -- python -m pytest` (or another command
+after `--`). The command inherits the terminal and working directory, returns
+the tool's exit status, and uses the active generation's interpreter and tools.
+It holds that generation against collection until the command exits.
+From an unprepared checkout, `uv run --no-project python scripts/develop.py setup --yes`
+bootstraps only the supervisor, then uses that same contributor generation builder.
+The default project is the checkout's sibling `.<checkout-name>-development`,
+not its root `.venv`. Use `python scripts/develop.py run -- python -m pytest`
+for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
+`run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
+generation. The CPU variant is the default; pass `--variant NAME` to setup for
+another host-compatible variant.
+
 Use `--live-engine`, `--live-pack /absolute/pack`, or
 `--live-library /absolute/helper` on both plan and apply commands to run from
 explicitly selected local folders instead. A live folder must also be a source
@@ -944,8 +967,7 @@ of its last inputs can make exact recovery unavailable.
 Source paths, package roots, content digests and available Git commit/dirty state
 describe the captured working bytes, including selected untracked edits. Recovery
 does not reset, clean, overwrite or back up author folders. Workflows, models,
-outputs and other project data are not recovered by software restore. No bundled
-Git, Git-URL fetching or contributor-environment synchronization is provided by
-this operation. When invoking tools through `uv run`, `--no-sync` prevents uv from
-silently changing that tool environment to match a checkout lock; it does not
-capture an environment or make arbitrary unrecorded edits recoverable.
+outputs and other project data are not recovered by software restore. Contributor
+commands run in their selected generation, separately from any checkout-managed uv
+environment. That separation does not make live edits recoverable; omit live
+marks when an exactly restorable capture is needed.

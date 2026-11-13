@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
 import subprocess
 import sys
 from contextlib import suppress
@@ -303,6 +304,52 @@ transactions.activate(Path(sys.argv[1]), Path(sys.argv[2]), revalidate=lambda: N
         stop_engine(tmp_path, "main", generation=1)
 
 
+def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Path) -> None:
+    _target(tmp_path, 1)
+    previous = start_engine(tmp_path, 1, "main", free_port())
+    path = begin_activation(tmp_path, 2, "repair")
+    _target(tmp_path, 2)
+    occupied = Journal.read(path).bindings[0]["targetPort"]
+    with socket.socket() as blocker:
+        if sys.platform == "win32":
+            blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        blocker.bind(("0.0.0.0" if sys.platform == "win32" else "127.0.0.1", cast("int", occupied)))
+        blocker.listen()
+
+        def revalidate() -> None:
+            assert read_current(tmp_path) == 1
+            with urlopen(f"{previous['url']}/api/generation", timeout=5) as response:  # noqa: S310
+                assert json.loads(response.read()) == {
+                    "generation": str(tmp_path / "generations/1")
+                }
+            actual = Journal.read(path).bindings[0]["targetPort"]
+            assert actual != occupied
+            with urlopen(f"http://127.0.0.1:{actual}/api/generation", timeout=5) as response:  # noqa: S310
+                assert json.loads(response.read()) == {
+                    "generation": str(tmp_path / "generations/2")
+                }
+
+        try:
+            activate(tmp_path, path, revalidate=revalidate)
+            journal = Journal.read(path)
+            assert journal.stage == "complete" and read_current(tmp_path) == 2
+            assert journal.bindings[0]["targetPort"] != occupied
+            assert engine_status(tmp_path) == (
+                {
+                    "name": "main",
+                    "generation": 2,
+                    "state": "ready",
+                    "url": f"http://127.0.0.1:{journal.bindings[0]['targetPort']}",
+                },
+            )
+            stop_engine(tmp_path, "main", generation=2)
+            assert engine_status(tmp_path)[0]["state"] == "stopped"
+            assert blocker.getsockname()[1] == occupied
+        finally:
+            stop_engine(tmp_path, "main", generation=1)
+            stop_engine(tmp_path, "main", generation=2)
+
+
 @pytest.mark.parametrize("migration", [False, True])
 def test_update_preserves_previous_tree_and_publishes_selected_settings(
     tmp_path: Path, migration: bool
@@ -493,8 +540,12 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         name: str,
         port: int,
         gpus: tuple[str, ...] = (),
+        *,
+        activation_journal: Path | None = None,
     ) -> dict[str, object]:
-        result = original_start(root, generation, name, port, gpus)
+        result = original_start(
+            root, generation, name, port, gpus, activation_journal=activation_journal
+        )
         if generation != 2:
             return result
         if interruption == "asset-removed":

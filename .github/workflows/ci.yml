@@ -45,7 +45,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
         if: steps.paths.outputs.docs != 'true'
       - run: bash scripts/ci-fast.sh checks
         if: steps.paths.outputs.docs != 'true'
@@ -113,15 +113,12 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Install the locked Linux workspace with CPU torch
+      - run: uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
+        if: needs.checks.outputs.docs != 'true'
+      - name: Verify the Linux generation uses CPU torch
         if: needs.checks.outputs.docs != 'true'
         run: |
-          uv export --locked --all-packages --no-hashes --no-annotate --no-header \
-            | sed '/^nvidia-/d; /^triton==/d' > "$RUNNER_TEMP/linux-root-requirements.txt"
-          uv venv --clear --python 3.12
-          uv pip sync --python .venv/bin/python --torch-backend cpu "$RUNNER_TEMP/linux-root-requirements.txt"
-          echo 'UV_NO_SYNC=1' >> "$GITHUB_ENV"
-          .venv/bin/python - <<'PY'
+          python scripts/develop.py run -- python - <<'PY'
           from importlib.metadata import distributions
           import torch
           import torchvision
@@ -142,11 +139,12 @@ jobs:
           for package in dinkster dinkster-api dinkster-engine; do
             uv build --package "$package" --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
           done
-          uv venv --python .venv/bin/python "$RUNNER_TEMP/fast-wheel-host"
+          execution_python=$(python scripts/develop.py run -- python -c 'import sys; print(sys.executable)')
+          uv venv --python "$execution_python" "$RUNNER_TEMP/fast-wheel-host"
           uv pip install --python "$RUNNER_TEMP/fast-wheel-host/bin/python" --no-sources "$RUNNER_TEMP/fast-build-setup/"*.whl
       - name: Verify pinned inference APIs
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python tools/verify_pinned_inference.py
+        run: python scripts/develop.py run -- python tools/verify_pinned_inference.py
       - name: Create a disposable XFS clone-test volume
         if: needs.checks.outputs.engine == 'true'
         run: |
@@ -166,9 +164,6 @@ jobs:
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_ACCELERATOR: cpu
-      - name: Install the CPU base for selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
       - name: Install the CPU software shader renderer
         if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
         uses: ./.github/actions/torch-cpu-suite/renderer-setup
@@ -177,17 +172,17 @@ jobs:
         env:
           PACKS: ${{ needs.checks.outputs.packs }}
           DINKSTER_ACCELERATOR: cpu
-        run: uv run --no-sync python -m tools.ci_selection --packs "$PACKS"
+        run: python scripts/develop.py run -- python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
         env:
           CUDA_VISIBLE_DEVICES: ""
       - name: Read the pinned frontend revision
         if: needs.checks.outputs.engine == 'true'
         id: frontend
         run: |
-          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          python scripts/develop.py run -- python - <<'PY' >> "$GITHUB_OUTPUT"
           from pathlib import Path
           import yaml
 
