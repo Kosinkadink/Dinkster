@@ -72,15 +72,22 @@ def start_engine(
     name: str,
     port: int,
     gpus: tuple[str, ...] = (),
+    *,
+    activation_journal: Path | None = None,
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
     with generation_runtime_lock(root):
-        return _start_engine(root, generation, name, port, gpus)
+        return _start_engine(root, generation, name, port, gpus, activation_journal)
 
 
 def _start_engine(
-    root: Path, generation: int, name: str, port: int, gpus: tuple[str, ...]
+    root: Path,
+    generation: int,
+    name: str,
+    port: int,
+    gpus: tuple[str, ...],
+    activation_journal: Path | None,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
@@ -135,6 +142,11 @@ def _start_engine(
         "127.0.0.1",
         "--port",
         str(port),
+        *(
+            ["--activation-journal", str(activation_journal), "--activation-name", name]
+            if activation_journal is not None
+            else []
+        ),
         "--",
         str(python),
         "-I",
@@ -164,7 +176,9 @@ def _start_engine(
     while time.monotonic() < deadline:
         inspected = _inspect(record)
         # A Python launcher may forward to a supervisor with a different PID.
-        if _identity_matches(inspected) and inspected["pid"] != record["pid"]:
+        if _identity_matches(inspected) and (
+            inspected["pid"] != record["pid"] or inspected["port"] != record["port"]
+        ):
             record = inspected
             _write_record(root, name, record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
@@ -504,6 +518,19 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
         # A crashed supervisor does not prove that its engine child exited.
         inspected["state"] = "failed"
         return inspected
+    listener = lifecycle / "listener.json"
+    if listener.is_file():
+        binding = read_document(listener)
+        port = binding.get("port")
+        if binding.get("instance") != inspected["instance"] or type(port) is not int:
+            raise EnvironmentError("invalid supervisor listener record")
+        validate_assignment(
+            cast("int", inspected["generation"]),
+            cast("str", inspected["name"]),
+            port,
+            tuple(cast("list[str]", inspected["gpus"])),
+        )
+        inspected.update(port=port, url=f"http://127.0.0.1:{port}")
     try:
         status = _request(cast("str", inspected["url"]) + "/supervisor/status")
     except (HTTPError, URLError, ValueError):
