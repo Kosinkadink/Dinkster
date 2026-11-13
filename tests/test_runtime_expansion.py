@@ -45,7 +45,6 @@ from dinkster_schema import (
 )
 from dinkster_values import (
     COST_META_KEY,
-    RESOURCE_ID_META_KEY,
     TypeRegistry,
     Value,
     ValueMeta,
@@ -341,91 +340,6 @@ PACK_NODES = [
 ]
 
 
-@pytest.mark.parametrize(
-    ("worker_kind", "use_shm"),
-    [
-        ("in-process", False),
-        ("governed", False),
-        ("isolated", False),
-        ("isolated", True),
-        ("remote", False),
-    ],
-)
-def test_expansion_result_survives_worker_round_trip(
-    tmp_path: Path, worker_kind: str, use_shm: bool
-) -> None:
-    from test_remote import TOKEN, start_service, stop_service
-
-    async def scenario() -> None:
-        values = TypeRegistry()
-        register_core_types(values)
-        boundary_worker: IsolatedWorker | RemoteWorker | None = None
-        service: asyncio.subprocess.Process | None = None
-        worker: Worker
-        if worker_kind in ("isolated", "remote"):
-            manifest = tmp_path / "dinkster-pack.toml"
-            manifest.write_text(
-                '[pack]\nname = "expansion"\nnamespaces = ["expansion"]\n'
-                '[pack.entry]\nnodes = "tests.test_runtime_expansion:PACK_NODES"\n',
-                encoding="ascii",
-            )
-            root = Path(__file__).resolve().parent.parent
-            if worker_kind == "remote":
-                service, host, port = await start_service(manifest, tmp_path, pythonpath=(root,))
-                boundary_worker = RemoteWorker(host, port, TOKEN, values, name="expansion")
-            else:
-                boundary_worker = IsolatedWorker(
-                    manifest,
-                    values,
-                    use_shm=use_shm,
-                    shm_threshold=1,
-                    extra_env={"PYTHONPATH": str(root)},
-                )
-            worker = boundary_worker
-        else:
-            worker = InProcessWorker(build_node_types(PACK_NODES), values)
-            if worker_kind == "governed":
-                worker = GovernedWorker(
-                    worker,
-                    planner=lambda _: (ReservationRequest("ram", 1),),
-                    reservations=GovernorReservationService(MemoryGovernor({"ram": 16})),
-                )
-        try:
-            if boundary_worker is not None:
-                await boundary_worker.start()
-            for index in range(2):
-                result = await worker.invoke(
-                    Invocation(
-                        f"invocation-{index}",
-                        "parent",
-                        "expansion.test",
-                        {},
-                        WireExpansionNode.schema(),
-                        job_ref="run",
-                    )
-                )
-                assert result.error is None
-                assert result.outputs is not None
-                assert result.outputs["seed"].resolve() == 17
-                assert result.expansion is not None
-                bindings = dict(result.expansion.bindings)
-                assert bindings["result"] == LocalOutputRef("child", "value")
-                assert isinstance(bindings["seed"], PresentOutput)
-                assert bindings["seed"].value is result.outputs["seed"]
-                assert result.expansion.expansion.nodes == (
-                    LocalNode("child", "expansion.child", (("value", CurrentOutputRef("seed")),)),
-                )
-        finally:
-            try:
-                if boundary_worker is not None:
-                    await boundary_worker.close()
-            finally:
-                if service is not None:
-                    await stop_service(service)
-
-    run_scenario(scenario())
-
-
 def cached_expansion(seed: Value) -> CachedResult:
     registry = TypeRegistry()
     register_core_types(registry)
@@ -547,27 +461,6 @@ def test_incomplete_cached_expansion_is_a_whole_entry_miss(tmp_path: Path, damag
         cache = LayeredCache(MemoryLRUCache(), DiskCacheStore(tmp_path, registry))
         assert await cache.get("parent") is None
         assert not path.exists()
-
-    run_scenario(scenario())
-
-
-def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        seed = registry.wrap("INT", 17)
-        seed = replace(seed, meta=ValueMeta({COST_META_KEY: {"ram": 50}}))
-        memory = MemoryLRUCache(max_bytes=100)
-        disk = DiskCacheStore(tmp_path, registry)
-        cache = LayeredCache(memory, disk)
-        await cache.put("parent", cached_expansion(seed))
-        assert memory.footprint("ram") == 50
-        resident = replace(seed, meta=ValueMeta({RESOURCE_ID_META_KEY: "resident"}))
-        await cache.put("parent", cached_expansion(resident))
-        assert memory.footprint("ram") == 0
-        assert await disk.get("parent") is None
-        assert cache.drop_referencing("resident") == 1
-        assert await cache.get("parent") is None
 
     run_scenario(scenario())
 

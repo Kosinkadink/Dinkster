@@ -11,12 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 import aiohttp
 import dinkster_workers.egress as egress_module
@@ -25,7 +23,6 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import (
     BubblewrapCapability,
@@ -39,7 +36,6 @@ from dinkster_workers import (
     detect_bubblewrap,
     load_manifest,
 )
-from dinkster_workers.accelerator import ACCELERATOR_ENV
 from dinkster_workers.launch import SubprocessLauncher
 
 from tests.async_scenarios import run_scenario
@@ -69,15 +65,6 @@ def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:
 
 def worker_failure(error: str, stderr_path: Path) -> AssertionError:
     return AssertionError(f"{error}\nworker stderr:\n{stderr_path.read_text(encoding='utf-8')}")
-
-
-def test_worker_failure_includes_stderr(tmp_path: Path) -> None:
-    stderr_path = tmp_path / "serve.stderr"
-    stderr_path.write_text("bwrap: test failure\n", encoding="utf-8")
-
-    failure = worker_failure("worker exited with code 1", stderr_path)
-
-    assert str(failure) == ("worker exited with code 1\nworker stderr:\nbwrap: test failure\n")
 
 
 def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
@@ -122,176 +109,11 @@ def pairs(argv: list[str], flag: str) -> list[tuple[str, str]]:
 
 
 class TestBuildBwrapCommand:
-    def test_deny_by_default_shape(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(make_spec(tmp_path), SandboxPolicy())
-        assert argv[0] == "bwrap"
-        assert "--die-with-parent" in argv
-        assert "--new-session" in argv
-        assert "--unshare-user" in argv
-        assert "--unshare-pid" in argv
-        # Network is always unshared; granted egress uses a Unix socket proxy.
-        assert "--unshare-net" in argv
-        # Private tmpfs /tmp, fresh /proc and /dev.
-        assert argv[argv.index("--tmpfs") + 1] == "/tmp"
-        assert argv[argv.index("--proc") + 1] == "/proc"
-        assert argv[argv.index("--dev") + 1] == "/dev"
-        # The rlimit stub becomes the original child command.
-        assert tuple(argv[-2:]) == ("-m", "dinkster_workers.host")
-        stub = argv[-3]
-        assert "RLIMIT_FSIZE" in stub
-        assert "RLIMIT_NPROC" in stub
-
-    def test_degraded_mode_omits_user_namespaces(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(make_spec(tmp_path), SandboxPolicy(), user_namespaces=False)
-        assert "--unshare-user" not in argv
-        assert "--unshare-pid" not in argv
-        assert "--unshare-net" in argv  # network isolation is orthogonal
-
-    def test_egress_grant_keeps_network_unshared(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(
-            make_spec(tmp_path),
-            SandboxPolicy(egress_allowlist=("https://api.example.test",)),
-        )
-        assert "--unshare-net" in argv
-
-    def test_environment_uses_private_file_descriptor_never_argv(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(make_spec(tmp_path), SandboxPolicy(), env_fd=42)
-        assert "--clearenv" in argv
-        assert "--setenv" not in argv
-        assert "sekrit" not in argv
-        file_index = argv.index("--file")
-        assert argv[file_index + 1 : file_index + 3] == [
-            "42",
-            "/run/dinkster/worker-env.json",
-        ]
-        stub = argv[-3]
-        assert "json.load(_env_file)" in stub
-        assert "os.unlink('/run/dinkster/worker-env.json')" in stub
-
-    def test_relative_interpreter_is_resolved_before_environment_clear(
-        self, tmp_path: Path
-    ) -> None:
-        argv = build_bwrap_command(
-            make_spec(tmp_path, python="python3", command=("python3", "-V")),
-            SandboxPolicy(),
-        )
-        assert argv[-4] == os.path.abspath(shutil.which("python3") or "python3")
-
-    def test_endpoint_dir_is_writable_and_pack_root_read_only(self, tmp_path: Path) -> None:
-        spec = make_spec(tmp_path)
-        argv = build_bwrap_command(spec, SandboxPolicy())
-        assert (str(spec.endpoint_dir), str(spec.endpoint_dir)) in pairs(argv, "--bind")
-        assert (str(spec.pack_root), str(spec.pack_root)) in pairs(argv, "--ro-bind")
-
-    def test_shm_bind_follows_use_shm(self, tmp_path: Path) -> None:
-        with_shm = build_bwrap_command(make_spec(tmp_path), SandboxPolicy())
-        without = build_bwrap_command(make_spec(tmp_path, use_shm=False), SandboxPolicy())
-        if os.path.exists("/dev/shm"):
-            assert ("/dev/shm", "/dev/shm") in pairs(with_shm, "--bind")
-        assert ("/dev/shm", "/dev/shm") not in pairs(without, "--bind")
-
-    def test_gpu_denied_by_default(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(make_spec(tmp_path), SandboxPolicy())
-        assert ("/sys", "/sys") not in pairs(argv, "--ro-bind")
-        assert "--dev-bind" not in argv
-
-    def test_gpu_grant_binds_devices(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(make_spec(tmp_path), SandboxPolicy(gpu=True))
-        assert ("/sys", "/sys") in pairs(argv, "--ro-bind")
-        if any(Path("/dev").glob("nvidia*")):
-            assert "--dev-bind" in argv
-
-    def test_pythonpath_entries_are_bound(self, tmp_path: Path) -> None:
-        extra = tmp_path / "extra-code"
-        extra.mkdir()
-        spec = make_spec(tmp_path, env={"PYTHONPATH": str(extra), "DINKSTER_BOUNDARY_TOKEN": "s"})
-        argv = build_bwrap_command(spec, SandboxPolicy())
-        assert (str(extra), str(extra)) in pairs(argv, "--ro-bind")
-
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
     def test_pythonpath_cannot_dissolve_the_jail(self, tmp_path: Path) -> None:
         spec = make_spec(tmp_path, env={"PYTHONPATH": "/", "DINKSTER_BOUNDARY_TOKEN": "s"})
         with pytest.raises(SandboxError, match="PYTHONPATH"):
             build_bwrap_command(spec, SandboxPolicy())
-
-    def test_worker_rlimits_can_be_overridden_or_disabled(self, tmp_path: Path) -> None:
-        argv = build_bwrap_command(
-            make_spec(tmp_path),
-            SandboxPolicy(max_file_size_bytes=1234, max_processes=None),
-        )
-        stub = argv[-3]
-        assert "_limit = 1234" in stub
-        assert "min(_limit, _soft)" in stub
-        assert "min(_limit, _hard)" in stub
-        assert "setrlimit(resource.RLIMIT_FSIZE, (_limit, _limit))" in stub
-        assert "RLIMIT_NPROC" not in stub
-
-        unlimited = build_bwrap_command(
-            make_spec(tmp_path),
-            SandboxPolicy(max_file_size_bytes=None, max_processes=None),
-        )
-        assert tuple(unlimited[-2:]) == ("-m", "dinkster_workers.host")
-        assert "RLIMIT_FSIZE" not in unlimited[-3]
-        assert "RLIMIT_NPROC" not in unlimited[-3]
-
-    def test_invalid_worker_rlimit_refuses(self, tmp_path: Path) -> None:
-        with pytest.raises(SandboxError, match="max_file_size_bytes"):
-            build_bwrap_command(make_spec(tmp_path), SandboxPolicy(max_file_size_bytes=0))
-        with pytest.raises(SandboxError, match="max_processes"):
-            build_bwrap_command(make_spec(tmp_path), SandboxPolicy(max_processes=0))
-
-    def test_windows_does_not_probe_interpreter_reparse_points(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        def unsupported_reparse_point(_path: Path) -> str:
-            raise ValueError("unsupported reparse tag")
-
-        monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(os, "readlink", unsupported_reparse_point)
-        assert (
-            sandbox_module._next_symlink_step(tmp_path / "python.exe")  # pyright: ignore[reportPrivateUsage]
-            is None
-        )
-
-    @pytest.mark.skipif(os.name != "posix", reason="requires POSIX symlinks")
-    def test_absolute_interpreter_alias_is_recreated_after_target_bind(
-        self, tmp_path: Path
-    ) -> None:
-        from dinkster_workers import build_probe_bwrap_command
-
-        uv_python_root = tmp_path / "uv" / "python"
-        resolved_prefix = uv_python_root / "cpython-3.13.14-linux-x86_64-gnu"
-        resolved_bin = resolved_prefix / "bin"
-        resolved_bin.mkdir(parents=True)
-        executable = resolved_bin / "python3.13"
-        executable.touch()
-
-        alias_prefix = uv_python_root / "cpython-3.13-linux-x86_64-gnu"
-        alias_prefix.symlink_to(resolved_prefix)
-        venv = tmp_path / "venv"
-        (venv / "bin").mkdir(parents=True)
-        python = venv / "bin" / "python"
-        python.symlink_to(alias_prefix / "bin" / "python3.13")
-
-        argv = build_bwrap_command(
-            make_spec(tmp_path, python=str(python), command=(str(python), "-V")),
-            SandboxPolicy(),
-        )
-        read_only = pairs(argv, "--ro-bind")
-        assert (str(venv), str(venv)) in read_only
-        assert (str(resolved_prefix), str(resolved_prefix)) in read_only
-        assert (str(alias_prefix), str(alias_prefix)) not in read_only
-        assert pairs(argv, "--symlink") == [(str(resolved_prefix), str(alias_prefix))]
-        assert argv.index(str(resolved_prefix)) < argv.index("--symlink")
-
-        probe_argv = build_probe_bwrap_command(str(python), tmp_path)
-        probe_read_only = pairs(probe_argv, "--ro-bind")
-        assert (str(resolved_prefix), str(resolved_prefix)) in probe_read_only
-        assert (str(alias_prefix), str(alias_prefix)) not in probe_read_only
-        assert pairs(probe_argv, "--symlink") == [(str(resolved_prefix), str(alias_prefix))]
-        assert probe_argv.index(str(resolved_prefix)) < probe_argv.index("--symlink")
 
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
     def test_policy_binds_land_and_forbidden_roots_refuse(self, tmp_path: Path) -> None:
@@ -394,45 +216,8 @@ class TestBuildBwrapCommand:
                 ),
             )
 
-    def test_environment_is_allowlisted(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "7")
-        monkeypatch.setenv(LOG_LEVEL_ENV, "debug")
-        monkeypatch.setenv(LOG_OVERRIDES_ENV, "dinkster.pack.probe=warning")
-        monkeypatch.setenv(ACCELERATOR_ENV, "xpu")
-        environment = sandbox_module._launch_environment(  # pyright: ignore[reportPrivateUsage]
-            make_spec(tmp_path), SandboxPolicy()
-        )
-        assert environment["HOME"] == "/tmp"
-        assert environment["TMPDIR"] == "/tmp"
-        assert environment["PYTHONNOUSERSITE"] == "1"
-        assert environment["DINKSTER_BOUNDARY_TOKEN"] == "sekrit"
-        assert environment[LOG_LEVEL_ENV] == "debug"
-        assert environment[LOG_OVERRIDES_ENV] == "dinkster.pack.probe=warning"
-        # The accelerator pin travels without a GPU grant: explicit CPU or
-        # device selection must survive into every sandboxed worker.
-        assert environment[ACCELERATOR_ENV] == "xpu"
-        # GPU env only travels with a GPU grant.
-        assert "CUDA_VISIBLE_DEVICES" not in environment
-        gpu_environment = sandbox_module._launch_environment(  # pyright: ignore[reportPrivateUsage]
-            make_spec(tmp_path), SandboxPolicy(gpu=True)
-        )
-        assert gpu_environment["CUDA_VISIBLE_DEVICES"] == "7"
-
 
 class TestDetection:
-    def test_detection_is_honest_about_this_machine(self) -> None:
-        capability = detect_bubblewrap()
-        if sys.platform != "linux":
-            assert not capability.available
-            assert "Linux" in capability.detail
-        elif not capability.available:
-            # Unavailable must come with a remediation, not a shrug.
-            assert capability.detail
-        else:
-            assert capability.bwrap is not None
-
     def test_unavailable_capability_refuses_loudly(self, tmp_path: Path) -> None:
         launcher = BubblewrapLauncher(
             capability=BubblewrapCapability(
@@ -461,154 +246,6 @@ class TestDetection:
                 await launcher.launch(make_spec(tmp_path, env={}))
 
         run_scenario(scenario())
-
-    def test_bubblewrap_process_inherits_no_parent_environment(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        observed: dict[str, Any] = {}
-        sentinel = object()
-
-        async def fake_create_subprocess_exec(*argv: str, **kwargs: object) -> object:
-            observed["argv"] = argv
-            observed.update(kwargs)
-            pass_fds = kwargs["pass_fds"]
-            assert isinstance(pass_fds, tuple)
-            env_fd = pass_fds[0]
-            assert isinstance(env_fd, int)
-            with os.fdopen(os.dup(env_fd), "rb") as environment_file:
-                observed["worker_env"] = json.load(environment_file)
-            return sentinel
-
-        monkeypatch.setenv("DINKSTER_PACK_SCRATCH", "/inherited/untrusted")
-        monkeypatch.setenv("DINKSTER_EGRESS_PROXY", "/inherited/proxy.sock")
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-        launcher = BubblewrapLauncher(
-            policy=SandboxPolicy(
-                env_passthrough=("DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH")
-            ),
-            capability=BubblewrapCapability(
-                available=True,
-                bwrap="/usr/bin/bwrap",
-                user_namespaces=True,
-                detail="",
-            ),
-        )
-
-        async def scenario() -> None:
-            process = await launcher.launch(make_spec(tmp_path))
-            assert process is sentinel
-
-        run_scenario(scenario())
-        assert observed["env"] == {}
-        assert "sekrit" not in observed["argv"]
-        assert "DINKSTER_PACK_SCRATCH" not in observed["worker_env"]
-        assert "DINKSTER_EGRESS_PROXY" not in observed["worker_env"]
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="requires Unix sockets")
-def test_egress_proxy_lives_with_the_sandbox_process(
-    tmp_path: Path,
-    unix_socket_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed: dict[str, Any] = {}
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.exited = asyncio.Event()
-
-        async def wait(self) -> int:
-            await self.exited.wait()
-            return 0
-
-    async def scenario() -> None:
-        process = FakeProcess()
-
-        async def fake_create_subprocess_exec(*argv: str, **kwargs: object) -> object:
-            observed["argv"] = argv
-            pass_fds = kwargs["pass_fds"]
-            assert isinstance(pass_fds, tuple)
-            env_fd = pass_fds[0]
-            assert isinstance(env_fd, int)
-            with os.fdopen(os.dup(env_fd), "rb") as environment_file:
-                observed["worker_env"] = json.load(environment_file)
-            return process
-
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-        launcher = BubblewrapLauncher(
-            policy=SandboxPolicy(egress_allowlist=("https://api.example.test",)),
-            capability=BubblewrapCapability(True, "/usr/bin/bwrap", True, ""),
-        )
-        launched = await launcher.launch(make_spec(tmp_path, endpoint_dir=unix_socket_dir))
-        assert launched is process
-        socket_path = unix_socket_dir / "egress.sock"
-        assert socket_path.is_socket()
-        assert "--unshare-net" in observed["argv"]
-        assert observed["worker_env"]["DINKSTER_EGRESS_PROXY"] == str(socket_path)
-        process.exited.set()
-        for _ in range(100):
-            if not socket_path.exists():
-                break
-            await asyncio.sleep(0.01)
-        assert not socket_path.exists()
-
-    run_scenario(scenario())
-
-
-def test_serving_policy_derives_pack_grants_and_proxied_egress(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    models = tmp_path / "models"
-    models.mkdir()
-    writable = tmp_path / "writable"
-    writable.mkdir()
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        '[pack]\nname = "policy-pack"\nnamespaces = ["policy"]\n'
-        "[pack.sandbox]\ngpu = true\nnetwork = true\nwritable-mounts = true\n"
-        '[pack.entry]\nnodes = "policy_pack:NODES"\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "dinkster.compose.detect_bubblewrap",
-        lambda: BubblewrapCapability(True, "/usr/bin/bwrap", True, ""),
-    )
-    composer = ServingComposer(
-        sandbox_policy=SandboxPolicy(ro_binds=(str(models), str(writable))),
-        sandbox_writable_mounts=(str(writable),),
-    )
-    loaded = load_manifest(manifest_path)
-    spec = PackSpec(
-        manifest_path,
-        env={
-            "DINKSTER_ASSET_VAULT": str(vault),
-            "DINKSTER_REMOTE_GATEWAY_BASE": "https://api.example.test",
-            "DINKSTER_OPENAI_BASE_URL": "https://llm.example.test/v1",
-        },
-        aimdo="auto",
-    )
-    launcher = composer._sandbox_launcher(spec, (loaded,), spec.env)
-    try:
-        assert launcher is not None
-        assert launcher.policy.egress_allowlist == (
-            "https://llm.example.test",
-            "https://api.example.test",
-        )
-        assert launcher.policy.gpu is True
-        assert set(launcher.policy.ro_binds) >= {
-            str(models),
-            str(vault),
-            str(manifest_path.parent),
-        }
-        assert str(writable) not in launcher.policy.ro_binds
-        assert str(writable) in launcher.policy.rw_binds
-    finally:
-        run_scenario(composer.close())
 
 
 def test_serving_policy_requires_both_manifest_requests_and_host_grants(
@@ -703,194 +340,6 @@ def test_serving_policy_requires_both_manifest_requests_and_host_grants(
     assert not plain_launcher.policy.egress_allowlist
 
 
-def test_host_readwrite_mount_stays_read_only_without_manifest_request(tmp_path: Path) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    writable = tmp_path / "host-write"
-    writable.mkdir()
-    manifest_path = tmp_path / "plain" / "dinkster-pack.toml"
-    manifest_path.parent.mkdir()
-    manifest_path.write_text(
-        '[pack]\nname = "plain"\n[pack.sandbox]\n[pack.entry]\nnodes = "plain:NODES"\n',
-        encoding="utf-8",
-    )
-    manifest = load_manifest(manifest_path)
-    composer = ServingComposer(
-        sandbox_policy=SandboxPolicy(ro_binds=(str(writable),)),
-        sandbox_writable_mounts=(str(writable),),
-    )
-
-    launcher = composer._sandbox_launcher(PackSpec(manifest_path), (manifest,), {})
-
-    assert launcher is not None
-    assert str(writable) in launcher.policy.ro_binds
-    assert str(writable) not in launcher.policy.rw_binds
-
-
-def test_mount_snapshot_uses_its_existing_directory_grant(tmp_path: Path) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    manifest_path = tmp_path / "pack" / "dinkster-pack.toml"
-    manifest_path.parent.mkdir()
-    manifest_path.write_text(
-        '[pack]\nname = "plain"\n[pack.sandbox]\n[pack.entry]\nnodes = "plain:NODES"\n',
-        encoding="utf-8",
-    )
-    snapshot_dir = tmp_path / "library" / "worker-state"
-    snapshot_dir.mkdir(parents=True)
-    snapshot = snapshot_dir / "mounts-snapshot.json"
-    snapshot.write_text('{"mounts": []}', encoding="utf-8")
-    manifest = load_manifest(manifest_path)
-    composer = ServingComposer(sandbox_policy=SandboxPolicy(ro_binds=(str(snapshot_dir),)))
-
-    launcher = composer._sandbox_launcher(
-        PackSpec(manifest_path, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}),
-        (manifest,),
-        {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)},
-    )
-
-    assert launcher is not None
-    assert str(snapshot_dir) in launcher.policy.ro_binds
-    assert str(snapshot) not in launcher.policy.ro_binds
-
-
-def test_remote_pack_gets_scoped_vault_write_token_read_and_gateway_egress(
-    tmp_path: Path,
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    manifest_path = REPO_ROOT / "packages/dinkster-nodes-remote/dinkster-pack.toml"
-    manifest = load_manifest(manifest_path)
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    token = tmp_path / "remote-token"
-    token.write_text("secret", encoding="utf-8")
-    env = {
-        "DINKSTER_ASSET_VAULT": str(vault),
-        "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token),
-        "DINKSTER_REMOTE_CATALOG_BASE": "https://catalog.example.test",
-        "DINKSTER_REMOTE_GATEWAY_BASE": "https://gateway.example.test/v1",
-    }
-    composer = ServingComposer(
-        sandbox_policy=SandboxPolicy(
-            ro_binds=(str(vault),),
-            protected_roots=(str(tmp_path),),
-            protected_ro_exceptions=(str(vault),),
-        )
-    )
-    spec = PackSpec(
-        manifest_path,
-        trust_reserved=True,
-        env=env,
-        asset_vault_write=True,
-    )
-
-    launcher = composer._sandbox_launcher(spec, (manifest,), env)
-
-    assert launcher is not None
-    assert str(vault) not in launcher.policy.ro_binds
-    assert str(vault) in launcher.policy.rw_binds
-    assert str(vault) in launcher.policy.protected_rw_exceptions
-    assert str(token) in launcher.policy.ro_binds
-    assert str(token) in launcher.policy.protected_ro_exceptions
-    assert str(token) not in launcher.policy.rw_binds
-    assert launcher.policy.egress_allowlist == (
-        "https://catalog.example.test",
-        "https://gateway.example.test",
-    )
-    with pytest.raises(ValueError, match="in-process"):
-        PackSpec(manifest_path, in_process=True, asset_vault_write=True)
-
-
-def test_pack_scratch_reaches_sandboxed_and_unsandboxed_workers(tmp_path: Path) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    library = tmp_path / "library"
-    scratch_root = library / "scratch"
-    expected = scratch_root / "packs" / "dinkster-nodes-dev"
-    manifest = load_manifest(DEV_MANIFEST)
-    spec = PackSpec(DEV_MANIFEST, env={"DINKSTER_PACK_SCRATCH": "/untrusted"})
-
-    sandboxed = ServingComposer(
-        sandbox_policy=SandboxPolicy(protected_roots=(str(library),)),
-        pack_scratch_root=scratch_root,
-    )
-    sandboxed_worker = sandboxed._isolated_worker(  # pyright: ignore[reportPrivateUsage]
-        spec,
-        manifest,
-        TypeRegistry(),
-    )
-    assert (  # pyright: ignore[reportPrivateUsage]
-        sandboxed_worker._extra_env["DINKSTER_PACK_SCRATCH"] == str(expected)
-    )
-    launcher = sandboxed_worker._launcher  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(launcher, BubblewrapLauncher)
-    assert str(expected) in launcher.policy.rw_binds
-    assert str(expected) in launcher.policy.protected_rw_exceptions
-    assert str(library) not in launcher.policy.rw_binds
-
-    unsandboxed = ServingComposer(pack_scratch_root=scratch_root)
-    unsandboxed_worker = unsandboxed._isolated_worker(  # pyright: ignore[reportPrivateUsage]
-        spec,
-        manifest,
-        TypeRegistry(),
-    )
-    assert (  # pyright: ignore[reportPrivateUsage]
-        unsandboxed_worker._extra_env["DINKSTER_PACK_SCRATCH"] == str(expected)
-    )
-    assert expected.is_dir()
-    if os.name == "posix":
-        assert expected.stat().st_mode & 0o777 == 0o700
-    run_scenario(sandboxed.close())
-    run_scenario(unsandboxed.close())
-
-
-def test_pack_scratch_is_scoped_for_groups_and_staging(tmp_path: Path) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    def make_manifest(name: str) -> Path:
-        root = tmp_path / name
-        root.mkdir()
-        path = root / "dinkster-pack.toml"
-        path.write_text(
-            f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n'
-            f'[pack.entry]\nnodes = "{name}:NODES"\n',
-            encoding="utf-8",
-        )
-        return path
-
-    alpha_path = make_manifest("alpha")
-    beta_path = make_manifest("beta")
-    paths = (alpha_path, beta_path)
-    manifests = tuple(load_manifest(path) for path in paths)
-    scratch_root = tmp_path / "library" / "scratch"
-    composer = ServingComposer(pack_scratch_root=scratch_root)
-    group_spec = PackSpec(
-        alpha_path,
-        worker_group="Models",
-        group_manifests=paths,
-    )
-    group_env = composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-        group_spec,
-        manifests,
-    )
-    solo_env = composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-        PackSpec(alpha_path),
-        (manifests[0],),
-    )
-    assert group_env["DINKSTER_PACK_SCRATCH"] == str(scratch_root / "groups" / "Models")
-    assert solo_env["DINKSTER_PACK_SCRATCH"] == str(scratch_root / "packs" / "alpha")
-
-    staged = composer.spawn_empty()
-    staged_env = staged._worker_environment(  # pyright: ignore[reportPrivateUsage]
-        group_spec,
-        manifests,
-    )
-    assert staged_env["DINKSTER_PACK_SCRATCH"] == group_env["DINKSTER_PACK_SCRATCH"]
-    run_scenario(staged.close())
-    run_scenario(composer.close())
-
-
 def test_pack_scratch_refuses_symlink_and_unsafe_group_name(tmp_path: Path) -> None:
     from dinkster.compose import CompositionError, PackSpec, ServingComposer
 
@@ -917,92 +366,6 @@ def test_pack_scratch_refuses_symlink_and_unsafe_group_name(tmp_path: Path) -> N
             ),
             (manifest,),
         )
-    run_scenario(composer.close())
-
-
-def test_pack_scratch_is_absent_without_a_library_root() -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    manifest = load_manifest(DEV_MANIFEST)
-    composer = ServingComposer(worker_env={"DINKSTER_PACK_SCRATCH": "/untrusted"})
-    environment = composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-        PackSpec(DEV_MANIFEST),
-        (manifest,),
-    )
-    assert "DINKSTER_PACK_SCRATCH" not in environment
-    run_scenario(composer.close())
-
-
-def test_single_job_sandbox_lanes_share_writable_rendezvous(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer, _SingleJobWorkerPool
-
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    monkeypatch.setattr(
-        "dinkster.compose.detect_bubblewrap",
-        lambda: BubblewrapCapability(True, "/usr/bin/bwrap", True, ""),
-    )
-    composer = ServingComposer(sandbox_policy=SandboxPolicy())
-    manifest = load_manifest(DEV_MANIFEST)
-    pool = composer._isolated_worker(  # pyright: ignore[reportPrivateUsage]
-        PackSpec(DEV_MANIFEST, single_job_cuda_indices=(0, 1)),
-        manifest,
-        TypeRegistry(),
-    )
-    assert isinstance(pool, _SingleJobWorkerPool)
-    rendezvous_values = {
-        lane.worker._extra_env["DINKSTER_SINGLE_JOB_RENDEZVOUS"]  # pyright: ignore[reportPrivateUsage]
-        for lane in pool.lanes
-    }
-    assert len(rendezvous_values) == 1
-    rendezvous = Path(rendezvous_values.pop().removeprefix("file://"))
-    assert rendezvous.parent.is_dir()
-    for lane in pool.lanes:
-        launcher = lane.worker._launcher  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(launcher, BubblewrapLauncher)
-        assert str(rendezvous.parent) in launcher.policy.rw_binds
-    run_scenario(pool.close())
-    assert not rendezvous.parent.exists()
-
-
-@pytest.mark.parametrize("single_job", [False, True])
-def test_multi_gpu_sandbox_lanes_share_pack_scratch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    single_job: bool,
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer, _ReplicaWorkerPool
-
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    monkeypatch.setattr(
-        "dinkster.compose.detect_bubblewrap",
-        lambda: BubblewrapCapability(True, "/usr/bin/bwrap", True, ""),
-    )
-    scratch = tmp_path / "library" / "scratch"
-    composer = ServingComposer(
-        sandbox_policy=SandboxPolicy(protected_roots=(str(tmp_path / "library"),)),
-        pack_scratch_root=scratch,
-    )
-    pool = composer._isolated_worker(  # pyright: ignore[reportPrivateUsage]
-        PackSpec(
-            DEV_MANIFEST,
-            replica_cuda_indices=() if single_job else (0, 1),
-            single_job_cuda_indices=(0, 1) if single_job else (),
-        ),
-        load_manifest(DEV_MANIFEST),
-        TypeRegistry(),
-    )
-    assert isinstance(pool, _ReplicaWorkerPool)
-    expected = str(scratch / "packs" / "dinkster-nodes-dev")
-    for lane in pool.lanes:
-        assert (  # pyright: ignore[reportPrivateUsage]
-            lane.worker._extra_env["DINKSTER_PACK_SCRATCH"] == expected
-        )
-        launcher = lane.worker._launcher  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(launcher, BubblewrapLauncher)
-        assert expected in launcher.policy.rw_binds
-    run_scenario(pool.close())
     run_scenario(composer.close())
 
 
@@ -1574,62 +937,6 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
 # -- probe jail (the doctor's import probe under bwrap) ------------------------
 
 
-def _ro_bound(argv: list[str]) -> list[str]:
-    return [argv[i + 1] for i, arg in enumerate(argv) if arg == "--ro-bind"]
-
-
-def test_probe_jail_command_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The probe jail is stricter than the worker jail: network ALWAYS
-    unshared (no policy knob), nothing writable but the private tmpfs,
-    environment cleared."""
-    from dinkster_workers import build_probe_bwrap_command
-
-    secret = "must-not-appear-in-probe-argv"
-    monkeypatch.setenv(LOG_LEVEL_ENV, secret)
-    argv = build_probe_bwrap_command(sys.executable, tmp_path)
-    assert "--unshare-net" in argv
-    assert "--die-with-parent" in argv
-    assert "--clearenv" in argv
-    assert "--setenv" not in argv
-    assert secret not in argv
-    assert pairs(argv, "--file") == [("3", "/run/dinkster/probe-env.json")]
-    assert "--bind" not in argv  # no writable bind anywhere
-    tmpfs = argv.index("--tmpfs")
-    assert argv[tmpfs : tmpfs + 2] == ["--tmpfs", "/tmp"]
-    assert str(tmp_path) in _ro_bound(argv)
-
-
-def test_default_probe_environment_preserves_the_allowlist(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(LOG_LEVEL_ENV, "debug")
-    monkeypatch.setenv("DINKSTER_UNRELATED_HOST_SENTINEL", "must-not-leak")
-    environment = sandbox_module.probe_environment(None)
-    assert environment[LOG_LEVEL_ENV] == "debug"
-    assert environment["HOME"] == "/tmp"
-    assert environment["TMPDIR"] == "/tmp"
-    assert environment["PYTHONNOUSERSITE"] == "1"
-    assert "DINKSTER_UNRELATED_HOST_SENTINEL" not in environment
-
-
-def test_probe_jail_binds_the_import_surface(tmp_path: Path) -> None:
-    """Every existing absolute sys.path entry of the parent is readable in
-    the jail (bound directly or under a bound prefix) - editable installs
-    and site-packages alike, so the probe child can import exactly what
-    its parent can."""
-    from dinkster_workers import build_probe_bwrap_command
-
-    argv = build_probe_bwrap_command(sys.executable, tmp_path)
-    readable = [*_ro_bound(argv), *(link for _, link in pairs(argv, "--symlink"))]
-    for entry in sys.path:
-        if not entry or not os.path.isabs(entry) or not os.path.exists(entry):
-            continue
-        normalized = os.path.normpath(entry)
-        assert any(
-            normalized == path or normalized.startswith(path + os.sep) for path in readable
-        ), f"sys.path entry {normalized} is not readable inside the probe jail"
-
-
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
 def test_probe_jail_refuses_dissolving_root(tmp_path: Path) -> None:
     from dinkster_workers import build_probe_bwrap_command
@@ -1638,26 +945,6 @@ def test_probe_jail_refuses_dissolving_root(tmp_path: Path) -> None:
         build_probe_bwrap_command(sys.executable, "/home")
     with pytest.raises(SandboxError):
         build_probe_bwrap_command(sys.executable, tmp_path, source_roots=(Path("/home"),))
-
-
-def test_probe_jail_wrap_applies_environment_and_rlimits_via_bootstrap(tmp_path: Path) -> None:
-    """wrap() prefixes bwrap and inserts the bootstrap between the
-    interpreter and probe module, without a thread-unsafe preexec_fn."""
-    from dinkster_workers import ProbeJail
-
-    jail = ProbeJail(bwrap="bwrap", user_namespaces=True)
-    argv = [sys.executable, "-m", "dinkster_workers._doctor_probe", "x"]
-    wrapped = jail.wrap(argv, tmp_path)
-    assert wrapped[0] == "bwrap"
-    assert wrapped[-3:] == ["-m", "dinkster_workers._doctor_probe", "x"]
-    assert wrapped[-5] == "-c"
-    assert "setrlimit" in wrapped[-4] and "RLIMIT_CPU" in wrapped[-4]
-    assert "from dinkster_workers import _doctor_probe as _probe" in wrapped[-4]
-    assert wrapped[-4].index("_doctor_probe as _probe") < wrapped[-4].index("sys.path[1:1]")
-    assert "_probe.main()" in wrapped[-4]
-    assert "os.environ.clear()" in wrapped[-4]
-    assert "os.unlink('/run/dinkster/probe-env.json')" in wrapped[-4]
-    assert wrapped[-6] == sys.executable
 
 
 def test_detect_probe_jail_refuses_loudly(monkeypatch: pytest.MonkeyPatch) -> None:

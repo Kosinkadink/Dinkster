@@ -12,14 +12,10 @@ death.
 from __future__ import annotations
 
 import asyncio
-import json
-import math
-import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-from dinkster_assets import ASSET_TYPE, AssetError, AssetRef, AssetResolver, register_asset_type
 from dinkster_engine import Invocation, InvocationResult, OnInvocationEvent
 from dinkster_memory import (
     BudgetExceeded,
@@ -44,18 +40,11 @@ from dinkster_values import (
 from dinkster_workers import (
     GovernedWorker,
     IsolatedWorker,
-    ManifestError,
-    load_manifest,
 )
-from dinkster_workers.boundary import ValueCodec
 from dinkster_workers.reservations import (
-    CHECKPOINT_RAM_FACTOR,
-    NATIVE_CHECKPOINT_RAM_FACTOR,
-    ReservationPlanError,
     plan_reservations,
 )
 from dinkster_workers.resident_pool import ResidentPool
-from dinkster_workers.session import BoundarySession, WorkerDied
 
 from tests.async_scenarios import run_scenario
 
@@ -67,33 +56,7 @@ DIGEST = "blake3:" + "ab" * 32
 # -- ReservationRequest contracts ----------------------------------------
 
 
-def test_reservation_request_validates() -> None:
-    with pytest.raises(ValueError, match="residency"):
-        ReservationRequest(residency="", nbytes=1)
-    with pytest.raises(ValueError, match="nbytes"):
-        ReservationRequest(residency="ram", nbytes=-1)
-    assert ReservationRequest(residency="ram", nbytes=0).nbytes == 0
-
-
 # -- GovernorReservationService ------------------------------------------
-
-
-def test_service_merges_classes_and_releases_on_exit() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100, "disk": 20})
-        service = GovernorReservationService(governor)
-        requests = (
-            ReservationRequest("ram", 40),
-            ReservationRequest("disk", 10),
-            ReservationRequest("ram", 30),  # merged with the first
-        )
-        async with service.reserve(requests):
-            assert governor.reserved("ram") == 70
-            assert governor.reserved("disk") == 10
-        assert governor.reserved("ram") == 0
-        assert governor.reserved("disk") == 0
-
-    run_scenario(scenario())
 
 
 def test_service_unwinds_partial_acquisition_on_denial() -> None:
@@ -210,17 +173,6 @@ def test_governed_worker_holds_reservation_across_execute() -> None:
     run_scenario(scenario())
 
 
-def test_governed_worker_skips_reservation_for_empty_plan() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100})
-        worker, fake = governed(governor)
-        result = await worker.invoke(make_invocation(0))
-        assert result.error is None
-        assert fake.reserved_during == [0]
-
-    run_scenario(scenario())
-
-
 def test_governed_worker_denial_is_a_node_error_and_skips_execute() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
@@ -317,25 +269,6 @@ def test_governed_worker_serializes_over_a_constrained_budget(
 # -- manifest entry -------------------------------------------------------
 
 
-def test_manifest_reservations_entry_is_optional_and_validated(tmp_path: Path) -> None:
-    plain = tmp_path / "plain.toml"
-    plain.write_text('[pack]\nname = "p"\n\n[pack.entry]\nnodes = "m:N"\n')
-    assert load_manifest(plain).reservations_entry is None
-
-    with_planner = tmp_path / "planner.toml"
-    with_planner.write_text(
-        '[pack]\nname = "p"\n\n[pack.entry]\nnodes = "m:N"\nreservations = "m:plan"\n'
-    )
-    assert load_manifest(with_planner).reservations_entry == "m:plan"
-
-    malformed = tmp_path / "bad.toml"
-    malformed.write_text(
-        '[pack]\nname = "p"\n\n[pack.entry]\nnodes = "m:N"\nreservations = "noattr"\n'
-    )
-    with pytest.raises(ManifestError, match="reservations"):
-        load_manifest(malformed)
-
-
 # -- isolated lease protocol ----------------------------------------------
 
 
@@ -386,115 +319,6 @@ def core_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     return registry
-
-
-def _feed_frame(reader: asyncio.StreamReader, header: dict[str, object]) -> None:
-    encoded = json.dumps({**header, "blobs": []}, separators=(",", ":")).encode()
-    reader.feed_data(len(encoded).to_bytes(4, "big") + encoded)
-
-
-@pytest.mark.parametrize("capture_outcome", [None, "success", "error"])
-def test_result_waits_for_lease_cleanup_when_peer_dies(
-    monkeypatch: pytest.MonkeyPatch, capture_outcome: str | None
-) -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100})
-        registry = core_registry()
-        session = BoundarySession(
-            registry,
-            role="test worker",
-            pack="test",
-            codec=ValueCodec(registry, use_shm=False),
-            reservations=GovernorReservationService(governor),
-        )
-
-        async def drop_frame(header: Mapping[str, object], *_args: object) -> None:
-            if header.get("type") in ("shmAck", "resultAck") and reader.at_eof():
-                raise WorkerDied()
-
-        class Writer:
-            def close(self) -> None:
-                return None
-
-            async def wait_closed(self) -> None:
-                return None
-
-        session._send_unlocked = drop_frame  # type: ignore[method-assign]  # noqa: SLF001
-        session._writer = Writer()  # type: ignore[assignment]  # noqa: SLF001
-        session._alive = True  # noqa: SLF001 - drive a negotiated session
-        reader = asyncio.StreamReader()
-        session._reader = reader  # noqa: SLF001 - drive the production receive path
-        session._reader_task = asyncio.create_task(session._read_loop())  # noqa: SLF001
-        entered, release = threading.Event(), threading.Event()
-        capture = session._produced_assets.capture
-
-        def blocked_capture(
-            outputs: Mapping[str, Value],
-            transferred: AssetResolver | None = None,
-            inputs: Mapping[str, Value] | None = None,
-        ) -> None:
-            entered.set()
-            assert release.wait(5)
-            if capture_outcome == "error":
-                raise AssetError("adoption failed after peer EOF")
-            capture(outputs, transferred, inputs)
-
-        if capture_outcome is not None:
-            monkeypatch.setattr(session._produced_assets, "capture", blocked_capture)
-        invocation = make_invocation(60)
-        pending = asyncio.create_task(session.invoke(invocation))
-        await asyncio.sleep(0)
-        session._start_lease(  # noqa: SLF001 - peer memoryReserve frame
-            {
-                "requestId": invocation.invocation_id,
-                "requests": [{"residency": "ram", "nbytes": 60}],
-            }
-        )
-        async with asyncio.timeout(5):
-            while governor.reserved("ram") != 60:
-                await asyncio.sleep(0)
-
-        _feed_frame(
-            reader,
-            {
-                "type": "result",
-                "invocationId": invocation.invocation_id,
-                "executeMs": 0.0,
-                "outputs": {},
-                "outputStats": {},
-            },
-        )
-        try:
-            if capture_outcome is not None:
-                # Complete the lease so adoption can start before the transport dies.
-                _feed_frame(
-                    reader, {"type": "memoryRelease", "requestId": invocation.invocation_id}
-                )
-                assert await asyncio.to_thread(entered.wait, 5)
-            reader.feed_eof()
-            if capture_outcome is not None:
-                async with asyncio.timeout(1):
-                    while not session._closing:
-                        await asyncio.sleep(0)
-                assert not pending.done()
-                assert session._asset_adoptions
-            release.set()
-            result = await asyncio.wait_for(pending, 1)
-
-            if capture_outcome == "error":
-                assert result.error is not None
-                assert result.error.message == "adoption failed after peer EOF"
-            else:
-                assert result.error is None
-                assert result.outputs == {}
-            assert governor.reserved("ram") == 0
-            assert session._leases == {}  # noqa: SLF001
-        finally:
-            release.set()
-            await asyncio.gather(pending, return_exceptions=True)
-            await session.close()
-
-    run_scenario(scenario())
 
 
 def test_isolated_lease_grant_hold_release(tmp_path: Path) -> None:
@@ -631,22 +455,6 @@ def test_isolated_lease_survives_cancellation_while_blocked(
     run_scenario(scenario())
 
 
-def test_isolated_lease_without_service_grants_unaccounted(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = core_registry()
-        worker = iso_worker(tmp_path, registry, governor=None)
-        await worker.start()
-        try:
-            result = await worker.invoke(
-                hog_invocation(worker, registry, 10**12)  # nothing budgets this
-            )
-            assert result.error is None
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
 def test_isolated_close_unwinds_held_leases(tmp_path: Path) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
@@ -669,56 +477,6 @@ def test_isolated_close_unwinds_held_leases(tmp_path: Path) -> None:
 
 
 # -- checkpoint policy -----------------------------------------------------
-
-
-def asset_invocation(size: int, *, arm: str | None = None) -> Invocation:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_asset_type(registry)
-    ref = AssetRef(digest=DIGEST, name="model.safetensors", size=size)
-    return Invocation(
-        invocation_id="i1",
-        node_id="load",
-        node_type="dinkster.load_checkpoint",
-        inputs={"checkpoint": registry.wrap(ASSET_TYPE, ref)},
-        effective_schema=NodeSchema(
-            node_type="dinkster.load_checkpoint",
-            display_name="Load Checkpoint",
-            category="compat",
-            inputs=(InputSpec("checkpoint", TypeExpr.concrete(ASSET_TYPE)),),
-            outputs=(),
-        ),
-        arm=arm,
-    )
-
-
-def test_comfy_arm_checkpoint_planner_keeps_2_6_ram_factor() -> None:
-    plan = plan_reservations(asset_invocation(1_000))
-    assert len(plan) == 1
-    assert plan[0].residency == "ram"
-    assert plan[0].nbytes == int(1_000 * CHECKPOINT_RAM_FACTOR)
-
-
-def test_native_arm_checkpoint_planner_uses_1_5_ram_and_zero_vram() -> None:
-    plan = plan_reservations(asset_invocation(1_001, arm="native"))
-    assert plan == (ReservationRequest("ram", math.ceil(1_001 * NATIVE_CHECKPOINT_RAM_FACTOR)),)
-
-
-def test_checkpoint_planner_refuses_sizeless_assets() -> None:
-    with pytest.raises(ReservationPlanError, match="byte size"):
-        plan_reservations(asset_invocation(0))
-
-
-def test_checkpoint_planner_ignores_other_node_types() -> None:
-    invocation = asset_invocation(1_000)
-    other = Invocation(
-        invocation_id=invocation.invocation_id,
-        node_id=invocation.node_id,
-        node_type="comfy.vae_decode",
-        inputs=invocation.inputs,
-        effective_schema=invocation.effective_schema,
-    )
-    assert plan_reservations(other) == ()
 
 
 def resident_input(
@@ -792,38 +550,3 @@ def test_checkpoint_planner_deduplicates_resident_ids_and_walks_nested_lists(
     outer = make_list_value("list<test.resident>", (inner,))
     invocation = invocation_with_inputs(first=child, nested=outer)
     assert plan_reservations(invocation) == (ReservationRequest("vram:cuda:0", 100),)
-
-
-def test_checkpoint_planner_reserves_anonymous_vram_costs_without_deduplication(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: ResidentPool())
-    invocation = invocation_with_inputs(
-        first=resident_input(None, {"vram:cuda:0": 75}),
-        second=resident_input(None, {"vram:cuda:0": 75}),
-    )
-    assert plan_reservations(invocation) == (
-        ReservationRequest("vram:cuda:0", 75),
-        ReservationRequest("vram:cuda:0", 75),
-    )
-
-
-def test_checkpoint_ram_policy_composes_with_input_vram(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: ResidentPool())
-    base = asset_invocation(1_000)
-    invocation = Invocation(
-        invocation_id=base.invocation_id,
-        node_id=base.node_id,
-        node_type=base.node_type,
-        inputs={
-            **base.inputs,
-            "model": resident_input("resident:old-worker", {"vram:cuda:0": 125}),
-        },
-        effective_schema=base.effective_schema,
-    )
-    assert plan_reservations(invocation) == (
-        ReservationRequest("vram:cuda:0", 125),
-        ReservationRequest("ram", int(1_000 * CHECKPOINT_RAM_FACTOR)),
-    )

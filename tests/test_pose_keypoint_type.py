@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import os
-import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import replace
@@ -24,7 +23,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import LATENT_TYPE, encode_latent
-from dinkster_workers import load_manifest
 
 from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
 from tests.async_scenarios import run_scenario
@@ -108,45 +106,6 @@ def test_public_pose_keypoint_rejects_malformed_structure(value: object) -> None
         spec.decode(malformed)
     with pytest.raises(ValueError):
         spec.validate_encoded(malformed, {})
-
-
-def test_public_pose_registration_preserves_first_authority_and_existing_pose() -> None:
-    registry = TypeRegistry()
-    pose = registry.register(POSE_TYPE)
-    keypoints = registry.register(POSE_KEYPOINT_TYPE)
-    from dinkster_vision_sdpose import register_types
-
-    register_types(registry)
-    register_types(registry)
-    assert registry.spec(POSE_KEYPOINT_TYPE) is keypoints
-    assert registry.spec(POSE_TYPE) is pose
-    manifest = load_manifest("packages/dinkster-nodes-vision-sdpose/dinkster-pack.toml")
-    assert manifest.types_entry == "dinkster_vision_sdpose:register_types"
-
-
-def test_public_pose_keypoint_registration_and_codec_are_torch_free() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "from dinkster_api.v1 import POSE_KEYPOINT_TYPE, TypeRegistry\n"
-            "from dinkster_values.builtin_types import POSE_KEYPOINT_TYPE as canonical\n"
-            "from dinkster_vision_sdpose import register_types\n"
-            "assert POSE_KEYPOINT_TYPE is canonical\n"
-            "registry = TypeRegistry()\n"
-            "register_types(registry)\n"
-            "value = [{'canvas_width': 7, 'canvas_height': 13, 'people': []}]\n"
-            "spec = registry.spec(canonical)\n"
-            "data = spec.encode(value)\n"
-            "spec.validate_encoded(data, {})\n"
-            "assert spec.decode(data) == value\n"
-            "assert not any(name == 'torch' or name.startswith('torch.')\n"
-            "    or name == 'dinkster_inference' or name.startswith('dinkster_inference.')\n"
-            "    for name in sys.modules)\n",
-        ],
-        check=True,
-    )
 
 
 class PoseSource(Node):

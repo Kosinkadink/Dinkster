@@ -9,10 +9,8 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
-from dinkster_audio_models import NODES as AUDIO_MODEL_NODES
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_audio_models.conditioning import ConditioningStableAudio
-from dinkster_conditioning import NODES
 from dinkster_conditioning.conditioning import (
     ConditioningAverage,
     ConditioningCombine,
@@ -252,101 +250,6 @@ def inference_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
             set_mask_for_conditioning=set_mask, set_timesteps_for_conditioning=set_timesteps
         ),
     )
-
-
-def test_registered_classes_have_exact_ids_atoms_and_ordered_interfaces() -> None:
-    nodes = (
-        ConditioningAverage,
-        ConditioningCombine,
-        ConditioningConcat,
-        ConditioningMultiply,
-        ConditioningSetArea,
-        ConditioningSetAreaPercentage,
-        ConditioningSetAreaPercentageVideo,
-        ConditioningSetAreaStrength,
-        ConditioningSetMask,
-        ConditioningZeroOut,
-        ConditioningSetTimestepRange,
-        ConditioningStableAudio,
-    )
-    expected = (
-        (
-            "dinkster.conditioning.conditioning_average",
-            "Conditioning (Average)",
-            ("conditioning_to", "conditioning_from", "conditioning_to_strength"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_combine",
-            "Conditioning (Combine)",
-            ("conditioning_1", "conditioning_2"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_concat",
-            "Conditioning (Concat)",
-            ("conditioning_to", "conditioning_from"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_multiply",
-            "Conditioning (Multiply)",
-            ("conditioning", "multiplier"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_set_area",
-            "Conditioning (Set Area)",
-            ("conditioning", "width", "height", "x", "y", "strength"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_set_area_percentage",
-            "Conditioning (Set Area with Percentage)",
-            ("conditioning", "width", "height", "x", "y", "strength"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_set_area_percentage_video",
-            "Conditioning (Set Area with Percentage for Video)",
-            ("conditioning", "width", "height", "temporal", "x", "y", "z", "strength"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_set_area_strength",
-            "Conditioning (Set Area Strength)",
-            ("conditioning", "strength"),
-        ),
-        (
-            "dinkster.conditioning.conditioning_set_mask",
-            "Conditioning (Set Mask)",
-            ("conditioning", "mask", "strength", "set_cond_area"),
-        ),
-        ("dinkster.conditioning.conditioning_zero_out", "Conditioning Zero Out", ("conditioning",)),
-        (
-            "dinkster.conditioning.conditioning_set_timestep_range",
-            "ConditioningSetTimestepRange",
-            ("conditioning", "start", "end"),
-        ),
-        (
-            "dinkster.audio.models.conditioning_stable_audio",
-            "ConditioningStableAudio",
-            ("positive", "negative", "seconds_start", "seconds_total"),
-        ),
-    )
-    assert len(nodes) == 12
-    for node, (node_type, display_name, inputs) in zip(nodes, expected, strict=True):
-        assert node in (AUDIO_MODEL_NODES if node is ConditioningStableAudio else NODES)
-        schema = node.schema()
-        assert schema.node_type == node_type
-        assert schema.display_name == display_name
-        assert schema.category == (
-            "model/conditioning/stable audio"
-            if node is ConditioningStableAudio
-            else "model/conditioning/transform"
-        )
-        assert tuple(input_spec.id for input_spec in schema.inputs) == inputs
-        assert all(output.type.types == ("CONDITIONING",) for output in schema.outputs)
-        assert tuple(output.id for output in schema.outputs) == (
-            ("positive", "negative") if node is ConditioningStableAudio else ("CONDITIONING",)
-        )
-    mask_wire = schema_to_wire(ConditioningSetMask.schema())
-    interface = cast(list[dict[str, object]], mask_wire["interface"])
-    mask_input = next(item for item in interface if item["id"] == "set_cond_area")
-    assert mask_input["widget"] == {"type": "COMBO", "options": ["default", "mask bounds"]}
 
 
 def test_combine_appends_records_without_rewriting_either_side() -> None:

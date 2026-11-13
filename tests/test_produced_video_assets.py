@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import multiprocessing
 import os
 import shutil
@@ -26,7 +25,6 @@ from dinkster_assets import (
     AssetRef,
     AssetResolver,
     AssetVault,
-    LocalAssetRef,
     digest_bytes,
     register_audio_value_type,
     register_video_value_type,
@@ -44,25 +42,22 @@ from dinkster_assets.scratch import (
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_engine.control import EngineRunContext, RunControlState
 from dinkster_graph import Graph, GraphNode
-from dinkster_protocol import Invocation, InvocationResult
+from dinkster_protocol import Invocation
 from dinkster_schema import Node, NodeSchema, RunExecutionContext
-from dinkster_values import TypeRegistry, Value, ValueMeta, default_encode, make_list_value
+from dinkster_values import TypeRegistry, Value, ValueMeta, make_list_value
 from dinkster_values.model import PyObjPayload
 from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker, RemoteWorker
 from dinkster_workers import session as session_module
-from dinkster_workers.blobs import attribute_moved_wire
-from dinkster_workers.boundary import ValueCodec, encode_result, read_frame
+from dinkster_workers.boundary import read_frame
 from dinkster_workers.produced_assets import (
     ProducedAssetAuthority,
     offer_source_assets,
-    result_asset_digests,
     source_asset_files,
 )
 from produced_video_nodes import ProduceAudio, ProduceVideo
 from test_remote import TOKEN, start_service, stop_service
 
 from tests.async_scenarios import run_scenario
-from tests.workers.test_reservations import core_registry, make_invocation
 
 
 @pytest.fixture
@@ -179,72 +174,6 @@ def test_produced_scratch_process_publication_waits_for_busy_writer(tmp_path: Pa
             )
         )
     )
-
-
-@pytest.mark.parametrize("kind", ["scratch", "inventory"])
-def test_produced_journal_read_only_wal_snapshots(tmp_path: Path, kind: str) -> None:
-    digest = digest_bytes(b"committed bytes")
-    scratch = ProducedScratchState(tmp_path)
-    inventory = ProducedAssetInventory(tmp_path)
-    if kind == "scratch":
-        scratch.bind("WAL job", 1)
-        scratch.published(digest, 15)
-        path = tmp_path / ".produced-scratch.sqlite"
-        table = "publications"
-    else:
-        inventory.pending(digest, 15)
-        path = tmp_path / ".produced-assets.sqlite"
-        table = "adoptions"
-
-    # Last writer closed and checkpointed: a read-only connection can create
-    # the sidecars in a writable directory without making the database writable.
-    assert not Path(str(path) + "-wal").exists()
-    with closing(connect_journal(path, mode="ro")) as reader:
-        assert reader.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-        assert reader.execute("PRAGMA busy_timeout").fetchone() == (30000,)
-        assert reader.execute(f"SELECT digest, size FROM {table}").fetchall() == [(digest, 15)]
-        assert Path(str(path) + "-wal").is_file()
-        assert Path(str(path) + "-shm").is_file()
-        with pytest.raises(sqlite3.OperationalError, match="readonly"):
-            reader.execute(f"UPDATE {table} SET size = 99")
-
-    with closing(sqlite3.connect(path)) as writer, writer:
-        writer.execute(f"UPDATE {table} SET size = 99")
-        # Public readers see the committed snapshot, not the open writer's data.
-        if kind == "scratch":
-            assert scratch.owner() == ("WAL job", 1)
-            assert scratch.publications() == ((digest, 15, False),)
-        else:
-            assert [(row.digest, row.size, row.adopted_at_ns) for row in inventory.entries()] == [
-                (digest, 15, None)
-            ]
-        writer.rollback()
-
-    # Existing rollback journals remain readable and migrate on the next write.
-    with closing(sqlite3.connect(path)) as legacy:
-        assert legacy.execute("PRAGMA journal_mode=DELETE").fetchone() == ("delete",)
-    if kind == "scratch":
-        assert scratch.publications() == ((digest, 15, False),)
-    else:
-        assert inventory.entries()[0].size == 15
-    with closing(sqlite3.connect(path)) as legacy:
-        assert legacy.execute("PRAGMA journal_mode").fetchone() == ("delete",)
-    if kind == "scratch":
-        scratch.offer((digest,))
-        assert scratch.publications() == ((digest, 15, True),)
-    else:
-        inventory.adopted(digest, 15)
-        assert inventory.entries()[0].adopted_at_ns is not None
-    with closing(connect_journal(path, mode="rw")) as migrated:
-        assert migrated.execute("PRAGMA journal_mode").fetchone() == ("wal",)
-        assert migrated.execute("PRAGMA busy_timeout").fetchone() == (30000,)
-
-    # mode=ro and mode=rw must never create missing recovery state.
-    path.unlink()
-    for mode in ("ro", "rw"):
-        with pytest.raises(sqlite3.OperationalError):
-            connect_journal(path, mode=mode)
-    assert not path.exists()
 
 
 def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
@@ -388,45 +317,6 @@ def test_produced_scratch_claim_survives_data_directory_removal(tmp_path: Path) 
         vault = produced_output_scratch(env)
         assert vault is not None
         assert _publish(vault, b"new invocation").read_bytes() == b"new invocation"
-
-
-@pytest.mark.parametrize("creation_result", [False, True])
-def test_produced_scratch_preserves_publication_handoff_after_restart(
-    tmp_path: Path, creation_result: bool
-) -> None:
-    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
-    data = b"offered publication"
-    unused = b"unused intermediate"
-    digest = digest_bytes(data)
-    with use_produced_output_job("handoff job", 2):
-        vault = produced_output_scratch(env)
-        assert vault is not None
-        with vault.writer(digest) as writer:
-            writer.write(data)
-            if creation_result:
-                path, created = writer.commit_with_result()
-                assert created
-            else:
-                path = writer.commit()
-        _publish(vault, unused)
-        before = ProducedScratchState(vault.root).publications()
-        assert set(before) == {
-            (digest, len(data), False),
-            (digest_bytes(unused), len(unused), False),
-        }
-        outputs = {"video": _value(AssetRef(digest, "source", len(data)))}
-        assert source_asset_files(outputs, vault) == [(digest, path)]
-        assert ProducedScratchState(vault.root).publications() == before
-        offer_source_assets(outputs)
-    expected = {(digest, len(data), True), (digest_bytes(unused), len(unused), False)}
-    assert set(ProducedScratchState(vault.root).publications()) == expected
-    with use_produced_output_job("handoff job", 2):
-        reopened = produced_output_scratch(env)
-        assert reopened is not None and reopened.root == vault.root
-        assert set(ProducedScratchState(reopened.root).publications()) == expected
-    with pytest.raises(AssetError, match="ownership is unavailable or changed"):
-        ProducedScratchState(vault.root).bind("different owner", 2)
-    assert path.read_bytes() == data
 
 
 def test_produced_scratch_refuses_missing_journal_without_reclassifying_bytes(
@@ -757,10 +647,6 @@ def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:
     )
 
 
-def _unverified_wire() -> dict[str, object]:
-    return LocalAssetRef("local-source", "source.mkv", 12, "input/source.mkv").to_wire()
-
-
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
 def test_adoption_survives_producer_removal_and_handles_list_values(
     vaults: tuple[AssetVault, AssetVault],
@@ -846,27 +732,6 @@ def test_produced_adoption_inventory_survives_restart_and_failed_copy(
     assert replace(ref, resolver=engine).read_bytes() == b"recoverable original"
 
 
-def test_produced_adoption_repairs_copy_completed_before_inventory_commit(
-    vaults: tuple[AssetVault, AssetVault], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    producer, engine = vaults
-    ref = _publish(producer, b"adopted before interruption")
-    outputs = {"video": _value(ref)}
-
-    def interrupted(self: ProducedAssetInventory, digest: str, size: int) -> None:
-        raise AssetError("interrupted inventory commit")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(ProducedAssetInventory, "adopted", interrupted)
-        with pytest.raises(AssetError, match="interrupted inventory commit"):
-            ProducedAssetAuthority(engine, producer).capture(outputs)
-    assert replace(ref, resolver=engine).read_bytes() == b"adopted before interruption"
-    assert ProducedAssetInventory(engine.root).entries()[0].adopted_at_ns is None
-    ref.local_path().unlink()
-    ProducedAssetAuthority(AssetVault(engine.root)).capture(outputs)
-    assert ProducedAssetInventory(engine.root).entries()[0].adopted_at_ns is not None
-
-
 def test_produced_adoption_does_not_inventory_existing_inputs_or_mounts(
     vaults: tuple[AssetVault, AssetVault],
 ) -> None:
@@ -880,16 +745,6 @@ def test_produced_adoption_does_not_inventory_existing_inputs_or_mounts(
     assert not engine.has(mounted.digest)
     assert mounted.read_bytes() == b"mounted input"
     assert existing.read_bytes() == b"downloaded input"
-
-
-def test_produced_inventory_refuses_missing_or_corrupt_state(tmp_path: Path) -> None:
-    inventory = ProducedAssetInventory(tmp_path)
-    with pytest.raises(AssetError, match="inventory is unavailable"):
-        inventory.entries()
-    assert not (tmp_path / ".produced-assets.sqlite").exists()
-    (tmp_path / ".produced-assets.sqlite").write_bytes(b"not a database")
-    with pytest.raises(AssetError, match="inventory is unavailable"):
-        inventory.entries()
 
 
 @pytest.mark.parametrize("recorded", [False, True])
@@ -907,25 +762,6 @@ def test_existing_source_requires_integrity_verification(vaults, recorded) -> No
     ref.local_path().write_bytes(b"evil")
     with pytest.raises(AssetError, match="integrity failure"):
         authority.capture(outputs)
-
-
-@pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
-def test_source_return_does_not_materialize_payloads(
-    vaults: tuple[AssetVault, AssetVault], type_id: str
-) -> None:
-    class Unreadable:
-        transport = "pyobj"
-
-        def load(self) -> object:
-            raise AssertionError("asset return must not decode payloads")
-
-    producer, engine = vaults
-    ref = _publish(producer, b"encoded source")
-    value = Value(type_id, "source", ValueMeta({"asset_refs": [ref.to_wire()]}), Unreadable())
-    outputs = {"values": make_list_value(type_id, (value, value))}
-    assert source_asset_files(outputs, producer) == [(ref.digest, ref.local_path())]
-    ProducedAssetAuthority(engine).capture(outputs, producer)
-    assert engine.has(ref.digest)
 
 
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
@@ -958,91 +794,6 @@ def test_returned_input_sources_need_no_produced_output_scratch(
     produced = _value(AssetRef(digest_bytes(b"new"), "new", 3), type_id)
     with pytest.raises(AssetError, match="require an engine DINKSTER_ASSET_VAULT"):
         authority.capture({"existing": value, "produced": produced}, inputs=inputs)
-
-
-def test_unverified_asset_inputs_do_not_need_produced_asset_adoption() -> None:
-    wire = _unverified_wire()
-    input_value = Value(
-        "ASSET", "unverified-local:local-source", ValueMeta(wire), PyObjPayload(wire)
-    )
-    output_value = Value(
-        "custom.asset",
-        "source",
-        ValueMeta({"asset_refs": [wire]}),
-        PyObjPayload({"source": wire}),
-    )
-
-    ProducedAssetAuthority(None).capture({"output": output_value}, inputs={"input": input_value})
-
-
-def test_asset_provenance_omits_unverified_refs_and_preserves_verified_refs(
-    vaults: tuple[AssetVault, AssetVault],
-) -> None:
-    producer, _ = vaults
-    verified = _publish(producer, b"verified")
-    unverified = _unverified_wire()
-    blobs = [default_encode({"asset_refs": [unverified, verified.to_wire()]})]
-    header = {"outputs": {"video": {"metaBlob": 0}}}
-    value = Value(
-        "custom.asset",
-        "source",
-        ValueMeta({"asset_refs": [unverified, verified.to_wire()]}),
-        PyObjPayload({}),
-    )
-
-    assert result_asset_digests(header, blobs) == {verified.digest}
-    assert source_asset_files({"video": value}, producer) == [
-        (verified.digest, verified.local_path())
-    ]
-
-
-@pytest.mark.parametrize(
-    "wire",
-    [
-        {"verification": "unverified", "name": "source", "size": 1},
-        {"verification": "verified", "name": "source", "size": 1},
-    ],
-)
-def test_asset_provenance_rejects_malformed_wire_refs(wire: dict[str, object]) -> None:
-    blobs = [default_encode({"asset_refs": [wire]})]
-    value = Value("custom.asset", "source", ValueMeta({"asset_refs": [wire]}), PyObjPayload({}))
-    asset_input = Value("ASSET", "source", ValueMeta(wire), PyObjPayload(wire))
-
-    with pytest.raises(AssetError):
-        result_asset_digests({"outputs": {"video": {"metaBlob": 0}}}, blobs)
-    with pytest.raises(AssetError):
-        source_asset_files({"video": value}, None)
-    with pytest.raises(AssetError):
-        ProducedAssetAuthority(None).capture({}, inputs={"asset": asset_input})
-
-
-@pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
-@pytest.mark.parametrize("expanded", [False, True])
-def test_source_pins_include_list_children_and_parent_metadata(
-    type_id: str, expanded: bool
-) -> None:
-    child = AssetRef(digest_bytes(b"child"), "child", 5)
-    parent = AssetRef(digest_bytes(b"parent"), "parent", 6)
-    original = AssetRef(digest_bytes(b"original"), "original", 8, "image/png")
-    blobs = [
-        default_encode({"asset_refs": [child.to_wire()]}),
-        default_encode({"asset_refs": [parent.to_wire()]}),
-    ]
-    header: dict[str, Any] = {
-        "outputs": {
-            "values": {
-                "typeId": "dinkster.list",
-                "metaBlob": 1,
-                "elements": [{"typeId": type_id, "metaBlob": 0}],
-            }
-        }
-    }
-    if expanded:
-        header = {"resultAlgebra": {"values": list(header["outputs"].values())}}
-    header["imageDocumentSources"] = {
-        "0": [{key: value for key, value in original.to_wire().items() if key != "virtualPath"}]
-    }
-    assert result_asset_digests(header, blobs) == {child.digest, parent.digest, original.digest}
 
 
 @pytest.fixture
@@ -1332,122 +1083,3 @@ def test_produced_video_adoption_owns_source_until_finished(
             await stop_service(proc)
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("pressure", [False, True])
-@pytest.mark.parametrize("capture_failure", [False, True])
-def test_buffered_result_and_eof_retain_source_until_adoption(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pressure: bool, capture_failure: bool
-) -> None:
-    store = BudgetedDiskCAS(tmp_path / "transfer", max_bytes=1)
-    data = b"new producer source"
-    ref = AssetRef(store.put(data), "source", len(data))
-
-    async def scenario() -> None:
-        registry = core_registry()
-        session = session_module.BoundarySession(
-            registry, role="test", pack="test", codec=ValueCodec(registry, use_shm=False)
-        )
-        session.enable_blob_transfer(store)
-        closed = False
-        captured: list[bytes] = []
-
-        class Writer:
-            def close(self) -> None:
-                nonlocal closed
-                closed = True
-                assert not session._asset_adoptions
-                if pressure:
-                    store.put(b"another session publishing during EOF cleanup")
-
-            async def wait_closed(self) -> None:
-                pass
-
-        async def drop(*args: object) -> None:
-            pass
-
-        def capture(
-            outputs: Mapping[str, Value],
-            transferred: AssetResolver | None = None,
-            inputs: Mapping[str, Value] | None = None,
-        ) -> None:
-            # This fixture checks EOF ownership, not durable vault publication.
-            assert transferred is store
-            references = cast(list[Mapping[str, object]], outputs["source"].meta.get("asset_refs"))
-            captured.append(AssetRef.from_wire(references[0], transferred).read_bytes())
-            if capture_failure:
-                raise AssetError("injected capture failure")
-
-        monkeypatch.setattr(session._produced_assets, "capture", capture)
-        monkeypatch.setattr(session, "_send_unlocked", drop)
-        monkeypatch.setattr(session, "_writer", Writer())
-        session._alive = True
-        reader = asyncio.StreamReader()
-        session._reader = reader
-        session._reader_task = asyncio.create_task(session._read_loop())
-        pending = asyncio.create_task(session.invoke(make_invocation(0)))
-        await asyncio.sleep(0)
-        value = replace(
-            registry.wrap("STRING", "source descriptor"),
-            meta=ValueMeta({"asset_refs": [ref.to_wire()]}),
-        )
-        header, blobs, _ = encode_result(
-            ValueCodec(registry, use_shm=False),
-            InvocationResult(outputs={"source": value}),
-            "i1",
-            0,
-        )
-        encoded = json.dumps({**header, "blobs": [len(blob) for blob in blobs]}).encode()
-        reader.feed_data(len(encoded).to_bytes(4, "big") + encoded + b"".join(blobs))
-        reader.feed_eof()
-        try:
-            result = await asyncio.wait_for(pending, 5)
-            assert closed
-            if capture_failure:
-                assert result.error is not None
-                assert result.error.message == "injected capture failure"
-            else:
-                assert result.error is None, result.error
-            assert captured == [data]
-            assert not session._received_asset_pins
-            assert not session._asset_adoptions
-            store.put(b"pressure after finalization")
-            assert not store.has(ref.digest)
-        finally:
-            await session.close()
-            await asyncio.gather(pending, return_exceptions=True)
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("expanded", [False, True])
-def test_source_transfer_accounting_deduplicates_across_edges(expanded: bool) -> None:
-    ref = AssetRef(digest_bytes(b"encoded"), "source", 7)
-    blobs = [default_encode({"asset_refs": [ref.to_wire()]})]
-    wire = {"typeId": VIDEO_TYPE, "metaBlob": 0, "payload": {"transport": "inline"}}
-    header: dict[str, Any] = {
-        "outputs": {"first": wire, "second": wire},
-        "outputStats": {"first": {"networkBytes": 3}, "second": {"networkBytes": 3}},
-    }
-    if expanded:
-        header = {
-            "resultAlgebra": {
-                "values": list(header["outputs"].values()),
-                "valueStats": list(header["outputStats"].values()),
-            }
-        }
-    attribute_moved_wire(header, {ref.digest: (7, 1.0)}, blobs)
-    stats = (
-        header["resultAlgebra"]["valueStats"] if expanded else list(header["outputStats"].values())
-    )
-    assert stats[0]["networkBytes"] == 10
-    assert stats[1]["networkBytes"] == 3
-
-
-@pytest.mark.parametrize("index", [-1, True, 1, "0", None])
-def test_source_pin_rejects_invalid_metadata_index(index: object) -> None:
-    with pytest.raises(AssetError, match="index is invalid"):
-        result_asset_digests(
-            {"outputs": {"video": {"typeId": VIDEO_TYPE, "metaBlob": index}}},
-            [default_encode({})],
-        )

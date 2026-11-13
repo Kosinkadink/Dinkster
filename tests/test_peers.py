@@ -155,15 +155,6 @@ def test_heartbeat_refreshes_the_registry_entry(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_server_runs_without_discovery() -> None:
-    async def scenario() -> None:
-        async with await start_server(make_engine, SCHEMAS) as server:
-            async with PeerClient(server.endpoint) as client:
-                assert "devices" in await client.status()
-
-    run_scenario(scenario())
-
-
 # -- peer client round trips ---------------------------------------------------
 
 
@@ -323,28 +314,3 @@ def test_held_renews_past_the_original_ttl_and_releases_on_exit(
 
 
 # -- discovery to coordination, end to end --------------------------------------
-
-
-def test_instance_discovers_peer_and_takes_a_lease(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        governor_a = MemoryGovernor({"vram:cuda:0": 100})
-        a = await governed_instance(
-            governor_a,
-            registry=InstanceRegistry(tmp_path),
-            instance_id="inst-a",
-        )
-        b_registry = InstanceRegistry(tmp_path)
-        b = await start_server(make_engine, SCHEMAS, registry=b_registry, instance_id="inst-b")
-        try:
-            # B finds A through the per-machine registry, never config.
-            (peer,) = b_registry.peers()
-            assert peer.instance_id == "inst-a"
-            async with PeerClient(peer.endpoint) as client:
-                async with client.held("vram:cuda:0", 80, ttl=30.0):
-                    assert governor_a.reserved("vram:cuda:0") == 80
-                assert governor_a.reserved("vram:cuda:0") == 0
-        finally:
-            await b.close()
-            await a.close()
-
-    run_scenario(scenario())

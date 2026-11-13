@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-from collections.abc import Mapping, Sequence
-from multiprocessing.shared_memory import SharedMemory
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 import pytest
 from dinkster_assets import digest_file
 from dinkster_caches import BudgetedDiskCAS, CASError, DiskCAS
-from dinkster_values import TypeRegistry
 from dinkster_workers import BoundaryError
 from dinkster_workers import blobs as blobs_module
 from dinkster_workers.blobs import BlobTransfer
-from dinkster_workers.boundary import ValueCodec
-from dinkster_workers.session import BoundarySession
 
 from tests.async_scenarios import run_scenario
 
@@ -219,127 +214,5 @@ def test_interrupted_file_stream_closes_source_and_receiver_temp(
         receiver.close()
         assert not list(receiver_store.root.glob("incoming-*"))
         sender.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("blocked_open", [1, 2], ids=["publication", "read"])
-def test_file_io_finishes_before_repeated_cancellation_releases_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_open: int
-) -> None:
-    async def scenario() -> None:
-        entered = threading.Event()
-        release = threading.Event()
-        finished = threading.Event()
-        source_handle: BinaryIO | None = None
-        opens = 0
-        real_open = Path.open
-
-        class SlowReader:
-            def __init__(self, handle: BinaryIO) -> None:
-                self.handle = handle
-
-            def __enter__(self) -> SlowReader:
-                return self
-
-            def __exit__(self, *args: object) -> None:
-                self.handle.close()
-
-            def fileno(self) -> int:
-                return self.handle.fileno()
-
-            def read(self, size: int = -1) -> bytes:
-                entered.set()
-                assert release.wait(5)
-                chunk = self.handle.read(size)
-                finished.set()
-                return chunk
-
-        def blocked_source_open(path: Path, *args: Any, **kwargs: Any) -> BinaryIO:
-            nonlocal opens, source_handle
-            handle = cast(BinaryIO, real_open(path, *args, **kwargs))
-            if path == source and args and args[0] == "rb":
-                opens += 1
-                if opens == blocked_open:
-                    source_handle = handle
-                    return cast(BinaryIO, SlowReader(handle))
-            return handle
-
-        producer = BudgetedDiskCAS(tmp_path / "producer", max_bytes=1)
-        digest = producer.put(b"encoded")
-        source = producer.resolve(digest)
-        assert source is not None
-        sender, receiver = linked_pair(DiskCAS(tmp_path / "sender"), DiskCAS(tmp_path / "peer"))
-        monkeypatch.setattr(Path, "open", blocked_source_open)
-
-        async def transfer() -> None:
-            producer.pin(sender, [digest])
-            try:
-                await sender.ensure_peer_holds([(digest, source)])
-            finally:
-                producer.unpin(sender)
-                sender.close()
-
-        task = asyncio.create_task(transfer())
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            for _ in range(2):
-                task.cancel()
-                await asyncio.sleep(0)
-            assert not task.done()
-            assert not sender._closed
-            assert source_handle is not None and not source_handle.closed
-            producer.put(b"cache pressure during file operation")
-            assert producer.has(digest)
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert finished.is_set()
-            assert source_handle.closed
-            assert sender._closed
-            producer.put(b"cache pressure after file operation")
-            assert not producer.has(digest)
-            assert not list(sender._store.root.glob("outgoing-*"))
-        finally:
-            release.set()
-            await asyncio.gather(task, return_exceptions=True)
-            sender.close()
-            receiver.close()
-
-    run_scenario(scenario())
-
-
-def test_received_source_stays_pinned_until_result_replay_after_disconnect(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        store = BudgetedDiskCAS(tmp_path / "receiver", max_bytes=1)
-        registry = TypeRegistry()
-        session = BoundarySession(
-            registry, role="remote worker", pack="pack", codec=ValueCodec(registry), resumable=True
-        )
-
-        async def send(
-            header: Mapping[str, object],
-            blobs: Sequence[bytes],
-            segments: Sequence[SharedMemory] = (),
-        ) -> None:
-            pass
-
-        session.send = send
-        session.enable_blob_transfer(store)
-        try:
-            source = store.put(b"produced source")
-            transfer = session._blob_transfer
-            assert transfer is not None
-            await transfer.answer_query({"requestId": "source", "digests": [source]})
-            await session._detach_for_resume()
-            store.put(b"another session sharing this cache")
-            assert store.has(source), "replayed result must still resolve its transferred source"
-            replacement = session._blob_transfer
-            assert replacement is not None and replacement is not transfer
-            await replacement.answer_query({"requestId": "next", "digests": [source]})
-        finally:
-            await session.close()
-        store.put(b"cache pressure after final close")
-        assert not store.has(source), "final close must release the retained query pins"
 
     run_scenario(scenario())

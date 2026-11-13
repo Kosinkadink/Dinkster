@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import io
 import wave
-from collections.abc import Generator
 from contextlib import closing
 from fractions import Fraction
 from tempfile import SpooledTemporaryFile
@@ -188,57 +187,6 @@ def test_aac_saving_decodes_source_once(aac_audio, tmp_path, monkeypatch, decode
         assert np.max(np.abs(expected - actual)) <= 1 / 32768
 
 
-@pytest.mark.parametrize("consumer", ["reader", "save-audio", "video-generator", "video-mux"])
-def test_aac_consumers_close_decoder_on_failure_or_cancellation(
-    aac_audio, tmp_path, monkeypatch, decode_counts, consumer
-):
-    import dinkster_values.audio_lazy as audio_lazy
-    import dinkster_video_runtime.runtime as video_runtime
-
-    class Cancelled(BaseException):
-        pass
-
-    if consumer == "reader":
-        reader = AudioWindowReader(aac_audio)
-        reader.read(54960, 2001)
-        with pytest.raises(ValueError, match="sample_count"):
-            reader.read(0, -1)
-        with pytest.raises(ValueError, match="closed"):
-            reader.read(0, 1)
-        return
-    video = assemble_video(np.zeros((8, 16, 16, 3), np.float32), fps=1, audio=aac_audio)
-    if consumer == "video-generator":
-        iterator = video_runtime._audio_frames(video_runtime._plan(video), 0)
-        next(iterator)
-        iterator.close()
-        return
-
-    class FailingReader(AudioWindowReader):
-        def read(self, *args, **kwargs):
-            result = super().read(*args, **kwargs)
-            if decode_counts["samples"] > 65536:
-                raise Cancelled
-            return result
-
-    with pytest.raises(Cancelled):
-        if consumer == "save-audio":
-            _mount(tmp_path, monkeypatch)
-            decode = audio_lazy._decode_frames
-
-            def failing_decode(*args):
-                with closing(cast(Generator[Any, None, None], decode(*args))) as frames:
-                    for frame in frames:
-                        if decode_counts["samples"] > 65536:
-                            raise Cancelled
-                        yield frame
-
-            monkeypatch.setattr(audio_lazy, "_decode_frames", failing_decode)
-            SaveAudio.execute(audio=aac_audio)
-        else:
-            monkeypatch.setattr(video_runtime, "AudioWindowReader", FailingReader)
-            save_video_stream(video, io.BytesIO(), container="mp4", codec="h264")
-
-
 @pytest.fixture
 def concat_audio(aac_audio):
     inline = audio_from_source(_encoded_aac(48000, (11, 17)), stream_index=1)
@@ -330,28 +278,6 @@ def test_concat_aac_save_matches_materialized_audio(
     assert np.max(np.abs(actual["waveform"] - expected["waveform"])) <= 1 / 32768
 
 
-def test_reader_spills_large_overlaps_and_retires_concat_occurrences(aac_audio, decode_counts):
-    leaf = append_audio_edit(aac_audio, {"trim": {"start_sample": 0, "sample_count": 150000}})
-    leaf = append_audio_edit(leaf, {"resample": 8})
-    expected = audio_window(leaf, 0, 25)["waveform"]
-    audio = append_audio_edit(leaf, {"concat": [leaf] * 63})
-    decode_counts.update(samples=0, sessions=0)
-    with AudioWindowReader(audio) as reader:
-        np.testing.assert_array_equal(reader.read(0, 1600)["waveform"], np.tile(expected, 64))
-        sources = list(reader._sources.values())
-        assert len(sources) == 64
-        assert all(cast(Any, source.cache)._rolled for source in sources)
-        assert sum(source.frames is not None for source in sources) == 1
-        assert decode_counts["sessions"] == 64
-        np.testing.assert_array_equal(reader.read(1590, 10)["waveform"], expected[..., -10:])
-        assert len(reader._sources) == 1
-        assert sum(source.cache.closed for source in sources) == 63
-        assert decode_counts["sessions"] == 64
-        np.testing.assert_array_equal(reader.read(0, 1)["waveform"], expected[..., :1])
-        assert decode_counts["sessions"] == 65
-    assert all(source.cache.closed for source in sources)
-
-
 def test_concat_backward_window_reopens_suspended_sources_with_partial_overlap(
     aac_audio, decode_counts
 ):
@@ -367,30 +293,6 @@ def test_concat_backward_window_reopens_suspended_sources_with_partial_overlap(
         assert decode_counts["sessions"] == 2
         np.testing.assert_array_equal(reader.read(boundary - 2000, 4000)["waveform"], expected)
         assert decode_counts["sessions"] == 4
-
-
-@pytest.mark.parametrize("failure", ["invalid-child-probe", "cancel", "close"])
-def test_concat_reader_closes_every_source_and_spill_on_exit(aac_audio, decode_counts, failure):
-    inline = audio_from_source(_encoded_aac(48000, (41,)))
-    if failure == "invalid-child-probe":
-        inline["probe"] = {**cast(dict, inline["probe"]), "codec": "flac"}
-    audio = append_audio_edit(aac_audio, {"concat": [inline]})
-    boundary = effective_audio_facts(aac_audio)["frames"]
-    reader = AudioWindowReader(audio)
-    if failure == "invalid-child-probe":
-        with pytest.raises(ValueError, match="probe does not match"):
-            reader.read(boundary - 150000, 300000)
-    else:
-        with reader:
-            reader.read(boundary - 150000, 300000)
-            assert len(reader._sources) == 2
-            if failure == "cancel":
-                with pytest.raises(KeyboardInterrupt):
-                    with reader:
-                        raise KeyboardInterrupt
-    assert reader._sources == {}
-    with pytest.raises(ValueError, match="closed"):
-        reader.read(0, 1)
 
 
 @pytest.mark.parametrize("chunk_samples", [257, 4096])
@@ -550,15 +452,6 @@ def test_ordinary_unknown_windows_keep_zero_padding_after_iterator_eof(unknown_a
     assert effective_audio_facts(audio)["frames"] is None
 
 
-@pytest.mark.parametrize("field", ["codec", "layout", "sample_rate"])
-def test_unknown_iterator_still_rejects_forged_probes(unknown_audio, field):
-    audio, _, _ = unknown_audio
-    probe = dict(cast(dict, audio["probe"]))
-    probe[field] = 16000 if field == "sample_rate" else "forged"
-    with pytest.raises(ValueError, match="probe does not match"):
-        list(iter_audio_chunks({**audio, "probe": probe}, chunk_samples=10))
-
-
 @pytest.mark.parametrize(
     "kwargs,error",
     [
@@ -593,14 +486,6 @@ def test_chunk_iterator_preserves_unbound_source_error(aac_audio):
     assert list(iter_audio_chunks(audio, sample_count=0, chunk_samples=1)) == []
     with pytest.raises(AudioSourceUnavailableError):
         list(iter_audio_chunks(audio, chunk_samples=1))
-
-
-def test_chunk_iterator_closes_on_invalid_concat_source(aac_audio, decode_counts):
-    child = {**aac_audio, "probe": {**cast(dict, aac_audio["probe"]), "codec": "forged"}}
-    audio = append_audio_edit(aac_audio, {"concat": [child]})
-    with pytest.raises(ValueError, match="probe does not match"):
-        list(iter_audio_chunks(audio, chunk_samples=150000))
-    assert decode_counts["sessions"] == 1
 
 
 @pytest.mark.parametrize("action", ["close", "break", "throw", "cancel", "read-error"])

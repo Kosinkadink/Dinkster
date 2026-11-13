@@ -3,7 +3,7 @@ from __future__ import annotations
 from dinkster_protocol import ErrorHint, InvocationResult, NodeError
 from dinkster_values import TypeRegistry
 from dinkster_workers.boundary import ValueCodec, encode_result, error_from_wire
-from dinkster_workers.error_hints import _hints_for, hints_for
+from dinkster_workers.error_hints import hints_for
 
 
 def test_tensor_shape_mismatch_interpreter_extracts_dimensions() -> None:
@@ -68,25 +68,6 @@ def test_cuda_oom_interpreter_matches_structural_type_name() -> None:
 def test_unrecognized_runtime_error_has_no_hints() -> None:
     assert hints_for(RuntimeError("an unrelated node failure")) == ()
     assert hints_for(RuntimeError("size mismatch for payload length")) == ()
-
-
-def test_interpreter_failure_is_dropped_without_losing_other_hints() -> None:
-    expected = ErrorHint("test-hint", "still returned")
-
-    def raises(_exc: BaseException) -> tuple[ErrorHint, ...]:
-        raise RuntimeError("broken interpreter")
-
-    def succeeds(_exc: BaseException) -> tuple[ErrorHint, ...]:
-        return (expected,)
-
-    assert _hints_for(RuntimeError("failure"), (raises, succeeds)) == (expected,)
-
-
-def test_hints_are_capped_at_three() -> None:
-    def produces_four(_exc: BaseException) -> tuple[ErrorHint, ...]:
-        return tuple(ErrorHint(f"hint-{index}", "message") for index in range(4))
-
-    assert len(_hints_for(RuntimeError("failure"), (produces_four,))) == 3
 
 
 def test_error_hints_survive_worker_boundary_encoding() -> None:

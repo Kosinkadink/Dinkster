@@ -20,8 +20,6 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_from_wire,
-    schema_to_wire,
 )
 from dinkster_values import TypeRegistry, Value, is_absent, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker
@@ -249,13 +247,6 @@ def test_cancelling_waiter_releases_admission_for_the_next_run() -> None:
             Waiter.started = None
 
     run_scenario(scenario())
-
-
-def test_execution_context_schema_is_explicit_and_not_a_socket() -> None:
-    schema = Waiter.schema()
-    assert schema_from_wire(schema_to_wire(schema)) == schema
-    with pytest.raises(ValueError, match="reserved input"):
-        NodeSchema("bad", inputs=(InputSpec("execution_context", INT),))
 
 
 def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document() -> None:

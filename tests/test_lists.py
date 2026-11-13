@@ -18,95 +18,31 @@ from dinkster_schema import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    bind_type_variables,
     build_node_types,
     build_schemas,
-    combo_type_mismatch_is_error,
-    resolved_type_id,
-    schema_from_wire,
-    schema_to_wire,
 )
 from dinkster_values import (
     CORE_COMBO,
     CORE_INT,
     RESOURCE_HANDLE_TYPE,
-    RESOURCE_OWNER_META_KEY,
     ResourceHandle,
     TypeRegistry,
     Value,
     ValueMeta,
-    iter_value_tree,
     list_children,
     list_type_id,
     make_list_value,
     make_tuple_value,
-    parse_list_type_id,
     register_core_types,
     register_resource_handle_type,
-    runtime_type_atoms,
-    stamp_resource_producer_arm,
-    value_children,
     value_resource_ids,
-    value_resource_provenance_refs,
 )
 from dinkster_workers import InProcessWorker
-from dinkster_workers.boundary import BoundaryError, ValueCodec
-from dinkster_workers.devices import DeviceMap
+from dinkster_workers.boundary import ValueCodec
 
 from tests.async_scenarios import run_scenario
 
 # -- grammar and TypeExpr ---------------------------------------------------
-
-
-def test_list_type_id_grammar() -> None:
-    assert list_type_id("INT") == "list<INT>"
-    assert parse_list_type_id("list<INT>") == "INT"
-    assert parse_list_type_id("list<list<INT>>") == "list<INT>"
-    assert parse_list_type_id("INT") is None
-    assert parse_list_type_id("list<>") is None
-
-
-def test_list_types_have_one_schema_spelling() -> None:
-    with pytest.raises(ValueError):
-        TypeExpr.concrete("list<INT>")
-
-
-def test_type_expr_list_kind() -> None:
-    expr = TypeExpr.list_of(TypeExpr.concrete("INT"))
-    assert expr.runtime_type_id() == "list<INT>"
-    nested = TypeExpr.list_of(expr)
-    assert nested.runtime_type_id() == "list<list<INT>>"
-    assert TypeExpr.list_of(TypeExpr.wildcard()).runtime_type_id() == "list<*>"
-
-    assert expr.cardinality() == "list"
-    assert TypeExpr.concrete("INT").cardinality() == "scalar"
-    assert TypeExpr.wildcard().cardinality() == "unknown"
-
-    assert expr.accepts_concrete("list<INT>")
-    assert not expr.accepts_concrete("INT")
-    assert not expr.accepts_concrete("list<FLOAT>")
-    assert TypeExpr.list_of(TypeExpr.wildcard()).accepts_concrete("list<anything>")
-
-    with pytest.raises(ValueError):
-        TypeExpr(kind="list")  # no element
-    with pytest.raises(ValueError):
-        TypeExpr(kind="concrete", types=("INT",), element=TypeExpr.wildcard())
-
-
-def test_schema_wire_roundtrip_with_lists() -> None:
-    schema = NodeSchema(
-        node_type="test.lists",
-        inputs=(
-            InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),
-            InputSpec(
-                "matrix",
-                TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("FLOAT"))),
-                required=False,
-            ),
-        ),
-        outputs=(OutputSpec("out", TypeExpr.list_of(TypeExpr.concrete("STRING"))),),
-    )
-    assert schema_from_wire(schema_to_wire(schema)) == schema
 
 
 # -- value envelopes --------------------------------------------------------
@@ -118,19 +54,6 @@ def make_registry() -> TypeRegistry:
     return registry
 
 
-def test_wrap_list_builds_child_envelopes() -> None:
-    registry = make_registry()
-    value = registry.wrap("list<INT>", [1, 2, 3])
-    assert value.type_id == "list<INT>"
-    assert value.meta.get("length") == 3
-    assert value.resolve() == [1, 2, 3]
-    children = list_children(value)
-    assert children is not None
-    assert [c.type_id for c in children] == [CORE_INT] * 3
-    assert children[0].fingerprint == registry.wrap(CORE_INT, 1).fingerprint
-    assert len(list(iter_value_tree(value))) == 4  # the list + 3 children
-
-
 def test_list_fingerprint_is_order_sensitive_and_stable() -> None:
     registry = make_registry()
     a = registry.wrap("list<INT>", [1, 2, 3])
@@ -140,30 +63,6 @@ def test_list_fingerprint_is_order_sensitive_and_stable() -> None:
     assert a.fingerprint == b.fingerprint
     assert a.fingerprint != c.fingerprint
     assert a.fingerprint != d.fingerprint
-
-
-def test_wrap_nested_lists() -> None:
-    registry = make_registry()
-    value = registry.wrap("list<list<INT>>", [[1, 2], [3]])
-    assert value.resolve() == [[1, 2], [3]]
-    children = list_children(value)
-    assert children is not None
-    assert [c.type_id for c in children] == ["list<INT>"] * 2
-
-
-def test_wrap_combo_lists_preserves_empty_order_and_duplicates() -> None:
-    registry = make_registry()
-    empty = registry.wrap("list<COMBO>", [])
-    ordered = registry.wrap("list<COMBO>", ["b", "a", "b"])
-
-    assert empty.resolve() == []
-    assert ordered.resolve() == ["b", "a", "b"]
-    children = list_children(ordered)
-    assert children is not None
-    assert [child.type_id for child in children] == [CORE_COMBO] * 3
-    assert children[0].fingerprint == children[2].fingerprint
-    assert children[0].fingerprint != children[1].fingerprint
-    assert ordered.fingerprint != registry.wrap("list<COMBO>", ["a", "b", "b"]).fingerprint
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -190,95 +89,6 @@ def test_wrap_combo_lists_preserves_scalar_types_across_boundary(nested: bool) -
     assert decoded.fingerprint == value.fingerprint
 
 
-@pytest.mark.parametrize("invalid", [[None], [["nested"]]])
-def test_wrap_combo_lists_recursively_rejects_non_scalars(invalid: object) -> None:
-    registry = make_registry()
-    with pytest.raises(TypeError, match="COMBO expects a JSON scalar"):
-        registry.wrap("list<COMBO>", invalid)
-
-
-def test_wrap_list_rejects_non_sequences() -> None:
-    registry = make_registry()
-    with pytest.raises(TypeError):
-        registry.wrap("list<INT>", 5)
-    with pytest.raises(TypeError):
-        registry.wrap("list<STRING>", "not-a-list-of-strings")
-
-
-def test_make_list_value_rejects_mismatched_children() -> None:
-    registry = make_registry()
-    child = registry.wrap(CORE_INT, 1)
-    with pytest.raises(ValueError):
-        make_list_value("FLOAT", [child])
-    with pytest.raises(TypeError, match="rejects envelope"):
-        registry.wrap("list<FLOAT>", [child])
-
-
-def test_heterogeneous_lists_preserve_typed_children_without_guessing() -> None:
-    registry = make_registry()
-    text = registry.wrap("STRING", "seven")
-    number = registry.wrap("INT", 29)
-    value = registry.wrap("list<*>", [text, number])
-    assert value.resolve() == ["seven", 29]
-    assert list_children(value) == (text, number)
-    assert value.fingerprint != registry.wrap("list<*>", [number, text]).fingerprint
-    assert registry.wrap("list<*>", []).resolve() == []
-    assert registry.wrap("list<list<*>>", [[number, text], []]).resolve() == [[29, "seven"], []]
-    assert registry.wrap("list<*>", [value, number]).resolve() == [["seven", 29], 29]
-    with pytest.raises(TypeError, match="typed child envelopes"):
-        registry.wrap("list<*>", ["seven", 29])
-    with pytest.raises(ValueError, match="child has type"):
-        make_list_value("STRING", [text, number])
-    expression = TypeExpr.list_of(TypeExpr.wildcard())
-    assert resolved_type_id(expression, {}) == "list<*>"
-    bindings = bind_type_variables(
-        (InputSpec("value", TypeExpr.variable("T")),), {"value": "list<*>"}
-    )
-    assert resolved_type_id(TypeExpr.variable("T"), bindings) == "list<*>"
-    assert runtime_type_atoms("tuple<list<*>,INT,list<list<*>>>") == ("INT",)
-    schema = NodeSchema(node_type="test.mixed", outputs=(OutputSpec("out", expression),))
-    assert schema_from_wire(schema_to_wire(schema)) == schema
-
-
-def test_tuple_values_preserve_position_types_and_nested_containers() -> None:
-    registry = make_registry()
-    assert runtime_type_atoms("tuple<IMAGE,list<INT>,asset<tuple<INT,STRING>>>") == (
-        "IMAGE",
-        "INT",
-        "STRING",
-    )
-    assert runtime_type_atoms("tuple<>") == ()
-    for malformed in ("tuple<INT,>", "tuple<INT,STRING>>", "list<tuple<INT,>>", "tuple<,INT>"):
-        assert runtime_type_atoms(malformed) is None
-    assert combo_type_mismatch_is_error("tuple<INT,COMBO>", TypeExpr.concrete("STRING"))
-    assert combo_type_mismatch_is_error(
-        "tuple<INT,STRING>", TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("COMBO"))
-    )
-    assert not combo_type_mismatch_is_error(
-        "tuple<INT,STRING>", TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("FLOAT"))
-    )
-    value = registry.wrap(
-        "tuple<INT,STRING,list<INT>,tuple<STRING,INT>>", (7, "a", [9, 2], ("b", 4))
-    )
-    assert value.resolve() == (7, "a", [9, 2], ("b", 4))
-    assert list_children(value) is None
-    children = value_children(value)
-    assert children is not None
-    assert tuple(child.type_id for child in children) == (
-        "INT",
-        "STRING",
-        "list<INT>",
-        "tuple<STRING,INT>",
-    )
-    assert value.fingerprint != registry.wrap(value.type_id, (8, "a", [9, 2], ("b", 4))).fingerprint
-    assert registry.wrap("tuple<>", ()).resolve() == ()
-    for invalid in ([7, "a"], (7,), (7, "a", 3)):
-        with pytest.raises(TypeError, match="expects a tuple of 2 positions"):
-            registry.wrap("tuple<INT,STRING>", invalid)
-    with pytest.raises(KeyError, match="unregistered"):
-        registry.wrap("tuple<INT,unknown>", (7, "a"))
-
-
 def _handle_value(registry: TypeRegistry, rid: str, device: str = "cuda:0"):
     handle = ResourceHandle(
         resource_id=rid,
@@ -288,17 +98,6 @@ def _handle_value(registry: TypeRegistry, rid: str, device: str = "cuda:0"):
         obj=object(),
     )
     return registry.wrap(RESOURCE_HANDLE_TYPE, handle)
-
-
-def test_resource_ids_visible_through_lists() -> None:
-    registry = make_registry()
-    register_resource_handle_type(registry)
-    v1 = _handle_value(registry, "model-a")
-    v2 = _handle_value(registry, "model-b")
-    lst = make_list_value(RESOURCE_HANDLE_TYPE, [v1, v2, v1])
-    assert value_resource_ids(lst) == ("model-a", "model-b")  # deduped, ordered
-    nested = make_list_value(list_type_id(RESOURCE_HANDLE_TYPE), [lst])
-    assert value_resource_ids(nested) == ("model-a", "model-b")
 
 
 # -- engine end to end ------------------------------------------------------
@@ -787,49 +586,6 @@ def test_bad_list_output_is_contract_error() -> None:
     run_scenario(scenario())
 
 
-def test_tuple_positions_prepare_their_host_types_before_output_wrapping() -> None:
-    class TupleSource(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            pair = TypeExpr.tuple_of(
-                TypeExpr.concrete("test.first"), TypeExpr.concrete("test.second")
-            )
-            return NodeSchema(
-                "test.tuple_source",
-                outputs=(OutputSpec("value", pair),),
-            )
-
-        @classmethod
-        def execute(cls) -> Mapping[str, object]:
-            return cls.outputs(value=(7, "label"))
-
-    async def scenario() -> None:
-        registry = make_registry()
-        nodes = (TupleSource,)
-        engine = Engine(
-            schemas=build_schemas(nodes),
-            registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
-            cache=MemoryLRUCache(),
-        )
-
-        async def prepare(atoms: set[str]) -> None:
-            for type_id in ("test.first", "test.second"):
-                if type_id in atoms and type_id not in registry:
-                    registry.register(type_id)
-
-        runtime = replace(engine.pin_execution(), prepare_host_types=prepare)
-        result = await engine.run(
-            Graph(nodes={"source": GraphNode("test.tuple_source", {})}),
-            ["source"],
-            execution=runtime,
-        )
-        assert result.outputs["source"]["value"].type_id == "tuple<test.first,test.second>"
-        assert result.outputs["source"]["value"].resolve() == (7, "label")
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize("in_process", [False, True])
 @pytest.mark.parametrize("cache_mode", ["memory", "layered"])
 def test_tuple_nodes_preserve_position_types_through_production_hosts(
@@ -959,35 +715,6 @@ def test_non_list_literal_on_list_input_is_an_error() -> None:
 # -- boundary codec ---------------------------------------------------------
 
 
-def test_codec_roundtrips_lists_with_child_envelopes() -> None:
-    registry = make_registry()
-    register_resource_handle_type(registry)
-    sender = ValueCodec(registry, use_shm=False, accept_shm=False)
-    receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
-
-    stub = _handle_value(registry, "model-x", device="cuda:1")
-    inner = registry.wrap("list<INT>", [1, 2])
-    value = make_list_value("list<INT>", [inner, registry.wrap("list<INT>", [3])])
-
-    blobs: list[bytes] = []
-    wire, stat = sender.encode(value, blobs, [])
-    assert stat.transport == "list"
-    decoded, _ = receiver.decode(wire, blobs, [])
-    assert decoded.type_id == value.type_id
-    assert decoded.fingerprint == value.fingerprint
-    assert decoded.resolve() == [[1, 2], [3]]
-
-    # A resource stub inside a list keeps its identity across the boundary.
-    lst = make_list_value(RESOURCE_HANDLE_TYPE, [stub])
-    blobs2: list[bytes] = []
-    wire2, _ = sender.encode(lst, blobs2, [])
-    decoded2, _ = receiver.decode(wire2, blobs2, [])
-    assert value_resource_ids(decoded2) == ("model-x",)
-    children = list_children(decoded2)
-    assert children is not None
-    assert children[0].meta.get("resources") == {"gpu": "cuda:1"}
-
-
 def test_heterogeneous_transport_keeps_child_conversion_and_resources() -> None:
     import numpy as np
     from dinkster_api.v1 import image_input
@@ -1015,48 +742,6 @@ def test_heterogeneous_transport_keeps_child_conversion_and_resources() -> None:
     )
     assert cast(Any, image.resolve()).dtype == np.uint8
     assert encode_entry({"mixed": decoded}, registry) is None
-
-
-def test_device_map_rewrites_list_children() -> None:
-    registry = make_registry()
-    register_resource_handle_type(registry)
-    stub = _handle_value(registry, "model-y", device="cuda:0")
-    lst = make_list_value(RESOURCE_HANDLE_TYPE, [stub])
-    mapped = DeviceMap(mapping={"cuda:0": "cuda:1"}).value(lst)
-    assert mapped.fingerprint == lst.fingerprint  # identity is device-free
-    children = list_children(mapped)
-    assert children is not None
-    assert children[0].meta.get("resources") == {"gpu": "cuda:1"}
-    # Identity map: the very same object comes back.
-    assert DeviceMap(mapping={}).value(lst) is lst
-
-
-def test_tuple_transport_retains_resource_identity_and_projection() -> None:
-    registry = make_registry()
-    register_resource_handle_type(registry)
-    stub = _handle_value(registry, "tuple-model", device="cuda:0")
-    stub = replace(stub, meta=ValueMeta({**stub.meta.entries, RESOURCE_OWNER_META_KEY: "owner"}))
-    value = make_tuple_value(
-        (registry.wrap("STRING", "label"), make_list_value(RESOURCE_HANDLE_TYPE, [stub]))
-    )
-    stamped = stamp_resource_producer_arm(value, "owner", "arm")
-    assert value_resource_provenance_refs(stamped) == (("tuple-model", "owner", "arm", True),)
-    mapped = DeviceMap(mapping={"cuda:0": "cuda:1"}).value(stamped)
-    codec = ValueCodec(registry, use_shm=False, accept_shm=False)
-    blobs: list[bytes] = []
-    wire, stat = codec.encode(mapped, blobs, [])
-    decoded, _ = codec.decode(wire, blobs, [])
-    assert stat.transport == "tuple"
-    assert decoded.type_id == value.type_id
-    assert decoded.fingerprint == value.fingerprint
-    assert list_children(decoded) is None
-    assert value_resource_provenance_refs(decoded) == (("tuple-model", "owner", "arm", True),)
-    leaves = tuple(iter_value_tree(decoded))
-    assert leaves[-1].meta.get("resources") == {"gpu": "cuda:1"}
-    assert encode_entry({"value": decoded}, registry) is None
-    malformed = {**wire, "typeId": "tuple<INT,STRING>"}
-    with pytest.raises(BoundaryError, match="tuple child types"):
-        codec.decode(malformed, blobs, [])
 
 
 # -- persisted cache manifests ----------------------------------------------

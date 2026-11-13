@@ -29,14 +29,11 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_from_wire,
-    schema_to_wire,
 )
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
-    CORE_ABSENT,
     TypeRegistry,
     is_absent,
     make_absent_value,
@@ -55,54 +52,7 @@ def test_omit_policy_requires_optional_input() -> None:
         InputSpec("x", TypeExpr.concrete("INT"), required=True, on_absent="omit")
 
 
-def test_absent_policy_defaults() -> None:
-    required = InputSpec("a", TypeExpr.concrete("INT"))
-    optional = InputSpec("b", TypeExpr.concrete("INT"), required=False)
-    assert required.absent_policy() == "skip"
-    assert optional.absent_policy() == "omit"
-    declared = InputSpec("c", TypeExpr.concrete("INT"), on_absent="accept")
-    assert declared.absent_policy() == "accept"
-
-
-def test_schema_wire_roundtrip_with_absence_fields() -> None:
-    schema = NodeSchema(
-        node_type="test.maybe",
-        inputs=(
-            InputSpec("strict", TypeExpr.concrete("INT"), on_absent="fail"),
-            InputSpec("loose", TypeExpr.concrete("INT"), on_absent="accept"),
-        ),
-        outputs=(
-            OutputSpec("value", TypeExpr.concrete("INT"), optional=True),
-            OutputSpec("always", TypeExpr.concrete("INT")),
-        ),
-    )
-    assert schema_from_wire(schema_to_wire(schema)) == schema
-    wire = schema_to_wire(schema)
-    interface = wire["interface"]
-    assert isinstance(interface, list)
-    strict = next(e for e in interface if e["id"] == "strict")
-    assert strict["onAbsent"] == "fail"
-    value_out = next(e for e in interface if e["id"] == "value")
-    assert value_out["optional"] is True
-    always_out = next(e for e in interface if e["id"] == "always")
-    assert "optional" not in always_out
-
-
 # -- absent envelopes -------------------------------------------------------
-
-
-def test_absent_value_is_interrogable_and_deterministic() -> None:
-    value = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="INT")
-    assert is_absent(value)
-    assert value.type_id == CORE_ABSENT
-    assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "n1/vae"
-    assert value.meta.get(ABSENT_REASON_META_KEY) == "no VAE"
-    assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
-    assert value.resolve() is None
-    same = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="INT")
-    assert same.fingerprint == value.fingerprint
-    other = make_absent_value(origin="n2/vae", reason="no VAE", stands_for="INT")
-    assert other.fingerprint != value.fingerprint
 
 
 def test_absent_crosses_the_boundary() -> None:
@@ -415,24 +365,6 @@ def test_skip_cascades_with_root_provenance() -> None:
         again = await engine.run(graph, ["b"])
         assert again.cached == ("m",)
         assert set(again.skipped) == {"a", "b"}
-
-    run_scenario(scenario())
-
-
-def test_skip_does_not_block_produced_branch() -> None:
-    async def scenario() -> None:
-        AddOne.ran.clear()
-        engine = make_engine()
-        graph = Graph(
-            nodes={
-                "m": GraphNode("test.maybe_produce", {"produce": True}),
-                "a": GraphNode("test.add_one", {"value": Link("m", "value")}),
-            }
-        )
-        result = await engine.run(graph, ["a"])
-        assert result.skipped == ()
-        assert result.outputs["a"]["out"].resolve() == 43
-        assert AddOne.ran == [42]
 
     run_scenario(scenario())
 

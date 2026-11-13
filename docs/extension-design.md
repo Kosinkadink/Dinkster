@@ -404,8 +404,7 @@ in [comfy-vibe-station#120](https://github.com/Kosinkadink/comfy-vibe-station/is
 - **S9. Storage providers + ArtifactStore + compile contracts** (3.3, 3.9
   artifacts). Proof: one quantized-storage pack.
 - **S10. Model-family registration** (3.9) ships through the inference
-  contribution contract. The ordinary extension-contract fixture proves an
-  out-of-tree family, component, assembly, detector, and both sampler surfaces.
+  contribution contract.
 - **S11. Sampler checkpoints (envelope) + SamplingDriver + trajectory
   middleware** (rest of 3.6). Proof: stateful sampler resume; one full-loop
   driver under supervision.

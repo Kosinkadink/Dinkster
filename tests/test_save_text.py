@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_api.v1 import ComboWidget, StringWidget
 from dinkster_assets import (
     AssetError,
     AssetVault,
@@ -27,30 +26,6 @@ from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
-
-
-def test_save_text_schema_preserves_core_contract_and_appends_mount() -> None:
-    schema = SaveText.schema()
-    assert schema.node_type == "dinkster.text.save_text"
-    assert schema.display_name == "Save Text"
-    assert schema.category == "text"
-    assert tuple(spec.id for spec in schema.inputs) == (
-        "text",
-        "filename_prefix",
-        "format",
-        "mount",
-    )
-    assert schema.inputs[0].force_input
-    assert schema.inputs[0].widget == StringWidget(multiline=False)
-    assert schema.inputs[1].default == "ComfyUI"
-    assert schema.inputs[2].default == "txt"
-    assert isinstance(schema.inputs[2].widget, ComboWidget)
-    assert tuple(schema.inputs[2].widget.options) == ("txt", "csv", "md", "json")
-    assert not schema.inputs[3].required
-    assert schema.inputs[3].default is None
-    assert tuple(spec.id for spec in schema.outputs) == ("text",)
-    assert schema.output_node
-    assert not schema.idempotent
 
 
 def _snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:

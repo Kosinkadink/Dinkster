@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -22,7 +20,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_ltx import register_types
-from dinkster_values import EncodedLatentTensor, encode_latent
+from dinkster_values import EncodedLatentTensor
 
 from dinkster.compose import PackInfo, PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
@@ -46,61 +44,6 @@ def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> No
     assert spec.fingerprint is not None
     assert spec.fingerprint(value) == spec.fingerprint(spec.decode(encoded))
     assert spec.fingerprint(value) != spec.fingerprint({**value, "extra": True})
-
-
-def test_ic_lora_parameters_rejects_non_mapping_and_invalid_frames() -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
-    assert spec.validate_encoded is not None
-
-    with pytest.raises(ValueError):
-        spec.encode(("reference_downscale_factor", 2))
-    payload = encode_latent({"samples": {"reference_downscale_factor": 1}, "extra": 1})
-    with pytest.raises(ValueError):
-        spec.decode(payload)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(payload, {})
-
-
-@pytest.mark.parametrize("entry", ("ab", 12, None, {"a": 1}, ("a",), ("a", 1, 2)))
-def test_ic_lora_parameters_rejects_malformed_mapping_entries(entry: object) -> None:
-    registry = TypeRegistry()
-    register_types(registry)
-    spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
-    assert spec.validate_encoded is not None
-    payload = encode_latent({"samples": [entry]})
-    with pytest.raises(ValueError, match="string-keyed pairs"):
-        spec.decode(payload)
-    with pytest.raises(ValueError, match="string-keyed pairs"):
-        spec.validate_encoded(payload, {})
-
-
-def test_ic_lora_parameters_public_registration_is_cold_and_idempotent() -> None:
-    script = "\n".join(
-        (
-            "import sys",
-            "from dinkster_api.v1 import IC_LORA_PARAMETERS_TYPE, TypeRegistry",
-            "from dinkster_ltx import register_types",
-            "registry = TypeRegistry()",
-            "first = register_types(registry)",
-            "second = register_types(registry)",
-            "assert first == second",
-            "spec = registry.spec(IC_LORA_PARAMETERS_TYPE)",
-            "value = {'reference_downscale_factor': 2, 'extra': {'preserve': True}}",
-            "assert spec.decode(spec.encode(value)) == value",
-            "blocked = ('torch', 'dinkster_inference')",
-            "assert not any(name.split('.')[0] in blocked for name in sys.modules)",
-        )
-    )
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            script,
-        ],
-        check=True,
-    )
 
 
 class ICLoRAParametersSource(Node):

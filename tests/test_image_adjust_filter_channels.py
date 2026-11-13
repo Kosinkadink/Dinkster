@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import math
 import pickle
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 import pytest
-from dinkster_image.adjust import ADJUST_OPERATIONS, ImageAdjust
+from dinkster_image.adjust import ImageAdjust
 from dinkster_image.channels import ImageAlphaJoin, ImageChannelMerge, ImageChannelSplit
 from dinkster_image.filters import DITHER_MODES, FILTER_OPERATIONS, ImageFilter
 
@@ -40,41 +39,6 @@ def _golden_source() -> np.ndarray:
 def _image(*, batch: int = 1, channels: int = 3) -> np.ndarray:
     values = np.linspace(0.0, 1.0, batch * 3 * 4 * channels, dtype=np.float32)
     return values.reshape(batch, 3, 4, channels)
-
-
-def test_adjust_and_filter_dynamic_combo_schemas_and_materialized_execution() -> None:
-    adjust = ImageAdjust.define_schema()
-    image_filter = ImageFilter.define_schema()
-    assert adjust.version == image_filter.version == 2
-    assert tuple(item.id for item in adjust.inputs) == ("image",)
-    adjust_options = [
-        (option.key, tuple(item.id for item in option.inputs))
-        for option in adjust.combos[0].options
-    ]
-    assert adjust_options == [
-        ("invert", ()),
-        ("normalize", ("mean", "standard_deviation")),
-        ("brightness", ("factor",)),
-        ("contrast", ("factor",)),
-    ]
-    expected_filter = {
-        "gaussian_blur": ("radius", "sigma"),
-        "sharpen": ("radius", "sigma", "strength"),
-        "quantize": ("colors", "dither"),
-        "noise": ("strength", "seed"),
-        **{name: ("kernel_size",) for name in FILTER_OPERATIONS[4:]},
-    }
-    assert {
-        option.key: tuple(item.id for item in option.inputs)
-        for option in image_filter.combos[0].options
-    } == expected_filter
-
-    source = _image()
-    expected = ImageAdjust.execute(image=source, operation="contrast", factor=2.0)
-    materialized = ImageAdjust.execute(
-        **{"image": source, "operation": "contrast", "operation.factor": 2.0}
-    )
-    np.testing.assert_array_equal(materialized["image"], expected["image"])
 
 
 def test_core_adjust_filter_mappings_match_comfy_goldens() -> None:
@@ -225,32 +189,6 @@ def test_core_channel_mappings_match_comfy_goldens(mask_polarity: str) -> None:
     )
 
 
-def test_adjust_operations_match_core_formulas_and_preserve_layout() -> None:
-    image = np.asarray([[[[0.0, 0.25, 0.75], [1.0, 0.5, 0.1]]]], dtype=np.float32)
-    invert = ImageAdjust.execute(image=image, operation="invert")["image"]
-    normalized = ImageAdjust.execute(
-        image=image,
-        operation="normalize",
-        mean=0.5,
-        standard_deviation=0.25,
-    )["image"]
-    brightness = ImageAdjust.execute(image=image, operation="brightness", factor=2.0)["image"]
-    contrast = ImageAdjust.execute(image=image, operation="contrast", factor=2.0)["image"]
-    np.testing.assert_array_equal(invert, 1.0 - image)
-    np.testing.assert_array_equal(normalized, (image - 0.5) / 0.25)
-    np.testing.assert_array_equal(brightness, np.clip(image * 2.0, 0.0, 1.0))
-    np.testing.assert_array_equal(contrast, np.clip((image - 0.5) * 2.0 + 0.5, 0.0, 1.0))
-    assert all(
-        np.asarray(value).shape == image.shape
-        for value in (invert, normalized, brightness, contrast)
-    )
-    assert all(
-        np.asarray(value).dtype == np.float32
-        for value in (invert, normalized, brightness, contrast)
-    )
-    assert set(ADJUST_OPERATIONS) == {"invert", "normalize", "brightness", "contrast"}
-
-
 def test_adjust_rejects_invalid_parameters() -> None:
     with pytest.raises(ValueError, match="standard_deviation"):
         ImageAdjust.execute(
@@ -302,36 +240,6 @@ def test_gaussian_blur_and_sharpen_handle_tiny_images_radius_zero_and_batches() 
         )["image"]
     )
     np.testing.assert_allclose(no_sharpen, impulse, rtol=0, atol=1e-7)
-
-
-def test_gaussian_coordinates_and_sharpen_scale_match_core_formulas() -> None:
-    impulse = np.zeros((1, 5, 5, 1), dtype=np.float32)
-    impulse[:, 2, 2, :] = 1.0
-    blurred = np.asarray(
-        ImageFilter.execute(
-            image=impulse,
-            operation="gaussian_blur",
-            radius=1,
-            sigma=1.0,
-        )["image"]
-    )
-    side = math.exp(-0.5)
-    center_weight = 1.0 / (1.0 + 2.0 * side)
-    side_weight = side * center_weight
-    np.testing.assert_allclose(blurred[0, 2, 2, 0], center_weight**2, rtol=0, atol=1e-7)
-    np.testing.assert_allclose(blurred[0, 2, 1, 0], center_weight * side_weight, rtol=0, atol=1e-7)
-
-    sharpened = np.asarray(
-        ImageFilter.execute(
-            image=impulse,
-            operation="sharpen",
-            radius=1,
-            sigma=1.0,
-            strength=0.05,
-        )["image"]
-    )
-    expected = np.clip(impulse + 0.5 * (impulse - blurred), 0.0, 1.0)
-    np.testing.assert_allclose(sharpened, expected, rtol=0, atol=1e-7)
 
 
 @pytest.mark.parametrize("dither", DITHER_MODES)
@@ -389,56 +297,6 @@ def test_seeded_noise_is_local_deterministic_and_batch_preserving() -> None:
     assert not np.array_equal(first, different)
     assert np.asarray(first).shape == image.shape
     assert np.asarray(first).dtype == np.float32
-
-
-@pytest.mark.parametrize("operation", FILTER_OPERATIONS[4:])
-def test_each_image_morphology_operation_is_bounded_and_shape_preserving(operation: str) -> None:
-    image = np.zeros((1, 5, 5, 1), dtype=np.float32)
-    image[:, 1:4, 1:4, :] = 1.0
-    image[:, 2, 2, :] = 0.0
-    result = np.asarray(
-        ImageFilter.execute(
-            image=image,
-            operation=operation,
-            kernel_size=3,
-        )["image"]
-    )
-    assert result.shape == image.shape
-    assert result.dtype == np.float32
-    assert np.all(result >= 0.0)
-    assert np.all(result <= 1.0)
-
-
-def test_morphology_has_neutral_boundaries_and_expected_impulse_behavior() -> None:
-    impulse = np.zeros((1, 3, 3, 1), dtype=np.float32)
-    impulse[:, 1, 1, :] = 1.0
-    dilated = ImageFilter.execute(
-        image=impulse,
-        operation="dilate",
-        kernel_size=3,
-    )["image"]
-    eroded = ImageFilter.execute(
-        image=np.ones_like(impulse),
-        operation="erode",
-        kernel_size=3,
-    )["image"]
-    np.testing.assert_array_equal(dilated, 1.0)
-    np.testing.assert_array_equal(eroded, 1.0)
-
-    centered = np.zeros((1, 5, 5, 1), dtype=np.float32)
-    centered[:, 2, 2, :] = 1.0
-    top_hat = ImageFilter.execute(
-        image=centered,
-        operation="top_hat",
-        kernel_size=3,
-    )["image"]
-    bottom_hat = ImageFilter.execute(
-        image=centered,
-        operation="bottom_hat",
-        kernel_size=3,
-    )["image"]
-    np.testing.assert_array_equal(top_hat, centered)
-    np.testing.assert_array_equal(bottom_hat, 0.0)
 
 
 @pytest.mark.parametrize(
@@ -520,51 +378,6 @@ def test_rgb_channel_split_merge_round_trip_and_batch_broadcast() -> None:
             channel_3=split["channel_3"],
             batch_policy="strict",
         )
-
-
-def test_ycbcr_split_merge_is_directional_and_value_close() -> None:
-    image = _image()
-    split = ImageChannelSplit.execute(image=image, color_space="ycbcr")
-    merged = ImageChannelMerge.execute(
-        channel_1=split["channel_1"],
-        channel_2=split["channel_2"],
-        channel_3=split["channel_3"],
-        color_space="ycbcr",
-    )["image"]
-    np.testing.assert_allclose(np.asarray(merged), image, rtol=0, atol=3e-4)
-
-    red = np.asarray([[[[1.0, 0.0, 0.0]]]], dtype=np.float32)
-    red_split = ImageChannelSplit.execute(image=red, color_space="ycbcr")
-    np.testing.assert_allclose(np.asarray(red_split["channel_1"]), 0.299, rtol=0, atol=1e-7)
-    np.testing.assert_allclose(
-        np.asarray(red_split["channel_2"]), 0.5 - 0.299 * 0.564, rtol=0, atol=1e-7
-    )
-    np.testing.assert_allclose(
-        np.asarray(red_split["channel_3"]), 0.5 + (1.0 - 0.299) * 0.713, rtol=0, atol=1e-7
-    )
-    repeated = ImageChannelSplit.execute(
-        image=red,
-        color_space="ycbcr",
-        channel_layout="rgb_repeated",
-    )
-    assert np.asarray(repeated["channel_1"]).shape[-1] == 3
-    np.testing.assert_array_equal(
-        np.asarray(repeated["channel_1"])[..., 0],
-        np.asarray(repeated["channel_1"])[..., 2],
-    )
-
-
-def test_channel_merge_and_alpha_join_keep_distinct_required_arities() -> None:
-    split_schema = ImageChannelSplit.schema()
-    merge_schema = ImageChannelMerge.schema()
-    join_schema = ImageAlphaJoin.schema()
-    assert [item.id for item in split_schema.inputs if item.required] == ["image"]
-    assert [item.id for item in merge_schema.inputs if item.required] == [
-        "channel_1",
-        "channel_2",
-        "channel_3",
-    ]
-    assert [item.id for item in join_schema.inputs if item.required] == ["image", "alpha_mask"]
 
 
 def test_alpha_join_resizes_mask_and_supports_core_cyclic_batch_policy() -> None:

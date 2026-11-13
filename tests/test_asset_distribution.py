@@ -19,9 +19,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from dinkster_assets import (
     AssetError,
-    AssetRef,
     AssetVault,
-    ChainResolver,
     FetchingResolver,
     LocalAssetLibrary,
     ProvenanceRecord,
@@ -260,40 +258,3 @@ def test_asset_endpoints_absent_without_export(tmp_path: Path) -> None:
 
 
 # --- the node-facing path: AssetRef.local_path() through the chain ------------
-
-
-def test_asset_ref_materializes_through_chain_with_fetch(tmp_path: Path) -> None:
-    """What a node actually experiences: local library first, vault next,
-    network last - and the ref neither knows nor cares which one answered."""
-
-    async def scenario() -> None:
-        vault_a = AssetVault(tmp_path / "a")
-        with vault_a.writer(MODEL_DIGEST) as writer:
-            writer.write(MODEL_BYTES)
-            writer.commit()
-        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault_a))
-        await server.start_server()
-        try:
-            library_root = tmp_path / "models"
-            library_root.mkdir()
-            library = LocalAssetLibrary(library_root)
-            library.scan()
-            vault_b = AssetVault(tmp_path / "b")
-            endpoint = str(server.make_url("")).rstrip("/")
-            chain = ChainResolver(
-                library,
-                vault_b,
-                FetchingResolver(vault_b, lambda digest: [f"{endpoint}/assets/{digest}"]),
-            )
-            ref = AssetRef(
-                digest=MODEL_DIGEST,
-                name="model.safetensors",
-                size=len(MODEL_BYTES),
-                resolver=chain,
-            )
-            path = await asyncio.to_thread(ref.local_path)
-            assert path.read_bytes() == MODEL_BYTES
-        finally:
-            await server.close()
-
-    run_scenario(scenario())

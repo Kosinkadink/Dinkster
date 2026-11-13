@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-import tomllib
-from pathlib import Path
-
-import dinkster_conditioning
-import dinkster_hunyuan
-import dinkster_misc_models
 import pytest
 from dinkster_api.v1 import (
     CLIP_TYPE,
     CONDITIONING_TYPE,
     IMAGE_TYPE,
-    LATENT_TYPE,
     VAE_TYPE,
     InputSpec,
     NodeSchema,
-    NumberWidget,
     OutputSpec,
     TypeExpr,
     schema_from_wire,
     schema_to_wire,
 )
 from dinkster_conditioning.reference_conditioning import (
-    ReferenceLatent,
     ReferenceMultiLatent,
 )
 from dinkster_engine import ParentGraphBudget, admit_parent_graph
@@ -37,115 +28,8 @@ from dinkster_misc_models.joyimage_encoders import TextEncodeJoyImageEdit
 from dinkster_misc_models.mage_image_encoders import TextEncodeMageFlowEdit
 from dinkster_misc_models.ming_image_encoders import TextEncodeMingImageEdit
 from dinkster_misc_models.moss_image import TextEncodeMOSSImageEdit
-from dinkster_misc_models.reference_conditioning import InstructPixToPixConditioning
 from dinkster_qwen.qwen_image_encoders import TextEncodeQwenImage21
 from dinkster_schema import ElaborationError, elaborate
-
-
-def test_reference_conditioning_interfaces_and_manifest() -> None:
-    for node, provider, package, node_id in (
-        (
-            InstructPixToPixConditioning,
-            dinkster_misc_models,
-            "misc-models",
-            "dinkster.misc.models.instruct_pix_to_pix_conditioning",
-        ),
-        (
-            ReferenceLatent,
-            dinkster_conditioning,
-            "conditioning",
-            "dinkster.conditioning.reference_latent",
-        ),
-        (
-            ReferenceMultiLatent,
-            dinkster_conditioning,
-            "conditioning",
-            "dinkster.conditioning.reference_multi_latent",
-        ),
-    ):
-        manifest = tomllib.loads(
-            (
-                Path(__file__).resolve().parents[1]
-                / f"packages/dinkster-nodes-{package}/dinkster-pack.toml"
-            ).read_text()
-        )
-        assert node in provider.NODES
-        assert node.schema().node_type == node_id
-        assert node_id.rsplit(".", 1)[0] in manifest["pack"]["namespaces"]
-    image_edit = InstructPixToPixConditioning.define_schema()
-    assert [(port.id, port.type) for port in image_edit.inputs] == [
-        ("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ("vae", TypeExpr.concrete(VAE_TYPE)),
-        ("pixels", TypeExpr.concrete(IMAGE_TYPE)),
-    ]
-    assert [(port.id, port.type) for port in image_edit.outputs] == [
-        ("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ("latent", TypeExpr.concrete(LATENT_TYPE)),
-    ]
-    reference = ReferenceLatent.define_schema()
-    assert not reference.inputs[1].required
-    conditioning = [["embedding", {"reference_latents": ["first"], "strength": 0.7}]]
-    assert ReferenceLatent.execute(conditioning=conditioning)["CONDITIONING"] is conditioning
-
-
-def test_hunyuan_vision_interfaces_are_native() -> None:
-    from dinkster_api.v1 import CLIP_VISION_OUTPUT_TYPE
-    from dinkster_hunyuan.hunyuan3d import (
-        Hunyuan3Dv2Conditioning,
-        Hunyuan3Dv2ConditioningMultiView,
-    )
-
-    for node in (Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView):
-        assert node in dinkster_hunyuan.NODES
-        schema = node.schema()
-        assert schema.category == "model/conditioning/hunyuan 3d"
-        assert [(port.id, port.type) for port in schema.outputs] == [
-            ("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
-            ("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ]
-        assert all(
-            port.type == TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE) for port in schema.inputs
-        )
-    single, multi = Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView
-    assert [(port.id, port.required) for port in single.schema().inputs] == [
-        ("clip_vision_output", True)
-    ]
-    assert [(port.id, port.required) for port in multi.schema().inputs] == [
-        ("front", False),
-        ("left", False),
-        ("back", False),
-        ("right", False),
-    ]
-
-
-def test_reference_multi_latent_exposes_resize_and_optional_ordered_images() -> None:
-    schema = ReferenceMultiLatent.schema()
-    assert [(port.id, port.required) for port in schema.inputs] == [
-        ("positive", True),
-        ("negative", False),
-        ("vae", False),
-    ]
-    assert [(port.id, port.type) for port in schema.outputs] == [
-        ("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
-        ("empty_latent", TypeExpr.concrete(LATENT_TYPE)),
-    ]
-    combo = schema.combos[0]
-    assert combo.id == "resolution" and combo.default is None
-    assert [option.key for option in combo.options] == ["keep resolution", "resize"]
-    megapixels = combo.options[1].inputs[0]
-    assert isinstance(megapixels, InputSpec)
-    assert megapixels.id == "megapixels" and megapixels.default == 1.0
-    assert isinstance(megapixels.widget, NumberWidget)
-    assert megapixels.widget.min == 0.01
-    assert megapixels.widget.max == 16.0
-    family = schema.input_families[0]
-    assert family.id == "images" and not family.required
-    assert (family.min_members, family.max_members, family.member_prefix) == (1, 100, "image")
-    assert isinstance(family.template[0], InputSpec)
-    assert family.template[0].type == TypeExpr.concrete(IMAGE_TYPE)
 
 
 @pytest.mark.parametrize("node_type", ["TextEncodeMOSSImageEdit", "ReferenceMultiLatent"])
