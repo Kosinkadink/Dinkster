@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -64,6 +65,35 @@ def generation_runtime_lock(root: Path) -> Generator[None]:
     runtime.mkdir(exist_ok=True)
     with writer_lock(runtime):
         yield
+
+
+def run_generation(root: Path, command: list[str]) -> int:
+    """Keep the active interpreter protected from collection while a tool uses it."""
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        raise EnvironmentError("run requires a command after --")
+    with writer_lock(root):
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("project has no active generation; run develop or setup first")
+        target = root / "generations" / str(current)
+        Generation.read(target / "generation.json")
+        python = interpreter(target)
+        environment = dict(os.environ)
+        for name in ("UV_PROJECT", "UV_PROJECT_ENVIRONMENT", "PYTHONHOME", "PYTHONPATH"):
+            environment.pop(name, None)
+        environment["VIRTUAL_ENV"] = str(python.parent.parent)
+        environment["PATH"] = str(python.parent) + os.pathsep + environment.get("PATH", "")
+        environment["DINKSTER_EXECUTION_PYTHON"] = str(python)
+        executable = (
+            str(python)
+            if command[0] == "python"
+            else shutil.which(command[0], path=environment["PATH"])
+        )
+        if executable is None:
+            raise EnvironmentError(f"command not found in generation or PATH: {command[0]}")
+        return subprocess.run([executable, *command[1:]], env=environment).returncode
 
 
 def start_engine(
@@ -160,6 +190,11 @@ def _start_engine(
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]
+    development = target / "development-sources.json"
+    if development.is_file():
+        frontend = read_document(development).get("frontendRoot")
+        if frontend is not None:
+            command.extend(["--frontend-root", str(frontend)])
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
         log_offset = log.tell()
