@@ -25,14 +25,13 @@ if [ "${1:-all}" = checks ]; then exit 0; fi
 uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_settings.py \
   tests/test_security_notices.py \
-  tests/test_macos_workflow_receipt.py \
   tests/test_memory_review_regressions.py::test_public_keyed_residents_share_first_concurrent_load \
   tests/test_server.py::test_pack_resident_device_and_cost_reach_memory_status \
   tests/test_pack_environment.py \
   tests/test_environment_collection.py \
   tests/test_environment_state.py \
   tests/test_environment_generations.py::test_generation_sync_command_does_not_expand_wheel_sources \
-  tests/test_environment_generations.py::test_checkout_pack_commands_do_not_expand_wheel_sources \
+  tests/test_environment_generations.py::test_pack_lock_resolution_does_not_expand_wheel_sources \
   tests/test_environment_generations.py::test_public_setup_acquires_pack_wheel_absent_from_release \
   tests/test_environment_generations.py::test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active \
   tests/test_environment_generations.py::test_registry_preparation_allows_custom_locks_from_selected_inputs \
@@ -88,26 +87,20 @@ uv run --locked python -m pytest -q -m 'not network' -p tools.ci_selection \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
   tests/test_names.py \
-  tests/test_first_party_node_ids.py \
-  tests/test_comfy_controlnet_nodes.py \
   tests/test_values.py \
   tests/test_graph.py \
   tests/test_graph_wire.py \
   tests/test_model3d_io.py::test_viewport_capture_survives_workers_and_persistent_cache \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
-  tests/test_manifest.py::test_official_pack_declares_its_version_and_engine_range \
   tests/test_manifest.py::test_pack_declares_independent_version_and_engine_compatibility \
   tests/test_manifest.py::test_pack_rejects_invalid_version_or_engine_declaration \
   tests/test_manifest.py::test_catalog_driven_node_source_loads_without_importing_pack \
   tests/test_manifest.py::test_catalog_driven_node_source_rejects_unknown_kinds_and_types \
   tests/test_doctor.py::test_catalog_driven_node_source_is_reported_without_hiding_entry_errors \
   tests/test_doctor.py::test_empty_pack_warns \
-  tests/test_audio_lazy.py::test_audio_pack_registration_preserves_first_authority \
-  tests/test_audio_lazy.py::test_audio_pack_registration_is_torch_free \
   tests/test_compose.py::test_default_pack_prefers_loaded_source_tree_over_bundled_copy \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
-  tests/test_compose.py::test_pack_namespace_compose_reload_execute_and_reject_second_owner \
   tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
