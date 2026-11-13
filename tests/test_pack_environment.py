@@ -663,6 +663,7 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
         assert not list((generation / "packs").rglob("torch*"))
 
 
+@pytest.mark.parametrize("rooted", [True, False])
 @pytest.mark.parametrize(
     ("requirement", "transitive", "accepted"),
     [
@@ -675,7 +676,7 @@ def test_layered_pack_downloads_only_extra_and_rebuilds_on_new_generation(
     ],
 )
 def test_plan_checks_engine_requirements_instead_of_publication_versions(
-    tmp_path: Path, requirement: str, transitive: str, accepted: bool
+    tmp_path: Path, requirement: str, transitive: str, accepted: bool, rooted: bool
 ) -> None:
     private = _wheel(
         tmp_path,
@@ -689,7 +690,7 @@ def test_plan_checks_engine_requirements_instead_of_publication_versions(
         "example",
         "linux-cpu",
         ">=3.12",
-        (requirement, "fixture-extra==1.2"),
+        (requirement, "fixture-extra==1.2") if rooted else (requirement,),
         (),
         (
             LockedDistribution("dinkster-inference", "0.1.1", ()),

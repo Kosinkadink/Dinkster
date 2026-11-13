@@ -70,8 +70,10 @@ the resulting version constraint. This prevents two distributions owning `cv2`.
 installed versions, Python version, markers and compatible wheel tags.
 `plan_pack(lock, facts, variant=..., own_environment_size=...)` checks shared
 versions and Python compatibility before subtracting every generation-provided
-package. A conflicting plan names the package and offers a separate environment
-with the caller's measured base size. The caller presents this plan before making
+package. When shared versions change, planning reads verified metadata for every
+selected private wheel, using the retained wheel store when available; offline
+planning never fetches missing bytes. A conflicting plan names the package and
+offers a separate environment with the caller's measured base size. The caller presents this plan before making
 changes, including before a generation swap.
 
 `pack_environment.provision_pack` rechecks the plan and creates
