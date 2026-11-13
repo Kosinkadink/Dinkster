@@ -25,8 +25,9 @@ python scripts/develop.py run -- python -m pytest
 The editor opens at `http://127.0.0.1:3639`. See the
 [browser editor quickstart](docs/quickstart.md) for model folders, execution
 environments, and the first-image walkthrough.
-On Windows, use the [verified Windows interpreter setup](docs/install.md#windows-interpreter)
-instead of the floating Python selector above.
+Contributor setup prepares the [verified Windows interpreter](docs/install.md#windows-interpreter)
+automatically. On Linux, use `python3` in place of `python` if your shell does
+not provide the latter command.
 
 Packs are independently installable Python distributions with a
 `dinkster-pack.toml` manifest. A pack declares its schemas, runtime entry

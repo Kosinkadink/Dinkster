@@ -85,6 +85,7 @@ def main() -> int:
         str(frontend / "packages/app/dist"),
         "--yes",
     )
+    run(sys.executable, develop, "stop", "--yes")
     launch = [sys.executable, develop, "start", "--port", str(args.port), "--yes"]
     url = f"http://127.0.0.1:{args.port}"
     print(f"Development editor: {url}", flush=True)
