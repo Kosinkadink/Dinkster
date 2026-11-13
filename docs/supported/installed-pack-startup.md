@@ -849,8 +849,8 @@ capture; this does not grant registry admission. Missing sources, changed plan i
 API ranges and dependency conflicts refuse rather than inventing versions or
 dropping constraints.
 
-Development generations are built from local folders, not reviewed by the
-registry; dependency ranges resolve at build time. After editing a pack, stop the
+Development generations are built from explicitly selected sources, not reviewed
+by the registry; dependency ranges resolve at build time. After editing a pack, stop the
 engine with `dinkster-env --root /absolute/project stop --yes`, then repeat the
 plan and approved `develop` commands to build a new generation. An ordinary
 channel update refuses a local generation instead of changing its source.

@@ -946,10 +946,17 @@ class Installer:
                 )
             from urllib.parse import urlencode
 
+            from dinkster_supervisor.environment_state import EnvironmentError
             from dinkster_supervisor.git_sources import fetched_git_source
 
-            with fetched_git_source(url + "#" + urlencode({"ref": commit})) as (checkout, _origin):
-                self._acquire_from_tree(entry, checkout, source)
+            try:
+                with fetched_git_source(url + "#" + urlencode({"ref": commit})) as (
+                    checkout,
+                    _origin,
+                ):
+                    self._acquire_from_tree(entry, checkout, source)
+            except EnvironmentError as error:
+                raise InstallError(str(error)) from None
         elif _is_registry_source(source):
             if self._registry_fetch is None:
                 raise InstallError(

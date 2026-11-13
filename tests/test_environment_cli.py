@@ -1932,6 +1932,90 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
     assert not store.exists()
 
 
+@pytest.mark.parametrize("git_kind", ["engine", "pack", "library"])
+def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
+    tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch
+):
+    import pygit2
+
+    from dinkster.cli import main
+
+    source = Path(__file__).resolve().parents[1]
+    engine, pack, library = (tmp_path / name for name in ("engine", "pack", "library"))
+    for relative in (
+        "uv.lock",
+        "pyproject.toml",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py",
+    ):
+        target = engine / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / relative, target)
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
+    library.mkdir()
+    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    index = pygit2.Index()
+    for kind, folder in (("engine", engine), ("pack", pack), ("library", library)):
+        for path in folder.rglob("*"):
+            if path.is_file():
+                index.add(
+                    pygit2.IndexEntry(
+                        f"{kind}/{path.relative_to(folder).as_posix()}",
+                        repository.create_blob(path.read_bytes()),
+                        pygit2.GIT_FILEMODE_BLOB,
+                    )
+                )
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+    repository.create_commit(
+        f"refs/heads/development-{git_kind}",
+        signature,
+        signature,
+        "development sources",
+        index.write_tree(repository),
+        [],
+    )
+    repository.free()
+    monkeypatch.setenv("PATH", "")
+    arguments = ["develop", "--root", str(tmp_path / "project")]
+    for kind, folder, option in (
+        ("engine", engine, "--source"),
+        ("pack", pack, "--pack-source"),
+        ("library", library, "--library-source"),
+    ):
+        arguments.extend(
+            [
+                option,
+                f"{git_server['url']}#ref=development-{git_kind}&subdirectory={kind}"
+                if kind == git_kind
+                else str(folder),
+            ]
+        )
+    arguments.extend(
+        [
+            "--variant",
+            {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu"),
+            "--python",
+            sys.executable,
+            "--plan",
+            "--json",
+        ]
+    )
+    assert main(arguments) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert main([*arguments, "--approve", plan["sourceApproval"]]) == 0
+    repeated = json.loads(capsys.readouterr().out)
+    selected = next(row for row in repeated["development"]["sources"] if row["kind"] == git_kind)
+    assert selected["git"]["requestedRef"] == f"development-{git_kind}"
+    assert selected["git"]["contentDigest"] == selected["contentDigest"]
+    changed = [
+        value.replace("ref=development", "ref=refs/heads/development") for value in arguments
+    ]
+    assert main([*changed, "--approve", plan["sourceApproval"]]) == 1
+    assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+    assert not (tmp_path / "project").exists()
+
+
 def test_development_doctor_separates_runtime_drift_from_missing_recovery(tmp_path: Path):
     generation = _generation(tmp_path, 1).parent
     store = tmp_path / "capture"

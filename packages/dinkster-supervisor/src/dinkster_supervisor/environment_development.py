@@ -16,7 +16,7 @@ from typing import Any
 from .environment_state import EnvironmentError, content_digest
 
 DEVELOPMENT_DESCRIPTION = (
-    "development: built from local folders, not reviewed by the registry; "
+    "development: built from explicitly selected sources, not reviewed by the registry; "
     "dependency ranges resolved at build time, not reproducible from ranges; "
     "captured runtime artifacts remain restorable"
 )

@@ -67,6 +67,7 @@ def _isolated_config() -> Generator[str | None]:
         except (KeyError, OSError, pygit2.GitError):
             pass
         levels = (
+            pygit2.enums.ConfigLevel.PROGRAMDATA,
             pygit2.enums.ConfigLevel.SYSTEM,
             pygit2.enums.ConfigLevel.XDG,
             pygit2.enums.ConfigLevel.GLOBAL,
