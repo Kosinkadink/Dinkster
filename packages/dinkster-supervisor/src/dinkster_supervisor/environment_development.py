@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -95,8 +95,36 @@ def _git_state(root: Path) -> dict[str, object]:
     return {"commit": commit.stdout.strip(), "dirty": bool(status.stdout)}
 
 
+@contextmanager
+def acquired_development_sources(args: Any) -> Generator[Any]:
+    """Keep fetched folders alive only for this explicit development operation."""
+    import copy
+
+    from .git_sources import fetched_git_source
+
+    selected = copy.copy(args)
+    selected.git_origins = {}
+    with ExitStack() as stack:
+
+        def acquire(value: str | Path) -> Path:
+            text = str(value)
+            if "://" not in text and not text.startswith("git+"):
+                return Path(value)
+            folder, origin = stack.enter_context(fetched_git_source(text))
+            selected.git_origins[str(folder.resolve())] = origin
+            return folder
+
+        selected.source = acquire(args.source)
+        selected.pack_source = [acquire(value) for value in args.pack_source]
+        selected.library_source = [acquire(value) for value in args.library_source]
+        yield selected
+
+
 def development_selection(
-    source: Path, packs: tuple[Path, ...], libraries: tuple[Path, ...]
+    source: Path,
+    packs: tuple[Path, ...],
+    libraries: tuple[Path, ...],
+    git_origins: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
     if not packs:
@@ -124,7 +152,15 @@ def development_selection(
                     else ["."],
                     "contentDigest": _identity(files),
                     "files": files,
-                    **_git_state(root),
+                    **(
+                        {
+                            "commit": git_origins[str(root)]["commit"],
+                            "dirty": False,
+                            "git": {**git_origins[str(root)], "contentDigest": _identity(files)},
+                        }
+                        if git_origins and str(root) in git_origins
+                        else _git_state(root)
+                    ),
                 }
             )
     return {"format": "dinkster.development-sources/1", "sources": rows}

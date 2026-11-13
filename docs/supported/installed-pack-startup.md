@@ -789,7 +789,7 @@
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
 
-### Development generations from local folders
+### Development generations from local folders or public git
 
 Standalone local-folder and `git+URL[@REF]` pack installs remain available as
 development inputs without a published dependency lock. Their plans report
@@ -812,6 +812,28 @@ dinkster-env --root /absolute/project status
 dinkster-env --root /absolute/project doctor
 dinkster-env --root /absolute/project start --yes
 ```
+
+Each source option also accepts a public HTTPS git URL. No system git program
+is needed. Append `#ref=REF&subdirectory=PATH` to select a branch, tag, full
+commit or GitHub pull request head and a repository subdirectory. Without a ref,
+the repository's default branch is selected. Quote URLs containing `&`.
+For example, with a local engine and a pack from a branch, pull request or fork:
+
+```sh
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/Kosinkadink/dinkster-nodes.git#ref=refs/pull/123/head&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+dinkster develop --root /absolute/project --source /absolute/engine --pack-source 'https://github.com/YOUR-ACCOUNT/dinkster-nodes.git#ref=my-branch&subdirectory=packages/my-pack' --variant linux-cpu --data /absolute/store --plan
+```
+
+Replace the example branch, pull request, fork and package directory with the
+source you want to run. Review the plan, then repeat it with `--approve` and
+`--yes` as above. This explicitly runs unreviewed development code. Private
+repositories, credentials in URLs, non-HTTPS URLs, submodules and LFS pointers
+in selected content are refused. Ambient git rewrites and TLS settings do not
+apply; a configured HTTP proxy is honored. History records the credential-free
+URL, requested ref, resolved commit, selected subdirectory and content digest.
+Restore uses the retained wheels, not the current remote branch; running develop
+again is an explicit new build and can select a newer commit.
 
 Repeat `--pack-source` for more packs and `--library-source` for more helper
 folders or wheels. Omit library inputs when none are needed. Choose a base variant
