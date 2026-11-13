@@ -187,6 +187,19 @@ def retain_wheels(
                     / filename
                 )
                 fetch_artifact((directory,), filename, destination, sha, size)
+        if sha is not None and size is None:
+            cached = (
+                object_path(
+                    store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
+                )
+                / filename
+            )
+            if (
+                cached.is_file()
+                and not cached.is_symlink()
+                and content_digest(cached) == "sha256:" + sha
+            ):
+                size = cached.stat().st_size
         if sha is not None and size is None and urlsplit(url).scheme == "https":
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
@@ -260,6 +273,7 @@ def prepare_local(
             with tarfile.open(archive) as payload:
                 payload.extractall(work / "runtime", filter="data")
             python = work / "runtime" / definition["executable"]
+        contributor = selection.get("development", {}).get("contributor", False)
         exported = work / "export.txt"
         run_local_command(
             [
@@ -267,7 +281,7 @@ def prepare_local(
                 "export",
                 "--locked",
                 "--all-packages",
-                "--no-dev",
+                *(["--extra", "inference"] if contributor else ["--no-dev"]),
                 "--group",
                 "engine-base",
                 "--no-emit-workspace",
@@ -284,14 +298,21 @@ def prepare_local(
             packages.setdefault(package["name"], []).append(package)
         # All backend-specific descendants must be replaced, including remove-only CUDA rows.
         replaces: set[str] = set()
-        pending = list(selection["packages"])
+        visited: set[tuple[str, tuple[str, ...]]] = set()
+        pending: list[tuple[str, tuple[str, ...]]] = [(name, ()) for name in selection["packages"]]
         while pending:
-            name = pending.pop()
-            if name in replaces:
+            name, extras = pending.pop()
+            if (name, extras) in visited:
                 continue
+            visited.add((name, extras))
             replaces.add(name)
             for package in packages.get(name, []):
-                pending.extend(dep["name"] for dep in package.get("dependencies", []))
+                dependencies = list(package.get("dependencies", []))
+                for extra in extras:
+                    dependencies.extend(package.get("optional-dependencies", {}).get(extra, []))
+                pending.extend(
+                    (dep["name"], tuple(sorted(dep.get("extra", [])))) for dep in dependencies
+                )
         pins = work / "pins.txt"
         pins.write_text(
             "\n".join(
@@ -388,6 +409,8 @@ def prepare_local(
         engine_requirements = work / "engine.in"
         engine_requirements.write_text(
             "\n".join(str(path) for path in (*sorted(built.glob("*.whl")), *library_wheels))
+            + "\n"
+            + (engine_constraints if contributor else "")
         )
         engine = _resolve(
             engine_requirements,

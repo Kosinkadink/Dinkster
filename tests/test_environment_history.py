@@ -1155,7 +1155,39 @@ environment.main()
         )
         assert preview["metadata"]["dependencyLocks"]["healthy"] == json.loads(expected_lock)
         repaired_review = tmp_path / "security-review"
-        code, planned = repair("--pack", "healthy", "--output", str(repaired_review))
+        if notice_state == "malicious":
+            human = subprocess.run(
+                [
+                    *security_command[:-1],
+                    "fix-one",
+                    "--pack",
+                    "healthy",
+                    "--output",
+                    str(repaired_review),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert human.returncode == 0, human.stderr
+            for expected in (
+                repaired.artifact_digest,
+                hashlib.sha256(repair_payload).hexdigest(),
+                "Exact dependency locks:",
+                "Engine and base are retained",
+                "Workflow impacts are unavailable offline",
+                str(repaired_review),
+                "--input DIR --approval DIGEST",
+            ):
+                assert expected in human.stdout
+            approval = next(
+                line.removeprefix("Approval digest: ")
+                for line in human.stdout.splitlines()
+                if line.startswith("Approval digest: ")
+            )
+            code, planned = 0, {"status": "planned", "approval": approval}
+        else:
+            code, planned = repair("--pack", "healthy", "--output", str(repaired_review))
         assert code == 0 and planned["status"] == "planned", planned
         assert (repaired_review / "locks/healthy.json").read_bytes() == expected_lock
         assert (root / "current").read_text() == "4\n"

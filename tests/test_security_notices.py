@@ -1353,6 +1353,20 @@ def test_public_status_names_local_evidence_without_repair_or_refresh(
     assert finding["details"]["release"]["artifactDigest"] == release.artifact_digest
     assert finding["recovery"]["repair"] == "not-reviewed"
     assert finding["recovery"]["automaticResume"] is False
+    guidance = finding["recovery"]["action"]
+    if state == "malicious":
+        for advice in (
+            "Blocking is not cleanup",
+            "cannot undo theft, persistence or output changes",
+            "Isolate",
+            "rotate credentials from a trusted machine",
+            "assess exposure",
+            "rebuild from trusted inputs",
+            "Preserve incident evidence",
+        ):
+            assert advice in guidance
+    else:
+        assert "rotate credentials" not in guidance
     feeds = {row["registry"]: row for row in cast("list[dict[str, Any]]", result["feeds"])}
     assert feeds[REGISTRY]["status"] == "expired"
     assert feeds[REGISTRY]["refreshError"] == "TimeoutError"
@@ -1416,6 +1430,26 @@ def test_public_cli_import_and_changed_exact_answers(tmp_path: Path):
     approved = command("approve", *identity)
     assert approved["decision"] == "approved"
     assert approved["automaticResume"] is False
+    for action, decision in (("disapprove", "denied"), ("approve", "approved")):
+        human = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(root),
+                "security",
+                action,
+                *identity,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        assert human.returncode == 0, human.stderr
+        for value in (NOTICE, REGISTRY, "revision 1", decision, "stopped work is not resumed"):
+            assert value in human.stdout
+        assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == decision
     assert command("disapprove", *identity[:-1], "2")["status"] == "error"
     assert SecurityStore(host.store.path).decision(REGISTRY, UUID(NOTICE), 1) == "approved"
     cached = host.store.cached(REGISTRY)
@@ -2252,6 +2286,25 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 assert completed.returncode == (1 if report["status"] == "error" else 0)
                 return report
 
+            def human(*arguments: str) -> str:
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(tmp_path),
+                        "security",
+                        *arguments,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                assert completed.returncode == 0, completed.stderr
+                return completed.stdout
+
             cached = host.store.cached(REGISTRY)
             listed = inspect("list")
             report = listed["security"]
@@ -2262,6 +2315,20 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
             assert report["allowed"] is False
             assert report["workInventory"]["status"] == "unavailable"
             assert report["automaticResume"] is False
+            for arguments in (("list",), ("details", "--pack", "consumer")):
+                output = human(*arguments)
+                for expected in (
+                    "consumer==1.0.0: affected, decision blocked, execution refused",
+                    entries[0].artifact_digest,
+                    NOTICE,
+                    "test-incident",
+                    VERIFIED_AT.isoformat(),
+                    "Blocking is not cleanup",
+                    "Vulnerability refusal: off",
+                    "Maximum feed age: not set",
+                    "Offline generation inspection does not observe running jobs",
+                ):
+                    assert expected in output
             (tmp_path / "current").write_text("2\n")
             try:
                 retained = inspect("details", "--pack", "consumer", "--generation", "1")
@@ -2313,6 +2380,17 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                 )
                 assert set(proposal["retainedDependencyLocks"]) == {"consumer"}
                 assert preview["next"] == 2
+                output = human("fix-one", "--pack", "consumer")
+                for expected in (
+                    "Reviewed release selection:",
+                    "Exact dependency locks:",
+                    good_sha,
+                    "1.1.0",
+                    "Engine and base are retained",
+                    "Workflow impacts are unavailable offline",
+                ):
+                    assert expected in output
+                assert preview["workInventory"]["status"] == "unavailable"
                 provider_index = "/static/packs/provider/index.json"
                 intact_index = documents[provider_index]
                 unavailable = json.loads(intact_index)
@@ -2325,6 +2403,9 @@ def test_security_repair_offers_only_compatible_clean_metadata_without_applying(
                     assert no_fix["status"] == "no-compatible-fix", no_fix
                     assert no_fix["securityRepair"]["pack"] == "consumer"
                     assert no_fix["securityRepair"]["reasons"]
+                    explanation = human("fix-one", "--pack", "consumer")
+                    assert "No compatible fix exists among the reviewed candidates" in explanation
+                    assert no_fix["securityRepair"]["reasons"][0] in explanation
                     assert not output.exists()
                 finally:
                     documents[provider_index] = intact_index
