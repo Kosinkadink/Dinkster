@@ -1062,22 +1062,21 @@ def test_managed_pack_install_requires_exact_security_approval(
             security.import_feed(registry, _signed(feed, key))
 
         after_build = ""
+        security_command = [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(root),
+            "security",
+            "--json",
+        ]
 
         def repair(*arguments: str):
             if repair_action == "fix-all" and "--pack" in arguments:
                 assert arguments[:2] == ("--pack", "healthy")
                 arguments = arguments[2:]
-            command = [
-                sys.executable,
-                "-m",
-                "dinkster_supervisor.environment",
-                "--root",
-                str(root),
-                "security",
-                "--json",
-                repair_action,
-                *arguments,
-            ]
+            command = [*security_command, repair_action, *arguments]
             if after_build:
                 command[1:3] = [
                     "-c",
@@ -1097,6 +1096,17 @@ def interrupt(**kwargs):
     if {after_build!r} == 'failed':
         lock = Path(sys.argv[sys.argv.index('--input') + 1]) / 'locks/healthy.json'
         lock.write_bytes(lock.read_bytes() + b' ')
+    elif {after_build!r} == 'interrupted':
+        import os
+        os._exit(74)
+    elif {after_build!r} == 'activation-cancelled':
+        activate = environment_pack_install.activate
+        def cancel_before_selection(root, journal, *, revalidate):
+            def cancel():
+                Path({str(tmp_path / "repair-progress.json.cancel")!r}).touch()
+                revalidate()
+            activate(root, journal, revalidate=cancel)
+        environment_pack_install.activate = cancel_before_selection
     else:
         Path({str(tmp_path / "repair-progress.json.cancel")!r}).touch()
     return generation
@@ -1110,6 +1120,8 @@ environment.main()
                 text=True,
                 timeout=120,
             )
+            if after_build == "interrupted" and completed.returncode == 74:
+                return completed.returncode, {}
             assert completed.stdout, completed.stderr
             return completed.returncode, json.loads(completed.stdout)
 
@@ -1196,7 +1208,7 @@ environment.main()
                 for path in (root / "generations").rglob("*")
                 if path.is_file() and not path.is_symlink()
             }
-            for outcome in ("failed", "cancelled"):
+            for outcome in ("failed", "cancelled", "activation-cancelled"):
                 after_build = outcome
                 code, refused = repair(
                     "--input",
@@ -1209,7 +1221,9 @@ environment.main()
                 assert code != 0, refused
                 assert (tmp_path / "built-replacement").read_text() == "5"
                 assert refused["current"] == 4
-                assert refused["recovery"]["state"] == outcome, refused
+                assert refused["recovery"]["state"] == (
+                    "failed" if outcome == "failed" else "cancelled"
+                ), refused
                 assert refused["recovery"]["previous"] == 4
                 assert refused["recovery"]["target"] == 5
                 assert "new repair plan" in refused["recovery"]["action"]
@@ -1224,16 +1238,7 @@ environment.main()
                 (tmp_path / "built-replacement").unlink()
                 cancellation.unlink(missing_ok=True)
                 observation = subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "dinkster_supervisor.environment",
-                        "--root",
-                        str(root),
-                        "security",
-                        "--json",
-                        "list",
-                    ],
+                    [*security_command, "list"],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -1245,6 +1250,45 @@ environment.main()
                 after_build = ""
                 code, planned = repair("--pack", "healthy", "--output", str(repaired_review))
                 assert code == 0, planned
+            after_build = "interrupted"
+            code, interrupted = repair(
+                "--input", str(repaired_review), "--approval", planned["approval"]
+            )
+            assert code == 74, interrupted
+            assert (tmp_path / "built-replacement").read_text() == "5"
+            assert (root / "generations/5/generation.json").is_file()
+            after_build = ""
+            code, refused = repair(
+                "--input", str(repaired_review), "--approval", planned["approval"]
+            )
+            assert code != 0, refused
+            assert refused["recovery"]["state"] == "interrupted", refused
+            assert refused["recovery"]["previous"] == 4
+            assert refused["recovery"]["target"] == 5
+            assert refused["recovery"]["current"] == 4
+            assert "explicit environment repair" in refused["recovery"]["action"]
+            observation = subprocess.run(
+                [*security_command, "list"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            inspected = json.loads(observation.stdout)
+            assert observation.returncode == 0, inspected
+            assert inspected["security"]["recovery"] == refused["recovery"]
+            code, recovered = original_run(root, "start", "--yes")
+            assert code == 0 and recovered["current"] == 4, recovered
+            assert not (root / "generations/5").exists()
+            assert {
+                path: content_digest(path)
+                for path in (root / "generations").rglob("*")
+                if path.is_file() and not path.is_symlink()
+            } == preserved
+            assert security.decision(registry, UUID(NOTICE), 1) == "approved"
+            assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+            repaired_review = tmp_path / "interrupted-new-review"
+            code, planned = repair("--output", str(repaired_review))
+            assert code == 0, planned
         code, applied = repair(
             "--input",
             str(repaired_review),

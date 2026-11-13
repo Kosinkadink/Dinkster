@@ -1804,7 +1804,11 @@ def run(args: argparse.Namespace) -> int:
         try:
             result["current"] = read_current(args.root)
             result["recovery"] = recovery = activation_status(args.root)
-            if code != 0 and recovery.get("error") != result.get("error"):
+            if (
+                code != 0
+                and recovery["state"] != "interrupted"
+                and recovery.get("error") != result.get("error")
+            ):
                 result["recovery"] = {
                     "state": "cancelled"
                     if result["error"] == "pack preparation cancelled"
