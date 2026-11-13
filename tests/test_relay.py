@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,10 +24,10 @@ from dinkster_memory import (
     ReleaseCandidate,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_schema import Node
+from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import ResourcePins, TypeRegistry, register_core_types, resident_resource_id
 from dinkster_workers import DeviceMap, GroupIsolatedWorker, IsolatedWorker, ReleaseGuard
-from dinkster_workers.boundary import ValueCodec
+from dinkster_workers.boundary import ValueCodec, read_frame
 from dinkster_workers.host import serve_connection
 from dinkster_workers.in_process import InProcessWorker
 from dinkster_workers.session import BoundarySession
@@ -53,6 +53,8 @@ async def hosted_pool(
     guard: ReleaseGuard,
     *,
     node_types: Mapping[str, type[Node]] | None = None,
+    process_resource_tasks: set[asyncio.Task[None]] | None = None,
+    process_acknowledged_invocations: set[asyncio.Task[None]] | None = None,
 ) -> AsyncIterator[BoundarySession]:
     registry = core_registry()
     worker = InProcessWorker(node_types or {}, registry)
@@ -71,6 +73,8 @@ async def hosted_pool(
             planner=None,
             consumers={"pool": pool},
             codec=ValueCodec(registry),
+            process_resource_tasks=process_resource_tasks,
+            process_acknowledged_invocations=process_acknowledged_invocations,
         )
 
     server = await asyncio.start_server(accept, "127.0.0.1", 0)
@@ -480,6 +484,126 @@ def test_full_release_acknowledges_worker_with_no_consumers(tmp_path: Path) -> N
             assert worker.instance_token == token
         finally:
             await worker.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("other_connection", [False, True])
+def test_full_release_settles_completed_invocation_cleanup(
+    monkeypatch: pytest.MonkeyPatch, other_connection: bool
+) -> None:
+    import inspect
+    import weakref
+
+    import numpy as np
+    from dinkster_workers import host
+
+    async def scenario() -> None:
+        entered, finish = asyncio.Event(), asyncio.Event()
+        query_dispatched = asyncio.Event()
+        execute_entered, execute_finish = asyncio.Event(), asyncio.Event()
+        to_thread = asyncio.to_thread
+        query_seen = False
+        pool = ResidentPool()
+        storage: list[weakref.ReferenceType[Any]] = []
+
+        async def hold_cleanup(function, *args, **kwargs):
+            if function.__name__ == "close_staging":
+                closed = inspect.getclosurevars(function).nonlocals["staging_closed"]
+                if closed.is_set():
+                    entered.set()
+                    await finish.wait()
+            return await to_thread(function, *args, **kwargs)
+
+        async def observe_query(reader):
+            nonlocal query_seen
+            # Re-entering the reader means the preceding query was dispatched;
+            # its task is queued before this event wakes the test driver.
+            if query_seen:
+                query_dispatched.set()
+            frame = await read_frame(reader)
+            if frame is not None and frame[0].get("type") == "memoryFreeQuery":
+                query_seen = True
+            return frame
+
+        monkeypatch.setattr(asyncio, "to_thread", hold_cleanup)
+        monkeypatch.setattr(host, "read_frame", observe_query)
+
+        class Calculate(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    node_type="test.calculate",
+                    idempotent=False,
+                    outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+                )
+
+            @classmethod
+            async def execute(cls) -> Mapping[str, object]:
+                value = np.array([3, -8])
+                pool.rid_for(value)
+                storage.append(weakref.ref(value))
+                execute_entered.set()
+                await execute_finish.wait()
+                return cls.outputs(value=int(value.sum()))
+
+        resources: set[asyncio.Task[None]] = set()
+        acknowledged: set[asyncio.Task[None]] = set()
+        async with AsyncExitStack() as stack:
+            session = await stack.enter_async_context(
+                hosted_pool(
+                    pool,
+                    ReleaseGuard(ResourcePins(), ()),
+                    node_types={"test.calculate": Calculate},
+                    process_resource_tasks=resources,
+                    process_acknowledged_invocations=acknowledged,
+                )
+            )
+            maintenance = session
+            if other_connection:
+                maintenance = await stack.enter_async_context(
+                    hosted_pool(
+                        pool,
+                        ReleaseGuard(ResourcePins(), ()),
+                        process_resource_tasks=resources,
+                        process_acknowledged_invocations=acknowledged,
+                    )
+                )
+            token = maintenance.instance_token
+            assert token is not None
+            engine = Engine(
+                schemas=session.schemas,
+                registry=core_registry(),
+                worker=session,
+                cache=MemoryLRUCache(),
+            )
+            graph = Graph(nodes={"calculate": GraphNode("test.calculate")})
+            running = asyncio.create_task(engine.run(graph, ["calculate"]))
+            try:
+                await execute_entered.wait()
+                refused = await maintenance.full_release("active", token)
+                assert refused.status == "busy"
+                assert refused.consumers == ({"consumer": "pool", "status": "busy"},)
+                assert storage[0]() is not None
+                query_seen = False
+                query_dispatched.clear()
+                execute_finish.set()
+                result = await running
+                assert result.outputs["calculate"]["value"].resolve() == -5
+                await entered.wait()
+                freeing = asyncio.create_task(maintenance.full_release("completed", token))
+                await query_dispatched.wait()
+                finish.set()
+                released = await freeing
+                assert released.status == "complete"
+                assert released.consumers == ({"consumer": "pool", "status": "complete"},)
+                assert storage[0]() is None
+                rerun = await engine.run(graph, ["calculate"])
+                assert rerun.outputs["calculate"]["value"].resolve() == -5
+            finally:
+                finish.set()
+                execute_finish.set()
+                await asyncio.gather(running, return_exceptions=True)
 
     run_scenario(scenario())
 

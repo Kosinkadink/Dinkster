@@ -193,6 +193,7 @@ async def run_service(
     active_transports: tuple[str, ...] | None = None
     conversation_tasks: set[asyncio.Task[None]] = set()
     process_resource_tasks: set[asyncio.Task[None]] = set()
+    process_acknowledged_invocations: set[asyncio.Task[None]] = set()
     process_maintenance_operations: set[tuple[object, str]] = set()
 
     async def serve_resumable(
@@ -234,6 +235,7 @@ async def run_service(
                     value_store=value_store if persistent else None,
                     resume=conversation,
                     process_resource_tasks=process_resource_tasks,
+                    process_acknowledged_invocations=process_acknowledged_invocations,
                     process_maintenance_operations=process_maintenance_operations,
                 )
         finally:
