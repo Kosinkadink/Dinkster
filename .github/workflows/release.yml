@@ -309,8 +309,8 @@ jobs:
               require('child_process').execFileSync('git', [
                 'push', 'origin', `${context.sha}:refs/tags/${tag}`,
               ], { stdio: 'inherit' });
-              const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
-              object = result.data.object;
+              // A successful non-force push confirms this exact commit without a REST visibility race.
+              object = { type: 'commit', sha: context.sha };
             }
             while (object.type === 'tag') {
               const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
