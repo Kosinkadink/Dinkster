@@ -4,6 +4,8 @@
   existing audio asset input and decoded waveform output.
 - All eight Load 3D viewport inputs advertise the 3D editor. Capture and
   metadata-only inputs keep their existing saved JSON values and file inputs.
+  Isolated pack hosts accept authored viewport captures and canonical 3D file
+  inputs using the receiving host's existing asset grants.
 - Save Audio (Opus) uses its declared 128k quality when callers omit quality.
 - Audio saves reject malformed, empty or non-finite waveforms and invalid sample
   rates before encoding. Encoded output supports mono and stereo channels.
