@@ -225,8 +225,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         "1.0",
         41,
         metadata_headers=(
-            "Provides-Extra: accelerator\n"
-            'Requires-Dist: fixture-gpu==1.0; extra == "accelerator"\n'
+            'Provides-Extra: accelerator\nRequires-Dist: fixture-gpu==1.0; extra == "accelerator"\n'
         ),
     )
     _wheel(universal_index, "fixture_gpu", "1.0", 43)
