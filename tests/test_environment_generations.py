@@ -32,14 +32,16 @@ from dinkster_supervisor.environment_state import (
 )
 
 
-def _wheel(directory: Path, name: str, version: str, value: int) -> tuple[Path, str]:
+def _wheel(
+    directory: Path, name: str, version: str, value: int, *, metadata_headers: str = ""
+) -> tuple[Path, str]:
     path = directory / f"{name}-{version}-py3-none-any.whl"
     metadata = f"{name}-{version}.dist-info"
     with zipfile.ZipFile(path, "w") as wheel:
         wheel.writestr(f"{name}.py", f"VALUE = {value}\n")
         wheel.writestr(
             f"{metadata}/METADATA",
-            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n{metadata_headers}",
         )
         wheel.writestr(
             f"{metadata}/WHEEL",
@@ -294,6 +296,26 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     _wheel(index, "fixture_base", "1.0", 37)
     _wheel(index, "fixture_tool", "1.0", 59)
     _wheel(index, "dinkster_inference", "0.1.1", 11)
+    universal_index = tmp_path / "universal-index"
+    shutil.copytree(index, universal_index)
+    _wheel(
+        universal_index,
+        "fixture_base",
+        "1.0",
+        37,
+        metadata_headers="Requires-Dist: fixture-toolkit[accelerator]==1.0\n",
+    )
+    _wheel(
+        universal_index,
+        "fixture_toolkit",
+        "1.0",
+        41,
+        metadata_headers=(
+            "Provides-Extra: accelerator\n"
+            'Requires-Dist: fixture-gpu==1.0; extra == "accelerator"\n'
+        ),
+    )
+    _wheel(universal_index, "fixture_gpu", "1.0", 43)
     live = mode != "captured"
     contributor = mode == "contributor"
     monkeypatch.setenv("UV_NO_INDEX", "1")
@@ -325,10 +347,15 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
     boundary.parent.mkdir(parents=True)
     boundary.write_text("PROTOCOL_VERSION = 1\n")
+    monkeypatch.setenv("UV_FIND_LINKS", str(universal_index))
     subprocess.run(["uv", "lock", "--offline"], cwd=source, check=True, capture_output=True)
+    monkeypatch.setenv("UV_FIND_LINKS", str(index))
     lock = source / "uv.lock"
-    locked = lock.read_text()
-    for wheel in index.glob("*.whl"):
+    # Retain universal wheel metadata while selecting the CPU-only fixture index.
+    locked = lock.read_text().replace(
+        f'registry = "{universal_index.as_posix()}"', f'registry = "{index.as_posix()}"'
+    )
+    for wheel in universal_index.glob("*.whl"):
         locked = locked.replace(
             f'path = "{wheel.as_posix()}"',
             f'path = "{wheel.as_posix()}", hash = "{content_digest(wheel)}"',
@@ -362,6 +389,15 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
             text=True,
         )
         assert output.strip() == "83"
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "import importlib.util; assert importlib.util.find_spec('fixture_gpu') is None",
+            ],
+            check=True,
+        )
         tool = subprocess.run(
             [str(python), "-I", "-c", "import fixture_tool; print(fixture_tool.VALUE)"],
             capture_output=True,
