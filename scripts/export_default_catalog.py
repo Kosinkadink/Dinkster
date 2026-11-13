@@ -13,7 +13,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from dinkster_supervisor.environment_state import interpreter
 from verify_release_launch import available_port, stop
 
 
@@ -36,9 +35,10 @@ def export_catalog(output: Path) -> None:
                 "--root",
                 str(project),
                 "setup",
-                "--from-scratch",
-                "--source",
-                str(Path(__file__).resolve().parents[1]),
+                "--mirror",
+                "https://releases.dinkster.org",
+                "--channel",
+                "main",
                 "--variant",
                 "linux-cpu",
                 "--data",
@@ -55,7 +55,23 @@ def export_catalog(output: Path) -> None:
         )
         if setup.returncode:
             raise RuntimeError(f"default generation setup failed: {setup.stdout}")
+        print(setup.stdout, file=sys.stderr, end="")
         result = json.loads(setup.stdout)
+        if result["status"] == "applied":
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(project),
+                    "stop",
+                    "--yes",
+                    "--json",
+                ],
+                env=environment,
+                check=True,
+            )
         if result["status"] != "applied" or result.get("unavailablePacks"):
             raise RuntimeError(f"default generation setup incomplete: {result}")
         generation = project / "generations" / str(result["current"])
@@ -63,8 +79,7 @@ def export_catalog(output: Path) -> None:
         with tempfile.TemporaryFile(mode="w+") as log:
             backend = subprocess.Popen(
                 [
-                    str(interpreter(generation)),
-                    "-I",
+                    sys.executable,
                     "-B",
                     "-m",
                     "dinkster.serve",
