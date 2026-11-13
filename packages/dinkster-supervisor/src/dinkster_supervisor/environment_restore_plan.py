@@ -888,6 +888,11 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         if candidate.get("source") not in {"published", "local"}:
             continue
         try:
+            development = _metadata(candidate).get("development-sources.json")
+            if development is not None and any(
+                row.get("live") for row in json.loads(development)["sources"]
+            ):
+                continue
             unavailable = unavailable_inputs(candidate)
         except (OSError, ValueError, KeyError):
             continue
