@@ -500,6 +500,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 args.source,
                 tuple(args.pack_source),
                 tuple(args.library_source),
+                git_origins=getattr(args, "git_origins", None),
                 live_engine=args.live_engine,
                 live_packs=tuple(args.live_pack),
                 live_libraries=tuple(args.live_library),
@@ -512,8 +513,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     )
             local["development"] = development
             result["development"] = development
+            approval_inputs = {
+                **local,
+                "development": {
+                    **development,
+                    "sources": [
+                        {**row, "path": row["git"]} if "git" in row else row
+                        for row in development["sources"]
+                    ],
+                },
+            }
             approval = (
-                "sha256:" + hashlib.sha256(json.dumps(local, sort_keys=True).encode()).hexdigest()
+                "sha256:"
+                + hashlib.sha256(json.dumps(approval_inputs, sort_keys=True).encode()).hexdigest()
             )
             result["sourceApproval"] = approval
             if args.approve is not None and args.approve != approval:
@@ -1624,10 +1636,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
-    develop = commands.add_parser("develop", help="capture and build explicit local sources")
-    develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
-    develop.add_argument("--pack-source", type=Path, action="append", required=True)
-    develop.add_argument("--library-source", type=Path, action="append", default=[])
+    develop = commands.add_parser(
+        "develop", help="capture and build explicit local or public git sources"
+    )
+    develop.add_argument("--source", required=True, help="engine folder or HTTPS git URL")
+    develop.add_argument("--pack-source", action="append", required=True)
+    develop.add_argument("--library-source", action="append", default=[])
     develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
     develop.add_argument(
         "--live-pack",
@@ -1807,7 +1821,12 @@ def run(args: argparse.Namespace) -> int:
             code = 0
         elif args.operation == "doctor" and args.repair:
             code = _repair(args, result)
-        elif args.operation in {"setup", "update", "develop"}:
+        elif args.operation == "develop":
+            from .environment_development import acquired_development_sources
+
+            with acquired_development_sources(args) as selected:
+                code = _install(selected, result)
+        elif args.operation in {"setup", "update"}:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)

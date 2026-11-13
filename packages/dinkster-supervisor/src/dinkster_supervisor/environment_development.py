@@ -10,14 +10,14 @@ import subprocess
 import tempfile
 import tomllib
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
 from .environment_state import EnvironmentError, content_digest
 
 DEVELOPMENT_DESCRIPTION = (
-    "development: built from local folders, not reviewed by the registry; "
+    "development: built from explicitly selected sources, not reviewed by the registry; "
     "dependency ranges resolved at build time, not reproducible from ranges; "
     "captured runtime artifacts remain restorable"
 )
@@ -96,6 +96,31 @@ def _git_state(root: Path) -> dict[str, object]:
     return {"commit": commit.stdout.strip(), "dirty": bool(status.stdout)}
 
 
+@contextmanager
+def acquired_development_sources(args: Any) -> Generator[Any]:
+    """Keep fetched folders alive only for this explicit development operation."""
+    import copy
+
+    from .git_sources import fetched_git_source
+
+    selected = copy.copy(args)
+    selected.git_origins = {}
+    with ExitStack() as stack:
+
+        def acquire(value: str | Path) -> Path:
+            text = str(value)
+            if "://" not in text and not text.startswith("git+"):
+                return Path(value)
+            folder, origin = stack.enter_context(fetched_git_source(text))
+            selected.git_origins[str(folder.resolve())] = origin
+            return folder
+
+        selected.source = acquire(args.source)
+        selected.pack_source = [acquire(value) for value in args.pack_source]
+        selected.library_source = [acquire(value) for value in args.library_source]
+        yield selected
+
+
 def development_description(selection: dict[str, Any]) -> str:
     live = [row["path"] for row in selection["sources"] if row.get("live")]
     if live:
@@ -111,6 +136,7 @@ def development_selection(
     packs: tuple[Path, ...],
     libraries: tuple[Path, ...],
     *,
+    git_origins: dict[str, dict[str, object]] | None = None,
     live_engine: bool = False,
     live_packs: tuple[Path, ...] = (),
     live_libraries: tuple[Path, ...] = (),
@@ -139,6 +165,8 @@ def development_selection(
             if path.is_symlink():
                 raise EnvironmentError(f"development source must not be a symlink: {path}")
             root = path.resolve()
+            if git_origins and str(root) in git_origins and root in live_paths[kind]:
+                raise EnvironmentError(f"live {kind} requires a local folder, not a git source")
             files = _files(root)
             required = "dinkster-pack.toml" if kind == "pack" else "pyproject.toml"
             if not root.is_file() and required not in files:
@@ -162,7 +190,15 @@ def development_selection(
                     else ["."],
                     "contentDigest": _identity(files),
                     "files": files,
-                    **_git_state(root),
+                    **(
+                        {
+                            "commit": git_origins[str(root)]["commit"],
+                            "dirty": False,
+                            "git": {**git_origins[str(root)], "contentDigest": _identity(files)},
+                        }
+                        if git_origins and str(root) in git_origins
+                        else _git_state(root)
+                    ),
                 }
             )
     return {"format": "dinkster.development-sources/1", "sources": rows}

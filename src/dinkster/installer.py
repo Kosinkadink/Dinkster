@@ -483,30 +483,22 @@ def lock_local_pack(pack_dir: Path, artifacts_dir: Path) -> tuple[LockedPack, Pa
     return _unpublished_entry(manifest, digest, f"local:{pack_dir.resolve()}"), archive
 
 
-def _run_git(label: str, args: Sequence[str]) -> str:
-    result = subprocess.run(["git", *args], capture_output=True, text=True)
-    if result.returncode != 0:
-        tail = (result.stderr or result.stdout).strip()[-2000:]
-        raise InstallError(f"git {label} failed:\n{tail}")
-    return result.stdout.strip()
-
-
 def lock_git_pack(
     url: str, artifacts_dir: Path, *, ref: str | None = None
 ) -> tuple[LockedPack, Path]:
-    """Clone a git pack and lock it through the identical archive path a
-    local install uses - the clone runs git, never pack code, and only the
-    deterministic artifact enters the store. Source records the EXACT
-    commit (``git:<url>@<commit>``): the lockfile stays reproducible even
-    though the branch moves; the artifact digest is still the real pin."""
-    with tempfile.TemporaryDirectory(prefix="dinkster-git-") as scratch:
-        checkout = Path(scratch) / "checkout"
-        _run_git("clone", ["clone", "--quiet", url, str(checkout)])
-        if ref is not None:
-            _run_git("checkout", ["-C", str(checkout), "checkout", "--quiet", "--detach", ref])
-        commit = _run_git("rev-parse", ["-C", str(checkout), "rev-parse", "HEAD"])
-        manifest, digest, archive = _archive_pack(checkout, artifacts_dir)
-    return _unpublished_entry(manifest, digest, f"git:{url}@{commit}"), archive
+    """Archive an explicit public git pack with the shared bundled fetcher."""
+    from urllib.parse import urlencode
+
+    from dinkster_supervisor.environment_state import EnvironmentError
+    from dinkster_supervisor.git_sources import fetched_git_source
+
+    specification = url + ("#" + urlencode({"ref": ref}) if ref is not None else "")
+    try:
+        with fetched_git_source(specification) as (checkout, origin):
+            manifest, digest, archive = _archive_pack(checkout, artifacts_dir)
+    except EnvironmentError as error:
+        raise InstallError(str(error)) from None
+    return _unpublished_entry(manifest, digest, f"git:{origin['url']}@{origin['commit']}"), archive
 
 
 class Installer:
@@ -952,14 +944,19 @@ class Installer:
                     f"cannot re-acquire {entry.pack}: recorded source {source!r} "
                     f"is not of the form git:<url>@<commit>"
                 )
-            with tempfile.TemporaryDirectory(prefix="dinkster-git-") as scratch:
-                checkout = Path(scratch) / "checkout"
-                _run_git("clone", ["clone", "--quiet", url, str(checkout)])
-                _run_git(
-                    "checkout",
-                    ["-C", str(checkout), "checkout", "--quiet", "--detach", commit],
-                )
-                self._acquire_from_tree(entry, checkout, source)
+            from urllib.parse import urlencode
+
+            from dinkster_supervisor.environment_state import EnvironmentError
+            from dinkster_supervisor.git_sources import fetched_git_source
+
+            try:
+                with fetched_git_source(url + "#" + urlencode({"ref": commit})) as (
+                    checkout,
+                    _origin,
+                ):
+                    self._acquire_from_tree(entry, checkout, source)
+            except EnvironmentError as error:
+                raise InstallError(str(error)) from None
         elif _is_registry_source(source):
             if self._registry_fetch is None:
                 raise InstallError(
