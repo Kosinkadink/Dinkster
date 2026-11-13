@@ -103,6 +103,30 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (root / "current").write_text(f"{number}\n")
 
 
+def test_run_uses_active_interpreter_and_preserves_command_io_and_exit(tmp_path: Path) -> None:
+    make_generation(tmp_path, fake_serve=False)
+    make_generation(tmp_path, 2, fake_serve=False)
+    (tmp_path / "current").write_text("2\n")
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(tmp_path),
+        "run",
+        "--",
+        "python",
+        "-c",
+        "import os,sys; print(sys.prefix); print(input()); "
+        "print(os.environ['DINKSTER_EXECUTION_PYTHON'], file=sys.stderr); sys.exit(37)",
+    ]
+    result = subprocess.run(command, input="tool input\n", capture_output=True, text=True)
+    target = tmp_path / "generations/2/python"
+    assert result.returncode == 37
+    assert result.stdout.splitlines() == [str(target), "tool input"]
+    assert Path(result.stderr.strip()).is_relative_to(target)
+
+
 @pytest.mark.parametrize(("supervisor_exit", "output_size"), [(False, 7), (True, 70000)])
 def test_start_failure_preserves_exit_code_and_current_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supervisor_exit: bool, output_size: int
@@ -372,7 +396,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
 
     def process_field(pid: int, field: str) -> str:
         result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", f"{field}="],
+            ["ps", "-ww", "-p", str(pid), "-o", f"{field}="],
             capture_output=True,
             text=True,
             check=False,
