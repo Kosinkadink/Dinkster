@@ -20,6 +20,15 @@
   is not a refusal unless an explicit maximum-age policy requires one. Recovery
   status distinguishes policy allowance from execution and never claims an
   unreviewed repair is compatible or automatically resumes stopped work.
+  `/api/security` includes visible queued and retained jobs, their submitted node
+  types, workflow identity when supplied, and pinned execution snapshot identity.
+  Job visibility follows the caller's scoped job-read grants. Submitted graphs
+  identify work, not proof that a node executed or an incident affected a result.
+  Human operators with settings authority can approve, disapprove or change an
+  exact active notice answer through `/api/security/answers` using registry,
+  notice UUID, positive revision and an explicit `approved` boolean. Agents,
+  delegated callers and stale revisions refuse without changing answers.
+  Neither approval nor a changed answer automatically resumes stopped work.
   Public environment commands accept exact-notice approval/disapproval changes
   after unattended start and authenticated signed-feed file import. Rejected
   imports preserve cached evidence and answers; neither operation resumes work.

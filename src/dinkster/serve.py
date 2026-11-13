@@ -47,6 +47,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 from aiohttp import web
 from dinkster_assets import (
@@ -66,6 +67,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
+from dinkster_graph import GraphNode
 from dinkster_inference_wire import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
@@ -2117,10 +2119,82 @@ def main(argv: list[str] | None = None) -> None:
         if resolution_store is not None:
             app.on_cleanup.append(close_federated_assets)
 
-        async def security_status(_: web.Request) -> web.Response:
-            return web.json_response(composer.security_status())
+        async def security_status(request: web.Request) -> web.Response:
+            result = composer.security_status()
+            principal = principal_for(request)
+            work = list(cast("list[dict[str, object]]", result.get("work", [])))
+            for job in request.app[STATE_KEY].queue.jobs():
+                if not principal.allows_in(job.scope, "jobs:read"):
+                    continue
+                node_types: set[str] = set()
+                graphs = [job.graph]
+                while graphs:
+                    for node in graphs.pop().nodes.values():
+                        if isinstance(node, GraphNode):
+                            node_types.add(node.node_type)
+                        else:
+                            graphs.append(node.body)
+                work.append(
+                    {
+                        "kind": "job",
+                        "clientId": job.key.client_id,
+                        "jobId": job.key.job_id,
+                        "runId": job.run_id,
+                        "state": job.state,
+                        "workflow": job.source_document or None,
+                        "nodeTypes": sorted(node_types),
+                        "extensionSnapshotDigest": (
+                            job.execution.extension_snapshot_digest
+                            if job.execution is not None
+                            else None
+                        ),
+                    }
+                )
+            result["work"] = work
+            result["workInventory"] = {
+                "workers": "registered",
+                "jobs": "visible-queue-and-retained-history",
+                "attribution": "Submitted job graphs, not proof of execution or incident impact.",
+            }
+            return web.json_response(result)
+
+        async def security_answer(request: web.Request) -> web.Response:
+            if not principal_for(request).is_operator:
+                raise web.HTTPForbidden(text="Security answers require human settings authority.")
+            if security is None:
+                raise web.HTTPConflict(text="Security trust is not provisioned for this install.")
+            try:
+                data = await request.json()
+                if (
+                    not isinstance(data, dict)
+                    or set(data) != {"registry", "notice", "revision", "approved"}
+                    or not isinstance(data["registry"], str)
+                    or not isinstance(data["notice"], str)
+                    or type(data["revision"]) is not int
+                    or data["revision"] < 1
+                    or type(data["approved"]) is not bool
+                ):
+                    raise ValueError(
+                        "Answer requires registry, notice, revision and explicit approved boolean."
+                    )
+                notice = UUID(data["notice"])
+                security.store.answer(
+                    data["registry"], notice, data["revision"], approved=data["approved"]
+                )
+            except (ValueError, TypeError) as exc:
+                raise web.HTTPBadRequest(text=str(exc)) from exc
+            return web.json_response(
+                {
+                    "registry": data["registry"],
+                    "notice": str(notice),
+                    "revision": data["revision"],
+                    "decision": security.store.decision(data["registry"], notice, data["revision"]),
+                    "automaticResume": False,
+                }
+            )
 
         app.router.add_get("/api/security", security_status)
+        app.router.add_post("/api/security/answers", security_answer)
         _add_collaboration_routes(
             app,
             Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
