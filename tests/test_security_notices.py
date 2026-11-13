@@ -833,8 +833,10 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
     capfd: pytest.CaptureFixture[str],
 ):
     import aiohttp
-    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, graph_to_wire
+    from dinkster_schema import TypeExpr
     from dinkster_supervisor.supervisor import EngineLink, EngineProcess
+    from dinkster_values import CORE_INT
 
     entries, archives, markers = execution_artifacts
     root = tmp_path / "managed"
@@ -853,6 +855,22 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
     feed["notices"][0]["release"]["artifactDigest"] = entries[0].artifact_digest
     response.update(status=200, body=_signed(feed, key))
 
+    auth_args: list[str] = []
+    headers: dict[str, str] = {}
+    if stop_reason == "denied":
+        auth = tmp_path / "auth.toml"
+        auth.write_text(
+            'version = 1\n[[tokens]]\ntoken = "operator-token"\n'
+            'principalId = "operator"\n[tokens.grants]\n'
+            'local = ["jobs:read", "jobs:submit", "settings:read", "settings:write"]\n'
+            '[[tokens]]\ntoken = "reader-token"\nprincipalId = "reader"\n'
+            '[tokens.grants]\nother = ["jobs:read", "settings:read"]\n'
+            '[[tokens]]\ntoken = "agent-token"\nprincipalId = "agent"\nkind = "agent"\n'
+            '[tokens.grants]\nlocal = ["settings:read", "settings:write"]\n'
+        )
+        auth_args = ["--auth", str(auth)]
+        headers = {"Authorization": "Bearer operator-token"}
+
     async def scenario() -> None:
         link = EngineLink()
         engine = EngineProcess(
@@ -865,11 +883,12 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 "",
                 "--generation",
                 str(generation),
+                *auth_args,
             ],
             link,
             probe_interval=0.05,
         )
-        async with aiohttp.ClientSession() as client:
+        async with aiohttp.ClientSession(headers=headers) as client:
 
             async def ready() -> None:
                 async with asyncio.timeout(60):
@@ -884,6 +903,22 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
 
             async def submit(name: str, job: str) -> None:
                 graph = Graph(nodes={"marker": GraphNode(f"{name}.run", {"nonce": job})})
+                if job == "running":
+                    graph = Graph(
+                        nodes={
+                            **graph.nodes,
+                            "unused": RegionNode(
+                                kind="map",
+                                body=Graph(
+                                    nodes={"nested": GraphNode("control-pack.run", {"nonce": job})}
+                                ),
+                                ports={"item": TypeExpr.concrete(CORE_INT)},
+                                inputs={"item": [1]},
+                                element_ports=("item",),
+                                outputs={"value": RegionOutput(Link("nested", "value"))},
+                            ),
+                        }
+                    )
                 async with client.post(
                     link.base_url + "/api/jobs",
                     json={
@@ -891,9 +926,35 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                         "jobId": job,
                         "graph": graph_to_wire(graph),
                         "targets": ["marker"],
+                        "sourceDocument": "blake3:" + "2" * 64,
                     },
                 ) as result:
                     assert result.status == 202, await result.text()
+
+            async def answer_cli(action: str) -> None:
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(root),
+                    "security",
+                    "--json",
+                    action,
+                    "--registry",
+                    REGISTRY,
+                    "--notice",
+                    NOTICE,
+                    "--revision",
+                    "1",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(), 120)
+                assert process.returncode == 0, stderr.decode()
+                assert json.loads(stdout)["decision"] == (
+                    "approved" if action == "approve" else "denied"
+                )
 
             async def completed(job: str, expected: str = "completed") -> None:
                 async with asyncio.timeout(15):
@@ -922,6 +983,33 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 await completed("after-restart")
                 assert (markers["test-pack"] / "finished").read_text() == "finished\nfinished\n"
                 assert "decision pending, execution allowed" in capfd.readouterr().err
+                answer = {
+                    "registry": REGISTRY,
+                    "notice": NOTICE,
+                    "revision": 1,
+                    "approved": True,
+                }
+                if stop_reason == "denied":
+                    async with client.post(
+                        link.base_url + "/api/security/answers",
+                        json=answer,
+                        headers={"Authorization": "Bearer agent-token"},
+                    ) as result:
+                        assert result.status == 403, await result.text()
+                    assert store.decision(REGISTRY, UUID(NOTICE), 1) == "pending"
+                    for invalid in ({**answer, "revision": 2}, {**answer, "approved": "false"}):
+                        async with client.post(
+                            link.base_url + "/api/security/answers", json=invalid
+                        ) as result:
+                            assert result.status == 400, await result.text()
+                        assert store.decision(REGISTRY, UUID(NOTICE), 1) == "pending"
+                    async with client.post(
+                        link.base_url + "/api/security/answers", json=answer
+                    ) as result:
+                        assert result.status == 200, await result.text()
+                        answered = await result.json()
+                    assert answered["decision"] == "approved" and not answered["automaticResume"]
+                    await answer_cli("approve")
                 await submit("control-pack", "before-block")
                 await completed("before-block")
                 assert (markers["control-pack"] / "finished").read_text() == "finished\n"
@@ -931,8 +1019,24 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                 async with asyncio.timeout(15):
                     while not (markers["test-pack"] / "started").exists():
                         await asyncio.sleep(0.02)
+                async with client.get(link.base_url + "/api/security") as result:
+                    status = await result.json()
+                jobs = [item for item in status["work"] if item["kind"] == "job"]
+                active = next(item for item in jobs if item["jobId"] == "running")
+                assert active["state"] == "running"
+                assert active["nodeTypes"] == ["control-pack.run", "test-pack.run"]
+                assert active["workflow"] == "blake3:" + "2" * 64
+                assert active["runId"] and active["extensionSnapshotDigest"]
+                assert any(item["nodeTypes"] == ["control-pack.run"] for item in jobs)
                 if stop_reason == "denied":
-                    store.answer(REGISTRY, UUID(NOTICE), 1, approved=False)
+                    async with client.get(
+                        link.base_url + "/api/security",
+                        headers={"Authorization": "Bearer reader-token"},
+                    ) as result:
+                        assert result.status == 200, await result.text()
+                        limited = await result.json()
+                    assert not any(item["kind"] == "job" for item in limited["work"])
+                    await answer_cli("disapprove")
                 elif stop_reason in {"refuse", "age"}:
                     policy = (
                         "refuse_vulnerable = true\n"
@@ -992,6 +1096,14 @@ def test_supervised_host_refreshes_pending_restart_and_stops_running_work(
                         if state["state"] in {"failed", "cancelled"}:
                             break
                         await asyncio.sleep(0.02)
+                if stop_reason == "denied":
+                    async with client.post(
+                        link.base_url + "/api/security/answers", json=answer
+                    ) as result:
+                        assert result.status == 200, await result.text()
+                        assert not (await result.json())["automaticResume"]
+                    assert store.decision(REGISTRY, UUID(NOTICE), 1) == "approved"
+                    await answer_cli("approve")
                 (markers["test-pack"] / "hold").unlink()
                 feed["revision"] = 3
                 previous = feed["notices"][0]["revision"]
