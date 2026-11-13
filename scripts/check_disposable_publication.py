@@ -606,6 +606,11 @@ def check_publication(
                 docker("volume", "rm", name)
             if network_created:
                 docker("network", "rm", name)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            if not failed:
+                raise
+            # Negative controls inspect the publication error, not cleanup failures.
+            print(f"Disposable cleanup failed: {type(exc).__name__}", file=sys.stderr)
         finally:
             finish_phase()
             if failed or sys.exc_info()[0] is not None:

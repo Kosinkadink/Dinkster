@@ -131,7 +131,7 @@ shared library changes also select their declared dependents. Registry default
 pack admission gates only scanner or harness changes. Publication preflight runs
 for publisher or manifest changes, not ordinary pack source edits. Reproduce the
 checks and whole configured suite after
-`uv run --no-project python scripts/setup_envs.py --variant linux-cpu`
+`python scripts/develop.py setup --variant linux-cpu --yes`
 with `bash scripts/ci-fast.sh`.
 
 Landing requires the selected hosted jobs green and a fresh LOW verifier PASS at
@@ -159,12 +159,10 @@ The selections and setup commands in
 | Coverage report | The selected platform's coverage artifacts combined, without a percentage floor |
 
 Build the CPU runtime with
-`uv run --no-project python scripts/setup_envs.py --variant linux-cpu` on Linux
-or `--variant win-cpu` on Windows. The same Python implementation serves the
-launcher and CPU action; its receipt is `.run/environment-base.json`.
-Contributor setup acceptance runs the root and pack checks with the bundle's
-Python version. The Linux CPython 3.12 row describes its separate full-validation
-root jobs; it does not override the selected bundle interpreter.
+`uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes`
+on Linux or `--variant win-cpu` on Windows. Execute root and pack checks with
+`python scripts/develop.py run -- python -m pytest`. The generation records
+its selected interpreter and complete dependency inventory.
 Keep isolated pack-install tests: workspace editables are not evidence that a
 published pack declares its complete dependencies. Pin CPU dispatch with
 `ATEN_CPU_CAPABILITY=avx2` and `ONEDNN_MAX_CPU_ISA=AVX2` as the workflow does.
@@ -179,7 +177,7 @@ pinned validation inputs prepared, the counted CPU root command is:
 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 CUDA_VISIBLE_DEVICES='' \
   DINKSTER_ACCELERATOR=cpu DINKSTER_SLOW_TESTS=1 \
   /home/kosin/comfy-vibe-station/run_counted_suite.sh \
-  .venv/bin/python -m pytest -q --durations=0 --durations-min=0 \
+  python scripts/develop.py run -- python -m pytest -q --durations=0 --durations-min=0 \
   --junitxml=test-results/root.xml \
   --deselect=tests/test_sandbox.py::TestLiveJail \
   --deselect=tests/test_doctor.py::TestLiveJailedProbe \
@@ -314,9 +312,10 @@ second real-artifact run. Sampling-runtime validation lives in
 integration:
 
 ```bash
-uv run --no-sync python scripts/prepare_validation_inputs.py
-uv run --no-project python scripts/setup_envs.py --variant linux-cpu
-.venv/bin/python -m pytest -q
+uv run --no-project python scripts/prepare_validation_inputs.py
+uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes \
+  --library-source ../.dinkster-evidence-source/packages/dinkster-acceptance
+python scripts/develop.py run -- python -m pytest -q
 ```
 
 The preparation command checks out the revision in
@@ -327,11 +326,10 @@ evidence revision, so local and hosted full validation execute the same benchmar
 and acceptance sources. Access to the private evidence repository is required
 only for the full maintainer suite, not to install or run Dinkster.
 
-On Windows, run the same Python entry point with `--variant win-cpu` for CPU
-checks or omit the variant to select the compatible NVIDIA bundle. Use native
-`.venv\Scripts\python.exe` paths. Rerunning setup reasserts the selected
-environment; `--force` rebuilds `.venv` without deleting the verified base store.
-Run tools with `uv run --no-sync` to retain the manifest's binary wheels.
+On Windows, use the same entry point with `--variant win-cpu` for CPU checks
+or explicitly select `--variant win-nvidia`. Commands run through the active
+generation's interpreter on every platform; checkout-level uv operations do not
+modify its binary wheels.
 
 MediaRecorder WebM upload tests generate local samples only for the writable
 `libopus` and `libvorbis` encoders present in the installed PyAV wheel. The
@@ -339,7 +337,7 @@ fixture gate always requires `libopus`; decode-side admission separately keeps
 Vorbis WebM coverage when the wheel cannot generate it through `libvorbis`.
 
 Run each vision package's full `tests` directory and the benchmark selector
-above with `.venv/bin/python -m pytest -q` too. Supply the real-artifact
+above with `python scripts/develop.py run -- python -m pytest -q` too. Supply the real-artifact
 environment variables documented in the provider READMEs and composite
 action; an absent artifact's skip is not real-model validation. Training and
 GPU checks in the Torch README also remain required
