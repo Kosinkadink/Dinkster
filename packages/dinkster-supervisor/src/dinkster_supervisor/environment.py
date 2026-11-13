@@ -96,6 +96,7 @@ from .environment_stores import (
 from .environment_tools import acquire_tools
 from .environment_transactions import (
     activate,
+    activation_status,
     begin_activation,
     begin_setup,
     next_generation,
@@ -1463,6 +1464,7 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
             or (args.generation is None and read_current(args.root) != number)
         ):
             raise EnvironmentError("selected software changed during security inspection")
+        report["recovery"] = activation_status(args.root)
         result.update(current=read_current(args.root), security=report)
         return 0
     if args.security_action == "policy":
@@ -1798,6 +1800,22 @@ def run(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
+    if args.operation == "security" and args.security_action in {"fix-one", "fix-all"}:
+        try:
+            result["current"] = read_current(args.root)
+            result["recovery"] = recovery = activation_status(args.root)
+            if code != 0 and recovery.get("error") != result.get("error"):
+                result["recovery"] = {
+                    "state": "cancelled"
+                    if result["error"] == "pack preparation cancelled"
+                    else "refused",
+                    "current": result["current"],
+                    "error": result["error"],
+                    "action": "Selection is unchanged; inspect the error and review a new plan.",
+                }
+        except (OSError, ValueError) as exc:
+            code = 1
+            result.update(status="error", error=str(exc))
     if (
         code == 0
         and result["status"] == "applied"
@@ -1845,6 +1863,9 @@ def run(args: argparse.Namespace) -> int:
             print(step)
         for change in cast("list[str]", result.get("changes", [])):
             print(change)
+        if "recovery" in result:
+            recovery = cast("dict[str, object]", result["recovery"])
+            print(f"Recovery: {recovery['state']}. {recovery['action']}")
         if "error" in result:
             print(result["error"], file=sys.stderr)
         if "url" in result:

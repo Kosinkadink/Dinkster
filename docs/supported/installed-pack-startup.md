@@ -78,6 +78,11 @@
   Both repair commands accept `--progress FILE`; a sibling `FILE.cancel`
   cancels preparation before the next progress boundary, including before
   activation. Cancellation does not select the replacement generation.
+  Repair results and offline list/details expose the last activation outcome,
+  previous and replacement generation, error and explicit next recovery action.
+  A failed or cancelled replacement build/activation restores the prior selection;
+  retrying a consumed approval requires a newly reviewed plan. Earlier generations
+  and their source/dependency locks remain unchanged.
 - Verified ownership notices accept an explicit operator-owned previous owner.
   An omitted previous owner, empty new publisher or unchanged owner is refused
   without losing cached release notices.

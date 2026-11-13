@@ -1000,26 +1000,117 @@ def test_managed_pack_install_requires_exact_security_approval(
             }
         ).encode()
 
+        sibling_repaired = None
+        sibling_notice = None
+        if repair_action == "fix-all":
+            from copy import deepcopy
+            from uuid import uuid4
+
+            for name in ("dinkster-pack.toml", "pyproject.toml"):
+                path = sibling / name
+                path.write_text(path.read_text().replace("1.0.0", "1.1.0"))
+            sibling_archive = tmp_path / "sibling-1.1.0-py3-none-any.whl"
+            build_pack_archive(sibling, sibling_archive)
+            sibling_payload = sibling_archive.read_bytes()
+            sibling_repaired = replace(
+                entry, version="1.1.0", artifact_digest=artifact_digest(sibling_payload)
+            )
+            sibling_lock = (
+                PackLock("sibling", "fixture-cpu", ">=3.12", (), (), ()).to_json().encode()
+            )
+            sibling_url = "locks/" + artifact_digest(sibling_lock).replace(":", "/") + ".json"
+            sibling_release = {
+                **test_installer._static_release(sibling_repaired, sibling_payload),
+                "engine": ">=1,<3",
+                "installLocks": {
+                    "fixture-cpu": {
+                        **release["installLocks"]["fixture-cpu"],
+                        "artifactDigest": sibling_repaired.artifact_digest,
+                        "digest": artifact_digest(sibling_lock),
+                        "size": len(sibling_lock),
+                        "url": sibling_url,
+                    }
+                },
+            }
+            registry_files.update(
+                test_installer._static_indexes(
+                    [*index["items"], release, repair_release, sibling_release]
+                )
+            )
+            registry_files["/static/" + sibling_url] = sibling_lock
+            registry_files["/static/" + sibling_release["wheels"][0]["url"]] = sibling_payload
+            registry_files["/v1/packs/sibling/versions/1.1.0"] = json.dumps(
+                {
+                    "packName": "sibling",
+                    "version": "1.1.0",
+                    "state": "active",
+                    "artifact": {"digest": sibling_repaired.artifact_digest},
+                    "manifest": {
+                        "dinkster": ">=1,<3",
+                        "pythonRequirements": [],
+                        "pythonExtraRequirements": {},
+                        "dependencies": [],
+                    },
+                }
+            ).encode()
+            sibling_notice = deepcopy(feed["notices"][0])
+            sibling_notice.update(id=str(uuid4()), revision=1)
+            sibling_notice.pop("previousRevision", None)
+            sibling_notice["release"].update(pack="sibling", artifactDigest=entry.artifact_digest)
+            feed["revision"] = 3
+            feed["notices"].append(sibling_notice)
+            security.import_feed(registry, _signed(feed, key))
+
+        after_build = ""
+
         def repair(*arguments: str):
             if repair_action == "fix-all" and "--pack" in arguments:
                 assert arguments[:2] == ("--pack", "healthy")
                 arguments = arguments[2:]
+            command = [
+                sys.executable,
+                "-m",
+                "dinkster_supervisor.environment",
+                "--root",
+                str(root),
+                "security",
+                "--json",
+                repair_action,
+                *arguments,
+            ]
+            if after_build:
+                command[1:3] = [
+                    "-c",
+                    f"""
+from pathlib import Path
+import sys
+from dinkster_supervisor import environment, environment_pack_install
+from dinkster_supervisor.environment_state import Generation
+build = environment_pack_install.build_generation
+def interrupt(**kwargs):
+    generation = build(**kwargs)
+    target = kwargs['root'] / 'generations' / str(kwargs['number'])
+    sealed = Generation.read(target / 'generation.json')
+    assert sealed.number == kwargs['number']
+    assert not sealed.drift(target)
+    Path({str(tmp_path / "built-replacement")!r}).write_text(str(generation.number))
+    if {after_build!r} == 'failed':
+        lock = Path(sys.argv[sys.argv.index('--input') + 1]) / 'locks/healthy.json'
+        lock.write_bytes(lock.read_bytes() + b' ')
+    else:
+        Path({str(tmp_path / "repair-progress.json.cancel")!r}).touch()
+    return generation
+environment_pack_install.build_generation = interrupt
+environment.main()
+""",
+                ]
             completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "dinkster_supervisor.environment",
-                    "--root",
-                    str(root),
-                    "security",
-                    "--json",
-                    repair_action,
-                    *arguments,
-                ],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=120,
             )
+            assert completed.stdout, completed.stderr
             return completed.returncode, json.loads(completed.stdout)
 
         current = root / "generations/4"
@@ -1099,6 +1190,61 @@ def test_managed_pack_install_requires_exact_security_approval(
         assert not (root / "generations/5").exists()
         assert not (repaired_review / "consumed").exists()
         cancellation.unlink()
+        if repair_action == "fix-all":
+            preserved = {
+                path: content_digest(path)
+                for path in (root / "generations").rglob("*")
+                if path.is_file() and not path.is_symlink()
+            }
+            for outcome in ("failed", "cancelled"):
+                after_build = outcome
+                code, refused = repair(
+                    "--input",
+                    str(repaired_review),
+                    "--approval",
+                    planned["approval"],
+                    "--progress",
+                    str(progress),
+                )
+                assert code != 0, refused
+                assert (tmp_path / "built-replacement").read_text() == "5"
+                assert refused["current"] == 4
+                assert refused["recovery"]["state"] == outcome, refused
+                assert refused["recovery"]["previous"] == 4
+                assert refused["recovery"]["target"] == 5
+                assert "new repair plan" in refused["recovery"]["action"]
+                assert (root / "current").read_text() == "4\n"
+                assert not (root / "generations/5").exists()
+                assert {
+                    path: content_digest(path)
+                    for path in (root / "generations").rglob("*")
+                    if path.is_file() and not path.is_symlink()
+                } == preserved
+                assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+                (tmp_path / "built-replacement").unlink()
+                cancellation.unlink(missing_ok=True)
+                observation = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "dinkster_supervisor.environment",
+                        "--root",
+                        str(root),
+                        "security",
+                        "--json",
+                        "list",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                inspected = json.loads(observation.stdout)
+                assert observation.returncode == 0, inspected
+                assert inspected["security"]["recovery"] == refused["recovery"]
+                repaired_review = tmp_path / (outcome + "-new-review")
+                after_build = ""
+                code, planned = repair("--pack", "healthy", "--output", str(repaired_review))
+                assert code == 0, planned
         code, applied = repair(
             "--input",
             str(repaired_review),
@@ -1108,6 +1254,24 @@ def test_managed_pack_install_requires_exact_security_approval(
             str(progress),
         )
         assert code == 0 and applied["current"] == 5, applied
+        assert applied["recovery"]["state"] == "applied"
+        if repair_action == "fix-all":
+            assert sibling_repaired is not None and sibling_notice is not None
+            selected_sources = Lockfile.from_record_json(
+                (root / "generations/5/dinkster.lock").read_text()
+            )
+            selected_sibling = selected_sources.get("sibling")
+            assert selected_sibling is not None
+            assert selected_sibling.version == "1.1.0"
+            assert selected_sibling.artifact_digest == sibling_repaired.artifact_digest
+            sibling_result = root / "generations/5/packs/sibling/pack-lock.json"
+            assert (
+                sibling_result.read_bytes() == (repaired_review / "locks/sibling.json").read_bytes()
+            )
+            assert (
+                current / "packs/sibling/pack-lock.json"
+            ).read_bytes() != sibling_result.read_bytes()
+            assert security.decision(registry, UUID(sibling_notice["id"]), 1) == "pending"
         selected = Lockfile.from_record_json((root / "generations/5/dinkster.lock").read_text())
         selected_pack = selected.get("healthy")
         assert selected_pack is not None
