@@ -853,8 +853,21 @@ folders or wheels. Omit library inputs when none are needed. Choose a base varia
 matching the host; `--python /absolute/python` explicitly selects an existing
 interpreter instead of the configured standalone interpreter. Use `--port PORT`
 when the default listener is occupied. Project and store directories must be
-outside selected source folders. Building uses verified copies, never editable
-installs into author folders. Selected helper wheels participate in engine
+outside selected source folders. Unmarked sources build from verified copies.
+Use `--live-engine`, `--live-pack /absolute/pack`, or
+`--live-library /absolute/helper` on both plan and apply commands to run from
+explicitly selected local folders instead. A live folder must also be a source
+in that command; wheels are not live. Live packs run isolated and reload after
+code edits without restarting the server. Engine and library edits, including
+inference edits, take effect after stop/start without another `develop` build.
+Dependency or manifest changes require a new build. Live engine and library
+installs belong to generation interpreters, not the checkout's tooling environment.
+Status and doctor show current live library versions and git commits. History,
+status and cleanup descriptions name the live folders and say that the generation
+changes with them and cannot be restored exactly. Restore and rollback refuse a
+live snapshot; omit all live marks to capture a restorable generation.
+
+Selected helper wheels participate in engine
 resolution before packs are built, including replacements for engine dependencies
 whose real versions still satisfy the declared constraints. The exception is an
 explicitly selected local `dinkster-inference`: `develop` may override the engine's

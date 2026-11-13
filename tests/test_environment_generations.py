@@ -269,13 +269,15 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         server.shutdown()
 
 
+@pytest.mark.parametrize("live", [False, True])
 def test_development_inference_override_runs_selected_library_but_ordinary_install_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, live: bool
 ) -> None:
     """Developers can run their local inference version without loosening ordinary installs."""
     from dinkster_supervisor.environment_development import (
         captured_development_sources,
         development_selection,
+        install_live_sources,
     )
     from dinkster_supervisor.environment_local import (
         DEFAULT_VARIANTS,
@@ -333,7 +335,13 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
     selection = local_selection(source, variant, DEFAULT_VARIANTS, Path(sys.executable))
     selection["packages"] = ["fixture-base"]
-    selection["development"] = development_selection(source, (pack,), (library,))
+    selection["development"] = development_selection(
+        source,
+        (pack,),
+        (library,),
+        live_engine=live,
+        live_libraries=(library,) if live else (),
+    )
     with captured_development_sources(selection["development"], store) as (engine, _, wheels):
         inputs = prepare_local(engine, selection, store, library_wheels=wheels)
         constraints = inputs["constraints"]
@@ -349,6 +357,21 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
             text=True,
         )
         assert output.strip() == "83"
+        install_live_sources(generation, selection["development"])
+        (library / "dinkster_inference/__init__.py").write_text("VALUE = 149\n")
+        (source / "dinkster/__init__.py").write_text("VALUE = 257\n")
+        output = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-B",
+                "-c",
+                "import dinkster, dinkster_inference; "
+                "print(dinkster.VALUE, dinkster_inference.VALUE)",
+            ],
+            text=True,
+        )
+        assert output.strip() == ("257 149" if live else "83 83")
         assert "dinkster-inference==0.1.2.dev3" in constraints.read_text()
         notice = capsys.readouterr().err
         assert "overrides dinkster-inference pin 0.1.1 with local version 0.1.2.dev3" in notice

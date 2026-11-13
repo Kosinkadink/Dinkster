@@ -1702,6 +1702,7 @@ def main(argv: list[str] | None = None) -> None:
         security.refresh()
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
+    live_pack_names: set[str] = set()
     for pack_id in () if args.no_default_packs else default_pack_ids():
         try:
             spec = replace(default_pack_spec(pack_id), require_catalog=True)
@@ -1742,6 +1743,13 @@ def main(argv: list[str] | None = None) -> None:
             if args.engine_variant is not None and args.engine_variant != selected_variant:
                 raise CompositionError("--engine-variant differs from selected generation variant")
             args.engine_variant = selected_variant
+            live_pack_names = {
+                name
+                for spec in generation_specs
+                if not spec.require_catalog
+                for name in (spec.packs or {})
+            }
+            args.watch_packs = bool(live_pack_names)
             for spec in generation_specs:
                 if spec.packs and "dinkster-nodes-remote" in spec.packs:
                     spec = _with_remote_config(
@@ -2173,7 +2181,14 @@ def main(argv: list[str] | None = None) -> None:
                 async def reload_changed(name: str) -> None:
                     await apply_reload(app[STATE_KEY], composer, name)
 
-                watcher = PackWatcher(composer.watch_targets, reload_changed)
+                def watch_targets() -> dict[str, Path]:
+                    return {
+                        name: path
+                        for name, path in composer.watch_targets().items()
+                        if args.generation is None or name in live_pack_names
+                    }
+
+                watcher = PackWatcher(watch_targets, reload_changed)
         frontend_bundle = (
             Path(args.frontend_root)
             if args.frontend_root

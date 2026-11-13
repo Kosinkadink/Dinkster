@@ -49,7 +49,7 @@ from .environment_custom import (
     prepare_custom_pack_locks,
     variant_file,
 )
-from .environment_development import DEVELOPMENT_DESCRIPTION
+from .environment_development import development_description, live_source_status
 from .environment_generations import (
     build_generation,
     pack_operation,
@@ -140,7 +140,11 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         for entry in entries:
             snapshot = cast("dict[str, object]", entry["snapshot"])
             if "development-sources.json" in cast("dict[str, str]", snapshot["metadata"]):
-                entry["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+                entry["sourceDescription"] = development_description(
+                    json.loads(
+                        cast("dict[str, str]", snapshot["metadata"])["development-sources.json"]
+                    )
+                )
         if args.history_action == "show":
             selected = next((entry for entry in entries if entry["id"] == args.entry), None)
             if selected is None:
@@ -155,7 +159,9 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         generation_root = root / "generations" / str(current)
         generation = Generation.read(generation_root / "generation.json")
         if "development-sources.json" in dict(generation.files):
-            result["sourceDescription"] = DEVELOPMENT_DESCRIPTION
+            development = read_document(generation_root / "development-sources.json")
+            result["sourceDescription"] = development_description(development)
+            result["liveSources"] = live_source_status(development)
         manifest = generation_root / "base-manifest.json"
         if generation.source != "local" and manifest.is_file():
             base = read_document(manifest)
@@ -231,10 +237,13 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
             if not store.is_absolute():
                 raise EnvironmentError("project store must be absolute")
             missing = missing_inputs(snapshots[-1], store, offline=True)
-            result["exactRecovery"] = {"available": not missing, "missing": missing}
+            live = bool(result["liveSources"])
+            result["exactRecovery"] = {"available": not live and not missing, "missing": missing}
             result["plan"] = [
-                DEVELOPMENT_DESCRIPTION,
-                "exact recovery artifacts retained"
+                cast("str", result["sourceDescription"]),
+                "live sources cannot be restored exactly; run develop without live marks to capture"
+                if live
+                else "exact recovery artifacts retained"
                 if not missing
                 else "exact recovery artifacts missing; restore will refuse",
             ]
@@ -488,7 +497,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             from .environment_development import development_selection
 
             development = development_selection(
-                args.source, tuple(args.pack_source), tuple(args.library_source)
+                args.source,
+                tuple(args.pack_source),
+                tuple(args.library_source),
+                live_engine=args.live_engine,
+                live_packs=tuple(args.live_pack),
+                live_libraries=tuple(args.live_library),
             )
             for row in development["sources"]:
                 source = Path(row["path"])
@@ -516,12 +530,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if development is not None:
             plan.extend(
                 [
-                    DEVELOPMENT_DESCRIPTION,
+                    development_description(development),
                     *[
-                        f"capture {row['kind']} {row['path']} ({row['contentDigest']})"
+                        f"{'live' if row.get('live') else 'capture'} {row['kind']} "
+                        f"{row['path']} ({row['contentDigest']})"
                         for row in development["sources"]
                     ],
-                    "restore recovers the captured runtime only; author folders stay untouched",
+                    "author folders stay untouched; only captured generations restore exactly",
                 ]
             )
     else:
@@ -1613,6 +1628,21 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.add_argument("--source", type=Path, required=True, help="local Dinkster engine folder")
     develop.add_argument("--pack-source", type=Path, action="append", required=True)
     develop.add_argument("--library-source", type=Path, action="append", default=[])
+    develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
+    develop.add_argument(
+        "--live-pack",
+        type=Path,
+        action="append",
+        default=[],
+        help="watch this selected pack folder for edits",
+    )
+    develop.add_argument(
+        "--live-library",
+        type=Path,
+        action="append",
+        default=[],
+        help="import this selected library folder; restart after edits",
+    )
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)

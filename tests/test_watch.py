@@ -10,9 +10,14 @@ executing - with no sleeps anywhere (tests drive poll_once directly).
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+from dinkster_registry import LockedPack, Lockfile, build_artifact
 from test_reload import run_echo, worker_env, write_pack
 
 from dinkster.compose import ServingComposer
@@ -203,7 +208,8 @@ def test_failed_reload_does_not_refire(tmp_path: Path) -> None:
 # -- end to end ----------------------------------------------------------------
 
 
-def test_watcher_reloads_composed_pack_end_to_end(tmp_path: Path) -> None:
+@pytest.mark.parametrize("generation_source", [False, True])
+def test_watcher_reloads_composed_pack_end_to_end(tmp_path: Path, generation_source: bool) -> None:
     """The real thing: rewrite a composed pack on disk, drive the poll
     loop, and the live engine executes the NEW code - watch_targets from
     the composer's records, the settle cycle, and reload_pack all in one
@@ -211,11 +217,63 @@ def test_watcher_reloads_composed_pack_end_to_end(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         write_pack(tmp_path, "v1")
+        selected = tmp_path
+        if generation_source:
+            from dinkster.generation_packs import generation_pack_specs, stage_generation_packs
+
+            generation = tmp_path.parent / "generation"
+            generation.mkdir()
+            archive = tmp_path.parent / "pack.zip"
+            identity = build_artifact(tmp_path, archive)
+            entry = LockedPack(
+                "rlpack", "1.0", identity, "dinkster", ("rl",), "local-build:" + str(tmp_path)
+            )
+            stage_generation_packs(generation, Lockfile.of([entry]), {"rlpack": archive})
+            (generation / "development-sources.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.development-sources/1",
+                        "sources": [{"kind": "pack", "path": str(tmp_path), "live": True}],
+                    }
+                )
+            )
+            subprocess.run(
+                [
+                    "uv",
+                    "venv",
+                    "--python",
+                    sys.executable,
+                    "--system-site-packages",
+                    str(generation / "packs/rlpack"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            python = (
+                generation
+                / "packs/rlpack"
+                / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            )
+            site = Path(
+                subprocess.check_output(
+                    [
+                        str(python),
+                        "-I",
+                        "-c",
+                        "import sysconfig; print(sysconfig.get_path('purelib'))",
+                    ],
+                    text=True,
+                ).strip()
+            )
+            (site / "fixture.pth").write_text(
+                "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+            )
+            (selected,) = generation_pack_specs(generation)
         composer = ServingComposer(worker_env=worker_env(tmp_path))
         try:
             targets = composer.watch_targets()
             assert targets == {}  # nothing composed yet
-            await composer.add_pack(tmp_path)
+            await composer.add_pack(selected)
             assert composer.watch_targets() == {"rlpack": tmp_path}
             engine = composer.composition.make_engine(lambda event: None)
             assert await run_echo(engine) == "hi-v1"

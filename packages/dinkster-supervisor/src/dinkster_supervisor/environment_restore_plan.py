@@ -846,6 +846,14 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         raise EnvironmentError(f"installation history has no entry {entry_id}")
     validate_import(root, selected)
     snapshot = cast("dict[str, object]", selected["snapshot"])
+    development = _metadata(snapshot).get("development-sources.json")
+    if development is not None and any(
+        row.get("live") for row in json.loads(development)["sources"]
+    ):
+        raise EnvironmentError(
+            "live sources change with their folders and cannot be restored exactly; "
+            "run develop without live marks to capture a restorable generation"
+        )
     store = Path((root / "store").read_text(encoding="utf-8").strip())
     if not store.is_absolute() or store.is_symlink() or (root / "store").is_symlink():
         raise EnvironmentError("restore requires an absolute unlinked store")
