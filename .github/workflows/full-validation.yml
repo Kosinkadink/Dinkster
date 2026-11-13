@@ -61,26 +61,9 @@ jobs:
               'timeout-minutes': windows && index === 0 ? 45 : 30,
             }));
             core.setOutput('test-matrix', JSON.stringify({include}));
-            let run = true;
-            if (context.eventName === 'schedule') {
-              const current = await github.rest.actions.getWorkflowRun({
-                ...context.repo, run_id: context.runId,
-              });
-              const previous = await github.paginate(github.rest.actions.listWorkflowRuns, {
-                ...context.repo,
-                workflow_id: current.data.workflow_id,
-                branch: 'main',
-                head_sha: context.sha,
-                status: 'completed',
-                per_page: 100,
-              });
-              run = !previous.some(item =>
-                item.id !== context.runId && item.head_sha === context.sha &&
-                !['cancelled', 'skipped'].includes(item.conclusion));
-            }
-            core.setOutput('run-heavy', String(run));
-            core.setOutput('run-torch', String(run && !windows));
-            core.setOutput('run-windows', String(run && windows));
+            core.setOutput('run-heavy', 'true');
+            core.setOutput('run-torch', String(!windows));
+            core.setOutput('run-windows', String(windows));
 
   test:
     needs: validation-plan

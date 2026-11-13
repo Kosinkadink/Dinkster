@@ -8,10 +8,45 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: daily-windows-validation
+  cancel-in-progress: false
+
 jobs:
-  validation:
+  admission:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+    steps:
+      - uses: actions/github-script@v7
+        id: plan
+        with:
+          script: |
+            const previous = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo,
+              workflow_id: 'windows-validation.yml',
+              branch: 'main',
+              head_sha: context.sha,
+              status: 'completed',
+              per_page: 100,
+            });
+            const completed = previous.some(item =>
+              item.id !== context.runId && item.head_sha === context.sha);
+            core.setOutput('run', String(!completed));
+
+  validation:
+    needs: admission
+    if: needs.admission.outputs.run == 'true'
     uses: ./.github/workflows/full-validation.yml
     with:
       platform: windows
+    secrets: inherit
+
+  dependencies:
+    needs: admission
+    if: needs.admission.outputs.run == 'true'
+    uses: ./.github/workflows/dependency-runtime.yml
+    with:
+      windows: true
     secrets: inherit

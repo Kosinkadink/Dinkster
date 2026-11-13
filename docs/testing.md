@@ -229,9 +229,10 @@ landing is covered by a natural main run with
 `.github/workflows/windows-validation.yml` calls the Windows lanes once a day
 at 10:23 UTC on main, never on a push or pull request. Its admission step
 checks completed runs of that daily workflow for the exact commit, regardless
-of whether the result was red or green. A completed run is not repeated;
-cancelled and skipped runs are incomplete evidence. The daily call does not
-run the Linux, CPU-pack or probe-jail lanes. Windows runtime shards retain
+of conclusion. A completed run is not repeated, including cancelled and
+skipped runs. One admission decision gates both Windows root/runtime tests
+and Windows dependency smoke checks. The daily call does not run the Linux,
+CPU-pack or probe-jail lanes. Windows runtime shards retain
 the disposable ReFS clone-test environment formerly used on pull requests.
 
 Coverage is collected inside the selected platform's test jobs rather than
