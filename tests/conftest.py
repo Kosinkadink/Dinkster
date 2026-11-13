@@ -163,17 +163,27 @@ def shm_segments(monkeypatch: pytest.MonkeyPatch) -> set[str]:
 
 
 @pytest.fixture(scope="session")
-def installed_default_catalogs() -> None:
+def installed_default_catalogs(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> None:
     from dinkster_workers import diagnose, load_manifest
     from dinkster_workers.catalog import read_catalog
+    from filelock import FileLock
 
     from dinkster.compose import default_pack_specs
 
-    for spec in default_pack_specs():
-        report = diagnose(
-            spec.manifest, environment={**(spec.env or {}), "CUDA_VISIBLE_DEVICES": ""}
-        )
-        assert read_catalog(load_manifest(spec.manifest)) is not None, report
+    shared = tmp_path_factory.getbasetemp()
+    if worker_id != "master":
+        shared = shared.parent
+    ready = shared / "installed-default-catalogs.ready"
+    # Doctor removes the old catalog before probing. Finish preparation once
+    # before any worker serves from these shared installed pack directories.
+    with FileLock(str(shared / "installed-default-catalogs.lock"), timeout=120):
+        if not ready.exists():
+            for spec in default_pack_specs():
+                report = diagnose(
+                    spec.manifest, environment={**(spec.env or {}), "CUDA_VISIBLE_DEVICES": ""}
+                )
+                assert read_catalog(load_manifest(spec.manifest)) is not None, report
+            ready.touch()
 
 
 @pytest.fixture(scope="session")

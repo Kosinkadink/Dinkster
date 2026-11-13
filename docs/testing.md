@@ -111,25 +111,28 @@ the evidence repository. Generation fails if the evidence checkout or its
 `.github/workflows/ci.yml` always reports `format, lint, types` and `tests`.
 Docs-only changes skip environment provisioning and test execution inside
 those jobs. Other changes run Ruff format, Ruff lint and both platform
-Pyright checks with `bash scripts/ci-fast.sh checks`. The test job runs the
-engine subset with `bash scripts/ci-fast.sh tests`, selected pack tests, or
-both, according to the changed paths. Engine subset examples include:
+Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
+only these checks. Ready pull requests run the whole configured kept Linux
+suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
+pack-only changes. Frontend decoding reads the live catalog of an isolated
+CPU generation acquired by supervisor setup from the published main channel.
+Setup prepares its catalogs before sealing. After stopping its assigned backend,
+the current checkout engine serves the generation's admitted packs and runtimes;
+it does not substitute the published engine catalog or checkout defaults.
+An unavailable default pack or an empty default catalog fails the export.
+There is no hand-picked file list, network-marker exclusion,
+forced offline mode, or changed-path runtime deselection. Real install tests
+acquire their dependencies; tests of offline behavior control their own inputs.
+The four audited environment suites retain
+their existing nonblocking policy under #867.
 
-- `tests/test_release_install.py`: release wheel and install surface checks.
-- `tests/test_schema.py`: schema construction and type validation.
-- `tests/test_schema_current_contracts.py`: generated current schema contracts.
-- `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
-- `tests/test_graph.py`: graph validation and execution planning.
-- `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
-
-These tests use synthetic data. The validation-input contract checks the prepared
-evidence location without reading model data. `tools/ci_selection.py` selects
-install/environment tests and the Windows jobs only for runtime-related changes.
-A pack-only change selects that pack's behavioral tests; shared library changes
-also select its declared dependents. Registry default pack admission gates only
-scanner or harness changes. Publication preflight runs for publisher or manifest
-changes, not ordinary pack source edits. Reproduce the checks and engine subset after
-`python scripts/develop.py setup --yes` with `bash scripts/ci-fast.sh`.
+`tools/ci_selection.py` additionally selects changed packs' behavioral tests;
+shared library changes also select their declared dependents. Registry default
+pack admission gates only scanner or harness changes. Publication preflight runs
+for publisher or manifest changes, not ordinary pack source edits. Reproduce the
+checks and whole configured suite after
+`python scripts/develop.py setup --variant linux-cpu --yes`
+with `bash scripts/ci-fast.sh`.
 
 Landing requires the selected hosted jobs green and a fresh LOW verifier PASS at
 the offered head. Running the counted full suite or its shards locally is not a
