@@ -28,7 +28,6 @@ jobs:
     outputs:
       docs: ${{ steps.paths.outputs.docs }}
       engine: ${{ steps.paths.outputs.engine }}
-      runtime: ${{ steps.paths.outputs.runtime }}
       packs: ${{ steps.paths.outputs.packs }}
     steps:
       - uses: actions/checkout@v4
@@ -114,8 +113,26 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --all-packages
+      - name: Install the locked Linux workspace with CPU torch
         if: needs.checks.outputs.docs != 'true'
+        run: |
+          uv export --locked --all-packages --no-hashes --no-annotate --no-header \
+            | sed '/^nvidia-/d; /^triton==/d' > "$RUNNER_TEMP/linux-root-requirements.txt"
+          uv venv --clear --python 3.12
+          uv pip sync --python .venv/bin/python --torch-backend cpu "$RUNNER_TEMP/linux-root-requirements.txt"
+          echo 'UV_NO_SYNC=1' >> "$GITHUB_ENV"
+          .venv/bin/python - <<'PY'
+          from importlib.metadata import distributions
+          import torch
+          import torchvision
+          print(f"torch {torch.__version__}, CUDA {torch.version.cuda}; torchvision {torchvision.__version__}")
+          assert torch.__version__.endswith('+cpu') and torch.version.cuda is None
+          assert torchvision.__version__.endswith('+cpu')
+          assert not any(
+              distribution.metadata['Name'].lower().startswith(('nvidia-', 'triton'))
+              for distribution in distributions()
+          )
+          PY
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"
@@ -144,13 +161,11 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$volume"
           echo "DINKSTER_CLONE_TEST_ROOT=$volume" >> "$GITHUB_ENV"
           echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
-      - name: Require real Linux clone allocation coverage
-        if: needs.checks.outputs.engine == 'true'
-        run: uv run --no-sync python -m pytest -q -rA --no-cov -n0 tests/test_environment_collection.py -k real_clones
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:
-          DINKSTER_CI_RUNTIME: ${{ needs.checks.outputs.runtime }}
+          CUDA_VISIBLE_DEVICES: ""
+          DINKSTER_ACCELERATOR: cpu
       - name: Install the CPU base for selected packs
         if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
         run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
