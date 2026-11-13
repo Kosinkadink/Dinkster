@@ -372,7 +372,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
 
     def process_field(pid: int, field: str) -> str:
         result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", f"{field}="],
+            ["ps", "-ww", "-p", str(pid), "-o", f"{field}="],
             capture_output=True,
             text=True,
             check=False,
@@ -384,6 +384,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
         state = process_field(pid, "stat")
         return bool(state) and not state.startswith("Z")
 
+    monkeypatch.setenv("COLUMNS", "80")
     monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     make_generation(tmp_path)
     port = free_port()
