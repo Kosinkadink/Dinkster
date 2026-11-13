@@ -16,10 +16,8 @@ import hashlib
 import json
 import os
 import shutil
-import sys
 import weakref
 from collections.abc import Mapping
-from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +25,7 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetError, AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_engine import EngineEvent
@@ -40,22 +38,17 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import Node
-from dinkster_server import PackInfo, ServerLibrary, create_app
+from dinkster_schema import build_schemas
+from dinkster_server import PackInfo, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
-from dinkster_values.storage import image_input
-from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
-from dinkster_workers.manifest import resolve_entry
 
 from dinkster.compose import (
-    Composition,
     CompositionError,
     PackSpec,
     ServingComposer,
     compose_serving,
     default_pack_spec,
-    default_pack_specs,
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
@@ -65,12 +58,51 @@ TESTS_DIR = Path(__file__).parent
 DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
-FIRST_PARTY_NODE_PACKS = {
-    node.schema().node_type: manifest.name
-    for spec in default_pack_specs()
-    if (manifest := load_manifest(spec.manifest)).nodes_entry
-    for node in cast("list[type[Node]]", resolve_entry(manifest.nodes_entry))
-}
+
+
+@pytest.fixture(autouse=True)
+def synthetic_pack_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster import compose
+
+    monkeypatch.setattr(compose, "_FIRST_PARTY_PACK_MODULES", {"dinkster-text": "dinkster_text"})
+    monkeypatch.setattr(
+        compose, "_FIRST_PARTY_PACK_DISTRIBUTIONS", {"dinkster-text": "dinkster-text"}
+    )
+
+
+@pytest.fixture
+def text_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from dinkster import compose
+
+    root = tmp_path / "text-pack"
+    module = root / "src/dinkster_text"
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text("NODES = ()\n", encoding="utf-8")
+    manifest = root / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "dinkster-text"\nversion = "0.0.4"\n'
+        'engine = ">=0.0.2.dev0,<2"\npublisher = "dinkster"\n'
+        'namespaces = ["dinkster.text"]\n'
+        '[pack.entry]\nnodes = "dinkster_text:NODES"\n',
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster-text"\nversion = "0.0.4"\n', encoding="utf-8"
+    )
+    lock = Lockfile.of(
+        [
+            LockedPack(
+                "dinkster-text",
+                "0.0.4",
+                compose._installed_pack_digest(manifest, module),
+                "dinkster",
+                ("dinkster-text",),
+                "python:dinkster-text==0.0.4",
+            )
+        ]
+    )
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: lock)
+    return root
 
 
 def editable_distribution(root: Path, version: str) -> SimpleNamespace:
@@ -84,131 +116,6 @@ def editable_distribution(root: Path, version: str) -> SimpleNamespace:
             else None
         ),
     )
-
-
-@pytest.mark.parametrize("source", ["image-list", "video-asset"])
-def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: str) -> None:
-    import io
-
-    import av
-    import numpy as np
-    from PIL import Image
-
-    async def scenario() -> None:
-        vault = AssetVault(tmp_path / "vault")
-        specs = tuple(
-            replace(default_pack_spec(pack), in_process=False, python=sys.executable)
-            for pack in (
-                "dinkster-utilities",
-                "dinkster-video",
-                "dinkster-image",
-            )
-        )
-        composition = await compose_serving(
-            specs,
-            include_default_packs=False,
-            worker_env={"DINKSTER_ASSET_VAULT": str(tmp_path / "vault")},
-        )
-        try:
-            library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
-            app = create_app(
-                composition.make_engine,
-                composition.schemas,
-                library=library,
-                choices=composition.choices,
-                lazy_choices=composition.lazy_choices,
-            )
-            async with TestClient(TestServer(app)) as client:
-                if source == "image-list":
-                    nodes = {
-                        "source": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 1},
-                        ),
-                        "other": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 11, "height": 5, "batch_size": 2},
-                        ),
-                        "list": GraphNode(
-                            "dinkster.utilities.make_list",
-                            {"items.0": Link("other", "IMAGE"), "items.1": Link("source", "IMAGE")},
-                        ),
-                        "select": GraphNode(
-                            "dinkster.utilities.list_element",
-                            {"list": Link("list", "list"), "index": -1},
-                        ),
-                        "info": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("select", "item")}
-                        ),
-                    }
-                    expected = {"width": 7, "height": 3, "batch_size": 1}
-                else:
-                    path = tmp_path / "input.mp4"
-                    with av.open(str(path), "w") as container:
-                        stream = container.add_stream("libx264rgb", rate=2)
-                        stream.width, stream.height, stream.pix_fmt = 32, 16, "rgb24"
-                        stream.options = {"crf": "0"}
-                        for value in (31, 173):
-                            frame = av.VideoFrame.from_ndarray(
-                                np.full((16, 32, 3), value, dtype=np.uint8), format="rgb24"
-                            )
-                            container.mux(stream.encode(frame))
-                        container.mux(stream.encode())
-                    response = await client.post("/api/assets", data=path.read_bytes())
-                    assert response.status == 201
-                    uploaded = await response.json()
-                    nodes = {
-                        "source": GraphNode(
-                            "dinkster.video.load_video",
-                            {"file": TypedLiteral("ASSET", {"digest": uploaded["digest"]})},
-                        ),
-                        "frames": GraphNode(
-                            "dinkster.video.get_video_components",
-                            {"video": Link("source", "VIDEO")},
-                        ),
-                        "info": GraphNode(
-                            "dinkster.image.get_image_size", {"image": Link("frames", "images")}
-                        ),
-                    }
-                    expected = {"width": 32, "height": 16, "batch_size": 2}
-                response = await client.post(
-                    "/api/jobs",
-                    json={
-                        "clientId": "cross-pack",
-                        "jobId": source,
-                        "graph": graph_to_wire(Graph(nodes=nodes)),
-                        "targets": ["info", "frames"] if source == "video-asset" else ["info"],
-                    },
-                )
-                assert response.status == 202, await response.text()
-                async with asyncio.timeout(60):
-                    while True:
-                        result = await (await client.get(f"/api/jobs/cross-pack/{source}")).json()
-                        if result["state"] in {"completed", "failed", "cancelled"}:
-                            break
-                        await asyncio.sleep(0.01)
-                assert result["state"] == "completed", result.get("error", result)
-                assert {
-                    name: result["outputs"]["info"][name]["value"] for name in expected
-                } == expected
-                if source == "video-asset":
-                    response = await client.get(
-                        "/api/values",
-                        params={
-                            "clientId": "cross-pack",
-                            "jobId": source,
-                            "nodeId": "frames",
-                            "outputId": "images",
-                            "rendition": "png",
-                        },
-                    )
-                    assert response.status == 200, await response.text()
-                    pixels = np.array(Image.open(io.BytesIO(await response.read())))
-                    assert np.array_equal(pixels, np.full((16, 32, 3), 31, dtype=np.uint8))
-        finally:
-            await composition.close()
-
-    run_scenario(scenario())
 
 
 def test_default_pack_specs_verify_independently_versioned_checkout_sources(
@@ -291,116 +198,6 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     pool = ResidentPool()
     monkeypatch.setattr("dinkster.compose.default_pool", lambda: pool)
     return pool
-
-
-@pytest.mark.usefixtures("installed_default_catalogs")
-@pytest.mark.parametrize(
-    "compositor_value, width",
-    [
-        ({"version": 2, "documentDigest": None, "commands": []}, 7),
-        ({}, 7),
-        (None, 7),
-        (
-            {
-                "version": 2,
-                "documentDigest": None,
-                "commands": [{"op": "canvas", "changes": {"width": 5}}],
-            },
-            5,
-        ),
-    ],
-)
-def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta(
-    compositor_value: object, width: int
-) -> None:
-    import numpy as np
-
-    async def scenario() -> None:
-        image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-        assert not image.in_process
-        composer = ServingComposer()
-        try:
-            await composer.add_pack(image)
-            assert composer._records["dinkster-image"].worker.cold
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "image": GraphNode(
-                            "dinkster.image.empty_image",
-                            {"width": 7, "height": 3, "batch_size": 1, "color": 0x123456},
-                        ),
-                        "layer": GraphNode(
-                            "dinkster.image.add_layer", {"image": Link("image", "IMAGE")}
-                        ),
-                        "compose": GraphNode(
-                            "dinkster.image.image_compositor",
-                            {
-                                "layers": Link("layer", "LAYERS"),
-                                **(
-                                    {"compositor": compositor_value}
-                                    if compositor_value is not None
-                                    else {}
-                                ),
-                            },
-                        ),
-                    }
-                ),
-                ["compose"],
-            )
-            pixels = np.asarray(image_input(result.outputs["compose"]["IMAGE"].resolve()))
-            assert pixels.shape == (1, 3, width, 3)
-            expected = np.broadcast_to(np.asarray([0x12, 0x34, 0x56]), pixels.shape)
-            np.testing.assert_array_equal(np.rint(pixels * 255).astype(np.uint8), expected)
-            assert result.diagnostics == ()
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.usefixtures("installed_default_catalogs")
-def test_lazy_image_pack_resolves_assets_after_host_registration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import io
-
-    import numpy as np
-    from PIL import Image
-
-    pixels = np.zeros((3, 5, 3), dtype=np.uint8)
-    pixels[..., 1] = 255
-    encoded = io.BytesIO()
-    Image.fromarray(pixels, mode="RGB").save(encoded, format="PNG")
-    data = encoded.getvalue()
-    digest = digest_bytes(data)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        writer.commit()
-    for key in ("DINKSTER_PACK_SCRATCH", "DINKSTER_MOUNTS_SNAPSHOT", "DINKSTER_ASSET_ROOT"):
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
-    ref = AssetRef(digest, "input.png", len(data), "image/png")
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-            await composer.add_pack(image)
-
-            engine = composer.composition.make_engine(lambda _event: None)
-            result = await engine.run(
-                Graph(
-                    nodes={"load": GraphNode("dinkster.image.load_image", {"image": ref.to_wire()})}
-                ),
-                ["load"],
-            )
-            loaded = cast("np.ndarray", result.outputs["load"]["IMAGE"].resolve())
-            np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
 
 
 def write_iso_manifest(
@@ -616,75 +413,48 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_capabiliti
 
 def test_compose_defaults_only(
     tmp_path: Path,
-    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Installed defaults provide the standard surface through independent packs."""
-    runner, defaults = shared_default_composition
+    """Implicit selection uses the configured defaults without adding other packs."""
+    spec = PackSpec(write_iso_manifest(tmp_path))
+    monkeypatch.setattr("dinkster.compose.default_pack_specs", lambda: (spec,))
 
     async def scenario() -> None:
-        async with defaults as composition:
-            assert set(composition.schemas) == set(FIRST_PARTY_NODE_PACKS)
-            assert not any(t.startswith("dev.") for t in composition.schemas)
-            assert set(composition.packs) == (
-                set(FIRST_PARTY_NODE_PACKS.values()) | {"dinkster-nodes-remote"}
-            )
-            assert composition.node_packs == FIRST_PARTY_NODE_PACKS
-            locked = default_pack_specs()
-            assert {
-                next(iter(spec.packs))
-                for spec in locked
-                if spec.packs is not None and not spec.in_process
-            } == set(composition.packs)
-            expected_digests = {
-                pack_id: info.artifact_digest
-                for spec in locked
-                if spec.packs is not None
-                for pack_id, info in spec.packs.items()
-            }
-            assert {
-                pack.pack: pack.artifact_digest for pack in composition.generation.packs
-            } == expected_digests
-            engine = composition.make_engine(lambda event: None)
-            graph = Graph(
-                nodes={
-                    "g": GraphNode(
-                        "dinkster.text.string_concatenate",
-                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                    )
-                }
-            )
-            result = await engine.run(graph, ["g"])
-            assert result.outputs["g"]["STRING"].resolve() == "left:right"
+        composition = await compose_serving(worker_env=WORKER_ENV)
+        try:
+            from tests.isopack_nodes import NODES
 
-            library = ServerLibrary(
-                vault=AssetVault(tmp_path / "vault"),
-                store=LibraryStore(tmp_path / "library.sqlite"),
-                pack_assets=composition.asset_catalog,
+            expected = set(build_schemas(NODES))
+            assert set(composition.schemas) == expected
+            assert set(composition.packs) == {"isopack"}
+            assert composition.node_packs == dict.fromkeys(expected, "isopack")
+            engine = composition.make_engine(lambda event: None)
+            result = await engine.run(
+                Graph(nodes={"g": GraphNode("iso.chatty", {"value": "left:right"})}), ["g"]
             )
-            app = create_app(
-                composition.make_engine,
-                composition.schemas,
-                choices=composition.choices,
-                lazy_choices=composition.lazy_choices,
-                library=library,
-            )
+            assert result.outputs["g"]["value"].resolve() == "LEFT:RIGHT"
+            app = create_app(composition.make_engine, composition.schemas)
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
                 response = await client.get("/api/nodes")
                 payload = await response.json()
                 assert response.status == 200, payload
-                assert set(payload["nodes"]) == set(FIRST_PARTY_NODE_PACKS)
+                assert set(payload["nodes"]) == expected
             finally:
                 await client.close()
+        finally:
+            await composition.close()
 
-    runner.run(scenario())
+    run_scenario(scenario())
 
 
-def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_pack_publishes_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_pack: Path
+) -> None:
     from dinkster import compose
 
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     copied = tmp_path / "pack"
     shutil.copytree(source, copied)
     manifest = copied / "dinkster-pack.toml"
@@ -718,7 +488,7 @@ def test_default_pack_publishes_docs(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_default_pack_uses_embedded_wheel_artifact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_pack: Path
 ) -> None:
     from dinkster_registry import artifact_digest, unpack_artifact
     from dinkster_workers.pack_wheel import build_pack_archive
@@ -726,7 +496,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     output = tmp_path / "wheel"
     build_pack_archive(source, output)
     archive = next(output.glob("*.whl"))
@@ -754,11 +524,12 @@ def test_default_pack_uses_embedded_wheel_artifact(
 def test_default_pack_refuses_version_outside_suite_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    text_pack: Path,
 ) -> None:
     from dinkster import compose
 
     lock = compose._default_pack_lock()
-    source = TESTS_DIR.parent / "packages/dinkster-nodes-text"
+    source = text_pack
     copied = tmp_path / "source"
     copied.mkdir()
     manifest = copied / "dinkster-pack.toml"
@@ -777,6 +548,25 @@ def test_default_pack_refuses_version_outside_suite_lock(
 
     with pytest.raises(CompositionError, match="locks dinkster-text version 0.0.4"):
         default_pack_spec("dinkster-text")
+
+
+@pytest.mark.parametrize("checkout", [False, True])
+def test_engine_has_no_implicit_pack_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checkout: bool
+) -> None:
+    from dinkster import compose
+
+    package = tmp_path / ("src" if checkout else "site-packages") / "dinkster"
+    package.mkdir(parents=True)
+    if checkout:
+        (tmp_path / "pyproject.toml").write_text("")
+    monkeypatch.setattr(compose, "__file__", str(package / "compose.py"))
+    monkeypatch.setattr(compose, "_CHECKOUT_PACKS_LOCK", package / "checkout-packs.lock")
+    compose._default_pack_lock.cache_clear()
+    try:
+        assert compose.default_pack_ids() == ()
+    finally:
+        compose._default_pack_lock.cache_clear()
 
 
 def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Path) -> None:
@@ -910,7 +700,7 @@ def test_compose_rejects_reserved_pack_name(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, name="core", presentation=False)
         with pytest.raises(CompositionError, match="reserved"):
-            await compose_serving([manifest], worker_env=WORKER_ENV)
+            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
 
     run_scenario(scenario())
 
@@ -920,7 +710,9 @@ def test_compose_rejects_duplicate_pack_name(tmp_path: Path) -> None:
         first = write_iso_manifest(tmp_path / "a", presentation=False)
         second = write_iso_manifest(tmp_path / "b", presentation=False)
         with pytest.raises(CompositionError, match="duplicate pack name"):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -947,126 +739,6 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             await compose_serving(
                 [first, second], include_default_packs=False, worker_env=WORKER_ENV
             )
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("in_process", (False, True))
-def test_pack_namespace_compose_reload_execute_and_reject_second_owner(
-    tmp_path: Path, in_process: bool
-) -> None:
-    from dinkster_utilities import NODES
-
-    claims = tuple(node.schema().node_type for node in NODES)
-    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-utilities/dinkster-pack.toml"
-    assert load_manifest(manifest).namespaces == ("dinkster.utilities",)
-    other_manifest = tmp_path / "dinkster-pack.toml"
-    other_manifest.write_text(
-        '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
-        'namespaces = ["dinkster.utilities"]\n'
-        '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
-    )
-    (tmp_path / "other_owner_fixture.py").write_text(
-        "from dinkster_utilities.primitive import PrimitiveString\nNODES = (PrimitiveString,)\n"
-    )
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
-            assert set(composer.composition.schemas) == set(claims)
-            assert set(composer.composition.node_packs.values()) == {"dinkster-utilities"}
-            assert not composer.composition.lazy_choices
-            if in_process:
-                with pytest.raises(CompositionError, match="cannot reload in-process pack"):
-                    await composer.reload_pack("dinkster-utilities")
-            else:
-                await composer.reload_pack("dinkster-utilities")
-            assert set(composer.composition.schemas) == set(claims)
-            assert not composer.composition.lazy_choices
-            await composer.add_pack(
-                PackSpec(
-                    manifest=TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml",
-                    in_process=in_process,
-                    trust_reserved=True,
-                )
-            )
-            combined_claims = set(composer.composition.schemas)
-            engine = composer.composition.make_engine(lambda _event: None)
-            graph = Graph(
-                nodes={
-                    "text": GraphNode(
-                        "dinkster.utilities.primitive_string", {"value": "a\U0001f600"}
-                    ),
-                    "length": GraphNode(
-                        "dinkster.text.string_length", {"string": Link("text", "STRING")}
-                    ),
-                    "false": GraphNode("dinkster.utilities.primitive_boolean", {"value": False}),
-                    "not": GraphNode(
-                        "dinkster.utilities.comfy_not_node", {"value": Link("length", "length")}
-                    ),
-                    "and": GraphNode(
-                        "dinkster.utilities.comfy_and_node",
-                        {
-                            "values.value0": Link("length", "length"),
-                            "values.value1": Link("false", "BOOLEAN"),
-                        },
-                    ),
-                    "or": GraphNode(
-                        "dinkster.utilities.comfy_or_node",
-                        {
-                            "values.value0": Link("false", "BOOLEAN"),
-                            "values.value1": Link("length", "length"),
-                        },
-                    ),
-                    "combo_default": GraphNode("dinkster.utilities.custom_combo", {"choice": ""}),
-                    "combo_index": GraphNode("dinkster.utilities.primitive_int", {"value": 205}),
-                    "combo": GraphNode(
-                        "dinkster.utilities.custom_combo",
-                        {
-                            "choice": "outside-menu",
-                            "index": Link("combo_index", "INT"),
-                            "2": TypedLiteral("STRING", "unused sparse option"),
-                            "205": Link("text", "STRING"),
-                            "label": TypedLiteral("STRING", "arbitrary extra name"),
-                            **{str(i): TypedLiteral("INT", i) for i in range(300, 405)},
-                        },
-                    ),
-                }
-            )
-            targets = ["length", "not", "and", "or", "combo_default", "combo"]
-            result = await engine.run(graph, targets)
-            assert result.outputs["length"]["length"].resolve() == 2
-            assert result.outputs["not"]["BOOLEAN"].resolve() is False
-            assert result.outputs["and"]["BOOLEAN"].resolve() is False
-            assert result.outputs["or"]["BOOLEAN"].resolve() is True
-            assert result.outputs["combo_default"]["STRING"].resolve() == ""
-            assert result.outputs["combo_default"]["INDEX"].resolve() == 0
-            assert result.outputs["combo"]["STRING"].resolve() == "outside-menu"
-            assert result.outputs["combo"]["INDEX"].resolve() == 205
-            repeated = await engine.run(graph, targets)
-            assert repeated.executed == ()
-            assert "combo" in repeated.cached
-            assert repeated.outputs["combo"]["INDEX"].resolve() == 205
-            changed = Graph(
-                nodes={
-                    **graph.nodes,
-                    "combo_index": GraphNode("dinkster.utilities.primitive_int", {"value": -7}),
-                }
-            )
-            changed_result = await engine.run(changed, ["combo"])
-            assert changed_result.outputs["combo"]["STRING"].resolve() == "outside-menu"
-            assert changed_result.outputs["combo"]["INDEX"].resolve() == -7
-            assert "combo" in changed_result.executed
-            with pytest.raises(
-                CompositionError, match="declared by both 'dinkster-utilities' and 'other-owner'"
-            ):
-                await composer.add_pack(PackSpec(manifest=other_manifest, trust_reserved=True))
-            assert set(composer.composition.schemas) == combined_claims
-        finally:
-            await composer.close()
 
     run_scenario(scenario())
 
@@ -1222,38 +894,6 @@ def test_asset_literals_use_host_and_worker_resolvers(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-text/dinkster-pack.toml"
-            await composer.add_pack(
-                PackSpec(manifest=manifest, in_process=in_process, trust_reserved=True)
-            )
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "dictionary": GraphNode(
-                            "dinkster.text.convert_dictionary_to_string",
-                            {"dictionary": {"key": [3, True]}, "indent": 0},
-                        ),
-                        "array": GraphNode(
-                            "dinkster.text.convert_array_to_string",
-                            {"array": [3, {"key": False}], "indent": 0},
-                        ),
-                    }
-                ),
-                ["dictionary", "array"],
-            )
-            assert result.outputs["dictionary"]["STRING"].resolve() == '{"key": [3, true]}'
-            assert result.outputs["array"]["STRING"].resolve() == '[3, {"key": false}]'
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
 def test_compose_rejects_nested_namespace_claims(tmp_path: Path) -> None:
     """Overlap is atom-bounded across separator spellings: iso-extra IS
     iso.extra, which nests inside iso - two owners could otherwise both
@@ -1268,7 +908,9 @@ def test_compose_rejects_nested_namespace_claims(tmp_path: Path) -> None:
             namespaces=("iso-extra",),
         )
         with pytest.raises(CompositionError, match="overlaps 'iso'"):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -1282,7 +924,9 @@ def test_compose_rejects_separator_equivalent_pack_names(tmp_path: Path) -> None
         first = write_iso_manifest(tmp_path / "a", name="iso-pack", presentation=False)
         second = write_iso_manifest(tmp_path / "b", name="iso_pack", presentation=False)
         with pytest.raises(CompositionError, match="one identity"):
-            await compose_serving([first, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [first, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     run_scenario(scenario())
 
@@ -1326,52 +970,8 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_composed_cpu_device_choices_without_tensor_initialization(tmp_path: Path) -> None:
-    (tmp_path / "sitecustomize.py").write_text(
-        "import importlib.abc\nimport sys\n"
-        "class NoTensorRuntime(importlib.abc.MetaPathFinder):\n"
-        "    def find_spec(self, fullname, path=None, target=None):\n"
-        "        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:\n"
-        "            raise AssertionError('device enumeration imported ' + fullname)\n"
-        "sys.meta_path.insert(0, NoTensorRuntime())\n",
-        encoding="ascii",
-    )
-
-    async def scenario() -> None:
-        composition = await compose_serving(
-            [default_pack_spec("dinkster-models")],
-            include_default_packs=False,
-            worker_env={
-                **WORKER_ENV,
-                "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
-                "DINKSTER_ACCELERATOR": "cpu",
-            },
-        )
-        app = create_app(
-            composition.make_engine,
-            composition.schemas,
-            choices=composition.choices,
-            lazy_choices=composition.lazy_choices,
-        )
-        try:
-            async with TestClient(TestServer(app)) as client:
-                for _ in range(2):
-                    for name, expected in (
-                        ("devices.gpu", ["default", "cpu"]),
-                        ("devices.vae", ["default"]),
-                    ):
-                        response = await client.get(f"/api/choices/{name}")
-                        assert response.status == 200, await response.text()
-                        assert await response.json() == expected
-                assert (await client.get("/api/choices/missing")).status == 404
-        finally:
-            await composition.close()
-
-    run_scenario(scenario())
-
-
 def test_composed_server_end_to_end(tmp_path: Path) -> None:
-    """One server: text nodes in-process, the pack isolated, both executing
+    """One server: development nodes in-process, the pack isolated, both executing
     through the same queue; /api/nodes attributes each side truthfully and
     carries the manifest's declared presentation."""
 
@@ -1379,8 +979,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         manifest = write_iso_manifest(tmp_path)
         composition = await compose_serving(
             [
-                replace(default_pack_spec("dinkster-text"), in_process=True),
-                default_pack_spec("dinkster-models"),
+                PackSpec(DEV_PACK_MANIFEST, in_process=True),
                 manifest,
             ],
             include_default_packs=False,
@@ -1389,12 +988,12 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         published_schemas = {
             node_type: schema
             for node_type, schema in composition.schemas.items()
-            if node_type.startswith("iso.") or node_type == "dinkster.text.string_concatenate"
+            if node_type.startswith("iso.") or node_type == "dev.util.delay"
         }
         published_packs = {
             pack_id: info
             for pack_id, info in composition.packs.items()
-            if pack_id in {"isopack", "dinkster-text"}
+            if pack_id in {"isopack", "dinkster-nodes-dev"}
         }
         app = create_app(
             composition.make_engine,
@@ -1417,7 +1016,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
         await client.start_server()
         try:
             # Provenance: manifest presentation reaches the packs table,
-            # pack nodes and standard nodes both attribute to their packs. A
+            # isolated and in-process nodes both attribute to their packs. A
             # plain dev pack exposes where its bytes live but no pin -
             # version/artifactDigest stay omitted (unpinned), never null.
             data = await (await client.get("/api/nodes")).json()
@@ -1429,7 +1028,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "source": f"local:{Path(manifest).parent.resolve()}",
             }
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
-            assert data["nodes"]["dinkster.text.string_concatenate"]["pack"] == "dinkster-text"
+            assert data["nodes"]["dev.util.delay"]["pack"] == "dinkster-nodes-dev"
             blob_size = next(
                 item
                 for item in data["nodes"]["iso.blob_out"]["interface"]
@@ -1442,17 +1041,17 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "unit": "bytes",
             }
 
-            devices = await client.get("/api/choices/devices.gpu")
-            assert devices.status == 200, await devices.text()
-            assert "cpu" in await devices.json()
+            samplers = await client.get("/api/choices/dev.gallery.samplers")
+            assert samplers.status == 200, await samplers.text()
+            assert "euler" in await samplers.json()
 
-            # One graph spanning both workers: text concatenation runs
+            # One graph spanning both workers: the development delay runs
             # in-process, iso.chatty in the pack process, one job.
             graph = Graph(
                 nodes={
                     "g": GraphNode(
-                        "dinkster.text.string_concatenate",
-                        {"string_a": "left", "string_b": "right", "delimiter": ":"},
+                        "dev.util.delay",
+                        {"value": "left:right", "seconds": 0},
                     ),
                     "c": GraphNode("iso.chatty", {"value": "hi"}),
                     "b": GraphNode("iso.blob_out", {"size": 3}),
@@ -1475,7 +1074,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             assert status.get("state") == "completed", status
 
             for node_id, output_id, expected in (
-                ("g", "STRING", "left:right"),
+                ("g", "value", "left:right"),
                 ("c", "value", "HI"),
             ):
                 response = await client.get(
@@ -1765,27 +1364,6 @@ def test_serving_composer_incremental(tmp_path: Path) -> None:
             finally:
                 await client.close()
 
-            standard_deltas = [
-                await composer.add_pack(standard) for standard in default_pack_specs()
-            ]
-            assert set().union(*(delta.schemas for delta in standard_deltas)) == set(
-                FIRST_PARTY_NODE_PACKS
-            )
-            for standard_delta in standard_deltas:
-                engine.announce_schemas(standard_delta.schemas)
-            result = await engine.run(
-                Graph(
-                    nodes={
-                        "g": GraphNode(
-                            "dinkster.text.string_concatenate",
-                            {"string_a": "left", "string_b": "right", "delimiter": ":"},
-                        )
-                    }
-                ),
-                ["g"],
-            )
-            assert result.outputs["g"]["STRING"].resolve() == "left:right"
-
             delta = await composer.add_pack(write_iso_manifest(tmp_path))
             assert delta.pack == "isopack"
             assert "iso.chatty" in delta.schemas
@@ -1828,8 +1406,8 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 candidates: tuple[str, Mapping[str, str]],
                 **context: object,
             ) -> None:
-                value = inputs["string_a"].resolve()
-                if value in ("first-second", "other"):
+                value = inputs["value"].resolve()
+                if value in ("FIRST-SECOND", "other"):
                     label = "other" if value == "other" else "main"
                     entered[label].set()
                     await resume[label].wait()
@@ -1843,10 +1421,12 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 if len(released) == 1 and ending == "native failure":
                     raise RuntimeError("native settlement failed")
 
-        composer = ServingComposer(pack_scratch_root=scratch, native_policy=Policy())
+        composer = ServingComposer(
+            pack_scratch_root=scratch, native_policy=Policy(), worker_env=WORKER_ENV
+        )
         tasks: list[asyncio.Task[object]] = []
         try:
-            await composer.add_pack(default_pack_spec("dinkster-text"))
+            await composer.add_pack(write_iso_manifest(tmp_path))
             engine = composer.composition.make_engine(lambda event: None)
             with pytest.raises(AssetError, match="ownership state is unavailable"):
                 with claim_inactive_produced_job(scratch, "unknown job"):
@@ -1855,18 +1435,8 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                 engine.run(
                     Graph(
                         nodes={
-                            "first": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {"string_a": "first", "string_b": "second", "delimiter": "-"},
-                            ),
-                            "second": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {
-                                    "string_a": Link("first", "STRING"),
-                                    "string_b": "third",
-                                    "delimiter": ":",
-                                },
-                            ),
+                            "first": GraphNode("iso.chatty", {"value": "first-second"}),
+                            "second": GraphNode("iso.chatty", {"value": Link("first", "value")}),
                         }
                     ),
                     ["second"],
@@ -1876,14 +1446,7 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
             )
             other = asyncio.create_task(
                 composer.composition.make_engine(lambda event: None).run(
-                    Graph(
-                        nodes={
-                            "other": GraphNode(
-                                "dinkster.text.string_concatenate",
-                                {"string_a": "other", "string_b": "job", "delimiter": "/"},
-                            )
-                        }
-                    ),
+                    Graph(nodes={"other": GraphNode("iso.chatty", {"value": "other"})}),
                     ["other"],
                     run_id=other_job,
                 )
@@ -1906,16 +1469,14 @@ def test_composed_job_scratch_stays_live_between_nodes_until_run_settles(
                         ):
                             await main
                     else:
-                        assert (await main).outputs["second"][
-                            "STRING"
-                        ].resolve() == "first-second:third"
+                        assert (await main).outputs["second"]["value"].resolve() == "FIRST-SECOND"
                 with claim_inactive_produced_job(scratch, "../main job") as inactive:
                     assert inactive == (other_job != "../main job")
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert not inactive
                 assert released == ["../main job"]
                 resume["other"].set()
-                assert (await other).outputs["other"]["STRING"].resolve() == "other/job"
+                assert (await other).outputs["other"]["value"].resolve() == "OTHER"
                 with claim_inactive_produced_job(scratch, other_job) as inactive:
                     assert inactive
         finally:
@@ -2174,7 +1735,7 @@ def test_group_contract_conflict_refuses_before_launch(tmp_path: Path) -> None:
             ),
         )
         with pytest.raises(CompositionError, match="incompatible launch contracts"):
-            await compose_serving(specs)
+            await compose_serving(specs, include_default_packs=False)
 
     run_scenario(scenario())
 

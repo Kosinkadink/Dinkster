@@ -1,4 +1,4 @@
-"""Deterministic ImageDocument rendering, cache provenance, and native node coverage."""
+"""Deterministic ImageDocument rendering, cache provenance, and server contracts."""
 
 from __future__ import annotations
 

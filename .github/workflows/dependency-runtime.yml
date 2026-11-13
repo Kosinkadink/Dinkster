@@ -9,8 +9,6 @@ on:
       - scripts/develop.py
       - scripts/base_bundles.json
       - packages/dinkster-supervisor/src/dinkster_supervisor/environment_artifacts.py
-      - tools/minimax_h3_multigpu_receipt.py
-      - packages/dinkster-nodes-void/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
       - packages/dinkster-video-runtime/pyproject.toml
@@ -192,8 +190,3 @@ jobs:
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
           print('CPU generation inventory and NMS passed:', manifest['id'])
           PY
-      - name: Test the public sampler cold import
-        shell: bash
-        run: |
-          python scripts/develop.py run -- python -m pytest -q \
-            packages/dinkster-nodes-void/tests/test_void_sampler_torch.py

@@ -159,38 +159,27 @@ def test_ordinary_manifest_materializes_audio_twice_in_both_hosts(
     in_process: bool, tmp_path: Path
 ) -> None:
     async def scenario() -> None:
-        source_root = (
-            Path(__file__).resolve().parents[1] / "packages" / "dinkster-nodes-audio" / "src"
-        )
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(tmp_path))),
             }
         )
         try:
-            manifest = (
-                Path(__file__).resolve().parents[1]
-                / "packages"
-                / "dinkster-nodes-audio"
-                / "dinkster-pack.toml"
-            )
             (tmp_path / "audio_materializer_fixture.py").write_text(
                 "from test_audio_materializer import AudioConsumer, AudioSource\n"
-                "from dinkster_audio import NODES as AUDIO_NODES, register_types\n"
-                "NODES = (*AUDIO_NODES, AudioSource, AudioConsumer)\n",
+                "from dinkster_api.v1 import register_inference_types\n"
+                "NODES = (AudioSource, AudioConsumer)\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["audio-materializer-fixture",')
-                .replace("dinkster_audio:NODES", "audio_materializer_fixture:NODES")
-                .replace(
-                    "dinkster_audio:register_types",
-                    "audio_materializer_fixture:register_types",
-                ),
+                '[pack]\nname = "audio-materializer-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["audio-materializer-fixture"]\n'
+                '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+                '[pack.entry]\nnodes = "audio_materializer_fixture:NODES"\n'
+                'types = "audio_materializer_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
             await composer.add_pack(

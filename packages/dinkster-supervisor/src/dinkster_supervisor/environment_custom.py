@@ -353,7 +353,7 @@ def prepare_custom_pack_locks(
         "https://pypi.org/simple",
         "--json",
     ]
-    extras = base["localBuild"]["extrasIndex"]
+    extras = base.get("localBuild", {}).get("extrasIndex", "https://pypi.org/simple")
     if extras.rstrip("/") != "https://pypi.org/simple":
         command.extend(["--index", extras])
     for path in links:

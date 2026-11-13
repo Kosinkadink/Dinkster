@@ -109,35 +109,8 @@ jobs:
             tests/test_environment_cli.py::test_setup_plan_labels_cached_channel_without_mutating_project_or_store \
             tests/test_environment_cli.py::test_development_plan_fingerprints_sources_and_refuses_changed_approval
 
-  torch-cpu:
-    needs: checks
-    if: startsWith(github.ref, 'refs/tags/v')
-    name: node pack tests gate (CPU, shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-      OMP_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Install the CPU software shader renderer
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-        timeout-minutes: 5
-      - uses: ./.github/actions/torch-cpu-suite
-        with:
-          suite: comfy
-          comfy-pytest-args: -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/4
-
   tests:
-    needs: [checks, torch-cpu]
+    needs: checks
     # Reusable calls retain the caller's workflow name and existing job selection.
     if: ${{ !cancelled() && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: tests
@@ -153,11 +126,6 @@ jobs:
       - name: Require successful path selection and checks
         run: |
           test '${{ needs.checks.result }}' = success
-          if [ '${{ startsWith(github.ref, 'refs/tags/v') }}' = true ]; then
-            test '${{ needs.torch-cpu.result }}' = success
-          else
-            test '${{ needs.torch-cpu.result }}' = skipped
-          fi
       - uses: actions/checkout@v4
         if: needs.checks.outputs.docs != 'true'
         with:
@@ -226,12 +194,6 @@ jobs:
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_ACCELERATOR: cpu
-      - name: Test selected packs
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        env:
-          PACKS: ${{ needs.checks.outputs.packs }}
-          DINKSTER_ACCELERATOR: cpu
-        run: python scripts/develop.py run -- python -m tools.ci_selection --packs "$PACKS"
       - name: Export the published default catalog
         if: needs.checks.outputs.engine == 'true'
         run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"

@@ -27,7 +27,7 @@ from dinkster_workers import (
     RemoteWorker,
 )
 from dinkster_workers.service import READY_LINE_PREFIX
-from test_isolated import DEV_MANIFEST, UTILITIES_MANIFEST, core_registry, image_graph
+from test_isolated import DEV_MANIFEST, core_registry, image_graph
 from test_relay import eventually
 
 from tests.async_scenarios import run_scenario
@@ -166,7 +166,7 @@ def big_image_graph() -> Graph:
 @pytest.mark.parametrize("selected", (False, True))
 def test_remote_switch_executes_only_the_selected_input(tmp_path: Path, selected: bool) -> None:
     async def scenario() -> None:
-        proc, host, port = await start_service(UTILITIES_MANIFEST, tmp_path)
+        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
         try:
             registry = core_registry()
             worker = remote_worker(host, port, registry)
@@ -175,18 +175,14 @@ def test_remote_switch_executes_only_the_selected_input(tmp_path: Path, selected
                 engine = make_engine(registry, worker)
                 graph = Graph(
                     {
-                        "first": GraphNode(
-                            "dinkster.utilities.primitive_string", {"value": "first"}
-                        ),
-                        "second": GraphNode(
-                            "dinkster.utilities.primitive_string", {"value": "second"}
-                        ),
+                        "first": GraphNode("dev.execution.value", {"value": 17}),
+                        "second": GraphNode("dev.execution.value", {"value": 43}),
                         "route": GraphNode(
-                            "dinkster.utilities.comfy_switch_node",
+                            "dev.execution.lazy_select",
                             {
-                                "switch": selected,
-                                "on_false": Link("first", "STRING"),
-                                "on_true": Link("second", "STRING"),
+                                "choose_right": selected,
+                                "left": Link("first", "value"),
+                                "right": Link("second", "value"),
                             },
                         ),
                     }
@@ -194,7 +190,7 @@ def test_remote_switch_executes_only_the_selected_input(tmp_path: Path, selected
 
                 result = await engine.run(graph, ["route"])
                 expected = "second" if selected else "first"
-                assert result.outputs["route"]["output"].resolve() == expected
+                assert result.outputs["route"]["value"].resolve() == (43 if selected else 17)
                 assert set(result.executed) == {expected, "route"}
             finally:
                 await worker.close()

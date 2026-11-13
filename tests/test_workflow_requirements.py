@@ -200,7 +200,7 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
     document = workflow()
     before = json.dumps(document)
     requirements = project_requirements([document])
-    manifest = load_manifest(Path("packages/dinkster-nodes-image/dinkster-pack.toml"))
+    manifest = load_manifest(Path(__file__).parent / "fixtures/pack-testing/dinkster-pack.toml")
 
     def plan(variant: str, gpu: bool = False, devices: tuple[str, ...] = ("cpu", "cuda")):
         declared = replace(
@@ -378,7 +378,7 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
     library = ServerLibrary(
         vault, store, resolver=ForbiddenFetchingResolver(), provenance=provenance
     )
-    manifest = load_manifest(Path("packages/dinkster-nodes-image/dinkster-pack.toml"))
+    manifest = load_manifest(Path(__file__).parent / "fixtures/pack-testing/dinkster-pack.toml")
     declared = {"tools-a": manifest, "tools-b": manifest}
     snapshot = (tmp_path / "snapshot.json").read_bytes()
 

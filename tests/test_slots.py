@@ -37,7 +37,6 @@ from dinkster_schema import (
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_text.text import StringConcatenate
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
@@ -332,16 +331,16 @@ def test_connected_type_mismatch_is_diagnosed_never_redispatched() -> None:
     # type disagrees gets the SAME advisory type-mismatch diagnostic as any
     # concrete input (the backend never silently re-dispatches to another
     # variant), because after elaboration the slot IS an ordinary input.
-    schemas = build_schemas([*SCAFFOLD_NODES, StringConcatenate, Stylize])
+    schemas = build_schemas([*SCAFFOLD_NODES, Stylize])
+    schemas["test.string_source"] = NodeSchema(
+        node_type="test.string_source", outputs=(OutputSpec("text", STRING),)
+    )
     graph = Graph(
         nodes={
-            "c": GraphNode(
-                "dinkster.text.string_concatenate",
-                {"string_a": "he", "string_b": "llo", "delimiter": ""},
-            ),
+            "c": GraphNode("test.string_source"),
             "n": GraphNode(
                 "test.stylize",
-                {"source": Link("c", "STRING"), "source.scale": 2.0},
+                {"source": Link("c", "text"), "source.scale": 2.0},
                 slot_variants={"source": "number"},
             ),
         }

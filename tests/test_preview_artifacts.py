@@ -1035,7 +1035,6 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
 ) -> None:
     from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr
     from dinkster_assets.declared import produced_output_scratch
-    from dinkster_image.types import register_image_types
     from dinkster_image_document import ImageDocument
     from dinkster_image_document.document import empty_document
     from dinkster_protocol import Invocation
@@ -1083,7 +1082,6 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_image_types(registry)
         schema = Document.schema()
         worker = InProcessWorker({schema.node_type: Document}, registry)
         result = await worker.invoke(Invocation("document", "node", schema.node_type, {}, schema))

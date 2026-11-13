@@ -133,7 +133,7 @@ def test_svg_crosses_native_and_own_public_type_fixture_twice(
     async def scenario() -> None:
         (tmp_path / "svg_fixture.py").write_text(
             "from test_svg_codec import SvgConsumer, SvgSource\n"
-            "from dinkster_image import register_types\n"
+            "from dinkster_api.v1 import register_media_types as register_types\n"
             "NODES = (SvgSource, SvgConsumer)\n",
             encoding="ascii",
         )

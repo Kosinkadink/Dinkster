@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 from aiohttp import web
 from dinkster_api.v1 import (
-    ABSENT,
     AUDIO_TYPE,
     InputSpec,
     Node,
@@ -44,10 +43,8 @@ from dinkster_values.audio_codec import (
     encode_audio,
 )
 from dinkster_values.audio_lazy import LazyAudio
-from dinkster_video.video_components import GetVideoComponents
 from dinkster_video_runtime import assemble_video, disassemble_video
 from dinkster_workers import RemoteWorker
-from test_av_codec import FakeTensor, mp4_bytes
 from test_remote import TOKEN, start_service, stop_service
 from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost
 
@@ -127,93 +124,6 @@ def decoded_audio_samples(monkeypatch, tmp_path):
         runtime, "_audio_frames", lambda *args: pytest.fail("audio extraction must not decode")
     )
     return samples
-
-
-@pytest.fixture
-def extract_audio():
-    return lambda video: GetVideoComponents.execute(video=video)["audio"]
-
-
-@pytest.mark.parametrize("concat", [False, True])
-def test_extraction_callers_publish_inline_video_before_lazy_audio(
-    tmp_path, monkeypatch, extract_audio, decoded_audio_samples, concat
-) -> None:
-    import dinkster_video_runtime.runtime as runtime
-
-    first_data, first_pcm = _encoded_video_audio(
-        samples=48000, extra_audio=True, audio_start=Fraction(9, 4), seed=1
-    )
-    second_data, second_pcm = _encoded_video_audio(
-        samples=48000, extra_audio=True, audio_start=Fraction(9, 4), seed=2
-    )
-    assert max(len(first_data), len(second_data)) <= 256 * 1024
-    first, second = (video_from_source(data) for data in (first_data, second_data))
-    video = edit_video(first, {"concat": [second]}) if concat else first
-    video = edit_video(video, {"trim": {"start_time": 0.75, "duration": 0.75}})
-    assert bind_video_value(video)["source"] is first_data
-    expected_sources = [first_data, second_data] if concat else [first_data]
-    sources = []
-
-    def published_audio(source, *, stream_index):
-        assert isinstance(source, AssetRef)
-        data = expected_sources[len(sources)]
-        assert source.digest == digest_bytes(data)
-        assert source.local_path().read_bytes() == data
-        assert stream_index == 1
-        sources.append(source)
-        return audio_from_source(source, stream_index=stream_index)
-
-    monkeypatch.setattr(runtime, "audio_from_source", published_audio)
-    audio = extract_audio(video)
-    assert isinstance(audio, LazyAudio)
-    assert "waveform" not in audio and "pcm" not in audio
-    assert len(sources) == len(expected_sources)
-    assert audio["source"] is sources[0]
-    assert first["source"] is first_data
-    facts = effective_audio_facts(audio)
-    original = audio_from_source(first_data, stream_index=1)
-    assert audio["probe"] == original["probe"]
-    assert (facts["stream_index"], facts["sample_rate"], facts["layout"]) == (
-        1,
-        48000,
-        effective_audio_facts(original)["layout"],
-    )
-    expected = first_pcm[..., 24000:36000]
-    if concat:
-        expected = np.concatenate([expected, second_pcm[..., :12000]], axis=-1)
-    assert facts["frames"] == expected.shape[-1]
-    receiver = AssetVault(tmp_path / "receiver")
-    for source in sources:
-        _video_asset(source.local_path().read_bytes(), receiver)
-    encoded = encode_audio(audio)
-    assert len(encoded) < 4096
-    rebound = bind_audio_value(decode_audio(encoded), receiver)
-    rebound_source = rebound["source"]
-    assert isinstance(rebound_source, AssetRef) and rebound_source.resolver is receiver
-    assert decoded_audio_samples == []
-    np.testing.assert_array_equal(
-        audio_window(rebound, 0, expected.shape[-1])["waveform"], expected
-    )
-    waveform = audio["waveform"]
-    if isinstance(waveform, FakeTensor):
-        waveform = waveform.array
-    np.testing.assert_array_equal(waveform, expected)
-
-
-@pytest.mark.parametrize("components", [False, True])
-def test_silent_video_extraction_needs_no_vault(
-    monkeypatch, extract_audio, decoded_audio_samples, components
-) -> None:
-    monkeypatch.delenv("DINKSTER_ASSET_VAULT")
-    video = (
-        assemble_video(np.zeros((2, 2, 2, 3), np.float32), fps=2)
-        if components
-        else video_from_source(mp4_bytes())
-    )
-    audio = extract_audio(video)
-    assert audio is ABSENT
-    assert disassemble_video(video)["audio"] is None
-    assert decoded_audio_samples == []
 
 
 @pytest.mark.parametrize("storage", ["asset", "inline"])

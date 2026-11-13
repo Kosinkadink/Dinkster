@@ -43,35 +43,3 @@ torch.testing.assert_close(selected(q, k, v, 2), expected)
         timeout=45,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import importlib
-from dinkster_inference_wire.process import initialize_inference_process
-from dinkster_sampling.standard_sampling import KSampler
-from dinkster_schema import ComboOption, ComboWidget
-
-initialize_inference_process()
-samplers = importlib.import_module("dinkster_inference.samplers")
-schema = KSampler.schema()
-for name, expected in (
-    ("sampler_name", samplers.KSampler.SAMPLERS),
-    ("scheduler", samplers.KSampler.SCHEDULERS),
-):
-    spec = schema.input(name)
-    assert spec is not None and isinstance(spec.widget, ComboWidget)
-    assert all(isinstance(option, ComboOption) for option in spec.widget.options)
-    assert [option.value for option in spec.widget.options] == list(expected)
-""",
-        ],
-        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr

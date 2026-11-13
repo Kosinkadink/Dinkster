@@ -214,49 +214,6 @@ jobs:
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
 
-  torch-cpu:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.validation-plan.outputs.run-torch == 'true'
-    name: ${{ matrix.suite == 'vision' && 'vision pack tests' || 'node pack tests' }} (CPU${{ matrix.shard }})
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suite: comfy
-            shard: ", shard 1"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 1/4"
-          - suite: comfy
-            shard: ", shard 2"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 2/4"
-          - suite: comfy
-            shard: ", shard 3"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 3/4"
-          - suite: comfy
-            shard: ", shard 4"
-            pytest-args: "-p tools.pytest_file_shard --file-shard 4/4"
-          - suite: vision
-            shard: ""
-            pytest-args: ""
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - name: Install the CPU software shader renderer
-        if: matrix.suite != 'vision'
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
-        timeout-minutes: 5
-      - uses: ./.github/actions/torch-cpu-suite
-        with:
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          suite: ${{ matrix.suite }}
-          comfy-pytest-args: ${{ matrix.pytest-args }}
-
   windows-runtime:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-windows == 'true'
@@ -398,7 +355,6 @@ jobs:
     needs:
       - validation-plan
       - test
-      - torch-cpu
       - windows-runtime
       - coverage-gate
       - probe-jail
@@ -409,14 +365,13 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
-          TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
           PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","windowsRuntime":"%s","coverage":"%s","probeJail":"%s"}}\n' \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","windowsRuntime":"%s","coverage":"%s","probeJail":"%s"}}\n' \
             "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
-            "$TORCH_RESULT" "$RUNTIME_RESULT" "$COVERAGE_RESULT" "$PROBE_JAIL_RESULT" \
+            "$RUNTIME_RESULT" "$COVERAGE_RESULT" "$PROBE_JAIL_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -429,21 +384,14 @@ jobs:
       - name: Require every selected lane to pass
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
-          RUN_TORCH: ${{ needs.validation-plan.outputs.run-torch }}
           RUN_WINDOWS: ${{ needs.validation-plan.outputs.run-windows }}
           TEST_RESULT: ${{ needs.test.result }}
-          TORCH_RESULT: ${{ needs.torch-cpu.result }}
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
           PROBE_JAIL_RESULT: ${{ needs.probe-jail.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
-          if [ "$RUN_TORCH" = true ]; then
-            test "$TORCH_RESULT" = success
-          else
-            test "$TORCH_RESULT" = skipped
-          fi
           if [ "$RUN_WINDOWS" = true ]; then
             test "$RUNTIME_RESULT" = success
             test "$PROBE_JAIL_RESULT" = skipped
@@ -471,5 +419,4 @@ jobs:
           uv run --no-project python scripts/develop.py setup --variant linux-cpu --yes
           python scripts/develop.py stop --yes
           python scripts/develop.py run -- python -m pytest -v \
-            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe \
-            'tests/test_comfy_model_selection_hosts.py::test_native_selection_loaders_in_public_hosts[sandbox]'
+            tests/test_sandbox.py::TestLiveJail tests/test_doctor.py::TestLiveJailedProbe

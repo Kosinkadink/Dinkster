@@ -13,7 +13,6 @@ import pytest
 from dinkster_api.v1 import VIDEO_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_assets.value import register_video_value_type, value_asset_references
-from dinkster_image.drawing import DrawText
 from dinkster_values import (
     TypeRegistry,
     annotate_image,
@@ -256,7 +255,7 @@ def test_split_move_ripple_roll_and_retime():
     assert doc == make(clips=[clip("a", start=2, duration=10)])
 
 
-def test_crossfade_title_render_uses_shared_kernels(bound_video):
+def test_crossfade_title_render_preserves_timing_and_frame_count(bound_video):
     value, factory, _ = bound_video
     doc = timeline_for(value)
     track = doc["timeline"]["tracks"]["children"][0]
@@ -290,15 +289,6 @@ def test_crossfade_title_render_uses_shared_kernels(bound_video):
     out = io.BytesIO()
     save_video_stream(TimelineVideo(doc, factory), out)
     assert len(_packets(out.getvalue())) == 10
-    frame = np.zeros((32, 64, 3), np.float32)
-    expected = cast(
-        np.ndarray,
-        DrawText.execute(image=frame[None], text="test", font_size=10, opacity=0.5)["image"],
-    )[0]
-    actual = CPUKernels().effect(
-        "dinkster.image.draw_text", frame, {"text": "test", "font_size": 10, "opacity": 0.5}
-    )
-    np.testing.assert_array_equal(actual, expected)
 
 
 def test_widget_projection_source_origin_crop_and_split(bound_video):
@@ -536,7 +526,7 @@ def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
     from dinkster_workers import RemoteWorker
     from test_remote import TOKEN, start_service, stop_service
     from test_remote_asset_staging import ENDPOINT_TOKEN, AssetHost
-    from test_video_io import _mount
+    from test_video_diagnostics import _mount
 
     value, _, data = bound_video
     doc = mutate(timeline_for(value), "add_track", {})

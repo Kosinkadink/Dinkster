@@ -85,7 +85,6 @@ _KILLED_RETURN_CODE = 1 if os.name == "nt" else -_SIGKILL
 # pack (test scaffolding, never a user surface) - so the isolated worker
 # under test hosts dinkster-nodes-dev.
 DEV_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
-UTILITIES_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-utilities" / "dinkster-pack.toml"
 TESTS_DIR = Path(__file__).parent
 
 
@@ -1127,7 +1126,7 @@ def test_isolated_lazy_hook_protocol_and_attribution(
 def test_isolated_switch_executes_only_the_selected_input(selected: bool) -> None:
     async def scenario() -> None:
         registry = core_registry()
-        worker = IsolatedWorker(UTILITIES_MANIFEST, registry)
+        worker = IsolatedWorker(DEV_MANIFEST, registry)
         await worker.start()
         try:
             engine = Engine(
@@ -1138,14 +1137,14 @@ def test_isolated_switch_executes_only_the_selected_input(selected: bool) -> Non
             )
             graph = Graph(
                 {
-                    "first": GraphNode("dinkster.utilities.primitive_string", {"value": "first"}),
-                    "second": GraphNode("dinkster.utilities.primitive_string", {"value": "second"}),
+                    "first": GraphNode("dev.execution.value", {"value": 17}),
+                    "second": GraphNode("dev.execution.value", {"value": 43}),
                     "route": GraphNode(
-                        "dinkster.utilities.comfy_switch_node",
+                        "dev.execution.lazy_select",
                         {
-                            "switch": selected,
-                            "on_false": Link("first", "STRING"),
-                            "on_true": Link("second", "STRING"),
+                            "choose_right": selected,
+                            "left": Link("first", "value"),
+                            "right": Link("second", "value"),
                         },
                     ),
                 }
@@ -1153,7 +1152,7 @@ def test_isolated_switch_executes_only_the_selected_input(selected: bool) -> Non
 
             result = await engine.run(graph, ["route"])
             expected = "second" if selected else "first"
-            assert result.outputs["route"]["output"].resolve() == expected
+            assert result.outputs["route"]["value"].resolve() == (43 if selected else 17)
             assert set(result.executed) == {expected, "route"}
         finally:
             await worker.close()

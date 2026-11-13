@@ -700,207 +700,6 @@ def test_opencv_alias_preserves_constraint_and_marker(name: str, extra: str) -> 
     )
 
 
-def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
-    tmp_path: Path,
-) -> None:
-    from dinkster_registry import Lockfile, unpack_artifact
-    from dinkster_workers import load_manifest
-    from dinkster_workers.pack_wheel import pack_manifest_path
-
-    from scripts.build_official_packs import build
-
-    wheels = tmp_path / "wheels with space # %"
-    wheels.mkdir()
-    pinned = _wheel(wheels, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
-    _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
-    source = tmp_path / "source"
-    source.mkdir()
-    for family in (
-        "comfy",
-        "foundation",
-        "image",
-        "media-io",
-        "remote",
-        "generation",
-        "text",
-        "upscale",
-    ):
-        root = source / "packages" / f"dinkster-nodes-{family}"
-        root.mkdir(parents=True)
-        (root / "dinkster-pack.toml").write_text(
-            f'[pack]\nname="dinkster-nodes-{family}"\npublisher="dinkster"\n'
-            'version="1.2.3"\nengine=">=0.0.2"\n'
-            'requires = ["fixture-extra<3"]\n'
-            '[pack.dependencies]\ndinkster-nodes-foundation=">=0.0.1"\n'
-            f'[pack.entry]\nnodes="dinkster_nodes_{family.replace("-", "_")}:NODES"\n'
-        )
-        module = root / f"dinkster_nodes_{family.replace('-', '_')}"
-        module.mkdir()
-        (module / "__init__.py").write_text("raise AssertionError('node bodies must not load')\n")
-        (root / "pyproject.toml").write_text(
-            f'[project]\nname="dinkster-nodes-{family}"\nversion="1.2.3"\nrequires-python=">=3.12"\n'
-            'dependencies=["fixture-extra>=2", "dinkster-nodes-foundation>=0.0.1"]\n'
-        )
-    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
-    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
-    tree = subprocess.check_output(["git", "-C", str(source), "write-tree"], text=True).strip()
-    (source / ".git/HEAD").write_text(tree + "\n")
-    (source / "packages/dinkster-nodes-comfy/pyproject.toml").write_text("dirty = true\n")
-    (source / "packages/dinkster-nodes-comfy/dinkster-pack.toml").write_text("dirty = true\n")
-    constraints = tmp_path / "constraints.txt"
-    constraints.write_text("fixture-extra==1.2\n")
-    output = tmp_path / "payloads"
-    payloads = build(
-        source,
-        output,
-        version="1.2.3",
-        variant="linux-cpu",
-        python=Path(sys.executable),
-        constraints=constraints,
-        find_links=[wheels],
-    )
-    scripts = source / "scripts"
-    scripts.mkdir()
-    script = scripts / "build_official_packs.py"
-    for name in (script.name, "build_release.py", "download_frontend.py"):
-        shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts" / name, scripts / name)
-    cli_output = tmp_path / "cli-payloads"
-    subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            "--version",
-            "1.2.3",
-            "--output",
-            str(cli_output),
-            "--variant",
-            "linux-cpu",
-            "--generation-python",
-            sys.executable,
-            "--constraints",
-            str(constraints),
-            "--find-links-stdin",
-        ],
-        input=json.dumps([str(wheels)]),
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert (cli_output / "official-packs.lock").read_bytes() == (
-        output / "official-packs.lock"
-    ).read_bytes()
-    assert len(payloads) == 15
-    assert not list(output.glob("dinkster-nodes-generation-*"))
-    inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
-    assert {entry.pack for entry in inventory.packs} == {
-        "dinkster-nodes-comfy",
-        "dinkster-nodes-foundation",
-        "dinkster-nodes-image",
-        "dinkster-nodes-media-io",
-        "dinkster-nodes-remote",
-        "dinkster-nodes-text",
-        "dinkster-nodes-upscale",
-    }
-    for entry in inventory.packs:
-        assert entry.version == "1.2.3"
-        lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
-        lock = PackLock.read(lock_path)
-        assert PackLock.read(cli_output / lock_path.name) == lock
-        assert lock.pack == entry.pack
-        assert lock.variant == "linux-cpu"
-        assert lock.requires_python == ">=3.12"
-        assert lock.requirements == ("fixture-extra<3",)
-        assert [(package.name, package.version) for package in lock.packages] == [
-            ("fixture-extra", "1.2")
-        ]
-        assert lock.packages[0].wheels == (pinned,)
-        extracted = unpack_artifact(
-            output / f"{entry.pack.replace('-', '_')}-1.2.3-py3-none-any.whl",
-            tmp_path / "unpacked" / entry.pack,
-            entry.artifact_digest,
-        )
-        manifest = load_manifest(pack_manifest_path(extracted))
-        assert set(manifest.requires) == set(lock.requirements)
-        assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
-
-
-@pytest.mark.parametrize("accelerator", ["cpu", "cuda"])
-def test_official_pack_locks_include_transitive_helper_requirements(
-    tmp_path: Path, accelerator: str
-) -> None:
-    from scripts.build_official_packs import build
-
-    wheels = tmp_path / "wheels"
-    wheels.mkdir()
-    for name, versions in (
-        ("consumer-extra", ("1",)),
-        ("helper-extra", ("2",)),
-        ("leaf-extra", ("3", "4")),
-    ):
-        for version in versions:
-            _wheel(wheels, name, version, name.replace("-", "_"), "")
-    source = tmp_path / "source"
-    source.mkdir()
-    for name, requirement, helper in (
-        ("consumer", "consumer-extra==1", "helper"),
-        ("helper", "helper-extra==2", "leaf"),
-        ("leaf", "leaf-extra==3", None),
-    ):
-        root = source / "packages" / f"dinkster-nodes-{name}"
-        root.mkdir(parents=True)
-        text = (
-            f'[pack]\nname="dinkster-{name}"\npublisher="dinkster"\n'
-            f'version="1.0.0"\nengine=">=0.0.2"\nrequires=["{requirement}"]\n'
-        )
-        if name == "leaf":
-            text += '[pack.extra-requires]\ncuda=["leaf-extra==4"]\n'
-            text = text.replace('requires=["leaf-extra==3"]', "requires=[]")
-            text += 'cpu=["leaf-extra==3"]\n'
-        if helper is not None:
-            text += f'[pack.dependencies]\ndinkster-{helper}=">=1"\n'
-        text += f'[pack.entry]\nnodes="dinkster_{name}:NODES"\n'
-        (root / "dinkster-pack.toml").write_text(text)
-        module = root / f"dinkster_{name}"
-        module.mkdir()
-        (module / "__init__.py").write_text("raise AssertionError('pack code must not load')\n")
-        (root / "pyproject.toml").write_text(
-            f'[project]\nname="dinkster-{name}"\nversion="1.0.0"\nrequires-python=">=3.12"\n'
-        )
-    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
-    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
-    tree = subprocess.check_output(["git", "-C", str(source), "write-tree"], text=True).strip()
-    (source / ".git/HEAD").write_text(tree + "\n")
-    constraints = tmp_path / "constraints.txt"
-    constraints.write_text("")
-    output = tmp_path / "output"
-    variant = "linux-cpu" if accelerator == "cpu" else "linux-nvidia"
-    build(
-        source,
-        output,
-        packs=("dinkster-consumer",),
-        variant=variant,
-        accelerator=accelerator,
-        python=Path(sys.executable),
-        constraints=constraints,
-        find_links=(wheels,),
-    )
-    lock = PackLock.read(output / f"dinkster-consumer-1.0.0-{variant}.pack-lock.json")
-    leaf_version = "3" if accelerator == "cpu" else "4"
-    assert lock.requirements == (
-        "consumer-extra==1",
-        "helper-extra==2",
-        f"leaf-extra=={leaf_version}",
-    )
-    assert {(package.name, package.version) for package in lock.packages} == {
-        ("consumer-extra", "1"),
-        ("helper-extra", "2"),
-        ("leaf-extra", leaf_version),
-    }
-    with zipfile.ZipFile(output / "dinkster_consumer-1.0.0-py3-none-any.whl") as archive:
-        manifest = next(name for name in archive.namelist() if name.endswith("dinkster-pack.toml"))
-        assert 'requires=["consumer-extra==1"]' in archive.read(manifest).decode()
-
-
 def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_path: Path) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
 
@@ -979,6 +778,99 @@ def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_pa
     assert json.loads(refused.stdout)["errors"]
     assert not list((tmp_path / "refused").glob("*.pack-lock.json"))
     assert not (generation / "dinkster.lock").exists()
+
+
+@pytest.mark.parametrize("pack", ["dinkster-test-helpers", "dinkster-test-consumer"])
+def test_helper_and_consumer_locks_layer_on_later_compatible_engine(
+    tmp_path: Path, pack: str
+) -> None:
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    engine_a = "0.0.3.dev235+g3a30be8a6f04"
+    engine_b = "0.0.3.dev236+g0123456789ab"
+    _wheel(wheels, "dinkster-api", engine_a, "dinkster_api", "VALUE = 1\n")
+    torch = _wheel(wheels, "torch", "2.14.1", "torch", "VALUE = 41\n")
+    _wheel(
+        wheels,
+        "dinkster-test-helpers",
+        "0.0.2",
+        "dinkster_test_helpers",
+        "from importlib.metadata import version\n"
+        "def engine_version(): return version('dinkster-api')\n",
+        requires=("dinkster-api", "torch"),
+    )
+    _wheel(
+        wheels,
+        "dinkster-test-consumer",
+        "0.0.4",
+        "dinkster_test_consumer",
+        "NODES = []\n",
+        requires=("dinkster-test-helpers>=0.0.2,<1",),
+    )
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(f"dinkster-api=={engine_a}\ntorch==2.14.1\n")
+    version = "0.0.2" if pack == "dinkster-test-helpers" else "0.0.4"
+    lock = resolve_pack_lock(
+        pack=pack,
+        variant="linux-cpu",
+        requirements=[f"{pack}=={version}"],
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=[wheels],
+        engine=">=0.0.3.dev0,<0.1",
+    )
+    lock_path = tmp_path / "lock.json"
+    lock.write(lock_path)
+    lock = PackLock.read(lock_path)
+    newer = tmp_path / "newer"
+    newer.mkdir()
+    api = _wheel(newer, "dinkster-api", engine_b, "dinkster_api", "VALUE = 2\n")
+    parent = _generation(tmp_path / "generation/python", [api, torch])
+    facts = GenerationPackages.inspect(parent)
+    artifacts = {path.name: path.read_bytes() for path in wheels.iterdir()}
+    plan = plan_pack(lock, facts, variant="linux-cpu", own_environment_size=9000)
+    assert not plan.conflicts, plan.conflicts
+    assert "dinkster-api" not in {package.name for package in lock.packages}
+    for versions, refused in (
+        ({**facts.versions, "torch": "2.15.0"}, "torch"),
+        ({**facts.versions, "dinkster-api": "0.1.0"}, "dinkster-api"),
+        (
+            {key: value for key, value in facts.versions.items() if key != "dinkster-api"},
+            "dinkster-api",
+        ),
+    ):
+        bad = plan_pack(
+            lock,
+            replace(facts, versions=versions),
+            variant="linux-cpu",
+            own_environment_size=9000,
+        )
+        assert any(refused in conflict for conflict in bad.conflicts), bad.conflicts
+    store = tmp_path / "store"
+    store.mkdir()
+    for wheel in plan.wheels:
+        (store / wheel.filename).write_bytes(artifacts[wheel.filename])
+    python = provision_pack(
+        plan,
+        generation_python=parent,
+        packs=tmp_path / "generation/packs",
+        wheel_store=store,
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+        offline=True,
+    )
+    if pack == "dinkster-test-consumer":
+        result = subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from dinkster_test_helpers import engine_version; print(engine_version())",
+            ],
+            text=True,
+        )
+        assert result.strip() == engine_b
+    assert {path.name: path.read_bytes() for path in wheels.iterdir()} == artifacts
 
 
 def test_transitive_api_constraints_and_legacy_exact_locks_remain_binding(tmp_path: Path) -> None:

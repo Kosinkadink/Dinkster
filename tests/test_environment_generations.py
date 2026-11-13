@@ -350,6 +350,103 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     assert content_digest(source / "uv.lock") == selection["lockDigest"]
 
 
+def test_pack_lock_resolution_does_not_expand_wheel_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.pack_lock import resolve_pack_lock
+
+    store = tmp_path / ("x" * max(1, 200 - len(str(tmp_path)) - 1))
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    constraints = generation / "constraints.txt"
+    constraints.write_text(
+        "\n".join(f"fixture-{number}==1.0 --hash=sha256:{number:064x}" for number in range(500))
+        + "\n"
+    )
+    links = [store / "wheels" / f"{number:064x}" for number in range(500)]
+
+    def captured(command, **kwargs):
+        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
+        source = Path(command[command.index("--no-config") + 1]).read_text()
+        assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
+        assert "--no-index" in command
+        raise RuntimeError("command inspected")
+
+    monkeypatch.setattr(subprocess, "run", captured)
+    with pytest.raises(RuntimeError, match="command inspected"):
+        resolve_pack_lock(
+            pack="fixture",
+            variant="win-cpu",
+            requirements=["fixture-0==1.0"],
+            python=interpreter(generation),
+            constraints=constraints,
+            find_links=links,
+        )
+
+
+def test_local_pack_locks_resolve_helpers_only_from_each_recorded_registry(tmp_path: Path) -> None:
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.pack_lock import PackLock
+    from test_installer import write_pack
+
+    from dinkster.generation_packs import prepare_pack_locks
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    (generation / "constraints.txt").write_text("")
+    entries, artifacts, servers = [], {}, []
+    try:
+        for name, version in (("first", "1.0"), ("second", "2.0")):
+            wheels = tmp_path / name
+            wheels.mkdir()
+            helper, digest = _wheel(wheels, "registry_helper", version, 73)
+            index = wheels / "static/linux-cpu/simple/registry-helper"
+            index.mkdir(parents=True)
+            (index / "index.html").write_text(
+                f'<a href="/{helper.name}#sha256={digest}">{helper.name}</a>'
+            )
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(wheels))
+            )
+            servers.append(server)
+            Thread(target=server.serve_forever, daemon=True).start()
+            source = write_pack(tmp_path / f"source-{name}", name)
+            manifest = source / "dinkster-pack.toml"
+            manifest.write_text(
+                manifest.read_text().replace(
+                    "[pack.entry]", 'requires = ["registry-helper>=1"]\n[pack.entry]'
+                )
+            )
+            archive = tmp_path / f"{name}.zip"
+            identity = build_artifact(source, archive)
+            entries.append(
+                LockedPack(
+                    name,
+                    "0.1.0",
+                    identity,
+                    "",
+                    (name,),
+                    f"registry:http://127.0.0.1:{server.server_port}",
+                )
+            )
+            artifacts[name] = archive
+        paths = prepare_pack_locks(
+            generation, Lockfile.of(entries), artifacts, tmp_path / "locks", variant="linux-cpu"
+        )
+        locks = [PackLock.from_json(path.read_text()) for path in paths]
+        assert {
+            lock.pack: [(package.name, package.version) for package in lock.packages]
+            for lock in locks
+        } == {"first": [("registry-helper", "1.0")], "second": [("registry-helper", "2.0")]}
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+
+
 def _standalone_tree(root: Path) -> None:
     source = Path(sys.base_prefix)
     if os.name == "nt":
@@ -577,296 +674,6 @@ def test_generation_sync_command_does_not_expand_wheel_sources(
             worker_protocol=1,
         )
     assert not (root / "generations" / "1").exists()
-
-
-def test_checkout_pack_build_preserves_independent_manifest_versions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import io
-    import runpy
-    import tarfile
-
-    from dinkster_registry import Lockfile
-    from dinkster_supervisor import environment_generations, environment_local
-
-    source = tmp_path / "source"
-    shutil.copytree(Path(__file__).resolve().parents[1] / "scripts", source / "scripts")
-    versions = {"dinkster-text": "0.0.2", "dinkster-remote": "0.0.4"}
-    for name, version in versions.items():
-        package = source / "packages" / name.replace("dinkster-", "dinkster-nodes-", 1)
-        module = name.replace("-", "_")
-        (package / "src" / module).mkdir(parents=True)
-        (package / "src" / module / "__init__.py").write_text("NODES = []\n")
-        (package / "pyproject.toml").write_text(
-            f'[project]\nname = "{name}"\nversion = "{version}"\nrequires-python = ">=3.12"\n'
-        )
-        (package / "dinkster-pack.toml").write_text(
-            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-            f'version = "{version}"\nengine = ">=0.0.2,<0.1"\n'
-            f'[pack.entry]\nnodes = "{module}:NODES"\n'
-        )
-    snapshot = io.BytesIO()
-    with tarfile.open(fileobj=snapshot, mode="w") as archive:
-        archive.add(source / "packages", arcname="packages")
-
-    def run_builder(command, *, cwd, input):
-        # Supply the committed-source snapshot without requiring a test Git identity.
-        with monkeypatch.context() as patch:
-            patch.setattr(sys, "argv", command[2:])
-            patch.setattr(sys, "stdin", io.StringIO(input))
-            patch.setattr(
-                subprocess,
-                "check_output",
-                lambda command, **kwargs: (
-                    "a" * 40 if "rev-parse" in command else snapshot.getvalue()
-                ),
-            )
-            runpy.run_path(command[2], run_name="__main__")
-
-    monkeypatch.setattr(environment_local, "run_local_command", run_builder)
-    generation = tmp_path / "generation"
-    generation.mkdir()
-    (generation / "constraints.txt").write_text("")
-    store = tmp_path / "store"
-    release = "sha256:" + "a" * 64
-    monkeypatch.setattr(environment_local, "interpreter", lambda path: Path(sys.executable))
-
-    def built(*args, **kwargs):
-        raise RuntimeError("local artifacts built")
-
-    monkeypatch.setattr(environment_generations, "pack_operation", built)
-    with pytest.raises(RuntimeError, match="local artifacts built"):
-        environment_local.prepare_local_packs(
-            generation,
-            source=source,
-            store=store,
-            release=release,
-            selection={"version": "0.0.2", "variant": "linux-cpu", "workerProtocol": 1},
-        )
-    artifacts = object_path(store / "engines", release) / "artifacts"
-    lock = Lockfile.from_record_json((artifacts / "official-packs.lock").read_text())
-    assert {pack.pack: pack.version for pack in lock.packs} == versions
-    assert {pack.source for pack in lock.packs} == {
-        "local-build:git:Kosinkadink/Dinkster@" + "a" * 40
-    }
-    assert {path.name for path in artifacts.glob("*.whl")} == {
-        f"{name.replace('-', '_')}-{version}-py3-none-any.whl" for name, version in versions.items()
-    }
-    for pack in lock.packs:
-        wheel = artifacts / f"{pack.pack.replace('-', '_')}-{pack.version}-py3-none-any.whl"
-        assert pack_archive_path(artifacts, pack.artifact_digest).read_bytes() == wheel.read_bytes()
-
-
-@pytest.mark.parametrize("case", ["clean", "corrupt", "corrupt-cached"])
-def test_checkout_library_is_verified_provisioned_and_not_staged_as_a_pack(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, case: str
-) -> None:
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Thread
-
-    from dinkster_registry import LockedPack, Lockfile, artifact_digest
-    from dinkster_supervisor import environment_local
-    from dinkster_supervisor.environment_downloads import DownloadError
-    from dinkster_workers.boundary import PROTOCOL_VERSION
-    from dinkster_workers.catalog import read_catalog
-    from dinkster_workers.manifest import load_manifest
-    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
-    from dinkster_workers.pack_wheel import build_pack_archive, pack_manifest_path
-    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
-
-    from tests.fixtures.environments.build import standalone_tree
-
-    requests: list[str] = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            requests.append(self.path)
-            self.send_error(404)
-
-        def log_message(self, format: str, *args: object) -> None:
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-    def close_server() -> None:
-        server.shutdown()
-        thread.join()
-        server.server_close()
-
-    request.addfinalizer(close_server)
-    store = tmp_path / "store"
-    release = "sha256:" + "a" * 64
-    artifacts = object_path(store / "engines", release) / "artifacts"
-    artifacts.mkdir(parents=True)
-    helper, sha = _wheel(artifacts, "fixture_helper", "1.0", 73)
-    dependency = LockedWheel(
-        helper.name,
-        helper.stat().st_size,
-        sha,
-        f"http://127.0.0.1:{server.server_port}/" + helper.name,
-    )
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "dinkster-pack.toml").write_text(
-        HEALTHY_MANIFEST.replace(
-            "[pack]\n", '[pack]\nversion = "1.0"\nengine = ">=0.0.2"\n'
-        ).replace('"numpy>=1.26"', '"fixture-helper==1.0"')
-    )
-    (source / "pyproject.toml").write_text('[project]\nname = "healthy-nodes"\nversion = "1.0"\n')
-    (source / "healthy_nodes").mkdir()
-    (source / "healthy_nodes/__init__.py").write_text(
-        "from fixture_helper import VALUE\nassert VALUE == 73\n" + HEALTHY_NODES
-    )
-    pack_wheel = artifacts / "healthy_nodes-1.0-py3-none-any.whl"
-    build_pack_archive(source, pack_wheel)
-    provenance = "git:Kosinkadink/Dinkster@" + "a" * 40
-    lock = Lockfile.of(
-        [
-            LockedPack(
-                "fixture-helper",
-                "1.0",
-                artifact_digest(helper.read_bytes()),
-                "dinkster",
-                (),
-                provenance,
-            ),
-            LockedPack(
-                "healthy-nodes",
-                "1.0",
-                artifact_digest(pack_wheel.read_bytes()),
-                "dinkster",
-                ("healthy",),
-                provenance,
-            ),
-        ]
-    )
-    (artifacts / "official-packs.lock").write_text(lock.record_json())
-    PackLock(
-        "healthy-nodes",
-        "linux-cpu",
-        ">=3.12",
-        ("fixture-helper==1.0",),
-        (),
-        (LockedDistribution("fixture-helper", "1.0", (dependency,)),),
-    ).write(artifacts / "healthy-nodes.pack-lock.json")
-    PackLock("fixture-helper", "linux-cpu", ">=3.12", (), (), ()).write(
-        artifacts / "fixture-helper.pack-lock.json"
-    )
-    if case == "corrupt-cached":
-        cached = object_path(store / "wheels", "sha256:" + sha) / helper.name
-        cached.parent.mkdir(parents=True)
-        shutil.copyfile(helper, cached)
-    if case != "clean":
-        helper.write_bytes(helper.read_bytes().replace(b"VALUE = 73", b"VALUE = 74"))
-    generation = tmp_path / "generation"
-    generation.mkdir()
-    (generation / "constraints.txt").write_text("")
-    monkeypatch.setattr(environment_local, "run_local_command", lambda *args, **kwargs: None)
-    standalone_tree(generation / "python")
-    site = Path(
-        subprocess.check_output(
-            [
-                str(interpreter(generation)),
-                "-c",
-                "import sysconfig; print(sysconfig.get_path('purelib'))",
-            ],
-            text=True,
-        ).strip()
-    )
-    site.mkdir(parents=True, exist_ok=True)
-    (site / "fixture.pth").write_text(
-        "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
-    )
-
-    def prepare() -> None:
-        environment_local.prepare_local_packs(
-            generation,
-            source=source,
-            store=store,
-            release=release,
-            selection={
-                "version": "0.0.2",
-                "variant": "linux-cpu",
-                "workerProtocol": PROTOCOL_VERSION,
-            },
-        )
-
-    if case != "clean":
-        with pytest.raises(DownloadError, match="corrupt"):
-            prepare()
-        assert not (generation / "pack-sources").exists()
-        assert requests == []
-        return
-    prepare()
-    assert requests == []
-    assert {path.name for path in (generation / "packs").iterdir()} == {"healthy-nodes"}
-    assert {path.name for path in (generation / "pack-sources").iterdir()} == {
-        "healthy-nodes",
-        "healthy-nodes.whl",
-    }
-    admitted = Lockfile.from_record_json((generation / "dinkster.lock").read_text())
-    assert [entry.pack for entry in admitted.packs] == ["healthy-nodes"]
-    manifest = pack_manifest_path(generation / "pack-sources/healthy-nodes")
-    assert read_catalog(load_manifest(manifest)) is not None
-    python = (
-        generation
-        / "packs/healthy-nodes"
-        / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    )
-    assert (
-        subprocess.check_output(
-            [str(python), "-c", "import fixture_helper; print(fixture_helper.VALUE)"], text=True
-        ).strip()
-        == "73"
-    )
-
-
-def test_checkout_pack_commands_do_not_expand_wheel_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_supervisor.environment_local import prepare_local_packs
-    from dinkster_workers.pack_lock import resolve_pack_lock
-
-    store = tmp_path / ("x" * max(1, 200 - len(str(tmp_path)) - 1))
-    generation = tmp_path / "generation"
-    generation.mkdir()
-    constraints = generation / "constraints.txt"
-    constraints.write_text(
-        "\n".join(f"fixture-{number}==1.0 --hash=sha256:{number:064x}" for number in range(500))
-        + "\n"
-    )
-    links = [store / "wheels" / f"{number:064x}" for number in range(500)]
-
-    def captured(command, **kwargs):
-        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
-        if "--find-links-stdin" in command:
-            assert json.loads(kwargs["input"]) == [str(path) for path in links]
-        else:
-            source = Path(command[command.index("--no-config") + 1]).read_text()
-            assert all(f"--find-links {path.as_uri()}\n" in source for path in links)
-            assert "--no-index" in command
-        raise RuntimeError("command inspected")
-
-    monkeypatch.setattr(subprocess, "run", captured)
-    with pytest.raises(RuntimeError, match="command inspected"):
-        prepare_local_packs(
-            generation,
-            source=tmp_path / "source",
-            store=store,
-            release="sha256:" + "a" * 64,
-            selection={"version": "1.0", "variant": "win-cpu", "workerProtocol": 1},
-        )
-    with pytest.raises(RuntimeError, match="command inspected"):
-        resolve_pack_lock(
-            pack="fixture",
-            variant="win-cpu",
-            requirements=["fixture-0==1.0"],
-            python=interpreter(generation),
-            constraints=constraints,
-            find_links=links,
-        )
 
 
 @pytest.mark.parametrize("provisioner", ["current", "cached-without-acquire", "without-acquire"])

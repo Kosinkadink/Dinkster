@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Local setup resolves registry pack dependencies against that pack's recorded
+  registry index for the selected variant, alongside the selected base's package
+  indexes and retained wheels. It does not search other packs' registries.
+
 - A managed update, repair, restore or rollback can start its replacement on
   another OS-assigned port if the planned port is occupied. The recorded URL
   follows the actual listener. The previous engine keeps serving until the
@@ -233,8 +237,8 @@
   code. New node-pack directories are discovered without a family allowlist.
   Development scaffolding stays unpublished.
 - First-party source resolution reads runtime IDs and node entry modules from
-  manifests and distribution names from project metadata or installed wheel
-  records. Runtime, distribution and import names need not match. Discovery
+  installed wheel manifests and distribution names from wheel records.
+  Runtime, distribution and import names need not match. Discovery
   does not import node code or add a pack to the selected defaults.
 - Official publication uses each selected pack's declared version and engine
   range, with complete archive-bound locks for all six supported bases.
@@ -355,9 +359,9 @@
   A missing lock, changed artifact or incompatible base refuses admission.
   Missing defaults, rejected packs and security review requirements fail the
   check without publishing any pack.
-- Selected-archive behavioral tests use each first-party pack's independent
-  distribution, including vision packs. They verify selected source provenance
-  and refuse checkout fallbacks or replacement of engine-owned tests.
+- First-party pack behavioral tests run in the standalone pack repository
+  against its selected wheels and published engine. Engine default-set admission
+  scans published archives without building pack sources or selecting pack tests.
 - Public archive admission verifies deterministic source ZIPs with bounded
   portable paths, validates manifest publication metadata, runs static doctor
   and a bounded isolated executable probe, and distinguishes security blocks
@@ -588,12 +592,13 @@
   accepts the same opt-in, with an explicit host interpreter override when its
   platform row is missing. Local generations report their origin and recorded
   drift; channel updates refuse them and offer a fresh published installation.
-  Official packs built from the explicitly selected checkout may serve under
-  reserved namespaces in that local generation. Other Git, local and pip
-  sources do not gain reserved-namespace trust, even with publisher `dinkster`.
-  Libraries built alongside those packs supply their locked dependencies
-  without a registry download and must match the dependency lock's digest.
-  Libraries are not installed or cataloged as node packs.
+  Default packs come from the registry, not the engine checkout, and their
+  dependencies resolve against the locally built engine and base constraints.
+  Explicit `develop --pack-source` selections build the chosen pack and library
+  sources; official packs built this way may serve under reserved namespaces
+  in that local generation. Other Git, local and pip sources do not gain
+  reserved-namespace trust, even with publisher `dinkster`. Local libraries must
+  match their dependency lock's digest and are not cataloged as node packs.
   Default setup and Desktop remain published-bundle consumers.
 - Status and doctor identify an active user-defined base by its variant name,
   torch version and torch index. The base's provenance is retained with the
@@ -700,12 +705,10 @@
   invoking published setup or loading a standalone installed-pack root. The
   terminal and node catalog label the source session as unreviewed and not
   reproducible from dependency ranges; the browser opens after health succeeds.
-- A pip-installed engine has no implicit official pack selection. Managed
-  generations serve their admitted registry sources. Checkout development
-  selects verified local sources with each pack's declared version, without
-  requiring an installed pack distribution.
-- Checkout defaults retain their managed source lock without requiring an
-  installed standard-suite distribution.
+- Installed engines and engine checkouts have no implicit official pack selection.
+  Managed generations serve their admitted registry sources. Checkout development
+  selects local pack manifests explicitly; production pack sources and their
+  publication versions are owned by the standalone pack repository.
 - Development scaffolding is workspace-only and is excluded from engine and
   official-pack releases.
 - Engine release assembly records variant-specific dependency wheel identities

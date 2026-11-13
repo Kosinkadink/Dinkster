@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 from fractions import Fraction
 from pathlib import Path
@@ -14,6 +13,7 @@ import dinkster_video_runtime.runtime as video_module
 import numpy as np
 import pytest
 from av.error import InvalidDataError
+from dinkster_api.v1 import admit_video_source
 from dinkster_assets import (
     AssetRef,
     AssetVault,
@@ -23,8 +23,9 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_values import edit_video
-from dinkster_video.video_load import LoadVideo
 from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
+
+from tests.test_video_diagnostics import _mount
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -45,31 +46,6 @@ def _audio(samples: int = 16_000, sample_rate: int = 16_000) -> dict[str, object
     timeline = np.arange(samples, dtype=np.float32) / sample_rate
     waveform = np.sin(2 * np.pi * 440 * timeline, dtype=np.float32)[None, None, :]
     return {"waveform": waveform, "sample_rate": sample_rate}
-
-
-def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "out"
-    root.mkdir()
-    index = root / ".dinkster-asset-index.json"
-    index.write_text("{}", "utf-8")
-    snapshot = tmp_path / "mounts.json"
-    snapshot.write_text(
-        json.dumps(
-            {
-                "mounts": [
-                    {
-                        "id": "comfy-output",
-                        "root": str(root),
-                        "index": str(index),
-                        "mode": "readwrite",
-                    }
-                ]
-            }
-        ),
-        "utf-8",
-    )
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    return root, snapshot
 
 
 def _bound(ref: AssetRef, snapshot: Path) -> AssetRef:
@@ -194,7 +170,7 @@ def test_indexed_video_over_one_gib_is_admitted_without_copy(
     path_source = video_source(admit_video_source(path))
     assert isinstance(path_source, AssetRef)
     assert path_source.digest == selected.digest
-    loaded = LoadVideo.execute(file=selected)["VIDEO"]
+    loaded = admit_video_source(selected)
     loaded_source = video_source(loaded)
     assert isinstance(loaded_source, AssetRef)
     assert loaded_source.digest == selected.digest
@@ -332,7 +308,7 @@ def test_video_value_load_and_save_preserve_container_bytes(
     source_ref = _bound(cast(AssetRef, saved["video"]), snapshot)
     source_bytes = (root / "video" / source_ref.name).read_bytes()
 
-    value = LoadVideo.execute(file=source_ref)["VIDEO"]
+    value = admit_video_source(source_ref)
     assert cast(dict[str, object], value)["source"] is source_ref
     assert cast(dict[str, object], value)["edits"] == []
     with io.BytesIO() as output:
@@ -381,7 +357,7 @@ def test_rgb_and_rgba_round_trips_preserve_exact_frame_count_at_awkward_rates(
     _root, snapshot = _mount(tmp_path, monkeypatch)
     saved = _save_frames(images=_frames(3, alpha=alpha), fps=fps, format=format_name)
     ref = _bound(cast(AssetRef, saved["video"]), snapshot)
-    loaded = disassemble_video(LoadVideo.execute(file=ref)["VIDEO"])
+    loaded = disassemble_video(admit_video_source(ref))
     images = cast(np.ndarray, loaded["images"])
     assert loaded["frame_count"] == 3
     assert images.shape == (3, 64, 64, 4 if alpha else 3)
@@ -404,7 +380,7 @@ def test_late_start_bounds_video_decode_and_preserves_audio_window(
         audio=soundtrack,
     )
     ref = _bound(cast(AssetRef, saved["video"]), snapshot)
-    value = LoadVideo.execute(file=ref)["VIDEO"]
+    value = admit_video_source(ref)
     full_audio = audio_window(disassemble_video(value)["audio"], 0, 176_400)["waveform"]
     real_open = cast(Any, av.open)
     seek_calls: list[int] = []
@@ -462,7 +438,7 @@ def test_load_refuses_malformed_asset(tmp_path: Path) -> None:
         writer.commit()
     ref = AssetRef(digest, "bad.mp4", len(payload), "video/mp4", resolver=vault)
     with pytest.raises(InvalidDataError):
-        LoadVideo.execute(file=ref)
+        admit_video_source(ref)
 
 
 @pytest.mark.parametrize(

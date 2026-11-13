@@ -7,7 +7,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -55,41 +54,11 @@ def select(root: Path, paths: list[str]) -> dict[str, object]:
     }
 
 
-def test_paths(root: Path, packages: list[str]) -> list[str]:
-    # Admission and checkout testing share the existing pack-to-root-test ownership map.
-    from scripts.run_selected_pack_tests import _SUITES
-
-    tests = set()
-    for package in packages:
-        path = root / package
-        manifest = path / "dinkster-pack.toml"
-        patterns = [f"{package}/tests/test_*.py"]
-        if manifest.is_file():
-            identity = tomllib.loads(manifest.read_text(encoding="utf-8"))["pack"]["name"]
-            patterns.extend(_SUITES.get(identity, ()))
-        found = {str(test.relative_to(root)) for pattern in patterns for test in root.glob(pattern)}
-        if not found:
-            raise ValueError(f"selected package has no behavioral tests: {package}")
-        tests.update(found)
-    return sorted(tests)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base")
-    parser.add_argument("--packs", help="JSON array of selected workspace package directories")
     args = parser.parse_args()
     root = Path.cwd()
-    if args.packs is not None:
-        tests = test_paths(root, json.loads(args.packs))
-        print("Selected pack tests: " + json.dumps(tests), flush=True)
-        # Separate directories can reuse test module and sibling helper names.
-        groups: dict[Path, list[str]] = {}
-        for test in tests:
-            groups.setdefault(Path(test).parent, []).append(test)
-        for group in groups.values():
-            subprocess.run([sys.executable, "-m", "pytest", "-q", *group], check=True)
-        return
     paths = (
         subprocess.check_output(
             ["git", "diff", "--name-only", "--no-renames", "-z", args.base, "HEAD"], text=True
