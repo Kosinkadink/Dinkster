@@ -27,7 +27,7 @@ from packaging.version import Version
 
 from .manifest import load_manifest
 from .provision import ProvisionError
-from .wheel_download import download_wheel
+from .wheel_download import download_wheel, fetch_wheel
 
 OPENCV_ALIASES = {
     "opencv-python": "opencv-contrib-python-headless",
@@ -96,19 +96,20 @@ class LockedDistribution:
 
 
 @lru_cache(maxsize=512)
-def _wheel_requirements(wheel: LockedWheel) -> tuple[str, ...]:
+def _wheel_requirements(wheel: LockedWheel, source: Path | None = None) -> tuple[str, ...]:
     """Read dependency metadata from verified bytes, once per publication artifact."""
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-metadata-") as directory:
-        path = Path(directory) / wheel.filename
-        download_wheel(wheel.url, path, max_size=wheel.size)
-        with path.open("rb") as source:
+        path = source if source is not None else Path(directory) / wheel.filename
+        if source is None:
+            download_wheel(wheel.url, path, max_size=wheel.size)
+        with path.open("rb") as stream:
             if (
                 path.stat().st_size != wheel.size
-                or hashlib.file_digest(source, "sha256").hexdigest() != wheel.sha256
+                or hashlib.file_digest(stream, "sha256").hexdigest() != wheel.sha256
             ):
                 raise ProvisionError(f"resolved wheel hash mismatch: {wheel.url}")
-            source.seek(0)
-            with zipfile.ZipFile(source) as archive:
+            stream.seek(0)
+            with zipfile.ZipFile(stream) as archive:
                 names = [
                     name
                     for name in archive.namelist()
@@ -274,8 +275,10 @@ def plan_pack(
     *,
     variant: str,
     own_environment_size: int,
+    wheel_store: Path | None = None,
+    offline: bool = False,
 ) -> PackPlan:
-    """Check engine compatibility and exact agreement for shared dependencies."""
+    """Check engine and dependency requirements while keeping private wheels locked."""
     conflicts: list[str] = []
     wheels: list[LockedWheel] = []
     if lock.variant != variant:
@@ -285,6 +288,14 @@ def plan_pack(
             f"Python {generation.python_version} does not satisfy {lock.requires_python}"
         )
     versions = {package.name: package.version for package in lock.packages}
+    shared_changes = {
+        name
+        for name, version in versions.items()
+        if name in generation.versions and Version(generation.versions[name]) != Version(version)
+    }
+    versions.update(
+        {name: version for name, version in generation.versions.items() if name in versions}
+    )
     if lock.engine is not None:
         api_version = generation.versions.get("dinkster-api")
         if api_version is None or not SpecifierSet(lock.engine).contains(
@@ -296,24 +307,8 @@ def plan_pack(
             )
         if api_version is not None:
             versions["dinkster-api"] = api_version
-    for text in lock.requirements:
-        requirement = Requirement(text)
-        if requirement.marker and not requirement.marker.evaluate(dict(generation.markers)):
-            continue
-        name = canonicalize_name(requirement.name)
-        version = versions.get(name)
-        if version is None or not requirement.specifier.contains(
-            version,
-            prereleases=True if lock.engine is not None and name == "dinkster-api" else None,
-        ):
-            conflicts.append(f"{text} is not satisfied by the pack lock")
     for package in lock.packages:
-        base_version = generation.versions.get(package.name)
-        if base_version is not None:
-            if Version(base_version) != Version(package.version):
-                conflicts.append(
-                    f"{package.name}: generation has {base_version}, lock needs {package.version}"
-                )
+        if package.name in generation.versions:
             continue
         compatible = [
             wheel
@@ -326,6 +321,57 @@ def plan_pack(
             )
         else:
             wheels.append(compatible[0])
+    selected = {
+        canonicalize_name(parse_wheel_filename(wheel.filename)[0]): wheel for wheel in wheels
+    }
+    pending = [(text, "") for text in lock.requirements]
+    visited: set[tuple[str, str]] = set()
+    while pending:
+        text, extra = pending.pop()
+        if (text, extra) in visited:
+            continue
+        visited.add((text, extra))
+        try:
+            requirement = Requirement(normalize_requirement(text))
+        except ValueError as exc:
+            conflicts.append(f"invalid dependency requirement {text}: {exc}")
+            continue
+        if requirement.marker and not requirement.marker.evaluate(
+            {**generation.markers, "extra": extra}
+        ):
+            continue
+        name = canonicalize_name(requirement.name)
+        version = versions.get(name, generation.versions.get(name))
+        if (
+            version is None
+            or not requirement.specifier.contains(version, prereleases=True)
+            or requirement.url is not None
+            and name in shared_changes
+        ):
+            conflicts.append(
+                f"{text}: {name}=={version or 'absent'} does not satisfy the requirement"
+            )
+        # The generation's own closure is already installed; only private wheels
+        # can introduce new transitive constraints on substituted shared versions.
+        if shared_changes and not conflicts and name in selected:
+            try:
+                wheel = selected[name]
+                if offline and wheel_store is None:
+                    raise ProvisionError("offline dependency metadata requires a wheel store")
+                source = (
+                    fetch_wheel(wheel, wheel_store, offline=offline)
+                    if wheel_store is not None
+                    else None
+                )
+                dependencies = _wheel_requirements(wheel, source)
+            except (ProvisionError, OSError, ValueError, zipfile.BadZipFile) as exc:
+                conflicts.append(f"{name}: cannot verify dependency requirements: {exc}")
+                continue
+            pending.extend(
+                (dependency, context)
+                for dependency in dependencies
+                for context in ("", *sorted(requirement.extras))
+            )
     return PackPlan(lock, tuple(wheels), tuple(conflicts), own_environment_size)
 
 

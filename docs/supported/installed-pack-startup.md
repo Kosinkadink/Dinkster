@@ -1,5 +1,8 @@
 ## Installed pack startup
 
+- Compatible engine dependency updates retain existing published packs without
+  republishing them; declared pack and private-wheel dependency ranges still apply.
+
 - Local setup resolves registry pack dependencies against that pack's recorded
   registry index for the selected variant, alongside the selected base's package
   indexes and retained wheels. It does not search other packs' registries.

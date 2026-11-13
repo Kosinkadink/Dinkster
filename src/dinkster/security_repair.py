@@ -390,11 +390,11 @@ def plan_security_repair(
                         facts = replace(
                             facts,
                             versions={
-                                **facts.versions,
                                 **{
                                     package.name: package.version
                                     for package in proposed[key].packages
                                 },
+                                **facts.versions,
                             },
                         )
                 dependencies = {
