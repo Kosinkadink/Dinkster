@@ -158,14 +158,14 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$volume"
           echo "DINKSTER_CLONE_TEST_ROOT=$volume" >> "$GITHUB_ENV"
           echo 'DINKSTER_REQUIRE_REAL_CLONES=1' >> "$GITHUB_ENV"
+      - name: Install the CPU software shader renderer
+        if: needs.checks.outputs.engine == 'true'
+        uses: ./.github/actions/torch-cpu-suite/renderer-setup
       - run: bash scripts/ci-fast.sh tests
         if: needs.checks.outputs.engine == 'true'
         env:
           CUDA_VISIBLE_DEVICES: ""
           DINKSTER_ACCELERATOR: cpu
-      - name: Install the CPU software shader renderer
-        if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
-        uses: ./.github/actions/torch-cpu-suite/renderer-setup
       - name: Test selected packs
         if: needs.checks.outputs.packs != '[]' && needs.checks.outputs.docs != 'true'
         env:

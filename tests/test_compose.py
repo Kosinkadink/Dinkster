@@ -293,6 +293,7 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     return pool
 
 
+@pytest.mark.usefixtures("installed_default_catalogs")
 @pytest.mark.parametrize(
     "compositor_value, width",
     [
@@ -317,7 +318,6 @@ def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta(
     async def scenario() -> None:
         image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
         assert not image.in_process
-        assert prepare_catalog(image.manifest, environment=os.environ).ok
         composer = ServingComposer()
         try:
             await composer.add_pack(image)
@@ -358,6 +358,7 @@ def test_lazy_image_pack_composes_nonempty_layers_with_literal_delta(
     run_scenario(scenario())
 
 
+@pytest.mark.usefixtures("installed_default_catalogs")
 def test_lazy_image_pack_resolves_assets_after_host_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -385,7 +386,6 @@ def test_lazy_image_pack_resolves_assets_after_host_registration(
         composer = ServingComposer()
         try:
             image = replace(default_pack_spec("dinkster-image"), require_catalog=True)
-            assert prepare_catalog(image.manifest, environment=os.environ).ok
             await composer.add_pack(image)
 
             engine = composer.composition.make_engine(lambda _event: None)
