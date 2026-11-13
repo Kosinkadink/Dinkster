@@ -396,7 +396,7 @@ def test_sigterm_stops_managed_engine_and_allows_restart(
 
     def process_field(pid: int, field: str) -> str:
         result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", f"{field}="],
+            ["ps", "-ww", "-p", str(pid), "-o", f"{field}="],
             capture_output=True,
             text=True,
             check=False,
