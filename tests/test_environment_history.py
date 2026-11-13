@@ -1276,16 +1276,18 @@ environment.main()
             inspected = json.loads(observation.stdout)
             assert observation.returncode == 0, inspected
             assert inspected["security"]["recovery"] == refused["recovery"]
-            code, recovered = original_run(root, "start", "--yes")
-            assert code == 0 and recovered["current"] == 4, recovered
-            assert not (root / "generations/5").exists()
             assert {
                 path: content_digest(path)
                 for path in (root / "generations").rglob("*")
-                if path.is_file() and not path.is_symlink()
+                if path.is_file()
+                and not path.is_symlink()
+                and not path.is_relative_to(root / "generations/5")
             } == preserved
             assert security.decision(registry, UUID(NOTICE), 1) == "approved"
             assert security.decision(registry, UUID(NOTICE), 2) == "pending"
+            code, recovered = original_run(root, "start", "--yes")
+            assert code == 0 and recovered["current"] == 4, recovered
+            assert not (root / "generations/5").exists()
             repaired_review = tmp_path / "interrupted-new-review"
             code, planned = repair("--output", str(repaired_review))
             assert code == 0, planned
