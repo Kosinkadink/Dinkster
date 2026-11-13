@@ -3271,40 +3271,68 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-def test_degraded_default_ordering_composes_latent_before_conditioning(
+def test_degraded_default_ordering_composes_provider_before_consumer(
     tmp_path: Path,
 ) -> None:
     """A broken pack must not make healthy consumers compose before providers."""
+    import shutil
+
+    from dinkster_server import PackInfo
+    from test_compose import write_contract_manifest
+
     import dinkster.serve as serve
     from dinkster.compose import (
         CompositionError,
         PackSpec,
         ServingComposer,
-        default_pack_spec,
         load_manifest,
         resolve_manifest_path,
     )
 
-    broken = tmp_path / "ordering-probe"
-    broken.mkdir()
-    (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
-        'namespaces = ["probe"]\n'
-        "[pack.requirements.capabilities]\n"
-        '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
-        '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
-        encoding="utf-8",
+    provider = tmp_path / "provider"
+    shutil.copytree(TESTS_DIR / "fixtures/pack-testing", provider)
+    consumer = write_contract_manifest(
+        tmp_path / "consumer",
+        "consumer",
+        '[pack.dependencies]\nexample-tally = ">=0.0.1,<1"\n',
+        namespace="consumer",
+        nodes_entry="consumer_nodes:NODES",
     )
-    specs: list[PackSpec] = [
-        default_pack_spec("dinkster-conditioning"),
-        default_pack_spec("dinkster-latent"),
-        PackSpec(manifest=broken / "dinkster-pack.toml"),
+    (consumer.parent / "consumer_nodes.py").write_text("""
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+class Count(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(
+            node_type="consumer.count",
+            inputs=(InputSpec("counts", TypeExpr.concrete("example-tally.counts")),),
+            outputs=(OutputSpec("count", TypeExpr.concrete("INT")),),
+        )
+    @classmethod
+    def execute(cls, *, counts):
+        return cls.outputs(count=sum(counts.values()))
+NODES = [Count]
+""")
+    broken = write_contract_manifest(
+        tmp_path / "broken",
+        "ordering-probe",
+        '[pack.requirements.capabilities]\n"ordering.probe" = ">=1,<2"\n',
+    )
+    specs = [
+        PackSpec(consumer, env={"PYTHONPATH": str(consumer.parent)}),
+        PackSpec(
+            provider,
+            env={"PYTHONPATH": str(provider / "src")},
+            packs={
+                "example-tally": PackInfo(
+                    display_name="Example tally",
+                    version="0.0.1",
+                    artifact_digest="blake3:" + "a" * 64,
+                )
+            },
+        ),
+        PackSpec(broken),
     ]
-    # Load order is alphabetical, and it puts the consumer before its provider.
-    from dinkster.compose import default_pack_ids
-
-    load_order = list(default_pack_ids())
-    assert load_order.index("dinkster-conditioning") < load_order.index("dinkster-latent")
     composer = ServingComposer()
 
     async def scenario() -> None:
@@ -3321,12 +3349,11 @@ def test_degraded_default_ordering_composes_latent_before_conditioning(
                 errors[pack] = str(error)
             else:
                 deltas[pack] = set(delta.schemas)
-        assert list(errors) == ["dinkster-ordering-probe"]
-        assert "dinkster.ordering.probe" in errors["dinkster-ordering-probe"]
-        assert "dinkster-latent" in deltas
-        assert "dinkster.latent.empty_latent_image" in deltas["dinkster-latent"]
-        assert "dinkster-conditioning" in deltas, errors
-        assert "dinkster.conditioning.clip_text_encode" in deltas["dinkster-conditioning"]
+        assert list(errors) == ["ordering-probe"]
+        assert "ordering.probe" in errors["ordering-probe"]
+        assert "example-tally.shout" in deltas["example-tally"]
+        assert "consumer" in deltas, errors
+        assert "consumer.count" in deltas["consumer"]
 
     async def compose_and_close() -> None:
         try:
@@ -3369,23 +3396,28 @@ def test_degraded_default_ordering_retains_first_party_packs(tmp_path: Path) -> 
     assert "dinkster-nodes-generation" not in names
 
 
-def fixture_default_serve_command(port: int, directory: Path, *args: str) -> list[str]:
+def prepare_tally_manifest(directory: Path) -> Path:
     import shutil
 
     from dinkster_workers.doctor import prepare_catalog
 
     root = directory / "default-pack"
     shutil.copytree(TESTS_DIR / "fixtures/pack-testing", root)
-    environment = {"PYTHONPATH": str(root / "src")}
     manifest = root / "dinkster-pack.toml"
-    assert prepare_catalog(manifest, environment=environment).ok
+    assert prepare_catalog(manifest, environment={"PYTHONPATH": str(root / "src")}).ok
+    return manifest
+
+
+def fixture_default_serve_command(port: int, directory: Path, *args: str) -> list[str]:
+    manifest = prepare_tally_manifest(directory)
+    environment = {"PYTHONPATH": str(manifest.parent / "src")}
     bootstrap = f"""
 from pathlib import Path
 import sys
 from dinkster import serve
 from dinkster.compose import PackSpec
 
-sys.path.insert(0, {str(root / "src")!r})
+sys.path.insert(0, {str(manifest.parent / "src")!r})
 serve.default_pack_ids = lambda: ("example-tally",)
 serve.default_pack_spec = lambda _pack_id: PackSpec(Path({str(manifest)!r}), env={environment!r})
 serve.main()
@@ -3527,49 +3559,28 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
     serve.main()
 
 
-@pytest.mark.parametrize(
-    ("failed_pack", "surviving_pack", "present_node", "missing_node"),
-    [
-        (
-            "dinkster-utilities",
-            "dinkster-video",
-            "dinkster.video.load_video",
-            "dinkster.utilities.primitive_int",
-        ),
-        (
-            "dinkster-video",
-            "dinkster-utilities",
-            "dinkster.utilities.primitive_int",
-            "dinkster.video.load_video",
-        ),
-        (
-            "dinkster-image",
-            "dinkster-utilities",
-            "dinkster.utilities.primitive_int",
-            "dinkster.image.image_scale",
-        ),
-    ],
-)
+@pytest.mark.parametrize("failure_first", [True, False])
 @pytest.mark.timeout(360)
 def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
-    monkeypatch: pytest.MonkeyPatch,
-    failed_pack: str,
-    surviving_pack: str,
-    present_node: str,
-    missing_node: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_first: bool
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
 
     from dinkster import serve
+    from dinkster.compose import PackSpec
 
+    manifest = prepare_tally_manifest(tmp_path)
+    failed_pack, surviving_pack = "isopack", "example-tally"
+    present_node, missing_node = "example-tally.shout", "iso.chatty"
+    defaults = (failed_pack, surviving_pack) if failure_first else (surviving_pack, failed_pack)
     observed: dict[str, object] = {}
 
-    real_default_pack_spec = serve.default_pack_spec
-
-    def fail_one_default(pack_id: str) -> object:
+    def fail_one_default(pack_id: str) -> PackSpec:
         if pack_id == failed_pack:
             raise RuntimeError("default pack bytes unavailable")
-        return real_default_pack_spec(pack_id)
+        return PackSpec(manifest, env={"PYTHONPATH": str(manifest.parent / "src")})
+
+    monkeypatch.setattr(serve, "default_pack_ids", lambda: defaults)
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         async def inspect() -> None:
