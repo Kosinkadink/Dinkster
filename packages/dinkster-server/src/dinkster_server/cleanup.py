@@ -42,7 +42,6 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
     from .library import LIBRARY_KEY
 
     library = app[LIBRARY_KEY]
-    state = app[STATE_KEY]
     while True:
         try:
             await asyncio.wait_for(app[POLICY_WAKE_KEY].wait(), timeout=60)
@@ -63,6 +62,7 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
             if limit is None:
                 result["blocked"] = ["policy_unlimited"]
             else:
+                state = app[STATE_KEY]
                 result.update(
                     await inspect_cleanup(
                         library.vault,
