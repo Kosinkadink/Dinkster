@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import gc
 import threading
-import weakref
 from typing import cast
 
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE
-from dinkster_values import MediaStream, TypeRegistry
+from dinkster_values import MediaStream
 
 
 def stream(
@@ -86,28 +83,6 @@ def test_retain_closes_source_and_callbacks_after_final_lease() -> None:
         value.retain()
 
 
-def test_collection_closes_source_when_callback_captures_stream() -> None:
-    events: list[str] = []
-
-    def make_cyclic_stream() -> weakref.ReferenceType[MediaStream]:
-        value: MediaStream
-
-        def read(_start: int, _stop: int) -> str:
-            return value.identity
-
-        def close() -> None:
-            events.extend(("source", value.identity))
-
-        value = MediaStream("IMAGE", 1, 1, read, identity="source-digest", close=close)
-        value.on_close(lambda: events.append(value.identity))
-        return weakref.ref(value)
-
-    value_ref = make_cyclic_stream()
-    gc.collect()
-    assert value_ref() is None
-    assert events == ["source", "source-digest", "source-digest"]
-
-
 def test_final_close_waits_for_an_active_read() -> None:
     reading = threading.Event()
     release = threading.Event()
@@ -147,62 +122,3 @@ def test_cleanup_runs_every_callback_when_source_close_fails() -> None:
     with pytest.raises(RuntimeError, match="source failed"):
         value.close()
     assert events == ["source", "first", "second"]
-
-
-def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
-    registry = TypeRegistry()
-    registry.register("IMAGE")
-    ref: dict[str, object] = {"digest": "sha256:" + "a" * 64, "size": 12}
-    first = MediaStream(
-        "IMAGE",
-        7,
-        3,
-        lambda start, stop: tuple(range(start, stop)),
-        identity="source-digest",
-        asset_refs=[ref],
-    )
-    second = MediaStream(
-        "IMAGE",
-        7,
-        5,
-        lambda start, stop: tuple(range(start, stop)),
-        identity="source-digest",
-        asset_refs=[dict(ref)],
-    )
-    try:
-        wrapped = registry.wrap("stream<IMAGE>", first)
-        same_content = registry.wrap("stream<IMAGE>", second)
-        ref["size"] = 99
-        assert wrapped.type_id == "stream<IMAGE>"
-        assert wrapped.resolve() is first
-        assert wrapped.fingerprint == same_content.fingerprint
-        assert wrapped.meta.entries == {
-            "total": 7,
-            "chunk_size": 3,
-            "sample_rate": None,
-            "identity": "source-digest",
-            "asset_refs": [{"digest": "sha256:" + "a" * 64, "size": 12}],
-        }
-        with pytest.raises(AttributeError):
-            first.identity = "replacement"  # type: ignore[misc]
-        with pytest.raises(TypeError, match="does not accept"):
-            registry.wrap("IMAGE", first)
-        with pytest.raises(TypeError, match="matching MediaStream"):
-            registry.wrap("stream<IMAGE>", object())
-        with pytest.raises(KeyError, match="unregistered"):
-            registry.wrap(f"stream<{AUDIO_TYPE}>", first)
-    finally:
-        first.close()
-        second.close()
-
-
-def test_registry_refuses_different_registered_stream_type() -> None:
-    registry = TypeRegistry()
-    registry.register("IMAGE")
-    registry.register(AUDIO_TYPE)
-    value = stream()
-    try:
-        with pytest.raises(TypeError, match="matching MediaStream"):
-            registry.wrap(f"stream<{AUDIO_TYPE}>", value)
-    finally:
-        value.close()

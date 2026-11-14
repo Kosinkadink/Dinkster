@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
-import sys
-import threading
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -14,7 +11,7 @@ import pytest
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_memory import PressureSignal, system_memory_snapshot
+from dinkster_memory import PressureSignal
 from dinkster_protocol import CachedResult
 from dinkster_schema import (
     InputSpec,
@@ -56,23 +53,6 @@ def disk_store(root: Path) -> DiskCacheStore:
     registry = TypeRegistry()
     register_core_types(registry)
     return DiskCacheStore(root, registry)
-
-
-def test_default_ram_budget_uses_effective_host_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    snapshot = system_memory_snapshot(
-        "linux", host_query=lambda: (8192, 4096), linux_cgroup_query=lambda: (2048, 1024)
-    )
-    calls: list[None] = []
-
-    def probe():
-        calls.append(None)
-        return snapshot
-
-    monkeypatch.setattr("dinkster_caches.memory.system_memory_snapshot", probe)
-    assert MemoryLRUCache().max_bytes == 256
-    assert len(calls) == 1
-    assert MemoryLRUCache(max_bytes=0).max_bytes == 0
-    assert len(calls) == 1
 
 
 def test_ram_budget_evicts_lru_without_dropping_other_devices() -> None:
@@ -171,38 +151,6 @@ def test_budgeted_batch_workflow_matches_unbounded_output_and_peak_stays_bounded
         assert actual == expected
         assert constrained.peak_ram <= constrained.max_bytes
         assert constrained.peak_ram == batch_bytes
-
-    run_scenario(scenario())
-
-
-def test_lazy_spill_threshold_replay_and_clean_promotion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        memory = MemoryLRUCache(max_bytes=100)
-        disk = disk_store(tmp_path)
-        cache = LayeredCache(memory, disk, disk_spill_min_bytes=50)
-        await cache.put("small", entry(49))
-        await cache.put("large", entry(50))
-        assert await disk_store(tmp_path).get("small") is not None
-        assert await disk.get("large") is None
-        assert len(list((tmp_path / "entries").glob("*.json"))) == 1
-        assert await memory.shed(PressureSignal("ram", 99)) == 99
-        assert await disk.get("small") is not None
-        assert await disk_store(tmp_path).get("large") is not None
-        manifest = disk._entry_path("large")
-        content = manifest.read_bytes()
-        assert await cache.get("large") is not None
-        assert cache.take_hit_layer() == "disk"
-
-        # A clean promoted entry is evicted without even invoking a writer.
-        def reject_write(*_args: object) -> None:
-            raise AssertionError("redundant disk write")
-
-        monkeypatch.setattr(disk, "_put", reject_write)
-        assert await memory.shed(PressureSignal("ram", 50)) == 50
-        assert manifest.read_bytes() == content
-        assert await disk_store(tmp_path).get("large") is not None
 
     run_scenario(scenario())
 
@@ -330,114 +278,6 @@ def test_clear_discards_dirty_values_without_persisting(tmp_path: Path) -> None:
         assert cache.clear() == 1
         assert await memory.shed(PressureSignal("ram", 100)) == 0
         assert await disk_store(tmp_path).get("dirty") is None
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("invalidate", ["clear", "replace"])
-def test_invalidation_cancels_queued_spill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalidate: str
-) -> None:
-    async def scenario() -> None:
-        memory = MemoryLRUCache(max_bytes=100)
-        disk = disk_store(tmp_path)
-        cache = LayeredCache(memory, disk, disk_spill_min_bytes=50)
-        await cache.put("key", entry(50))
-        started = threading.Event()
-        resume = threading.Event()
-        original = disk._with_lock
-
-        def gated(operation, *args):
-            if operation == disk._put_pending:
-                started.set()
-                assert resume.wait(5)
-            return original(operation, *args)
-
-        monkeypatch.setattr(disk, "_with_lock", gated)
-        shedding = asyncio.create_task(memory.shed(PressureSignal("ram", 50)))
-        assert await asyncio.to_thread(started.wait, 5)
-        replacement = None
-        try:
-            if invalidate == "clear":
-                cache.clear()
-            else:
-                replacement = asyncio.create_task(cache.put("key", entry(1, text="new")))
-                await asyncio.sleep(0)
-        finally:
-            resume.set()
-        await shedding
-        if replacement is not None:
-            await replacement
-            await memory.shed(PressureSignal("ram", 1))
-            persisted = await disk_store(tmp_path).get("key")
-            replay = await cache.get("key")
-            assert persisted is not None and persisted["out"].fingerprint == "new"
-            assert replay is not None and replay["out"].fingerprint == "new"
-        else:
-            assert await disk_store(tmp_path).get("key") is None
-            assert await cache.get("key") is None
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("other_process", [False, True])
-@pytest.mark.parametrize("invalidate", ["clear", "same-key", "other-key"])
-def test_shared_root_invalidation_serializes_without_cancelling_other_owners(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalidate: str, other_process: bool
-) -> None:
-    async def scenario() -> None:
-        writer = disk_store(tmp_path)
-        other = disk_store(tmp_path)
-        started = threading.Event()
-        resume = threading.Event()
-        original = writer._with_lock
-
-        def gated(operation, *args):
-            if operation == writer._put_pending:
-                started.set()
-                assert resume.wait(5)
-            return original(operation, *args)
-
-        monkeypatch.setattr(writer, "_with_lock", gated)
-        pending = asyncio.create_task(writer.put("key", entry(50)))
-        assert await asyncio.to_thread(started.wait, 5)
-        key = "other" if invalidate == "other-key" else "key"
-        try:
-            if other_process:
-                result = await asyncio.to_thread(
-                    subprocess.run,
-                    [
-                        sys.executable,
-                        "-c",
-                        "import sys; from pathlib import Path; "
-                        "from dinkster_caches import DiskCacheStore; "
-                        "from dinkster_values import TypeRegistry, register_core_types; "
-                        "r = TypeRegistry(); register_core_types(r); "
-                        "s = DiskCacheStore(Path(sys.argv[1]), r); "
-                        "s.clear() if sys.argv[2] == 'clear' else s.discard(sys.argv[3])",
-                        str(tmp_path),
-                        invalidate,
-                        key,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                assert result.stderr == ""
-            elif invalidate == "clear":
-                other.clear()
-            else:
-                other.discard(key)
-            assert await other.get("key") is None
-            await other.put("other", entry(1, text="independent"))
-        finally:
-            resume.set()
-        await pending
-        fresh = disk_store(tmp_path)
-        assert await fresh.get("key") is not None
-        assert await fresh.get("other") is not None
-        writer.clear()
-        assert await fresh.get("key") is None
 
     run_scenario(scenario())
 

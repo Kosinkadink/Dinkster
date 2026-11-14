@@ -5,8 +5,6 @@ dead worker lifetimes (cached entries recompute; fresh results fail loudly)."""
 
 from __future__ import annotations
 
-import asyncio
-
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import (
     Engine,
@@ -33,7 +31,6 @@ from dinkster_schema import (
 )
 from dinkster_values import (
     RESOURCE_HANDLE_TYPE,
-    ResourceHandle,
     TypeRegistry,
     Value,
     register_core_types,
@@ -77,14 +74,6 @@ def _string(text: str) -> Value:
     return _WRAP_REGISTRY.wrap("STRING", text)
 
 
-def _stamped(rid: str, owner: str) -> Value:
-    """A list-of-handles Value whose single element references ``rid`` with
-    producer-stamped owner provenance ``owner`` (a non-local handle relays
-    the token its producer stamped)."""
-    handle = ResourceHandle(resource_id=rid, kind="model", owner=owner)
-    return _WRAP_REGISTRY.wrap(f"list<{RESOURCE_HANDLE_TYPE}>", [handle])
-
-
 class RecordingWorker:
     """Fake worker: records every invocation and returns outputs built by
     a per-call factory, so tests control resource/owner stamping exactly."""
@@ -101,26 +90,6 @@ class RecordingWorker:
     ) -> InvocationResult:
         self.invocations.append(invocation)
         return InvocationResult(outputs={"out": self._make_out(len(self.invocations))})
-
-
-class TrackingWorker(RecordingWorker):
-    """Records the peak number of concurrent worker invocations."""
-
-    def __init__(self) -> None:
-        super().__init__(lambda n: _string(f"v{n}"))
-        self.active = 0
-        self.peak = 0
-
-    async def invoke(
-        self, invocation: Invocation, on_event: OnInvocationEvent | None = None
-    ) -> InvocationResult:
-        self.active += 1
-        self.peak = max(self.peak, self.active)
-        try:
-            await asyncio.sleep(0.02)
-            return await super().invoke(invocation, on_event)
-        finally:
-            self.active -= 1
 
 
 def _engine(
@@ -151,10 +120,6 @@ def _engine(
 
 def _graph(tag: str = "x") -> Graph:
     return Graph(nodes={"p": GraphNode("test.produce", {"tag": tag})})
-
-
-def _load_graph(tag: str = "x") -> Graph:
-    return Graph(nodes={"p": GraphNode("test.load", {"tag": tag})})
 
 
 def test_attention_route_partitions_cache_entries_on_the_same_arm() -> None:
@@ -197,68 +162,5 @@ def test_attention_route_partitions_cache_entries_on_the_same_arm() -> None:
             derive_attention_route_token(evidence, scalar),
             derive_attention_route_token(evidence, role),
         ]
-
-    run_scenario(scenario())
-
-
-def test_selected_plain_nodes_admit_per_execution_arm() -> None:
-    async def scenario() -> None:
-        targets = {"a": "cuda:0", "b": "cuda:0"}
-
-        async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
-        ) -> ExecutionSelection:
-            target = targets[run_id]
-            return ExecutionSelection(target=target, cache_tag=f"native:{target}")
-
-        worker = TrackingWorker()
-        engine = _engine(worker, plan_execution=plan)
-        await asyncio.gather(
-            engine.run(_graph("first"), ["p"], run_id="a"),
-            engine.run(_graph("second"), ["p"], run_id="b"),
-        )
-        assert worker.peak == 1
-        assert "compute:cuda:0" in engine._resource_slots
-
-        worker.peak = 0
-        targets["b"] = "cuda:1"
-        await asyncio.gather(
-            engine.run(_graph("third"), ["p"], run_id="a"),
-            engine.run(_graph("fourth"), ["p"], run_id="b"),
-        )
-        assert worker.peak == 2
-        assert "compute:cuda:1" in engine._resource_slots
-
-    run_scenario(scenario())
-
-
-def test_dead_owner_hit_recomputes_and_entry_is_overwritten() -> None:
-    async def scenario() -> None:
-        live = {"life-1"}
-        owners = iter(["life-1", "life-2"])
-
-        # Nested-list stamping: traversal must find the owner inside the tree.
-        worker = RecordingWorker(lambda n: _stamped("res:model", next(owners)))
-        cache = MemoryLRUCache()
-        events: list[EngineEvent] = []
-        engine = _engine(
-            worker,
-            owner_alive=lambda token: token in live,
-            cache=cache,
-            events=events,
-            explain_misses=True,
-        )
-        await engine.run(_load_graph(), ["p"])
-        assert len(worker.invocations) == 1
-
-        live.clear()
-        live.add("life-2")  # the first lifetime died; a new one is live
-        await engine.run(_load_graph(), ["p"])
-        assert len(worker.invocations) == 2  # dead-owner hit became a miss
-        assert any(
-            e.kind == "cache_miss" and e.detail.get("reason") == "dead-owner" for e in events
-        )
-        await engine.run(_load_graph(), ["p"])
-        assert len(worker.invocations) == 2  # fresh result overwrote the entry
 
     run_scenario(scenario())

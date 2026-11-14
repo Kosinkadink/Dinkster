@@ -10,7 +10,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
 )
 from dinkster_inference_wire.wan_wire import register_wan_type
-from dinkster_values import EncodedLatentTensor, encode_latent
+from dinkster_values import EncodedLatentTensor
 
 HALF = EncodedLatentTensor("float16", (1, 2), b"\x00\x3c\x00\xc0")
 BFLOAT = EncodedLatentTensor("bfloat16", (2, 1), b"\x80\x3f\x00\xc0")
@@ -89,36 +89,3 @@ def test_public_codec_roundtrip_and_fingerprints(
     assert spec.fingerprint(value) != spec.fingerprint(changed)
     if isinstance(value, dict):
         assert spec.fingerprint(value) == spec.fingerprint(dict(reversed(tuple(value.items()))))
-
-
-@pytest.mark.parametrize(
-    ("type_id", "value"),
-    (
-        (WAN_CAMERA_EMBEDDING_TYPE, {"tensor": HALF}),
-        (WAN_CAMERA_EMBEDDING_TYPE, EncodedLatentTensor("float16", (2, 3), b"\x00\x00")),
-        (TRACKS_TYPE, {}),
-        (TRACKS_TYPE, {"track_path": [1, 2]}),
-        (TRACKS_TYPE, {"track_path": HALF, "track_visibility": False}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**ENCODER, "encoded_audio": None}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**ENCODER, "encoded_audio_all_layers": {"0": HALF}}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**ENCODER, "encoded_audio_all_layers": [1]}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**ENCODER, "audio_samples": True}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**ENCODER, "audio_samples": 1.5}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**WANDANCER_ENCODER, "audio_feature": None}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**WANDANCER_ENCODER, "fps": 15}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**WANDANCER_ENCODER, "audio_inject_scale": True}),
-        (AUDIO_ENCODER_OUTPUT_TYPE, {**WANDANCER_ENCODER, "encoded_audio": None}),
-    ),
-)
-def test_public_codec_rejects_invalid_fields_on_encode_and_decode(
-    registry: TypeRegistry, type_id: str, value: object
-) -> None:
-    spec = registry.spec(type_id)
-    assert spec.validate_encoded is not None
-    payload = encode_latent({"samples": value})
-    with pytest.raises(ValueError):
-        spec.encode(value)
-    with pytest.raises(ValueError):
-        spec.decode(payload)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(payload, {})

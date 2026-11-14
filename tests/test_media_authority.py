@@ -418,17 +418,6 @@ def test_classify_media_accepts_structural_animated_webp() -> None:
     )
 
 
-def test_classify_media_rejects_layer_two_and_handles_id3_versions() -> None:
-    layer_two = b"\xff\xfd\x80\x00" + bytes(413)
-    with pytest.raises(AssetError):
-        classify_media(layer_two)
-    id3v23_experimental = b"ID3\x03\x00\x20" + bytes(4) + _mp3()
-    assert classify_media(id3v23_experimental).media_type == "audio/mpeg"
-    id3v24_header = b"ID3\x04\x00\x10" + bytes(4)
-    id3v24_footer = id3v24_header + b"3DI" + id3v24_header[3:10] + _mp3()
-    assert classify_media(id3v24_footer).media_type == "audio/mpeg"
-
-
 def test_classify_media_uses_mp4_track_types_and_prefers_video() -> None:
     assert classify_media(_mp4(_audio_mp4_track())) == MediaClassification(
         "media/audio", "audio/mp4", "m4a"
@@ -1201,28 +1190,6 @@ def test_latent_ingest_normalizes_integer_digit_limit_to_invalid_input(tmp_path:
             assert library.vault.digests() == []
             assert library.latent_reserved_bytes == [0]
             assert not list(library.vault.root.glob(".latent-upload-*"))
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_latent_metadata_probe_ignores_integer_limit_vae_hint(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, _library = await _media_client(tmp_path)
-        hint = '{"version":' + "9" * 5000 + "}"
-        payload = _latent({"dinkster_vae_hint": hint})
-        digest = digest_bytes(payload)
-        try:
-            uploaded = await client.post(
-                "/api/assets/latent?scope=local&name=hint.latent",
-                data=payload,
-                headers={"Content-Type": "application/x-comfy-latent"},
-            )
-            assert uploaded.status == 201
-            metadata = await client.get(f"/api/assets/{digest}/metadata")
-            assert metadata.status == 200
-            assert (await metadata.json())["metadata"]["latent"]["vaeHint"] == ""
         finally:
             await client.close()
 

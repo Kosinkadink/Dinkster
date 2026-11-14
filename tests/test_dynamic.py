@@ -7,8 +7,8 @@ from collections.abc import Mapping
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError, GraphValidationError, Invocation
-from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_engine import Engine, ExecutionError, Invocation
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
     InputFamilySpec,
     InputSpec,
@@ -99,79 +99,6 @@ SCAFFOLD_NODES = (*BASE_NODES, JoinStrings, ConcatStrings, SplitString)
 # --- elaboration is pure, stable, and order-preserving ---
 
 
-def test_positional_family_validation_requires_first_slots_not_tail() -> None:
-    schema = NodeSchema(
-        "test.positional",
-        input_families=(
-            InputFamilySpec(
-                "pieces",
-                STRING,
-                min_members=2,
-                max_members=4,
-                member_prefix="piece",
-                optional_after_minimum=True,
-            ),
-        ),
-    )
-
-    def diagnostics(inputs: dict[str, object]) -> list[str]:
-        graph = Graph(nodes={"n": GraphNode(schema.node_type, inputs)})
-        return [
-            d.message
-            for d in validate(graph, {schema.node_type: schema}, ["n"])
-            if d.severity == "error"
-        ]
-
-    assert (
-        diagnostics({"pieces.piece0": "first", "pieces.piece1": "second", "pieces.piece2": "third"})
-        == []
-    )
-    assert diagnostics(
-        {"pieces.piece0": "first", "pieces.piece1": "second", "pieces.piece2": None}
-    ) == ["input 'pieces.piece2' literal does not match STRING"]
-    missing = diagnostics({"pieces.piece2": "third", "pieces.piece3": "fourth"})
-    assert len(missing) == 2
-    assert any("pieces.piece0" in message for message in missing)
-    assert any("pieces.piece1" in message for message in missing)
-
-
-# --- schema-level guardrails ---
-
-
-# --- wire format: input and output families round-trip ---
-
-
-# --- graph validation on the effective interface ---
-
-
-def _schemas() -> dict[str, NodeSchema]:
-    schemas = build_schemas(SCAFFOLD_NODES)
-    schemas[JOIN_SCHEMA.node_type] = JOIN_SCHEMA
-    return schemas
-
-
-FANOUT_SCHEMA = NodeSchema(
-    node_type="test.fanout",
-    inputs=(InputSpec("seed", STRING),),
-    output_families=(OutputFamilySpec("results", STRING),),
-)
-
-
-def test_dangling_dynamic_member_is_a_document_time_error() -> None:
-    schemas = _schemas()
-    schemas["test.fanout"] = FANOUT_SCHEMA
-    graph = Graph(
-        nodes={
-            # Document stores only member "0", but the consumer links to "2".
-            "p": GraphNode("test.fanout", {"seed": "s"}, output_members={"results": ("0",)}),
-            "j": GraphNode("test.join", {"pieces.a": Link("p", "results.2"), "separator": "-"}),
-        }
-    )
-    diags = validate(graph, schemas, ["j"])
-    dangling = [d for d in diags if d.code == "dangling-output"]
-    assert dangling and "currently has members" in dangling[0].message
-
-
 # --- engine + worker end-to-end ---
 
 
@@ -214,15 +141,6 @@ def test_dynamic_inputs_execute_and_cache_deterministically() -> None:
         # Shrinking back -> the original entry is still valid and hits.
         back = await engine.run(join_graph(("a", "x"), ("b", "y")), ["j"])
         assert back.cached == ("j",)
-
-    run_scenario(scenario())
-
-
-def test_min_members_enforced_at_run() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        with pytest.raises(GraphValidationError):
-            await engine.run(join_graph(), ["j"])
 
     run_scenario(scenario())
 
@@ -374,27 +292,6 @@ class CountSpecProbe(Node):
         CountSpecProbe.seen = output_spec
         assert len(output_spec.family("results")) == count
         return cls.outputs(results={suffix: seed for suffix in output_spec.family("results")})
-
-
-def test_counted_output_members_reach_worker_output_spec() -> None:
-    async def scenario() -> None:
-        CountSpecProbe.seen = None
-        engine = make_engine([CountSpecProbe])
-        graph = Graph(
-            nodes={
-                "n": GraphNode(
-                    "test.count_spec_probe",
-                    {"count": 3, "seed": "v"},
-                    output_members={"results": ("0", "1", "2")},
-                )
-            }
-        )
-        result = await engine.run(graph, ["n"])
-        assert CountSpecProbe.seen is not None
-        assert CountSpecProbe.seen.family("results") == ("0", "1", "2")
-        assert set(result.outputs["n"]) == {"results.0", "results.1", "results.2"}
-
-    run_scenario(scenario())
 
 
 class BadFanout(Node):

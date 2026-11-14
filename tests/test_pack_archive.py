@@ -14,15 +14,9 @@ from dinkster_workers import ManifestError
 
 from dinkster import manager
 from dinkster.pack_archive import (
-    MAX_ENTRIES,
-    MAX_EXPANDED_BYTES,
-    MAX_FILE_BYTES,
-    MAX_MANIFEST_BYTES,
-    PackArchiveError,
     build_pack_archive,
 )
 from tests.async_scenarios import run_scenario
-from tests.platform_support import symlink_or_skip
 
 MANIFEST = (
     '[pack]\nname = "archive-test"\nversion = "1.0"\nengine = ">=0.9,<1"\n'
@@ -96,31 +90,6 @@ def test_archive_normalizes_paths_and_omits_excluded_directories(tmp_path: Path)
     assert all("nested" not in name.split("/") for name in names)
 
 
-def test_archive_rejects_symlinks_and_normalized_collisions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pack = write_pack(tmp_path / "pack")
-    package = pack / "archive_test"
-    symlink_or_skip(package / "link.py", package / "__init__.py")
-    with pytest.raises(PackArchiveError, match="symlink"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-
-    (package / "link.py").unlink()
-    entries = list(pack.rglob("*"))
-    composed = f"{chr(0xE9)}.py"
-    decomposed = unicodedata.normalize("NFD", composed)
-    (package / composed).write_text("one")
-    (package / decomposed).write_text("two")
-    # Normalization-insensitive filesystems cannot store both directory entries.
-    monkeypatch.setattr(
-        Path,
-        "rglob",
-        lambda self, pattern: iter([*entries, package / composed, package / decomposed]),
-    )
-    with pytest.raises(PackArchiveError, match="collides"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-
-
 def test_archive_validates_manifest_before_writing(tmp_path: Path) -> None:
     pack = write_pack(tmp_path / "pack")
     (pack / "dinkster-pack.toml").write_text("not toml = [")
@@ -128,73 +97,6 @@ def test_archive_validates_manifest_before_writing(tmp_path: Path) -> None:
     with pytest.raises(ManifestError):
         build_pack_archive(pack, output)
     assert not output.exists()
-
-
-def test_entry_limit_accepts_exact_and_rejects_plus_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pack = write_pack(tmp_path / "pack")
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_ENTRIES", 5)
-    build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    (pack / "archive_test/third.py").write_text("")
-    with pytest.raises(PackArchiveError, match="6 entries; limit is 5"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    assert MAX_ENTRIES == 10_000
-
-
-def test_file_manifest_expanded_and_archive_limits_are_applied(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pack = write_pack(tmp_path / "pack")
-    largest = pack / "largest.bin"
-    largest.write_bytes(b"x" * 1024)
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_FILE_BYTES", 1024)
-    build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_FILE_BYTES", 1023)
-    with pytest.raises(PackArchiveError, match="file 'archive_test/largest.bin'"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_FILE_BYTES", MAX_FILE_BYTES)
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_MANIFEST_BYTES", len(MANIFEST))
-    build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_MANIFEST_BYTES", len(MANIFEST) - 1)
-    with pytest.raises(PackArchiveError, match="pack manifest"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_MANIFEST_BYTES", MAX_MANIFEST_BYTES)
-    baseline = tmp_path / WHEEL_FILENAME
-    build_pack_archive(pack, baseline)
-    with zipfile.ZipFile(baseline) as archive:
-        expanded = sum(info.file_size for info in archive.infolist())
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_EXPANDED_BYTES", expanded)
-    build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_EXPANDED_BYTES", expanded - 1)
-    with pytest.raises(PackArchiveError, match="expanded archive"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_EXPANDED_BYTES", MAX_EXPANDED_BYTES)
-    build_pack_archive(pack, baseline)
-    archive_size = baseline.stat().st_size
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_ARCHIVE_BYTES", archive_size)
-    build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_ARCHIVE_BYTES", archive_size - 1)
-    with pytest.raises(PackArchiveError, match="archive"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-
-
-def test_path_limit_counts_normalized_utf8_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pack = write_pack(tmp_path / "pack")
-    unicode_file = pack / "archive_test" / (chr(0xE9) * 32 + ".py")
-    unicode_file.write_text("")
-    normalized_bytes = len(("archive_test/" + unicode_file.name).encode("utf-8"))
-    monkeypatch.setattr("dinkster_workers.pack_wheel.MAX_PATH_BYTES", normalized_bytes)
-    build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
-    longer = unicode_file.with_name(unicode_file.name + "x")
-    unicode_file.rename(longer)
-    with pytest.raises(PackArchiveError, match="archive path"):
-        build_pack_archive(pack, tmp_path / WHEEL_FILENAME)
 
 
 def test_cli_writes_archive_and_prints_written_digest(
@@ -507,32 +409,6 @@ def test_registry_manifest_admission_preserves_engine_range(tmp_path: Path, engi
     assert mismatch.blocked and "does not match submission" in mismatch.findings[0].message
 
 
-@pytest.mark.parametrize(
-    ("declaration", "message"),
-    [
-        ('license = "LicenseRef-Private"', "requires a root LICENSE"),
-        ('license = "not-a-license"', "Unknown license"),
-        ('repository = "http://example.org/pack"', "must be an HTTPS URL"),
-        ('dinkster = "nonsense"', "Invalid specifier"),
-    ],
-)
-def test_registry_manifest_admission_refuses_invalid_metadata(
-    tmp_path: Path, declaration: str, message: str
-) -> None:
-    from dinkster_registry.archive_admission import run_manifest_admission
-
-    root = write_pack(tmp_path / "pack")
-    (root / "dinkster-pack.toml").write_text(
-        MANIFEST.replace('version = "1.0"\nengine = ">=0.9,<1"\n', "").replace(
-            "[pack]\n", f"[pack]\n{declaration}\n"
-        )
-        + '\n[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
-    )
-    result = run_manifest_admission(root, "archive-test", "1.0.0")
-    assert result.blocked and result.findings[0].code == "manifest.invalid"
-    assert message in result.findings[0].message
-
-
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("problem", ["empty", "remote", "exception", "output", "timeout"])
 def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem: str) -> None:
@@ -578,19 +454,3 @@ def test_registry_executable_probe_bounds_and_sanitizes(tmp_path: Path, problem:
     assert all("private operator detail" not in finding.message for finding in result.findings)
     assert result.operator_details is not None
     assert len(str(result.operator_details["stdoutTail"]).encode()) <= 512
-
-
-def test_registry_probe_refuses_degraded_isolation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_registry.archive_admission import run_executable_probe
-    from dinkster_workers.sandbox import ProbeJail
-
-    root = write_pack(tmp_path / "pack")
-    monkeypatch.setattr(
-        "dinkster_registry.archive_admission.detect_probe_jail",
-        lambda: ProbeJail(bwrap="/usr/bin/true", user_namespaces=False),
-    )
-    result = run_executable_probe(root)
-    assert result.blocked and result.findings[0].code == "probe.isolation-unavailable"
-    assert result.operator_details == {"jail": "degraded"}

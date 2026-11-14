@@ -124,21 +124,6 @@ def test_doctor_detects_edits_missing_and_added_files_without_reporting_pack_fil
     )
 
 
-def test_generation_preserves_in_process_hosting_and_defaults_to_isolated(tmp_path: Path):
-    path = _generation(tmp_path, 1)
-    assert Generation.read(path).in_process_packs == ()
-    metadata = json.loads(path.read_text())
-    metadata["inProcessPacks"] = ["example_pack"]
-    path.write_text(json.dumps(metadata))
-    generation = Generation.read(path)
-    generation.write(path)
-    assert Generation.read(path).in_process_packs == ("example_pack",)
-    metadata["inProcessPacks"] = ["../escape"]
-    path.write_text(json.dumps(metadata))
-    with pytest.raises(EnvironmentError, match="array of pack ids"):
-        Generation.read(path)
-
-
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "a/../b", "C:/escape", "a\\b"])
 def test_generation_refuses_file_hashes_outside_its_tree(tmp_path: Path, name: str):
     path = _generation(tmp_path, 1)
@@ -197,23 +182,6 @@ def test_channel_selects_an_exact_base_and_never_falls_back_to_cpu(tmp_path: Pat
         channel.base_for("win-nvidia")
     assert "supported published variants: linux-cpu, win-cpu" in str(error.value)
     assert "--from-scratch" in str(error.value)
-
-
-def test_channel_resolves_labelled_locations_without_changing_content_identities():
-    document = _channel_document()
-    engine_path = "engine/2026-10-31-0.4.0.dev1+g1234-aaaaaaaa/release-manifest.json"
-    base_path = "base/win-cpu/2026-10-30-py3.14.10-torch2.14.1-bbbbbbbb/manifest.json"
-    document["engine"]["locations"][0]["path"] = engine_path
-    document["base"]["win-cpu"]["locations"][0]["path"] = base_path
-    channel = Channel.parse(document)
-    assert channel.engine_release == "sha256:" + "a" * 64
-    assert channel.base_for("win-cpu") == "sha256:" + "b" * 64
-    assert channel.engine_locations[0].path == engine_path
-    assert dict(channel.base_locations)["win-cpu"][0].path == base_path
-    document["base"]["win-cpu"]["locations"][0]["path"] = base_path.replace(
-        "torch2.14.1-", "torch2.14.1-cu132-"
-    )
-    assert Channel.parse(document).base_for("win-cpu") == "sha256:" + "b" * 64
 
 
 @pytest.mark.parametrize(

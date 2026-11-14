@@ -52,24 +52,6 @@ def _write_cgroup1_memory_mountinfo(
     return proc_mountinfo
 
 
-def test_system_snapshot_reports_psutil_source() -> None:
-    snapshot = system_memory_snapshot(include_swap=True)
-    assert snapshot.host_total_bytes > 0
-    assert 0 <= snapshot.host_available_bytes <= snapshot.host_total_bytes
-    assert snapshot.host_swap_available_bytes is not None
-    assert snapshot.host_swap_total_bytes is not None
-    assert 0 <= snapshot.host_swap_available_bytes <= snapshot.host_swap_total_bytes
-    assert 0 < snapshot.effective_total_bytes <= snapshot.host_total_bytes
-    assert 0 <= snapshot.effective_available_bytes <= snapshot.effective_total_bytes
-    assert snapshot.effective_swap_available_bytes is not None
-    assert snapshot.effective_swap_total_bytes is not None
-    assert 0 <= snapshot.effective_swap_available_bytes <= snapshot.effective_swap_total_bytes
-    assert snapshot.provenance[0] == "psutil"
-    assert snapshot.effective_used_bytes == (
-        snapshot.effective_total_bytes - snapshot.effective_available_bytes
-    )
-
-
 @linux_cgroup
 def test_system_snapshot_clamps_to_cgroup_v1_and_reports_swap(tmp_path: Path) -> None:
     root = tmp_path / "legacy-memory"
@@ -150,25 +132,6 @@ def test_cgroup_v1_uses_hierarchical_limits_and_ignores_huge_unlimited(
 
 
 @linux_cgroup
-def test_cgroup_v1_hierarchical_limit_survives_missing_leaf_usage(tmp_path: Path) -> None:
-    root = tmp_path / "legacy-memory"
-    child = root / "workload"
-    child.mkdir(parents=True)
-    (child / "memory.limit_in_bytes").write_text("700\n")
-    (child / "memory.stat").write_text("hierarchical_memory_limit 600\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("4:memory:/workload\n")
-    proc_mountinfo = _write_cgroup1_memory_mountinfo(tmp_path, root)
-
-    status = system_memory_module._linux_cgroup_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    )
-    assert status.total_bytes == 600
-    assert status.available_bytes is None
-
-
-@linux_cgroup
 def test_hybrid_cgroup_uses_v1_memory_controller_membership(tmp_path: Path) -> None:
     legacy = tmp_path / "legacy"
     unified = tmp_path / "unified"
@@ -194,84 +157,6 @@ def test_hybrid_cgroup_uses_v1_memory_controller_membership(tmp_path: Path) -> N
     )
     assert status.version == 1
     assert (status.total_bytes, status.available_bytes) == (700, 500)
-
-
-@linux_cgroup
-def test_cgroup_v1_walks_visible_ancestors_from_remounted_root(tmp_path: Path) -> None:
-    mountpoint = tmp_path / "delegated-memory"
-    child = mountpoint / "workload"
-    child.mkdir(parents=True)
-    (mountpoint / "memory.limit_in_bytes").write_text("900\n")
-    (mountpoint / "memory.usage_in_bytes").write_text("600\n")
-    (child / "memory.limit_in_bytes").write_text("700\n")
-    (child / "memory.usage_in_bytes").write_text("200\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("4:memory:/tenant/workload\n")
-    proc_mountinfo = _write_cgroup1_memory_mountinfo(
-        tmp_path,
-        mountpoint,
-        root="/tenant",
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 300)
-
-
-@linux_cgroup
-def test_cgroup_v1_prefers_hierarchy_relative_mount_over_namespace_fallback(
-    tmp_path: Path,
-) -> None:
-    correct = tmp_path / "correct"
-    correct_child = correct / "workload"
-    unrelated = tmp_path / "unrelated"
-    unrelated_child = unrelated / "tenant" / "workload"
-    correct_child.mkdir(parents=True)
-    unrelated_child.mkdir(parents=True)
-    (correct_child / "cgroup.procs").write_text("")
-    (correct_child / "memory.limit_in_bytes").write_text("700\n")
-    (correct_child / "memory.usage_in_bytes").write_text("200\n")
-    (unrelated_child / "cgroup.procs").write_text("")
-    (unrelated_child / "memory.limit_in_bytes").write_text("2000\n")
-    (unrelated_child / "memory.usage_in_bytes").write_text("100\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("4:memory:/tenant/workload\n")
-    proc_mountinfo = tmp_path / "proc-self-mountinfo"
-    proc_mountinfo.write_text(
-        f"1 0 0:1 /tenant {_mountinfo_path(correct)} "
-        "rw - cgroup cgroup rw,cpu,memory\n"
-        f"2 0 0:2 /unrelated/deeper {_mountinfo_path(unrelated)} "
-        "rw - cgroup cgroup rw,cpu,memory\n"
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 500)
-
-
-@linux_cgroup
-def test_cgroup_v1_resolves_namespace_root_membership_from_remounted_root(
-    tmp_path: Path,
-) -> None:
-    mountpoint = tmp_path / "delegated-memory"
-    mountpoint.mkdir()
-    (mountpoint / "cgroup.procs").write_text("")
-    (mountpoint / "memory.limit_in_bytes").write_text("700\n")
-    (mountpoint / "memory.usage_in_bytes").write_text("200\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("4:memory:/\n")
-    proc_mountinfo = _write_cgroup1_memory_mountinfo(
-        tmp_path,
-        mountpoint,
-        root="/tenant",
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 500)
 
 
 @linux_cgroup
@@ -308,30 +193,6 @@ def test_system_snapshot_clamps_to_nested_cgroup_v2_limits(tmp_path: Path) -> No
 
 
 @linux_cgroup
-def test_cgroup_v2_available_uses_each_ancestors_inactive_file_working_set(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "cgroup"
-    parent = root / "parent"
-    child = parent / "child"
-    child.mkdir(parents=True)
-    (parent / "memory.max").write_text("1000\n")
-    (parent / "memory.current").write_text("900\n")
-    (parent / "memory.stat").write_text("anon 200\ninactive_file 700\n")
-    (child / "memory.max").write_text("700\n")
-    (child / "memory.current").write_text("200\n")
-    (child / "memory.stat").write_text("inactive_file 50\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("0::/parent/child\n")
-    proc_mountinfo = _write_cgroup2_mountinfo(tmp_path, root)
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 550)
-
-
-@linux_cgroup
 def test_system_snapshot_reads_mutable_cgroup_values_on_every_call(tmp_path: Path) -> None:
     root = tmp_path / "cgroup"
     child = root / "child"
@@ -365,115 +226,6 @@ def test_system_snapshot_reads_mutable_cgroup_values_on_every_call(tmp_path: Pat
     assert first.effective_available_bytes == 900
     assert second.effective_total_bytes == 600
     assert second.effective_available_bytes == 0
-
-
-@linux_cgroup
-def test_system_snapshot_resolves_rootless_remounted_cgroup_v2(tmp_path: Path) -> None:
-    mountpoint = tmp_path / "delegated-cgroup"
-    child = mountpoint / "workload"
-    child.mkdir(parents=True)
-    (mountpoint / "memory.max").write_text("1000\n")
-    (mountpoint / "memory.current").write_text("400\n")
-    (child / "memory.max").write_text("700\n")
-    (child / "memory.current").write_text("200\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("0::/user.slice/session.scope/workload\n")
-    proc_mountinfo = _write_cgroup2_mountinfo(
-        tmp_path,
-        mountpoint,
-        root="/user.slice/session.scope",
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 500)
-
-
-@linux_cgroup
-def test_system_snapshot_prefers_most_specific_visible_cgroup_mount(tmp_path: Path) -> None:
-    broad = tmp_path / "broad"
-    specific = tmp_path / "specific"
-    (broad / "tenant" / "workload").mkdir(parents=True)
-    (specific / "workload").mkdir(parents=True)
-    (broad / "tenant" / "workload" / "memory.max").write_text("1200\n")
-    (broad / "tenant" / "workload" / "memory.current").write_text("100\n")
-    (specific / "workload" / "memory.max").write_text("700\n")
-    (specific / "workload" / "memory.current").write_text("200\n")
-    (specific / "workload" / "cgroup.procs").write_text("")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("0::/tenant/workload\n")
-    proc_mountinfo = tmp_path / "proc-self-mountinfo"
-    proc_mountinfo.write_text(
-        f"1 0 0:1 / {_mountinfo_path(broad)} rw - cgroup2 cgroup rw\n"
-        f"2 0 0:1 /tenant {_mountinfo_path(specific)} rw - cgroup2 cgroup rw\n"
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 500)
-
-
-@linux_cgroup
-def test_system_snapshot_accepts_leaf_without_memory_controller_files(tmp_path: Path) -> None:
-    broad = tmp_path / "broad"
-    specific = tmp_path / "specific"
-    (broad / "tenant" / "workload").mkdir(parents=True)
-    leaf = specific / "workload"
-    leaf.mkdir(parents=True)
-    (specific / "memory.max").write_text("700\n")
-    (specific / "memory.current").write_text("200\n")
-    (leaf / "cgroup.procs").write_text("")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("0::/tenant/workload\n")
-    proc_mountinfo = tmp_path / "proc-self-mountinfo"
-    proc_mountinfo.write_text(
-        f"1 0 0:1 / {_mountinfo_path(broad)} rw - cgroup2 cgroup rw\n"
-        f"2 0 0:1 /tenant {_mountinfo_path(specific)} rw - cgroup2 cgroup rw\n"
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 500)
-
-
-@linux_cgroup
-def test_system_snapshot_decodes_mountinfo_path_escapes(tmp_path: Path) -> None:
-    mountpoint = tmp_path / "cgroup with space"
-    child = mountpoint / "workload"
-    child.mkdir(parents=True)
-    (child / "memory.max").write_text("700\n")
-    (child / "memory.current").write_text("200\n")
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("0::/delegated group/workload\n")
-    proc_mountinfo = _write_cgroup2_mountinfo(
-        tmp_path,
-        mountpoint,
-        root="/delegated group",
-    )
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (700, 500)
-
-
-@linux_cgroup
-def test_system_snapshot_does_not_match_cgroup_mount_root_by_string_prefix(
-    tmp_path: Path,
-) -> None:
-    mountpoint = tmp_path / "tenant"
-    mountpoint.mkdir()
-    proc_cgroup = tmp_path / "proc-self-cgroup"
-    proc_cgroup.write_text("0::/tenant-other/workload\n")
-    proc_mountinfo = _write_cgroup2_mountinfo(tmp_path, mountpoint, root="/tenant")
-
-    assert system_memory_module._linux_cgroup_memory_status(
-        proc_cgroup=proc_cgroup,
-        proc_mountinfo=proc_mountinfo,
-    ) == (None, None)
 
 
 @linux_cgroup

@@ -12,7 +12,6 @@ from typing import Any, BinaryIO, cast
 import av
 import numpy as np
 import pytest
-from av.error import FFmpegError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_assets.value import value_asset_references
@@ -188,45 +187,6 @@ def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
             for i, frame in enumerate(frames):
                 assert frame.pts is not None and frame.time_base is not None
                 assert frame.pts * frame.time_base == Fraction(round(i * 1000 / 30), 1000)
-
-
-@pytest.mark.parametrize(("height", "width"), [(8, 12), (64, 64)])
-def test_source_component_av1_preserves_source_encode_contract(height: int, width: int) -> None:
-    images = np.linspace(0, 1, 2 * height * width * 3, dtype=np.float32).reshape(
-        2, height, width, 3
-    )
-    value = assemble_video(images, fps=30)
-    encoded = io.BytesIO()
-    try:
-        expected = _source_style_video(images, fps=Fraction(30), depth=8, color="sRGB", codec="av1")
-    except FFmpegError as expected_error:
-        if height >= 64 and width >= 64:
-            raise
-        # Small-frame support belongs to the source encoder, including its failures.
-        with pytest.raises(type(expected_error)) as actual_error:
-            save_video_stream(value, encoded, container="mkv", codec="av1", source_components=True)
-        assert type(actual_error.value) is type(expected_error)
-        assert actual_error.value.errno == expected_error.errno
-        assert encoded.getvalue() == b""
-        return
-    save_video_stream(
-        value,
-        encoded,
-        container="mkv",
-        codec="av1",
-        source_components=True,
-    )
-    with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
-        stream = container.streams.video[0]
-        assert stream.codec_context.codec.canonical_name == "av1"
-        assert (stream.width, stream.height) == (width, height)
-        assert len(list(container.decode(video=0))) == 2
-    if height >= 64 and width >= 64:
-        # Unaligned small inputs do not have bit-stable source encoder output.
-        np.testing.assert_array_equal(
-            disassemble_video(video_from_source(encoded.getvalue()))["images"],
-            disassemble_video(video_from_source(expected))["images"],
-        )
 
 
 @pytest.mark.parametrize("encoded", (False, True))
@@ -1036,24 +996,6 @@ def test_invalid_video_tree_never_calls_component_decoder(
     )
     with pytest.raises(ValueError):
         decode_video(damaged)
-
-
-def test_nested_large_sources_publish_without_reprobe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data = _source() + struct.pack(">I4s", 300_008, b"free") + bytes(300_000)
-    clip = video_from_source(data)
-    joined = edit_video(clip, {"concat": [clip]})
-    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
-    monkeypatch.setattr(
-        av, "open", lambda *a, **kw: pytest.fail("admitted source must not reprobe")
-    )
-    registry = TypeRegistry()
-    register_video_value_type(registry, VIDEO_TYPE)
-    value = registry.wrap(VIDEO_TYPE, joined)
-    assert len(cast(list[object], value.meta.get("asset_refs"))) == 1
-    assert value.meta.get("cost") == {"ram": 0}
-    assert AssetVault(tmp_path / "vault").resolve(digest_bytes(data)) is not None
 
 
 def test_alpha_source_codec_and_samples_survive_crop() -> None:

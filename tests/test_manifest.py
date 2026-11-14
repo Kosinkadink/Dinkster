@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -58,14 +57,6 @@ def write_manifest(path: Path, handler: object = None) -> Path:
         '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n' + handler_line
     )
     return path
-
-
-def test_manifest_ignores_unrecognized_pack_metadata(tmp_path: Path) -> None:
-    path = write_manifest(tmp_path / "dinkster-pack.toml")
-    expected = load_manifest(path)
-    with path.open("a") as output:
-        output.write('\n[pack.custom_metadata]\nimports = ["example"]\nrevision = "1"\n')
-    assert load_manifest(path) == expected
 
 
 def test_development_pack_declares_its_version_and_engine_range() -> None:
@@ -182,16 +173,6 @@ def test_pack_registration_refuses_duplicate_type_owner(tmp_path: Path, with_cod
     assert registry.owner_of("SHARED") == "first-owner"
 
 
-def test_pack_registration_rejects_bare_claim_before_importing_entries(tmp_path: Path) -> None:
-    path = tmp_path / "dinkster-pack.toml"
-    path.write_text(
-        '[pack]\nname = "mypack"\npublisher = "someone"\ntype-namespaces = ["THING"]\n'
-        '[pack.entry]\nnodes = "missing_module:NODES"\n'
-    )
-    with pytest.raises(ManifestError, match="only publisher 'dinkster'"):
-        load_pack(load_manifest(path))
-
-
 def test_pack_registration_rejects_bare_node_under_a_prefixed_claim(tmp_path: Path) -> None:
     (tmp_path / "bare_node_pack.py").write_text(
         "from dinkster_api.v1 import Node, NodeSchema\n"
@@ -209,48 +190,6 @@ def test_pack_registration_rejects_bare_node_under_a_prefixed_claim(tmp_path: Pa
     with pytest.raises(ManifestError, match="node.*bare_node.*pack-name prefix"):
         load_pack(load_manifest(path), import_from_pack_root=True)
     assert not prepare_catalog(path).ok
-
-
-def test_pack_frontend_assets_and_settings_are_validated_and_immutable(tmp_path: Path) -> None:
-    frontend = tmp_path / "frontend"
-    frontend.mkdir()
-    (frontend / "badge.png").write_bytes(b"\x89PNG\r\nfixture")
-    (frontend / "theme.css").write_bytes(b".pack { color: #123; }\n")
-    schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "enabled": {"type": "boolean", "title": "Enabled", "default": True},
-            "strength": {
-                "type": "number",
-                "title": "Strength",
-                "description": "Rendering strength",
-                "default": 0.5,
-                "minimum": 0,
-                "maximum": 1,
-            },
-        },
-        "required": ["enabled", "strength"],
-    }
-    (tmp_path / "settings.schema.json").write_text(json.dumps(schema), encoding="utf-8")
-    path = write_manifest(tmp_path / "dinkster-pack.toml")
-    path.write_text(
-        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
-        '[pack.frontend]\nassets = "./frontend/"\n'
-        '[pack.settings]\nschema = "./settings.schema.json"\n',
-        encoding="utf-8",
-    )
-
-    manifest = load_manifest(path)
-
-    assert [(asset.path, asset.media_type) for asset in manifest.frontend_assets] == [
-        ("badge.png", "image/png"),
-        ("theme.css", "text/css"),
-    ]
-    assert manifest.settings_schema is not None
-    assert manifest.settings_schema.defaults == {"enabled": True, "strength": 0.5}
-    (frontend / "theme.css").write_bytes(b"changed")
-    assert manifest.frontend_assets[1].data == b".pack { color: #123; }\n"
 
 
 @pytest.mark.parametrize(

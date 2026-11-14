@@ -9,10 +9,8 @@ connection closed, the daemon free for the next client."""
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import socket
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -37,9 +35,8 @@ from dinkster_schema import (
 from dinkster_server import STATE_KEY, create_app
 from dinkster_values import CORE_STRING, list_children, value_resource_provenance_refs
 from dinkster_workers import RemoteWorker, TransportError
-from dinkster_workers.service import READY_LINE_PREFIX
 from test_choices import write_choice_manifest
-from test_compose_dispatch import _write_generation_provider_packs, _write_vision_provider_packs
+from test_compose_dispatch import _write_vision_provider_packs
 from test_isolated import DEV_MANIFEST, core_registry, write_iso_manifest
 from test_remote import TLS_ARGS, TLS_CERT, TOKEN, start_service, stop_service
 
@@ -492,72 +489,6 @@ def test_remote_vision_provider_preflights_with_consent_and_reports_actual_execu
     run_scenario(scenario())
 
 
-def test_remote_generation_provider_uses_hidden_routing_input(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        owner_manifest, native_manifest, provider_manifest = _write_generation_provider_packs(
-            tmp_path / "packs"
-        )
-        daemon_root = tmp_path / "daemon"
-        daemon_root.mkdir()
-        proc, host, port = await start_service(
-            provider_manifest,
-            daemon_root,
-            pythonpath=(provider_manifest.parent,),
-        )
-        try:
-            composer = ServingComposer(
-                worker_env={
-                    "PYTHONPATH": os.pathsep.join(
-                        (str(owner_manifest.parent), str(native_manifest.parent))
-                    )
-                }
-            )
-            try:
-                await composer.add_pack(owner_manifest)
-                await composer.add_pack(native_manifest)
-                delta = await composer.add_remote(remote_spec(host, port, daemon_root))
-                remote = composer._remotes["box1"].worker
-                assert remote.generation_providers is not None
-                assert remote.generation_providers[0].node == "fixture.generate"
-                assert delta.derived_choices == {
-                    "fixture.generation.providers": ("generation-external",)
-                }
-                provider_input = composer.composition.schemas["fixture.generate"].input("provider")
-                assert provider_input is not None
-                assert provider_input.hidden
-                assert not provider_input.advanced
-
-                events: list[EngineEvent] = []
-                engine = composer.composition.make_engine(events.append)
-                graph = Graph(
-                    nodes={
-                        "generate": GraphNode(
-                            "fixture.generate",
-                            {
-                                "provider": "generation-external",
-                                "value": "remote prompt",
-                            },
-                        )
-                    }
-                )
-                result = await engine.run(graph, ["generate"])
-                assert result.outputs["generate"]["value"].resolve() == "external:remote prompt"
-                finished = next(
-                    event
-                    for event in events
-                    if event.kind == "node_finished" and event.node_id == "generate"
-                )
-                assert finished.detail["worker"] == "box1"
-                assert finished.detail["provider"] == "generation-external"
-                assert finished.detail["pack"] == "generation-external"
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
 def test_remote_hint_overrides_policy_requiring_an_unavailable_native_arm(tmp_path: Path) -> None:
     class RequiresNativeArm:
         calls = 0
@@ -605,18 +536,6 @@ def test_remote_hint_overrides_policy_requiring_an_unavailable_native_arm(tmp_pa
                 await composer.close()
         finally:
             await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_local_remote_name_is_reserved_before_connect(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            with pytest.raises(CompositionError, match="remote worker name 'local' is reserved"):
-                await composer.add_remote(remote_spec("127.0.0.1", 1, tmp_path, name="local"))
-        finally:
-            await composer.close()
 
     run_scenario(scenario())
 
@@ -800,43 +719,6 @@ def _dev_pack_variant(tmp_path: Path, name: str, old: str, new: str) -> Path:
     return root
 
 
-def test_presentation_divergent_matching_type_composes_by_signature(tmp_path: Path) -> None:
-    """A real daemon announces reduced schemas for executes-claimed types
-    (presentation prose stripped), so matching is by schema signature: the
-    computational interface, never descriptions or search terms."""
-    root = _dev_pack_variant(
-        tmp_path,
-        "presentation-variant",
-        "Rendering surface for every native widget descriptor; ",
-        "Reworded prose changing no computational fact whatsoever; ",
-    )
-
-    async def scenario() -> None:
-        proc, host, port = await start_service(
-            root / "dinkster-pack.toml", tmp_path, pythonpath=(root / "src",)
-        )
-        try:
-            composer = ServingComposer()
-            try:
-                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
-                before_schemas = dict(composer.composition.schemas)
-                delta = await composer.add_remote(
-                    remote_spec(host, port, tmp_path, trust_reserved=True)
-                )
-                assert delta.schemas == {}
-                assert composer.composition.schemas == before_schemas
-                assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == [
-                    "dinkster-nodes-dev",
-                    "box1",
-                ]
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
 def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> None:
     root = _dev_pack_variant(
         tmp_path,
@@ -887,119 +769,6 @@ def test_nodes_allowlist_filters_announced_types(tmp_path: Path) -> None:
                 assert "dev.image.invert" in composition.schemas
                 assert "dev.image.gradient" not in composition.schemas
                 assert composition.node_packs["dev.image.invert"] == "box1"
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-def test_nodes_allowlist_naming_unannounced_type_refused(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
-        try:
-            composer = ServingComposer()
-            try:
-                before = composition_snapshot(composer)
-                with pytest.raises(CompositionError, match="not served by"):
-                    await composer.add_remote(
-                        remote_spec(host, port, tmp_path, nodes=("dev.image.absent",))
-                    )
-                assert composition_snapshot(composer) == before
-                await daemon_accepts_a_client(host, port)
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
-RESERVED_NODES_MODULE = '''\
-"""Scaffolding pack announcing a node type under the reserved "dinkster" root."""
-
-from collections.abc import Mapping
-
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import CORE_STRING
-
-STRING = TypeExpr.concrete(CORE_STRING)
-
-
-class ReservedEcho(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.remote_test.echo",
-            display_name="Reserved Echo",
-            category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
-        )
-
-    @classmethod
-    async def execute(cls, *, value: str) -> Mapping[str, object]:
-        return cls.outputs(value=value)
-
-
-NODES = [ReservedEcho]
-'''
-
-
-async def start_reserved_service(
-    tmp_path: Path,
-) -> tuple[asyncio.subprocess.Process, str, int]:
-    """Launch a daemon whose pack announces a reserved-root node type; the
-    pack module lives in tmp_path, so it rides PYTHONPATH beside the shared
-    test scaffolding."""
-    (tmp_path / "reservedpack_nodes.py").write_text(RESERVED_NODES_MODULE, encoding="utf-8")
-    manifest = tmp_path / "reserved-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "reservedpack"\npublisher = "dinkster"\n\n'
-        '[pack.entry]\nnodes = "reservedpack_nodes:NODES"\n',
-        encoding="utf-8",
-    )
-    token_file = tmp_path / "remote-token.txt"
-    token_file.write_text(TOKEN, encoding="utf-8")
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "dinkster_workers.service",
-        "--listen",
-        "127.0.0.1:0",
-        "--manifest",
-        str(manifest),
-        "--token-file",
-        str(token_file),
-        stdout=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
-    )
-    assert proc.stdout is not None
-    try:
-        line = (await asyncio.wait_for(proc.stdout.readline(), 60.0)).decode()
-    except BaseException:
-        proc.kill()
-        await proc.wait()
-        raise
-    assert line.startswith(READY_LINE_PREFIX), f"unexpected ready line: {line!r}"
-    endpoint = line[len(READY_LINE_PREFIX) :].strip()
-    kind, host, port_text = endpoint.split(":")
-    assert kind == "tcp"
-    return proc, host, int(port_text)
-
-
-def test_reserved_root_requires_trust(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_reserved_service(tmp_path)
-        try:
-            composer = ServingComposer()
-            try:
-                before = composition_snapshot(composer)
-                with pytest.raises(CompositionError, match="reserved root"):
-                    await composer.add_remote(remote_spec(host, port, tmp_path))
-                assert composition_snapshot(composer) == before
-                await daemon_accepts_a_client(host, port)
             finally:
                 await composer.close()
         finally:

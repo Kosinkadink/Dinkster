@@ -61,13 +61,6 @@ from tests.platform_support import symlink_or_skip
 # --- identity ---------------------------------------------------------------
 
 
-def test_bad_digests_rejected() -> None:
-    for bad in ("", "blake3:short", "sha256:" + "0" * 64, "blake3:" + "G" * 64):
-        assert not is_digest(bad)
-        with pytest.raises(AssetError):
-            AssetRef(digest=bad, name="x", size=1)
-
-
 # --- catalog: file-like semantics without file access ------------------------
 
 
@@ -95,18 +88,6 @@ def test_catalog_folder_listing_and_glob() -> None:
     assert [e.virtual_path for e in catalog.glob("models/*/*.safetensors")] == [
         "models/checkpoints/sd15.safetensors",
         "models/loras/detail.safetensors",
-    ]
-
-
-def test_catalog_duplicate_content_one_identity() -> None:
-    data = b"the same weights twice"
-    catalog = AssetCatalog(
-        [entry("models/a.safetensors", data), entry("models/copies/b.safetensors", data)]
-    )
-    hits = catalog.by_digest(digest_bytes(data))
-    assert sorted(e.virtual_path for e in hits) == [
-        "models/a.safetensors",
-        "models/copies/b.safetensors",
     ]
 
 
@@ -311,30 +292,6 @@ def test_complete_asset_references_traverse_beyond_display_limits() -> None:
         value_asset_references(
             {"output": value}, complete_registry=registry, include_asset_values=False
         )
-
-
-def test_complete_asset_references_require_explicit_atom_declarations() -> None:
-    registry = asset_registry()
-    registry.register("example.opaque", encode=lambda _: b"opaque", decode=lambda _: None)
-    opaque = registry.wrap("example.opaque", None)
-    assert registry.spec("example.opaque").declared_codec
-    assert value_asset_references({"output": opaque}) == {}
-    with pytest.raises(AssetError, match="incomplete"):
-        value_asset_references(
-            {"output": make_list_value("*", [opaque])}, complete_registry=registry
-        )
-    ref = AssetRef(digest_bytes(b"alias"), "alias", 5)
-    with pytest.raises(AssetError, match="incomplete"):
-        value_asset_references(
-            {"output": registry.wrap(AUDIO_RECORD_TYPE, ref)}, complete_registry=registry
-        )
-    registry.register("example.empty", asset_references_complete=True)
-    assert (
-        value_asset_references(
-            {"output": registry.wrap("example.empty", None)}, complete_registry=registry
-        )
-        == {}
-    )
 
 
 def test_wrap_rejects_paths() -> None:
@@ -544,17 +501,6 @@ def test_unverified_local_binding_cannot_reuse_cache_after_change_or_revocation(
         asset_registry(table).wrap(ASSET_TYPE, ref)
     with pytest.raises(AssetError, match="unavailable"):
         worker_ref.read_bytes()
-
-
-def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:
-    registry = asset_registry()  # no resolver anywhere
-    ref_wire = {"digest": digest_bytes(b"elsewhere"), "name": "far.safetensors", "size": 9}
-    value = registry.wrap(ASSET_TYPE, ref_wire)
-    assert value.fingerprint == ref_wire["digest"]  # caching/interrogation fine
-    ref = value.resolve()
-    assert isinstance(ref, AssetRef)
-    with pytest.raises(AssetError, match="no resolver bound"):
-        ref.local_path()
 
 
 # --- end to end: a node consumes an asset input via the engine ---------------

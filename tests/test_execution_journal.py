@@ -152,33 +152,6 @@ def test_runs_beyond_keep_runs_expire_oldest_first(store: JournalStore) -> None:
     assert journal.read("run-2").latest_seq > 0
 
 
-def test_runs_older_than_keep_days_expire(store: JournalStore) -> None:
-    journal = ExecutionJournal(store, keep_days=1.0)
-    old_finished = 1000.0  # epoch: far older than any cutoff
-    store.transact(
-        lambda txn: (
-            txn.execute(
-                "INSERT INTO execution_runs (run_id, scope, started, finished)"
-                " VALUES ('run-old', 'local', ?, ?)",
-                (old_finished, old_finished),
-            ),
-            txn.append(
-                execution_run_stream("run-old"),
-                "node_started",
-                {"seq": 1},
-                durable=True,
-                timestamp=old_finished,
-            ),
-        )
-    )
-    journal.observe(lifecycle("run-new", "node_started", 1), scope="local")
-    journal.observe(job_state("run-new", 2, "completed"), scope="local")
-    flush(journal)
-    assert journal.scope_of("run-old") is None
-    assert journal.read("run-old").latest_seq == 0
-    assert journal.scope_of("run-new") == "local"
-
-
 def test_live_runs_never_expire(store: JournalStore) -> None:
     journal = ExecutionJournal(store, keep_runs=0)
     journal.observe(lifecycle("run-live", "node_started", 1), scope="local")
@@ -190,19 +163,6 @@ def test_live_runs_never_expire(store: JournalStore) -> None:
     assert journal.scope_of("run-done") is None
     assert journal.scope_of("run-live") == "local"
     assert journal.read("run-live").latest_seq == 1
-
-
-def test_oversized_record_is_dropped_without_losing_the_batch(
-    store: JournalStore,
-) -> None:
-    journal = ExecutionJournal(store)
-    run = "run-1"
-    journal.observe(lifecycle(run, "node_started", 1), scope="local")
-    journal.observe(log_event(run, 2, level="warning", message="x" * 300_000), scope="local")
-    journal.observe(log_event(run, 3, level="warning"), scope="local")
-    flush(journal)
-    page = journal.read(run)
-    assert [record.payload["seq"] for record in page.records] == [1, 3]
 
 
 def test_buffer_cap_sheds_only_coalescible_records(

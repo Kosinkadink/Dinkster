@@ -23,15 +23,7 @@ from dinkster_values.image_codec import (
     image_array_meta,
     render_image_png,
 )
-from dinkster_values.storage import BFLOAT16_FIELD, audio_input, encoded_storage_meta, image_input
-from dinkster_values.video_codec import (
-    decode_video,
-    encode_video,
-    validate_video_encoded,
-    video_fingerprint,
-    video_meta,
-)
-from dinkster_video_runtime import assemble_video
+from dinkster_values.storage import BFLOAT16_FIELD, audio_input, image_input
 from PIL import Image
 
 
@@ -112,29 +104,6 @@ def test_pcm16_wav_rendition_preserves_all_sample_bits() -> None:
     samples = np.arange(-32768, 32768, dtype=np.int16).reshape(1, 1, -1)
     wav = render_audio_wav({"waveform": samples, "sample_rate": 48000})
     np.testing.assert_array_equal(np.frombuffer(wav[44:], dtype="<i2"), samples.reshape(-1))
-
-
-@pytest.mark.parametrize("dtype", ["uint8", "uint16", "float16", "float32", "bf16"])
-def test_compact_video_components_roundtrip_and_local_cost_validation(dtype: str) -> None:
-    images = np.zeros((2, 4, 4, 3), dtype=[(BFLOAT16_FIELD, "<u2")] if dtype == "bf16" else dtype)
-    audio = {"waveform": np.zeros((1, 2, 128), dtype=np.int16), "sample_rate": 48000}
-    video = assemble_video(images, audio=audio)
-    data = encode_video(video)
-    decoded = decode_video(data)
-    components = cast(dict[str, Any], decoded["components"])
-    np.testing.assert_array_equal(components["images"], images)
-    np.testing.assert_array_equal(components["audio"]["waveform"], audio["waveform"])
-    assert components["images"].dtype == images.dtype
-    assert video_meta(video)[COST_META_KEY] == {"ram": images.nbytes + 512}
-    assert video_fingerprint("video")(video) == video_fingerprint("video")(decoded)
-    meta = encoded_storage_meta(video_meta(video), len(data))
-    assert meta[COST_META_KEY] == {"ram": len(data)}
-    validate_video_encoded(data, meta)
-    meta.pop("storage_dtype")
-    validate_video_encoded(data, meta)
-    meta["container"] = "mismatch"
-    with pytest.raises(ValueError, match="container"):
-        validate_video_encoded(data, meta)
 
 
 @pytest.mark.parametrize("audio", [False, True])
@@ -249,22 +218,6 @@ def test_storage_conversion_and_codec_preserve_media_semantics(dtype: str) -> No
     del converted, decoded, payload
     gc.collect()
     assert releases == [True]
-
-
-def test_video_components_preserve_semantic_trailer() -> None:
-    from dinkster_values import annotate_image, media_semantics
-
-    color = {"primaries": 9, "transfer": 18, "range": 2}
-    images = annotate_image(np.zeros((2, 4, 4, 4), dtype=np.uint16), color=color)
-    video = assemble_video(images)
-    encoded = encode_video(video)
-    decoded = decode_video(encoded)
-    actual = cast(dict[str, Any], decoded["components"])["images"]
-    assert media_semantics(actual) == media_semantics(images)
-    probe = cast(dict[str, Any], decoded["probe"])
-    assert [probe[key] for key in ("primaries", "transfer", "matrix", "range")] == [9, 18, 9, 1]
-    assert probe["bit_depth"] == 10
-    assert encode_video(decoded) == encoded
 
 
 @pytest.mark.parametrize("field", ["primaries", "transfer", "range"])

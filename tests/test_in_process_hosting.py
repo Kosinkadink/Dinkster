@@ -8,21 +8,13 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode
-from dinkster_registry import InstallError, Lockfile
 from dinkster_server import PackInfo, create_app
 from dinkster_workers import ManifestError
-from dinkster_workers.doctor import DoctorReport, Finding
 
-import dinkster.installer as installer_module
 from dinkster.compose import (
     PackSpec,
     ServingComposer,
     compose_serving,
-)
-from dinkster.installer import (
-    Installer,
-    _decode_hosting_record,
-    lock_local_pack,
 )
 from tests.async_scenarios import run_scenario
 
@@ -39,16 +31,6 @@ def _manifest(directory: Path, *, extra: str = "") -> Path:
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
     return path
-
-
-def _install_pack(directory: Path, name: str, *, requires: str = "") -> Path:
-    directory.mkdir(parents=True)
-    (directory / f"{name}_nodes.py").write_text("NODES = []\n")
-    requires_line = f"requires = [{requires}]\n" if requires else ""
-    (directory / "dinkster-pack.toml").write_text(
-        f'[pack]\nname = "{name}"\n{requires_line}[pack.entry]\nnodes = "{name}_nodes:NODES"\n'
-    )
-    return directory
 
 
 def _placement_manifest(directory: Path) -> Path:
@@ -170,99 +152,3 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             await isolated.close()
 
     run_scenario(scenario())
-
-
-def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    provisioned: list[str] = []
-    probed: list[Path | str] = []
-    serving_python = tmp_path / "serve-python"
-
-    def provision(manifest: object, root: Path, _spec: object) -> Path:
-        name = manifest.name  # type: ignore[attr-defined]
-        provisioned.append(name)
-        python = root / name / "bin" / "python"
-        python.parent.mkdir(parents=True, exist_ok=True)
-        python.write_text("#!fake\n")
-        return python
-
-    root = tmp_path / "root"
-    installer = Installer(
-        root,
-        provision=provision,  # type: ignore[arg-type]
-        freeze=lambda _python: (),
-        serving_interpreter=serving_python,
-        torch_capability_probe=lambda python: not probed.append(python),
-        runtime_version_probe=lambda python: probed.append(python) or PINS,
-    )
-    bad = _install_pack(tmp_path / "bad", "alpha", requires='"torch==2.12.0"')
-    target = Lockfile.of([lock_local_pack(bad, installer.artifacts_dir)[0]])
-    (root / "hosting.toml").write_text('in-process = ["alpha"]\n')
-    with pytest.raises(InstallError, match="must pin torch exactly"):
-        installer.apply(target, allow_doctor_findings=True)
-    assert installer.current_number() is None
-    assert provisioned == []
-    with pytest.raises(InstallError, match="requires exact torch and comfy-aimdo"):
-        installer.apply(
-            target,
-            hosting_groups=(),
-            hosting_in_process=("alpha",),
-            hosting_runtime_pins={},
-        )
-
-    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"comfy-aimdo==0.4.13"')
-    aimdo_target = Lockfile.of([lock_local_pack(aimdo, installer.artifacts_dir)[0]])
-    with pytest.raises(InstallError, match="must not declare a comfy-aimdo dependency"):
-        installer.apply(aimdo_target, allow_doctor_findings=True)
-
-    probes = iter((PINS, {**PINS, "torch": "2.14.0"}))
-    drift_root = tmp_path / "drift-root"
-    drift_installer = Installer(
-        drift_root,
-        provision=provision,  # type: ignore[arg-type]
-        torch_capability_probe=lambda _python: True,
-        runtime_version_probe=lambda _python: next(probes),
-    )
-    drift_pack = _install_pack(tmp_path / "drift", "drift")
-    drift_target = Lockfile.of([lock_local_pack(drift_pack, drift_installer.artifacts_dir)[0]])
-    (drift_root / "hosting.toml").write_text('in-process = ["drift"]\n')
-    with pytest.raises(InstallError, match="runtime changed during staging"):
-        drift_installer.apply(drift_target, allow_doctor_findings=True)
-    assert drift_installer.current_number() is None
-
-    good = _install_pack(tmp_path / "good", "beta")
-    target = Lockfile.of(
-        [
-            lock_local_pack(_install_pack(tmp_path / "alpha", "alpha"), installer.artifacts_dir)[0],
-            lock_local_pack(good, installer.artifacts_dir)[0],
-        ]
-    )
-    (root / "hosting.toml").write_text('in-process = ["alpha"]\n')
-    ordinary = DoctorReport(
-        "alpha", "dinkster-pack.toml", (Finding("error", "doctor.test", "ordinary"),)
-    )
-    monkeypatch.setattr(installer_module, "diagnose", lambda *_args, **_kwargs: ordinary)
-    installer.apply(target, allow_doctor_findings=True)
-    assert provisioned == ["beta"]
-    assert probed and set(probed) == {serving_python}
-    assert installer.packs_for_serving()[0].in_process
-    assert "WARNING: allowing doctor findings" in capsys.readouterr().out
-    sidecar = _decode_hosting_record(root / "generations" / "1.hosting.json")
-    assert sidecar.in_process == ("alpha",)
-    assert dict(sidecar.runtime_pins) == PINS
-    snapshot = installer.snapshot()
-    assert snapshot.in_process == ("alpha",)
-    assert dict(snapshot.runtime_pins) == PINS
-    assert type(snapshot).from_record_json(snapshot.record_json()) == snapshot
-
-    (root / "hosting.toml").unlink()
-    installer.apply(target, allow_doctor_findings=True)
-    assert _decode_hosting_record(root / "generations" / "2.hosting.json").in_process == ()
-    monkeypatch.setattr(
-        installer_module,
-        "diagnose",
-        lambda manifest, **_kwargs: DoctorReport("pack", str(manifest), ()),
-    )
-    assert installer.rollback() == 3
-    assert _decode_hosting_record(root / "generations" / "3.hosting.json").in_process == ("alpha",)

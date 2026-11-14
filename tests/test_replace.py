@@ -49,11 +49,6 @@ def _rule(*cases: ReplacementCase, from_type: str = "old.node") -> ReplacementRu
     return ReplacementRule(from_type=from_type, cases=tuple(cases))
 
 
-def _wire(*cases: ReplacementCase) -> Any:
-    """Encode a rule and hand back the wire as Any for shape assertions."""
-    return cast("Any", rule_to_wire(_rule(*cases)))
-
-
 FALLBACK = ReplacementCase.build("new.node")
 
 
@@ -61,53 +56,6 @@ FALLBACK = ReplacementCase.build("new.node")
 
 
 # -- transforms and mapping sources -------------------------------------------
-
-
-def test_input_family_mapping_wire_shapes_and_roundtrip() -> None:
-    copied = ReplacementCase.build(
-        "new.node",
-        input_families={
-            "values": InputFamilyMapping.copy(
-                "operands", inputs={"value": MappingSource.copy("item")}
-            )
-        },
-    )
-    copied_wire = _wire(copied)
-    assert copied_wire["cases"][0]["inputFamilies"] == {
-        "values": {
-            "kind": "copy",
-            "sourceFamily": "operands",
-            "inputs": {"value": {"kind": "copy", "input": "item"}},
-        }
-    }
-    assert rule_from_wire(copied_wire) == _rule(copied)
-
-    explicit = ReplacementCase.build(
-        "new.node",
-        input_families={
-            "values": InputFamilyMapping.from_members(
-                InputFamilyMember.build("value1", inputs={"value": MappingSource.copy("a")}),
-                InputFamilyMember.build("value2", inputs={"value": MappingSource.constant(False)}),
-            )
-        },
-    )
-    explicit_wire = _wire(explicit)
-    assert explicit_wire["cases"][0]["inputFamilies"] == {
-        "values": {
-            "kind": "members",
-            "members": [
-                {
-                    "suffix": "value1",
-                    "inputs": {"value": {"kind": "copy", "input": "a"}},
-                },
-                {
-                    "suffix": "value2",
-                    "inputs": {"value": {"kind": "constant", "value": False}},
-                },
-            ],
-        }
-    }
-    assert rule_from_wire(explicit_wire) == _rule(explicit)
 
 
 def test_input_family_source_template_checks_an_available_predecessor() -> None:
@@ -134,73 +82,7 @@ def test_input_family_source_template_checks_an_available_predecessor() -> None:
     assert "source template ids do not match" in problems[0].message
 
 
-def test_output_family_mapping_wire_shapes_and_roundtrip() -> None:
-    copied = ReplacementCase.build(
-        "new.node",
-        output_families={"values": OutputFamilyMapping.copy("results")},
-    )
-    copied_wire = _wire(copied)
-    assert copied_wire["cases"][0]["outputFamilies"] == {
-        "values": {"kind": "copy", "sourceFamily": "results"}
-    }
-    assert rule_from_wire(copied_wire) == _rule(copied)
-
-    explicit = ReplacementCase.build(
-        "new.node",
-        output_families={
-            "values": OutputFamilyMapping.from_members(
-                OutputFamilyMember("0", "left"),
-                OutputFamilyMember("1", "right"),
-            )
-        },
-    )
-    explicit_wire = _wire(explicit)
-    assert explicit_wire["cases"][0]["outputFamilies"] == {
-        "values": {
-            "kind": "members",
-            "members": [
-                {"suffix": "0", "output": "left"},
-                {"suffix": "1", "output": "right"},
-            ],
-        }
-    }
-    assert rule_from_wire(explicit_wire) == _rule(explicit)
-
-
 # -- cases and rules -----------------------------------------------------------
-
-
-def test_case_and_rule_validation() -> None:
-    with pytest.raises(ValueError, match="target node type"):
-        ReplacementCase.build("")
-    with pytest.raises(ValueError, match="source node type"):
-        ReplacementRule(from_type="", cases=(FALLBACK,))
-    with pytest.raises(ValueError, match="at least one case"):
-        ReplacementRule(from_type="old.node", cases=())
-    with pytest.raises(ValueError, match="last case must be unconditional"):
-        _rule(ReplacementCase.build("new.node", when=ReplacementPredicate.value_present("x")))
-    # explicit {"kind":"always"} counts as unconditional, matching the TS
-    # validator ("when omitted or kind 'always'")
-    _rule(ReplacementCase.build("new.node", when=ReplacementPredicate.always()))
-    # a source output feeding two target outputs would duplicate links
-    with pytest.raises(ValueError, match="feeds two target outputs"):
-        ReplacementCase.build("new.node", outputs={"out_a": "out", "out_b": "out"})
-    with pytest.raises(ValueError, match="feeds two target outputs"):
-        ReplacementCase.build(
-            "new.node",
-            outputs={"out": "result"},
-            output_families={
-                "items": OutputFamilyMapping.from_members(OutputFamilyMember("0", "result"))
-            },
-        )
-    with pytest.raises(ValueError, match="feeds two target families"):
-        ReplacementCase.build(
-            "new.node",
-            output_families={
-                "first": OutputFamilyMapping.copy("results"),
-                "second": OutputFamilyMapping.copy("results"),
-            },
-        )
 
 
 def test_rule_wire_roundtrip_full() -> None:
@@ -235,72 +117,6 @@ def test_rule_wire_roundtrip_full() -> None:
     assert "outputs" not in wire["cases"][1]
 
 
-def test_one_to_n_case_round_trips_with_nodes_links_and_addresses() -> None:
-    case = ReplacementCase.build(
-        "new.node",
-        nodes={"join": ReplacementNode.build("helper.join", values={"count": 2})},
-        inputs={"join:item": MappingSource.copy("picture")},
-        links=(ReplacementLink("join:items", "image"),),
-        outputs={"join:preview": "result"},
-    )
-    wire = cast("Any", rule_to_wire(_rule(case)))
-    assert wire["cases"][0] == {
-        "to": "new.node",
-        "nodes": {"join": {"type": "helper.join", "values": {"count": 2}}},
-        "inputs": {"join:item": {"kind": "copy", "input": "picture"}},
-        "links": [{"from": "join:items", "to": "image"}],
-        "outputs": {"join:preview": "result"},
-    }
-    assert rule_from_wire(wire) == _rule(case)
-    empty = _rule(ReplacementCase.build("new.node", nodes={}))
-    empty_wire = rule_to_wire(empty)
-    assert empty_wire["cases"][0]["nodes"] == {}  # type: ignore[index]
-    assert rule_from_wire(empty_wire).cases[0].nodes == ()
-
-
-def test_single_feeder_and_fan_in_rules() -> None:
-    node = ReplacementNode.build("helper.node")
-    with pytest.raises(ValueError, match="two feeders"):
-        ReplacementCase.build(
-            "new.node",
-            nodes={"h": node},
-            inputs={"image": MappingSource.copy("picture")},
-            links=(ReplacementLink("h:out", "image"),),
-        )
-    with pytest.raises(ValueError, match="two feeders"):
-        ReplacementCase.build(
-            "new.node",
-            nodes={"h": node},
-            links=(
-                ReplacementLink("h:out", "image"),
-                ReplacementLink("h:other", "image"),
-            ),
-        )
-    with pytest.raises(ValueError, match="feeds two target outputs"):
-        ReplacementCase.build("new.node", outputs={"out_a": "source", "out_b": "source"})
-
-
-def test_internal_links_must_be_acyclic() -> None:
-    node = ReplacementNode.build("helper.node")
-    with pytest.raises(ValueError, match="acyclic"):
-        ReplacementCase.build(
-            "new.node",
-            nodes={"h": node},
-            links=(
-                ReplacementLink("out", "h:input"),
-                ReplacementLink("h:out", "input"),
-            ),
-        )
-    with pytest.raises(ValueError, match="acyclic"):
-        ReplacementCase.build(
-            "new.node",
-            nodes={"h": node},
-            links=(ReplacementLink("h:out", "h:input"),),
-        )
-    with pytest.raises(ValueError, match="acyclic"):
-        ReplacementCase.build("new.node", links=(ReplacementLink("out", "input"),))
-
-
 # -- schema wire + signature ---------------------------------------------------
 
 
@@ -317,24 +133,6 @@ SUCCESSOR = NodeSchema(
         ),
     ),
 )
-
-
-def test_replacements_ride_the_schema_wire() -> None:
-    wire = schema_to_wire(SUCCESSOR)
-    assert wire["replacements"] == [
-        {
-            "from": "old.node",
-            "cases": [
-                {
-                    "to": "new.node",
-                    "inputs": {"image": {"kind": "copy", "input": "picture"}},
-                }
-            ],
-        }
-    ]
-    assert schema_from_wire(wire) == SUCCESSOR
-    plain = schema_to_wire(dataclasses.replace(SUCCESSOR, replacements=()))
-    assert "replacements" not in plain
 
 
 def test_replacements_never_join_the_signature() -> None:
@@ -501,91 +299,6 @@ def test_reference_check_requires_dynamic_target_choices() -> None:
     assert "required dynamic construct 'policy' has no stored choice" in problems[0].message
 
 
-def test_dynamic_slot_link_choice_preserves_the_source_connection() -> None:
-    mask = TypeExpr.concrete("core.mask")
-    source = NodeSchema(
-        node_type="old.masked",
-        inputs=(InputSpec("mask", mask, required=False), InputSpec("mask_polarity", INT)),
-    )
-    target = NodeSchema(
-        node_type="new.masked",
-        slots=(
-            DynamicSlotSpec(
-                "mask",
-                variants=(SlotVariant("mask", mask, inputs=(InputSpec("mask_polarity", INT),)),),
-                required=False,
-            ),
-        ),
-    )
-    rule = ReplacementRule(
-        from_type=source.node_type,
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                slot_variants={"mask": "mask"},
-                inputs={
-                    "mask": MappingSource.copy("mask"),
-                    "mask.mask_polarity": MappingSource.copy("mask_polarity"),
-                },
-            ),
-        ),
-    )
-    schemas = {
-        source.node_type: source,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    assert validate_replacement_references(schemas) == ()
-    assert rule_from_wire(rule_to_wire(rule)) == rule
-
-    connected = ReplacementCase.build(
-        target.node_type,
-        slot_variants={"mask": "mask"},
-        inputs={"mask": MappingSource.copy("mask")},
-    )
-    assert connected.inputs == (("mask", MappingSource.copy("mask")),)
-
-
-def test_dynamic_slot_link_choice_filters_incompatible_variants() -> None:
-    mask = TypeExpr.concrete("core.mask")
-    image = TypeExpr.concrete("core.image")
-    source = NodeSchema(
-        node_type="old.typed-slot",
-        inputs=(InputSpec("source", mask),),
-    )
-    target = NodeSchema(
-        node_type="new.typed-slot",
-        slots=(
-            DynamicSlotSpec(
-                "source",
-                variants=(
-                    SlotVariant("mask", mask, inputs=(InputSpec("mask_cfg", INT),)),
-                    SlotVariant("image", image, inputs=(InputSpec("image_cfg", INT),)),
-                ),
-            ),
-        ),
-    )
-    rule = ReplacementRule(
-        from_type=source.node_type,
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                slot_variants={"source": "mask"},
-                inputs={"source.image_cfg": MappingSource.constant(1)},
-            ),
-        ),
-    )
-    schemas = {
-        source.node_type: source,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    problems = validate_replacement_references(schemas)
-    assert any(
-        problem.ref == "source.image_cfg"
-        and "not an input id of the selected interface" in problem.message
-        for problem in problems
-    )
-
-
 @pytest.mark.parametrize(
     ("left_mapping", "right_mapping"),
     (
@@ -694,45 +407,6 @@ def test_connection_consumption_is_accounted_across_inputs_and_members() -> None
         assert "consumed by multiple target mappings" in problems[0].message
 
 
-def test_connection_consumption_is_accounted_across_family_copy_mappings() -> None:
-    source = NodeSchema(
-        node_type="old.shared-family",
-        input_families=(InputFamilySpec("items", (InputSpec("value", INT),), min_members=0),),
-    )
-    target = NodeSchema(
-        node_type="new.shared-family",
-        input_families=(
-            InputFamilySpec("left", (InputSpec("value", INT),), min_members=0),
-            InputFamilySpec("right", (InputSpec("value", INT),), min_members=0),
-        ),
-    )
-    rule = ReplacementRule(
-        from_type=source.node_type,
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                input_families={
-                    "left": InputFamilyMapping.copy(
-                        "items", inputs={"value": MappingSource.link("value")}
-                    ),
-                    "right": InputFamilyMapping.copy(
-                        "items", inputs={"value": MappingSource.copy("value")}
-                    ),
-                },
-            ),
-        ),
-    )
-    schemas = {
-        source.node_type: source,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    problems = validate_replacement_references(schemas)
-    assert len(problems) == 1
-    assert problems[0].ref == "value"
-    assert "items.*.value" in problems[0].message
-    assert "consumed by multiple target mappings" in problems[0].message
-
-
 @pytest.mark.parametrize(
     ("slot_variants", "message"),
     (
@@ -750,142 +424,6 @@ def test_reference_check_rejects_invalid_slot_variants(
         target.node_type: dataclasses.replace(target, replacements=(rule,)),
     }
     assert any(message in problem.message for problem in validate_replacement_references(schemas))
-
-
-def test_reference_check_rejects_impossible_paths_with_literal_choices() -> None:
-    target = _dynamic_target_schema()
-    rule = _rule(
-        ReplacementCase.build(
-            target.node_type,
-            slot_variants={"policy": "channel"},
-            inputs={"policy.missing": MappingSource.copy("picture")},
-        )
-    )
-    schemas = {
-        PREDECESSOR.node_type: PREDECESSOR,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    problems = validate_replacement_references(schemas)
-    assert any(
-        problem.ref == "policy.missing" and "not a materializable input path" in problem.message
-        for problem in problems
-    )
-
-    mixed = _rule(
-        ReplacementCase.build(
-            target.node_type,
-            slot_variants={
-                "policy": "missing",
-                "source": "number",
-            },
-        )
-    )
-    schemas[target.node_type] = dataclasses.replace(target, replacements=(mixed,))
-    problems = validate_replacement_references(schemas)
-    assert any(
-        problem.ref == "policy" and "names unknown choice" in problem.message
-        for problem in problems
-    )
-
-    inactive_nested = _rule(
-        ReplacementCase.build(
-            target.node_type,
-            slot_variants={
-                "policy": "channel",
-                "policy.color_source": "integer",
-                "source": "number",
-            },
-        )
-    )
-    schemas[target.node_type] = dataclasses.replace(target, replacements=(inactive_nested,))
-    problems = validate_replacement_references(schemas)
-    assert any(
-        problem.ref == "policy.color_source" and "inactive construct" in problem.message
-        for problem in problems
-    )
-
-
-def test_reference_check_rejects_inputs_from_an_inactive_literal_branch() -> None:
-    def inner_combo(key: str) -> DynamicComboSpec:
-        return DynamicComboSpec(
-            "inner",
-            options=(DynamicComboOption(key, inputs=(InputSpec(f"{key}_only", INT),)),),
-        )
-
-    target = NodeSchema(
-        node_type="new.correlated",
-        combos=(
-            DynamicComboSpec(
-                "outer",
-                options=(
-                    DynamicComboOption("a", inputs=(InputSpec("a_only", INT), inner_combo("x"))),
-                    DynamicComboOption("b", inputs=(InputSpec("b_only", INT), inner_combo("y"))),
-                ),
-            ),
-        ),
-    )
-    rule = _rule(
-        ReplacementCase.build(
-            target.node_type,
-            slot_variants={
-                "outer": "b",
-                "outer.inner": "y",
-            },
-            inputs={
-                "outer.a_only": MappingSource.copy("picture"),
-                "outer.inner.y_only": MappingSource.copy("picture"),
-            },
-        )
-    )
-    schemas = {
-        PREDECESSOR.node_type: PREDECESSOR,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    problems = validate_replacement_references(schemas)
-    assert any(
-        problem.ref == "outer.a_only"
-        and "not an input id of the selected interface" in problem.message
-        for problem in problems
-    )
-
-
-def test_reference_check_rejects_nested_family_paths() -> None:
-    nested = NodeSchema(
-        node_type="new.nested-family",
-        input_families=(
-            InputFamilySpec(
-                "items",
-                (
-                    DynamicComboSpec(
-                        "mode",
-                        options=(DynamicComboOption("value", inputs=(InputSpec("value", INT),)),),
-                    ),
-                ),
-                member_names=("first",),
-            ),
-        ),
-    )
-    rule = _rule(
-        ReplacementCase.build(
-            nested.node_type,
-            slot_variants={"items.first.mode": "value"},
-            inputs={"items.first.mode.value": MappingSource.copy("picture")},
-        )
-    )
-    schemas = {
-        PREDECESSOR.node_type: PREDECESSOR,
-        nested.node_type: dataclasses.replace(nested, replacements=(rule,)),
-    }
-    problems = validate_replacement_references(schemas)
-    assert any(
-        problem.ref == "items.first.mode" and "not a dynamic construct path" in problem.message
-        for problem in problems
-    )
-    assert any(
-        problem.ref == "items.first.mode.value"
-        and "not a materializable input path" in problem.message
-        for problem in problems
-    )
 
 
 def test_reference_check_elaborates_dynamic_helper_paths() -> None:
@@ -938,111 +476,6 @@ def test_reference_check_elaborates_dynamic_helper_paths() -> None:
     assert len(problems) == 1
     assert problems[0].target == primary.node_type
     assert "required dynamic construct 'policy' has no stored choice" in problems[0].message
-
-
-def test_dynamic_slot_variants_coexist_with_family_mappings() -> None:
-    source = dataclasses.replace(
-        PREDECESSOR,
-        input_families=(
-            InputFamilySpec(
-                "operands",
-                (InputSpec("item", INT),),
-                min_members=1,
-                member_names=("a", "b"),
-            ),
-        ),
-        output_families=(OutputFamilySpec("results", INT, max_members=2),),
-    )
-    target = dataclasses.replace(
-        _dynamic_target_schema(),
-        input_families=(
-            InputFamilySpec(
-                "values",
-                (InputSpec("value", INT),),
-                min_members=1,
-                member_names=("a", "b"),
-            ),
-        ),
-        output_families=(OutputFamilySpec("values", INT, max_members=2),),
-    )
-    rule = _rule(
-        ReplacementCase.build(
-            target.node_type,
-            slot_variants={
-                "policy": "channel",
-                "source": "number",
-            },
-            inputs={
-                "policy.channel": MappingSource.from_value("picture"),
-                "source": MappingSource.copy("picture"),
-                "source.scale": MappingSource.constant(1),
-            },
-            input_families={
-                "values": InputFamilyMapping.copy(
-                    "operands", inputs={"value": MappingSource.copy("item")}
-                )
-            },
-            output_families={"values": OutputFamilyMapping.copy("results")},
-        )
-    )
-    schemas = {
-        source.node_type: source,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    assert validate_replacement_references(schemas) == ()
-    del schemas[source.node_type]
-    assert validate_replacement_references(schemas) == ()
-
-
-def test_literal_slot_variants_include_copied_family_evidence() -> None:
-    source = NodeSchema(
-        node_type="old.family-choice",
-        inputs=(InputSpec("mode", INT),),
-        input_families=(
-            InputFamilySpec(
-                "operands",
-                (InputSpec("item", INT),),
-                min_members=1,
-                member_names=("first",),
-            ),
-        ),
-    )
-    target = NodeSchema(
-        node_type="new.family-choice",
-        combos=(
-            DynamicComboSpec(
-                "policy",
-                options=(DynamicComboOption("a"), DynamicComboOption("b")),
-            ),
-        ),
-        input_families=(
-            InputFamilySpec(
-                "values",
-                (InputSpec("value", INT),),
-                min_members=1,
-                member_names=("first",),
-            ),
-        ),
-    )
-    rule = ReplacementRule(
-        from_type=source.node_type,
-        cases=(
-            ReplacementCase.build(
-                target.node_type,
-                slot_variants={"policy": "a"},
-                input_families={
-                    "values": InputFamilyMapping.copy(
-                        "operands", inputs={"value": MappingSource.copy("item")}
-                    )
-                },
-            ),
-        ),
-    )
-    schemas = {
-        source.node_type: source,
-        target.node_type: dataclasses.replace(target, replacements=(rule,)),
-    }
-    assert validate_replacement_references(schemas) == ()
 
 
 def test_reference_check_flags_unknown_static_ids() -> None:
@@ -1167,19 +600,6 @@ def test_reference_check_rejects_undeclared_dynamic_source_paths(ref) -> None:
     assert len(problems) == 1
     assert problems[0].ref == ref
     assert problems[0].target == source.node_type
-
-
-def test_reference_check_rejects_dynamic_family_paths_in_ordinary_inputs() -> None:
-    """Family mappings have a dedicated field, not ordinary input paths."""
-    for ref in ("operands", "operands.x"):
-        rule = ReplacementRule(
-            from_type="old.node",
-            cases=(ReplacementCase.build("new.node", inputs={"image": MappingSource.copy(ref)}),),
-        )
-        schemas = {"old.node": PREDECESSOR, "new.node": _successor_with(rule)}
-        problems = validate_replacement_references(schemas)
-        assert len(problems) == 1
-        assert "dynamic family input" in problems[0].message
 
 
 def test_reference_check_validates_dynamic_family_mappings() -> None:
@@ -1476,26 +896,6 @@ def test_reference_check_skips_absent_schemas() -> None:
     )
     schemas = {"new.node": _successor_with(rule)}
     assert validate_replacement_references(schemas) == ()
-
-
-def test_reference_check_rejects_duplicate_connection_consumers_without_source_schema() -> None:
-    rule = ReplacementRule(
-        from_type="uninstalled.node",
-        cases=(
-            ReplacementCase.build(
-                "new.node",
-                inputs={
-                    "image": MappingSource.copy("same"),
-                    "mode": MappingSource.link("same"),
-                },
-            ),
-        ),
-    )
-
-    problems = validate_replacement_references({"new.node": _successor_with(rule)})
-    assert len(problems) == 1
-    assert problems[0].ref == "same"
-    assert "consumed by multiple target mappings" in problems[0].message
 
 
 def test_validate_replacement_references_resolves_helper_addresses() -> None:

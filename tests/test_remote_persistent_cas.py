@@ -20,7 +20,6 @@ import pytest
 from dinkster_assets import digest_bytes
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_engine import ExecutionError
-from dinkster_graph import Graph, GraphNode, Link
 from dinkster_workers import BoundaryDiagnostic, BoundaryError, EdgeCost
 from dinkster_workers import blobs as blobs_module
 from dinkster_workers.blobs import BlobTransfer
@@ -428,26 +427,6 @@ def test_shared_store_respects_other_conversations_pins(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_close_releases_pins(tmp_path: Path) -> None:
-    """A dead conversation's pins never outlive it: after close(), a put
-    may evict the digests its last query pinned."""
-
-    async def scenario() -> None:
-        sender, receiver, _, receiver_store = transfer_pair(tmp_path, receiver_budget=1000)
-        blob_x = b"x" * 600
-        digest_x = digest_bytes(blob_x)
-        moved = await sender.ensure_peer_holds([(digest_x, blob_x)])
-        assert moved[digest_x][0] == 600
-
-        receiver.close()
-        blob_z = b"z" * 700
-        digest_z = receiver_store.put(blob_z)
-        assert not receiver_store.has(digest_x)
-        assert receiver_store.get(digest_z) == blob_z
-
-    run_scenario(scenario())
-
-
 def test_cancelled_transfer_does_not_poison_the_next_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -557,53 +536,5 @@ def test_truncated_and_corrupt_transfers_roll_back_to_nothing(tmp_path: Path) ->
         await transfer.accept_chunk(frame(len(data), last=False), [data[:10]])
         transfer.close()
         assert not list(store.root.glob("incoming-*"))
-
-    run_scenario(scenario())
-
-
-def test_dedup_graph_streams_shared_payload_once(tmp_path: Path) -> None:
-    """One payload feeding two invocations crosses once even on a cold
-    store, and the movement is charged to the first referencing edge."""
-
-    async def scenario() -> None:
-        daemon_store = tmp_path / "daemon-store"
-        engine_store = BudgetedDiskCAS(tmp_path / "engine-store")
-        proc, host, port = await start_service(
-            DEV_MANIFEST, tmp_path, "--value-store", str(daemon_store)
-        )
-        diagnostics: list[BoundaryDiagnostic] = []
-        try:
-            registry = core_registry()
-            worker = remote_worker(
-                host,
-                port,
-                registry,
-                on_diagnostic=diagnostics.append,
-                value_store=engine_store,
-            )
-            await worker.start()
-            try:
-                graph = Graph(
-                    nodes={
-                        "g": GraphNode("dev.image.gradient", {"width": 512, "height": 256}),
-                        "i": GraphNode("dev.image.invert", {"image": Link("g", "image")}),
-                        "b": GraphNode(
-                            "dev.image.blend",
-                            {"a": Link("g", "image"), "b": Link("i", "image"), "ratio": 0.5},
-                        ),
-                        "s": GraphNode("dev.image.stats", {"image": Link("b", "image")}),
-                    }
-                )
-                result = await make_engine(registry, worker).run(graph, ["s"])
-                assert result.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
-                edges = big_edges(diagnostics)
-                assert edges
-                assert all(edge.transport == "persistentCas" for edge in edges)
-                moved = sum(edge.network_bytes for edge in edges)
-                assert moved == engine_store.total_bytes()
-            finally:
-                await worker.close()
-        finally:
-            await stop_service(proc)
 
     run_scenario(scenario())

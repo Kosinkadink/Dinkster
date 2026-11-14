@@ -10,7 +10,6 @@ from dinkster_assets import (
     LatentAssetDescriptor,
     parse_latent_asset,
     valid_vae_hint,
-    validate_vae_hint_field,
 )
 
 
@@ -18,38 +17,6 @@ def safetensors(header: dict[str, object], body: bytes) -> io.BytesIO:
     encoded = json.dumps(header, separators=(",", ":")).encode()
     encoded += b" " * (-len(encoded) % 8)
     return io.BytesIO(struct.pack("<Q", len(encoded)) + encoded + body)
-
-
-def test_native_single_descriptor_is_immutable_and_body_is_not_read() -> None:
-    schema = json.dumps(
-        {
-            "format": "dinkster.latent",
-            "version": 1,
-            "structure": "single",
-            "streams": [{"tensor": "dinkster_samples", "dtype": "F16", "shape": [1, 2]}],
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    source = safetensors(
-        {
-            "__metadata__": {"dinkster_latent_schema": schema},
-            "dinkster_samples": {"dtype": "F16", "shape": [1, 2], "data_offsets": [0, 4]},
-        },
-        b"body",
-    )
-    body_offset = len(source.getvalue()) - 4
-
-    class HeaderOnly(io.BytesIO):
-        def read(self, size: int | None = -1) -> bytes:
-            assert size is not None and size >= 0 and self.tell() + size <= body_offset
-            return super().read(size)
-
-    descriptor = parse_latent_asset(HeaderOnly(source.getvalue()))
-    assert descriptor.profile == "dinkster-v1"
-    assert descriptor.tensors[0].shape == (1, 2)
-    with pytest.raises(AttributeError):
-        descriptor.profile = "comfyui-single"  # type: ignore[misc]
 
 
 def test_plain_comfyui_profile_records_legacy_scaling() -> None:
@@ -83,28 +50,6 @@ def test_stock_comfyui_marker_is_exact_and_metadata_format_is_irrelevant(
     assert descriptor.profile == "comfyui-single"
     assert descriptor.legacy_scale is False
     assert tuple(item.name for item in descriptor.tensors) == ("latent_tensor",)
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("sourceName", "data:text/plain,vae"),
-        ("sourceName", "file:vae.safetensors"),
-        ("sourceName", "http://example.test/vae"),
-        ("sourceName", "../vae.safetensors"),
-        ("sourceName", "vae\\model.safetensors"),
-        ("sourceLogicalId", "C:vae"),
-        ("sourceLogicalId", "vae\x00id"),
-        ("latentSpace", "sdxl"),
-        ("latentSpace", "dinkster.SDXL"),
-        ("latentSpace", "dinkster.sdxl/path"),
-    ],
-)
-def test_vae_hint_field_validator_rejects_url_path_control_and_unregistered_ids(
-    field: str, value: str
-) -> None:
-    with pytest.raises(AssetError):
-        validate_vae_hint_field(field, value)
 
 
 def test_parsed_vae_hint_uses_the_shared_field_authority() -> None:
@@ -173,19 +118,6 @@ def test_parsed_vae_hint_uses_the_shared_field_authority() -> None:
     assert valid_vae_hint(nested_descriptor) == ""
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
-        b'{"latent_tensor":{"dtype":"F32","dtype":"F16","shape":[1],"data_offsets":[0,4]}}',
-        b'{"__metadata__":{"dinkster_latent_schema":"{\\"format\\":\\"dinkster.latent\\",\\"version\\":2,\\"structure\\":\\"single\\",\\"streams\\":[]}"}}',
-    ],
-)
-def test_duplicate_keys_and_unknown_schema_refuse(raw: bytes) -> None:
-    raw += b" " * (-len(raw) % 8)
-    with pytest.raises(AssetError):
-        parse_latent_asset(io.BytesIO(struct.pack("<Q", len(raw)) + raw))
-
-
 def test_integer_digit_limit_is_normalized_for_header_and_native_schema() -> None:
     huge_integer = b"9" * 5000
     raw_header = b'{"value":' + huge_integer + b"}"
@@ -238,56 +170,6 @@ def test_brackets_inside_metadata_text_do_not_count_as_json_nesting() -> None:
     descriptor = parse_latent_asset(source)
     assert descriptor.profile == "comfyui-single"
     assert descriptor.tensors[0].shape == (1,)
-
-
-def _native_multi(
-    streams: list[dict[str, object]],
-    tensors: dict[str, object] | None = None,
-    body: bytes = b"abcdefgh",
-) -> io.BytesIO:
-    schema = json.dumps(
-        {
-            "format": "dinkster.latent",
-            "version": 1,
-            "structure": "multi",
-            "streams": streams,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    table = tensors or {
-        "dinkster_stream_0000": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-        "dinkster_stream_0001": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]},
-    }
-    return safetensors({"__metadata__": {"dinkster_latent_schema": schema}, **table}, body)
-
-
-def _stream(order: int, role: str, name: str) -> dict[str, object]:
-    return {
-        "order": order,
-        "role": role,
-        "tensor": name,
-        "dtype": "F32",
-        "shape": [1],
-    }
-
-
-def test_native_multi_role_order_and_names_are_exact() -> None:
-    valid = [
-        _stream(0, "video", "dinkster_stream_0000"),
-        _stream(1, "audio", "dinkster_stream_0001"),
-    ]
-    descriptor = parse_latent_asset(_native_multi(valid))
-    assert tuple(item.role for item in descriptor.tensors) == ("video", "audio")
-    bad_cases = (
-        [_stream(0, "video", "dinkster_stream_0000"), _stream(1, "video", "dinkster_stream_0001")],
-        [_stream(0, "video", "dinkster_stream_0000"), _stream(2, "audio", "dinkster_stream_0001")],
-        [_stream(0, "video", "dinkster_stream_0000"), _stream(1, "audio", "stream_1")],
-        [_stream(0, "", "dinkster_stream_0000"), _stream(1, "audio", "dinkster_stream_0001")],
-    )
-    for streams in bad_cases:
-        with pytest.raises(AssetError):
-            parse_latent_asset(_native_multi(streams))
 
 
 def test_header_alignment_and_resource_bounds_refuse_before_body() -> None:

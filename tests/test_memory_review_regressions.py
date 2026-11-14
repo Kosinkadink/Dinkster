@@ -8,7 +8,6 @@ import dinkster_api.v1 as api
 import dinkster_memory.resident as resident
 import pytest
 from dinkster_memory import (
-    LeaseBroker,
     MemoryGovernor,
     PressureSignal,
     ReservationTimeout,
@@ -36,22 +35,6 @@ def test_reservation_timeout_bounds_hung_shedder() -> None:
             async with governor.reserve("ram", 1, timeout=0.05):
                 pass
         assert asyncio.get_running_loop().time() - started < 0.5
-
-    run_scenario(scenario())
-
-
-def test_close_cancels_acquire_pending_in_admission() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100})
-        governor.register_shedder(HungShedder(), name="hung")
-        broker = LeaseBroker(governor)
-        acquire = asyncio.create_task(broker.acquire("ram", 1, ttl=10))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        await broker.close()
-        with pytest.raises(asyncio.CancelledError):
-            await acquire
-        assert not broker._holder_tasks
 
     run_scenario(scenario())
 

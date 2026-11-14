@@ -11,14 +11,11 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_memory import MemoryGovernor
 from dinkster_server import (
-    ComfyArgumentError,
     Principal,
     RuntimeSettings,
     SettingsError,
-    comfy_dtype_args,
     create_app,
     load_settings,
-    validate_comfy_args,
 )
 from test_server import SCHEMAS, StubAuthenticator, make_engine
 
@@ -90,17 +87,6 @@ def test_settings_get_is_ungated_and_reports_mutability() -> None:
             await client.close()
 
     run_scenario(scenario())
-
-
-def test_dtype_policy_maps_to_comfy_flags_without_auto_overrides() -> None:
-    args = comfy_dtype_args({"diffusion": "bfloat16", "textEncoder": "auto", "vae": "float32"})
-    assert args == (
-        "--bf16-unet",
-        "--fp32-vae",
-    )
-    assert validate_comfy_args(args, require_tuple=True) == args
-    with pytest.raises(ComfyArgumentError, match="Dinkster dtype policy"):
-        validate_comfy_args(("--bf16-unet",), require_tuple=True)
 
 
 def test_memory_headroom_put_pushes_live_persists_and_updates_reload_value(

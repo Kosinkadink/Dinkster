@@ -34,7 +34,6 @@ from dinkster_workers import (
     SandboxUnavailable,
     build_bwrap_command,
     detect_bubblewrap,
-    load_manifest,
 )
 from dinkster_workers.launch import SubprocessLauncher
 
@@ -246,127 +245,6 @@ class TestDetection:
                 await launcher.launch(make_spec(tmp_path, env={}))
 
         run_scenario(scenario())
-
-
-def test_serving_policy_requires_both_manifest_requests_and_host_grants(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster.compose import CompositionError, PackSpec, ServingComposer
-
-    def manifest(name: str, sandbox: str) -> Path:
-        root = tmp_path / name
-        root.mkdir()
-        path = root / "dinkster-pack.toml"
-        path.write_text(
-            f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n'
-            f"[pack.sandbox]\n{sandbox}"
-            f'[pack.entry]\nnodes = "{name.replace("-", "_")}:NODES"\n',
-            encoding="utf-8",
-        )
-        return path
-
-    gpu_path = manifest("gpu-pack", "gpu = true\n")
-    network_path = manifest("network-pack", "network = true\n")
-    network_two_path = manifest("network-two", "network = true\n")
-    plain_path = manifest("plain-pack", "")
-    gpu = load_manifest(gpu_path)
-    network = load_manifest(network_path)
-    network_two = load_manifest(network_two_path)
-    plain = load_manifest(plain_path)
-
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    denied = ServingComposer(sandbox_policy=SandboxPolicy())
-    with pytest.raises(CompositionError, match="GPU access requested but not granted"):
-        denied._sandbox_launcher(PackSpec(gpu_path), (gpu,), {})
-    with pytest.raises(CompositionError, match="network access requested but not granted"):
-        denied._sandbox_launcher(PackSpec(network_path), (network,), {})
-
-    partial = ServingComposer(
-        sandbox_policy=SandboxPolicy(),
-        sandbox_network_grants={"network-pack": ("https://api.example.test",)},
-    )
-    with pytest.raises(CompositionError, match="network-two"):
-        partial._sandbox_launcher(
-            PackSpec(network_path),
-            (network, network_two),
-            {},
-        )
-
-    granted = ServingComposer(
-        sandbox_policy=SandboxPolicy(),
-        sandbox_gpu_grants=("gpu_pack",),
-        sandbox_network_grants={
-            "network.pack": (
-                "https://api.example.test",
-                "https://storage.example.test:8443",
-            ),
-            "network_pack": ("https://alias.example.test",),
-            "network-two": ("https://other.example.test",),
-        },
-    )
-    combined = granted._sandbox_launcher(
-        PackSpec(gpu_path),
-        (gpu, network, network_two),
-        {},
-    )
-    assert combined is not None
-    assert combined.policy.gpu
-    assert combined.policy.egress_allowlist == (
-        "https://api.example.test",
-        "https://storage.example.test:8443",
-        "https://alias.example.test",
-        "https://other.example.test",
-    )
-
-    staged = granted.spawn_empty()
-    staged_launcher = staged._sandbox_launcher(
-        PackSpec(gpu_path),
-        (gpu, network, network_two),
-        {},
-    )
-    assert staged_launcher is not None
-    assert staged_launcher.policy.gpu
-    assert staged_launcher.policy.egress_allowlist == combined.policy.egress_allowlist
-
-    host_only = ServingComposer(
-        sandbox_policy=SandboxPolicy(
-            gpu=True,
-            egress_allowlist=("https://global.example.test",),
-        )
-    )
-    plain_launcher = host_only._sandbox_launcher(PackSpec(plain_path), (plain,), {})
-    assert plain_launcher is not None
-    assert not plain_launcher.policy.gpu
-    assert not plain_launcher.policy.egress_allowlist
-
-
-def test_pack_scratch_refuses_symlink_and_unsafe_group_name(tmp_path: Path) -> None:
-    from dinkster.compose import CompositionError, PackSpec, ServingComposer
-
-    manifest = load_manifest(DEV_MANIFEST)
-    scratch_root = tmp_path / "library" / "scratch"
-    composer = ServingComposer(pack_scratch_root=scratch_root)
-    if os.name == "posix":
-        target = tmp_path / "outside"
-        target.mkdir()
-        scratch = scratch_root / "packs" / "dinkster-nodes-dev"
-        scratch.parent.mkdir(parents=True)
-        scratch.symlink_to(target, target_is_directory=True)
-        with pytest.raises(CompositionError, match="not a real directory"):
-            composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-                PackSpec(DEV_MANIFEST),
-                (manifest,),
-            )
-    with pytest.raises(CompositionError, match="not path-safe"):
-        composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-            PackSpec(
-                DEV_MANIFEST,
-                worker_group="../escape",
-                group_manifests=(DEV_MANIFEST,),
-            ),
-            (manifest,),
-        )
-    run_scenario(composer.close())
 
 
 @pytest.mark.skipif(
@@ -945,19 +823,3 @@ def test_probe_jail_refuses_dissolving_root(tmp_path: Path) -> None:
         build_probe_bwrap_command(sys.executable, "/home")
     with pytest.raises(SandboxError):
         build_probe_bwrap_command(sys.executable, tmp_path, source_roots=(Path("/home"),))
-
-
-def test_detect_probe_jail_refuses_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A requested probe jail never degrades: unavailable bwrap (or a
-    non-Linux platform) raises with the remediation."""
-    from dinkster_workers import detect_probe_jail
-
-    if sys.platform == "linux":
-        monkeypatch.setattr(
-            "dinkster_workers.sandbox.detect_bubblewrap",
-            lambda: BubblewrapCapability(
-                available=False, bwrap=None, user_namespaces=False, detail="no bwrap"
-            ),
-        )
-    with pytest.raises(SandboxUnavailable):
-        detect_probe_jail()

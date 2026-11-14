@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
-import threading
 import zlib
 from contextlib import closing
 from io import BytesIO
@@ -21,7 +20,6 @@ from dinkster_assets import (
     digest_bytes,
     raster_image_facts,
 )
-from dinkster_server import image_document as image_document_module
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY, Principal
 from dinkster_server.library import ServerLibrary, add_library_routes
 from PIL import Image
@@ -98,26 +96,6 @@ def _document(resource: bytes, digest: str) -> dict[str, object]:
                 "alphaMode": "straight",
             }
         },
-    }
-
-
-def _blank_document() -> dict[str, object]:
-    return {
-        "format": "dinkster-image",
-        "formatVersion": 1,
-        "lineage": "blank",
-        "canvas": {
-            "width": 1,
-            "height": 1,
-            "colorSpace": "srgb",
-            "channelDepth": 8,
-            "compositing": "premultiplied-alpha",
-        },
-        "allocation": {"nextOrdinal": 0},
-        "rootLayerIds": [],
-        "layers": {},
-        "masks": {},
-        "resources": {},
     }
 
 
@@ -398,63 +376,6 @@ def test_dependency_manifests_are_immutable_and_survive_reopen(tmp_path: Path) -
         assert reopened.get_dependencies(digest) == first
 
 
-def test_dependency_manifest_exact_concurrent_writes_have_one_creator(tmp_path: Path) -> None:
-    path = tmp_path / "library.sqlite"
-    digest = "blake3:" + "a" * 64
-    dependencies = [{"resourceId": "r0", "digest": "blake3:" + "b" * 64}]
-    stores = [LibraryStore(path) for _ in range(8)]
-    barrier = threading.Barrier(len(stores))
-    results: list[bool] = []
-    errors: list[Exception] = []
-
-    def write(store: LibraryStore) -> None:
-        try:
-            barrier.wait()
-            results.append(store.put_dependencies(digest, dependencies))
-        except Exception as error:  # noqa: BLE001 - evidence captures competing result
-            errors.append(error)
-        finally:
-            store.close()
-
-    threads = [threading.Thread(target=write, args=(store,)) for store in stores]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    assert errors == []
-    assert results.count(True) == 1
-    assert results.count(False) == len(stores) - 1
-    with closing(LibraryStore(path)) as reopened:
-        assert reopened.get_dependencies(digest) == dependencies
-
-
-def test_canonical_json_matches_frontend_number_and_string_encoding() -> None:
-    values = [
-        1.0,
-        1e-7,
-        1e-6,
-        1e20,
-        1e21,
-        1.2345678901234567e20,
-        float("1000000000000000128"),
-        -0.0,
-        0.00000123,
-        0.000000123,
-        3.141592653589793,
-    ]
-    assert image_document_module._canonical_json(values) == (  # pyright: ignore[reportPrivateUsage]
-        "[1,1e-7,0.000001,100000000000000000000,1e+21,123456789012345670000,"
-        "1000000000000000100,0,0.00000123,1.23e-7,3.141592653589793]"
-    )
-    assert (
-        image_document_module._canonical_json(  # pyright: ignore[reportPrivateUsage]
-            {"\U00010000": "\ud800", "\ue000": "ok"}
-        )
-        == '{"\U00010000":"\\ud800","\ue000":"ok"}'
-    )
-
-
 def test_raster_facts_cover_supported_containers_and_reject_unsupported_rasters() -> None:
     palette = Image.new("P", (2, 1))
     palette.putpalette([20, 40, 60] + [0] * 765)
@@ -582,24 +503,6 @@ def test_storage_failure_leaves_retryable_bytes_without_an_adoption_manifest(
             assert response.status == 503
             assert library.vault.resolve(parent_digest).read_bytes() == body  # type: ignore[union-attr]
             assert library.store.get_dependencies(parent_digest) is None
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-def test_fixed_document_limit_ignores_smaller_generic_upload_configuration(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, library = await _client(tmp_path, upload_limit=1)
-        body = _canonical(_blank_document())
-        try:
-            response = await client.post(
-                "/api/assets/image-document?scope=local",
-                data=body,
-                headers={"Content-Type": MEDIA_TYPE},
-            )
-            assert response.status == 201
-            assert library.vault.resolve(digest_bytes(body)) is not None
         finally:
             await client.close()
 

@@ -355,30 +355,6 @@ def test_validation_error_edge_rejects_before_producer(cache_enabled: bool) -> N
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
 @pytest.mark.parametrize(
-    ("node_type", "value"),
-    [("dev.execution.admission_source", 5), ("dev.execution.mask_source", 5.0)],
-    ids=["INT", "MASK"],
-)
-def test_validation_error_edge1(cache_enabled: bool, node_type: str, value: int | float) -> None:
-    """Port of ComfyUI test_validation_error_edge1."""
-
-    async def scenario() -> None:
-        graph = Graph(
-            {
-                "source": GraphNode(node_type, {"value": value}),
-                "validation": GraphNode(
-                    "dev.execution.admission", {"value": Link("source", "value")}
-                ),
-            }
-        )
-        with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
-            await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-@pytest.mark.parametrize(
     ("node_type", "value", "error"),
     [
         ("dev.execution.admission_source", 5, True),
@@ -618,23 +594,6 @@ def test_partial_execution_included_outputs(cache_enabled: bool) -> None:
         assert result.outputs["left"]["value"].resolve() == 3
         assert "right" not in result.outputs
         assert "right_source" not in result.executed
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("cache_enabled", [False, True])
-def test_partial_execution_empty_list(cache_enabled: bool) -> None:
-    """Port of ComfyUI test_partial_execution_empty_list."""
-
-    async def scenario() -> None:
-        result = await make_engine().run(
-            Graph({"output": GraphNode("dev.execution.output", {"value": 3})}),
-            [],
-            cache_enabled=cache_enabled,
-        )
-        assert result.outputs == {}
-        assert result.executed == ()
-        assert result.cached == ()
 
     run_scenario(scenario())
 

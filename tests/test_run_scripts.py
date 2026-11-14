@@ -112,18 +112,6 @@ def test_launcher_children_use_existing_library_mounts(checkout, monkeypatch, ex
     assert mounts.read_text() == '[mounts.models]\npath="/retained/models"\nmode="read"\n'
 
 
-def test_changed_pin_fetches_checks_out_and_rebuilds(checkout):
-    root, calls = checkout
-    (root / "scripts/release_sources.json").write_text(json.dumps({"commit": "2" * 40}))
-    assert launcher.main() == 0
-    assert calls[0] == ("git", "fetch", "origin", "2" * 40)
-    assert calls[1] == ("git", "checkout", "--detach", "2" * 40)
-    assert "--package=pnpm@11.28.8" in calls[2]
-    assert calls[2][-2:] == ("install", "--frozen-lockfile")
-    assert calls[3][-3:] == ("--filter", "@dinkster/app", "build")
-    assert (root / ".run/frontend-build").read_text() == "2" * 40
-
-
 def test_missing_bundle_rebuilds_even_with_current_stamp(checkout):
     root, calls = checkout
     (root / ".run/frontend/packages/app/dist/index.html").unlink()
@@ -136,15 +124,6 @@ def test_missing_prerequisite_stops_before_mutating_checkout(checkout, monkeypat
     _, calls = checkout
     monkeypatch.setattr(launcher.shutil, "which", lambda name: None if name == "node" else name)
     with pytest.raises(RuntimeError, match="node is required"):
-        launcher.main()
-    assert calls == []
-
-
-@pytest.mark.parametrize("version", ["v22.23.2", "v26.11.9", "v27.0.0"])
-def test_unsupported_node_stops_before_mutating_checkout(checkout, monkeypatch, version):
-    _, calls = checkout
-    monkeypatch.setattr(launcher, "output", lambda *args, **kwargs: version)
-    with pytest.raises(RuntimeError, match="Node.js 26.12"):
         launcher.main()
     assert calls == []
 

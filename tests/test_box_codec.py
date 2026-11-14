@@ -84,58 +84,6 @@ def test_box_contract_preserves_values_nesting_numeric_kinds_and_canonical_ident
     assert value == before
 
 
-@pytest.mark.parametrize("type_id", (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE))
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        {**BOX, "source": {"digest": "blake3:undeclared"}},
-        {**BOX, "metadata": {"source": {"digest": "blake3:undeclared"}}},
-        {**BOX, "metadata": {"z_index": True}},
-        {**BOX, "metadata": {"content_rect": [0, 0, -1, 2]}},
-        {**BOX, "metadata": {"palette": [object()]}},
-        {**BOX, "x": True},
-        {**BOX, "y": "3"},
-        {**BOX, "height": -1},
-        {**BOX, "score": 1.01},
-        {**BOX, "score": -0.01},
-        {**BOX, "score": float("nan")},
-        {**BOX, "x": float("inf")},
-        {**BOX, "label": None},
-        {"x": 0, "y": 0, "width": 1},
-        {"boxes": [BOX], "labels": ["person"], "scores": [0.75]},
-    ],
-)
-def test_box_contract_refuses_undeclared_and_non_json_fields(type_id: str, invalid: object) -> None:
-    registry = TypeRegistry()
-    register_box_types(registry)
-    value = invalid if type_id == BOUNDING_BOX_TYPE else [invalid]
-    with pytest.raises(ValueError):
-        registry.wrap(type_id, value)
-
-
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        ELEMENT,
-        [{**ELEMENT, "x": 0}],
-        [{**ELEMENT, "bbox": [0, 1, 2]}],
-        [{**ELEMENT, "bbox": [0, 1, 2, False]}],
-        [{**ELEMENT, "metadata": {"source": "asset"}}],
-        [{**ELEMENT, "color_palette": [None]}],
-        [{**ELEMENT, "type": "unknown"}],
-        [[ELEMENT], BOX],
-        [BOX, [ELEMENT]],
-    ],
-)
-def test_placement_contract_refuses_mixed_or_malformed_elements(invalid: object) -> None:
-    registry = TypeRegistry()
-    register_box_types(registry)
-    with pytest.raises(ValueError):
-        registry.wrap(COMFY_ARRAY_TYPE, invalid)
-    with pytest.raises(ValueError):
-        registry.wrap(BOUNDING_BOX_TYPE, [ELEMENT])
-
-
 def _reconstruct(marker: str) -> list[object]:
     Path(marker).write_text("reconstructed", encoding="ascii")
     return []

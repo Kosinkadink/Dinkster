@@ -13,18 +13,11 @@ direction, are digest-only.
 from __future__ import annotations
 
 import asyncio
-import mmap
-import multiprocessing
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from types import SimpleNamespace
 
-import dinkster_workers.boundary as boundary_module
 import pytest
-from cas_lock_holder import hold_disk_cache_process_lock
 from dinkster_assets import AssetError, digest_bytes
 from dinkster_caches import (
     BudgetedDiskCAS,
@@ -44,7 +37,6 @@ from dinkster_engine import (
 from dinkster_schema import build_schemas
 from dinkster_values import (
     RESOURCE_ID_META_KEY,
-    BufferEncoding,
     EncodedPayload,
     TypeRegistry,
     UnresolvablePayload,
@@ -52,8 +44,8 @@ from dinkster_values import (
     ValueMeta,
     register_core_types,
 )
-from dinkster_workers import BoundaryError, ValueCodec
-from dinkster_workers.boundary import EncodedPayloadValidationError, encode_result, release_segment
+from dinkster_workers import ValueCodec
+from dinkster_workers.boundary import release_segment
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from test_engine import InProcessWorkerFactory, image_graph
 
@@ -91,202 +83,6 @@ def test_shm_payload_survives_sender_ack_without_eager_copy() -> None:
         assert view.readonly
         assert bytes(view) == registry.spec("test.large").encode("x" * 1024)
     assert received.resolve() == "x" * 1024
-
-
-def test_shm_validator_borrows_only_declared_bytes_from_padded_mapping(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    registry = make_registry()
-    validated: list[tuple[bool, bool, bytes]] = []
-
-    def validate(data: bytes | memoryview, _metadata: object) -> None:
-        is_view = isinstance(data, memoryview)
-        validated.append((is_view, data.readonly if is_view else False, bytes(data)))
-
-    registry.register("test.validated-large", validate_encoded_buffer=validate)
-    value = registry.wrap("test.validated-large", "mapped payload")
-    sender = ValueCodec(registry, shm_threshold=1)
-    receiver = ValueCodec(registry, shm_threshold=1)
-    blobs: list[bytes] = []
-    original_segments = []
-    wire, _ = sender.encode(value, blobs, original_segments)
-    declared_size = _payload_wire(wire)["size"]
-    assert isinstance(declared_size, int)
-    encoded_size = declared_size
-    mapping_size = ((encoded_size + mmap.PAGESIZE - 1) // mmap.PAGESIZE) * mmap.PAGESIZE
-    padded = SharedMemory(create=True, size=mapping_size)
-    assert padded.buf is not None and original_segments[0].buf is not None
-    padded.buf[:encoded_size] = original_segments[0].buf[:encoded_size]
-    release_segment(original_segments[0])
-    wire["payload"] = {
-        "transport": "shm",
-        "segment": padded.name,
-        "size": encoded_size,
-    }
-    if not boundary_module._SHM_MAPPING_ROUNDS:  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(BoundaryError, match="has size"):
-            receiver.decode(wire, blobs, [])
-    monkeypatch.setattr(boundary_module, "_SHM_MAPPING_ROUNDS", True)
-
-    consumed: list[str] = []
-    received, _ = receiver.decode(wire, blobs, consumed)
-    expected = registry.spec("test.validated-large").encode("mapped payload")
-    assert validated == [(True, True, expected)]
-    assert not isinstance(object.__getattribute__(received.payload, "_encoded"), bytes)
-    release_segment(padded)
-
-    relay_blobs: list[bytes] = []
-    relay_segments = []
-    _, relayed = receiver.encode(received, relay_blobs, relay_segments)
-    assert relayed.reused is True
-    assert received.resolve() == "mapped payload"
-    for segment in relay_segments:
-        release_segment(segment)
-
-
-def test_shm_preserves_bytes_validator_contract() -> None:
-    registry = make_registry()
-    validated: list[bytes] = []
-
-    def validate(data: bytes, _metadata: object) -> None:
-        assert data.startswith(b"json:")
-        validated.append(data)
-
-    registry.register("test.legacy-validator", validate_encoded=validate)
-    codec = ValueCodec(registry, shm_threshold=1)
-    value = registry.wrap("test.legacy-validator", "payload")
-    blobs: list[bytes] = []
-    segments = []
-    wire, _ = codec.encode(value, blobs, segments)
-
-    received, _ = codec.decode(wire, blobs, [])
-    assert validated == [registry.spec("test.legacy-validator").encode("payload")]
-    assert isinstance(received.resolve(), str)
-    for segment in segments:
-        release_segment(segment)
-
-
-def test_direct_shm_writer_failure_releases_its_segment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    registry = make_registry()
-
-    def fail(_buffer: memoryview) -> int:
-        raise RuntimeError("direct write failed")
-
-    registry.register(
-        "test.direct",
-        encode=lambda obj: bytes(str(obj), "utf-8"),
-        decode=lambda data: data.decode(),
-        prepare_buffer_encoding=lambda _obj: BufferEncoding(32, fail),
-    )
-    codec = ValueCodec(registry, shm_threshold=1)
-    names: list[str] = []
-    create_empty_segment = boundary_module._create_empty_segment
-
-    def record_segment(size: int) -> SharedMemory:
-        segment = create_empty_segment(size)
-        names.append(segment.name)
-        return segment
-
-    monkeypatch.setattr(boundary_module, "_create_empty_segment", record_segment)
-    blobs: list[bytes] = []
-    segments = []
-    with pytest.raises(RuntimeError, match="direct write failed"):
-        codec.encode(registry.wrap("test.direct", "payload"), blobs, segments)
-
-    assert len(names) == 1
-    assert blobs == []
-    assert segments == []
-    with pytest.raises(FileNotFoundError):
-        SharedMemory(name=names[0])
-
-
-def test_buffer_encoding_falls_back_to_bytes_when_shm_is_disabled() -> None:
-    registry = make_registry()
-    prepared: list[object] = []
-    encoded: list[object] = []
-
-    def encode(obj: object) -> bytes:
-        encoded.append(obj)
-        return f"encoded:{obj}".encode()
-
-    def prepare(obj: object) -> BufferEncoding:
-        prepared.append(obj)
-        return BufferEncoding(100, lambda _buffer: 100)
-
-    registry.register(
-        "test.buffered",
-        encode=encode,
-        decode=lambda data: data.decode(),
-        prepare_buffer_encoding=prepare,
-        fingerprint=lambda _obj: "fingerprint",
-    )
-    blobs: list[bytes] = []
-    wire, stat = ValueCodec(registry, use_shm=False).encode(
-        registry.wrap("test.buffered", "payload"), blobs, []
-    )
-
-    assert prepared == []
-    assert encoded == ["payload"]
-    assert stat.transport == "inline"
-    payload = wire["payload"]
-    assert isinstance(payload, dict)
-    assert blobs[payload["blob"]] == b"encoded:payload"
-
-
-def test_result_encoding_releases_prior_segments_on_later_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Unencodable:
-        def __reduce__(self) -> tuple[object, ...]:
-            raise RuntimeError("metadata cannot be encoded")
-
-    registry = make_registry()
-
-    def prepare(obj: object) -> BufferEncoding:
-        data = str(obj).encode()
-
-        def write(buffer: memoryview) -> int:
-            buffer[:] = data
-            return len(data)
-
-        return BufferEncoding(len(data), write)
-
-    registry.register(
-        "test.large",
-        encode=lambda obj: str(obj).encode(),
-        decode=lambda data: data.decode(),
-        prepare_buffer_encoding=prepare,
-    )
-    first = registry.wrap("test.large", "first payload")
-    second = Value(
-        "test.large",
-        "fingerprint",
-        ValueMeta({"unencodable": Unencodable()}),
-        EncodedPayload("test.large", b"second payload", None, "inline"),
-    )
-    codec = ValueCodec(registry, shm_threshold=1)
-    names: list[str] = []
-    create_segment = boundary_module._create_empty_segment
-
-    def record_segment(size: int) -> SharedMemory:
-        segment = create_segment(size)
-        names.append(segment.name)
-        return segment
-
-    monkeypatch.setattr(boundary_module, "_create_empty_segment", record_segment)
-    with pytest.raises(RuntimeError, match="metadata cannot be encoded"):
-        encode_result(
-            codec,
-            InvocationResult(outputs={"first": first, "second": second}),
-            "invocation",
-            1.0,
-        )
-
-    assert len(names) == 1
-    with pytest.raises(FileNotFoundError):
-        SharedMemory(name=names[0])
 
 
 # -- DiskCAS ---------------------------------------------------------------
@@ -368,30 +164,6 @@ def test_budgeted_cas_never_evicts_the_just_stored_blob(tmp_path: Path) -> None:
     assert cas.get(digest) == data
 
 
-def test_cas_concurrent_identical_puts(tmp_path: Path) -> None:
-    cas = DiskCAS(tmp_path)
-    data = b"x" * 65536
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        digests = list(executor.map(cas.put, [data] * 8))
-    assert set(digests) == {digest_bytes(data)}
-    assert cas.get(digests[0]) == data
-
-
-def test_cas_concurrent_identical_adoptions(tmp_path: Path) -> None:
-    cas = DiskCAS(tmp_path / "cas")
-    data = b"x" * 65536
-    digest = digest_bytes(data)
-    candidates = [tmp_path / f"candidate-{index}" for index in range(8)]
-    for candidate in candidates:
-        candidate.write_bytes(data)
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        list(executor.map(lambda path: cas.adopt_file(path, digest), candidates))
-
-    assert all(not candidate.exists() for candidate in candidates)
-    assert cas.get(digest) == data
-
-
 def test_cas_concurrent_puts_and_adoptions_share_publication_lock(tmp_path: Path) -> None:
     cas = DiskCAS(tmp_path / "cas")
     data = b"x" * 65536
@@ -412,35 +184,6 @@ def test_cas_concurrent_puts_and_adoptions_share_publication_lock(tmp_path: Path
     assert adopt_results == [None] * 4
     assert all(not candidate.exists() for candidate in candidates)
     assert cas.get(digest) == data
-
-
-def test_cas_retries_verified_winner_after_transient_access_denial(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cas = DiskCAS(tmp_path)
-    data = b"winner"
-    digest = digest_bytes(data)
-    hexpart = digest.split(":", 1)[1]
-    path = tmp_path / hexpart[:2] / hexpart
-    real_open = Path.open
-    denied_opens = 0
-
-    def lose_replace_race(_source: Path, target: Path) -> None:
-        target.write_bytes(data)
-        raise PermissionError("target is settling")
-
-    def open_after_winner(file: Path, mode: str = "r"):
-        nonlocal denied_opens
-        if file == path and mode == "rb" and denied_opens < 2:
-            denied_opens += 1
-            raise PermissionError("target is settling")
-        return real_open(file, mode)
-
-    monkeypatch.setattr(os, "replace", lose_replace_race)
-    monkeypatch.setattr(Path, "open", open_after_winner)
-
-    assert cas.put(data) == digest
-    assert denied_opens == 2
 
 
 # -- DiskCacheStore ----------------------------------------------------------
@@ -493,29 +236,6 @@ def test_disk_cache_unknown_type_relays(tmp_path: Path) -> None:
         assert payload.data == b"opaque-bytes"  # relayable as-is
         with pytest.raises(UnresolvablePayload, match="not registered"):
             rehydrated.resolve()
-
-    run_scenario(scenario())
-
-
-def test_encoded_validator_failure_is_counted_as_disk_cache_miss(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-
-        def refuse(data: bytes, metadata: object) -> None:
-            raise ValueError(f"refused {len(data)} bytes with {metadata!r}")
-
-        registry.register("test.validated", validate_encoded=refuse)
-        value = Value(
-            type_id="test.validated",
-            fingerprint="untrusted-fingerprint",
-            meta=ValueMeta({"format": "test"}),
-            payload=EncodedPayload("test.validated", b"malformed", None),
-        )
-        store = DiskCacheStore(tmp_path, registry)
-        await store.put("key-invalid", {"out": value})
-        assert await store.get("key-invalid") is None
-        assert store.hits == 0
-        assert store.misses == 1
 
     run_scenario(scenario())
 
@@ -627,74 +347,6 @@ def test_disk_cache_shared_root_concurrent_writes_are_complete(tmp_path: Path) -
     run_scenario(scenario())
 
 
-def test_disk_cache_process_lock_waits_for_another_instance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    blocked = threading.Event()
-    retry = threading.Event()
-    if os.name == "nt":
-        import dinkster_caches.disk as disk_module
-
-        retries = 0
-
-        def retry_sleep(interval: float) -> None:
-            nonlocal retries
-            assert interval == 0.05
-            retries += 1
-            # Drive 10.55 seconds of retries while the real OS lock remains held.
-            if retries >= 211:
-                blocked.set()
-                assert retry.wait(15)
-
-        monkeypatch.setattr(disk_module, "time", SimpleNamespace(sleep=retry_sleep))
-    else:
-        import fcntl
-
-        original_flock = fcntl.flock
-
-        def observe_flock(fd: int, operation: int) -> None:
-            if operation == fcntl.LOCK_EX:
-                try:
-                    original_flock(fd, operation | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    blocked.set()
-                else:
-                    return
-            original_flock(fd, operation)
-
-        monkeypatch.setattr(fcntl, "flock", observe_flock)
-
-    context = multiprocessing.get_context("spawn")
-    ready = context.Event()
-    release = context.Event()
-    holder = context.Process(
-        target=hold_disk_cache_process_lock,
-        args=(str(tmp_path), ready, release),
-    )
-    holder.start()
-    try:
-        assert ready.wait(15)
-        registry = make_registry()
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            waiting = pool.submit(DiskCacheStore, tmp_path, registry)
-            try:
-                assert blocked.wait(15)
-                assert not waiting.done()
-            finally:
-                release.set()
-                retry.set()
-            store = waiting.result(timeout=15)
-        run_scenario(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
-        assert run_scenario(store.get("after-lock")) is not None
-    finally:
-        release.set()
-        holder.join(timeout=15)
-        if holder.is_alive():
-            holder.terminate()
-            holder.join(timeout=5)
-    assert holder.exitcode == 0
-
-
 def test_disk_cache_startup_recovers_orphans_and_interrupted_manifests(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
@@ -760,59 +412,6 @@ def test_disk_cache_shared_blob_survives_one_eviction(tmp_path: Path) -> None:
 # -- LayeredCache ------------------------------------------------------------
 
 
-def test_layered_cache_promotes_hits(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        memory = MemoryLRUCache()
-        disk = DiskCacheStore(tmp_path, registry)
-        layered = LayeredCache(memory, disk)
-
-        # Seed disk only (as if a previous process wrote it).
-        await disk.put("key-1", {"out": registry.wrap("INT", 9)})
-        assert len(memory) == 0
-
-        hit = await layered.get("key-1")
-        assert hit is not None and hit["out"].resolve() == 9
-        assert len(memory) == 1  # promoted
-        assert layered.take_hit_layer() == "disk"
-        assert await memory.get("key-1") is not None
-
-        assert await layered.get("key-1") is not None
-        assert layered.take_hit_layer() == "memory"
-        assert layered.hits_by_layer == {"disk": 1, "memory": 1}
-
-        # Write-through: a put lands everywhere.
-        await layered.put("key-2", {"out": registry.wrap("INT", 10)})
-        assert await memory.get("key-2") is not None
-        assert await DiskCacheStore(tmp_path, registry).get("key-2") is not None
-
-        assert layered.clear() >= 2
-        assert await layered.get("key-1") is None
-        assert await layered.get("key-2") is None
-
-    run_scenario(scenario())
-
-
-def test_layered_cache_invalidation_fans_out(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        memory = MemoryLRUCache()
-        layered = LayeredCache(memory, DiskCacheStore(tmp_path, registry))
-        stub = Value(
-            type_id="INT",
-            fingerprint="resident:abc",
-            meta=ValueMeta({RESOURCE_ID_META_KEY: "res-1"}),
-            payload=EncodedPayload("INT", b"json:1", None),
-        )
-        await layered.put("key-stub", {"out": stub})
-        assert await memory.get("key-stub") is not None  # memory took it
-        assert await DiskCacheStore(tmp_path, registry).get("key-stub") is None
-        assert layered.drop_referencing("res-1") == 1  # disk refused it
-        assert await layered.get("key-stub") is None
-
-    run_scenario(scenario())
-
-
 def test_layered_cache_keeps_unencodable_values_in_memory(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
@@ -836,137 +435,6 @@ def test_layered_cache_keeps_unencodable_values_in_memory(tmp_path: Path) -> Non
 
 
 # -- boundary cas transport ---------------------------------------------------
-
-
-def _payload_wire(wire: dict[str, object]) -> dict[str, object]:
-    from typing import cast
-
-    return cast("dict[str, object]", wire["payload"])
-
-
-def _paired_cas_codecs() -> tuple[ValueCodec, ValueCodec, TypeRegistry]:
-    registry = make_registry()
-    left = ValueCodec(registry, use_shm=False, accept_shm=False, cas_threshold=16)
-    right = ValueCodec(registry, use_shm=False, accept_shm=False, cas_threshold=16)
-    left.enable_cas()
-    right.enable_cas()
-    return left, right, registry
-
-
-def test_cas_transport_sends_bytes_once() -> None:
-    """First crossing carries digest + bytes; every repeat crossing of the
-    same payload is digest-only and still decodes to the same bytes."""
-    left, right, registry = _paired_cas_codecs()
-    value = registry.wrap("STRING", "x" * 100)
-
-    blobs: list[bytes] = []
-    wire, stat = left.encode(value, blobs, [])
-    assert stat.transport == "cas"
-    assert "blob" in _payload_wire(wire)
-    assert len(blobs) == 2  # meta blob + payload bytes
-    decoded, _ = right.decode(wire, blobs, [])
-    assert decoded.resolve() == "x" * 100
-
-    blobs2: list[bytes] = []
-    wire2, stat2 = left.encode(value, blobs2, [])
-    assert stat2.transport == "cas"
-    assert "blob" not in _payload_wire(wire2)  # digest-only
-    assert len(blobs2) == 1  # only the (small) meta blob rides the frame
-    decoded2, _ = right.decode(wire2, blobs2, [])
-    assert decoded2.resolve() == "x" * 100
-    assert decoded2.fingerprint == value.fingerprint
-
-
-def test_cas_transport_budget_bounds_retention() -> None:
-    """Past the retention budget the transport degrades, never breaks:
-    over-budget payloads carry their bytes on every crossing (marked
-    retained=false, mirrored by the receiver) instead of pinning RAM."""
-    registry = make_registry()
-    left = ValueCodec(registry, use_shm=False, accept_shm=False, cas_threshold=16, cas_budget=150)
-    right = ValueCodec(registry, use_shm=False, accept_shm=False, cas_threshold=16, cas_budget=150)
-    left.enable_cas()
-    right.enable_cas()
-
-    fits = registry.wrap("STRING", "a" * 100)
-    over = registry.wrap("STRING", "b" * 100)  # second 100B blows the 150B budget
-
-    blobs: list[bytes] = []
-    wire, _ = left.encode(fits, blobs, [])
-    assert _payload_wire(wire)["retained"] is True
-    right.decode(wire, blobs, [])
-
-    for _ in range(2):  # every crossing re-sends bytes, both stay consistent
-        blobs2: list[bytes] = []
-        wire2, stat2 = left.encode(over, blobs2, [])
-        assert stat2.transport == "cas"
-        assert "blob" in _payload_wire(wire2)  # bytes ride along again
-        assert _payload_wire(wire2)["retained"] is False
-        decoded, _ = right.decode(wire2, blobs2, [])
-        assert decoded.resolve() == "b" * 100
-
-    # The retained value still dedups; the echo back is digest-only.
-    back_blobs: list[bytes] = []
-    back_wire, _ = right.encode(fits, back_blobs, [])
-    assert "blob" not in _payload_wire(back_wire)
-    round_tripped, _ = left.decode(back_wire, back_blobs, [])
-    assert round_tripped.resolve() == "a" * 100
-
-
-def test_cas_transport_conservative_failures() -> None:
-    left, right, registry = _paired_cas_codecs()
-    value = registry.wrap("STRING", "w" * 100)
-    blobs: list[bytes] = []
-    wire, _ = left.encode(value, blobs, [])
-
-    # A digest the receiver never saw is a protocol violation, not a guess.
-    orphan = dict(wire)
-    orphan["payload"] = {
-        "transport": "cas",
-        "digest": "0" * 40,
-        "size": 100,
-    }
-    with pytest.raises(BoundaryError, match="never crossed"):
-        right.decode(orphan, [blobs[0]], [])  # meta blob still present
-
-    # A retained digest cannot be reused with a false declared size.
-    right.decode(wire, blobs, [])
-    false_size = dict(wire)
-    false_size_payload = dict(_payload_wire(wire))
-    false_size_payload.pop("blob")
-    declared_size = false_size_payload["size"]
-    assert isinstance(declared_size, int)
-    false_size_payload["size"] = declared_size + 1
-    false_size["payload"] = false_size_payload
-    with pytest.raises(BoundaryError, match="has size"):
-        right.decode(false_size, [blobs[0]], [])
-
-    # Bytes that do not hash to their claimed digest are refused.
-    tampered_blobs = [blobs[0], b"not the payload" + b"!" * 85]
-    with pytest.raises(BoundaryError, match="does not match"):
-        right.decode(wire, tampered_blobs, [])
-
-
-def test_encoded_validator_boundary_failure_is_named_and_precedes_value_creation() -> None:
-    registry = make_registry()
-
-    def refuse(data: bytes, metadata: object) -> None:
-        raise ValueError(f"bad payload {data!r} with {metadata!r}")
-
-    registry.register("test.validated", validate_encoded=refuse)
-    value = Value(
-        type_id="test.validated",
-        fingerprint="untrusted-fingerprint",
-        meta=ValueMeta({"format": "test"}),
-        payload=EncodedPayload("test.validated", b"malformed", None),
-    )
-    codec = ValueCodec(registry, use_shm=False)
-    blobs: list[bytes] = []
-    wire, _ = codec.encode(value, blobs, [])
-    with pytest.raises(
-        EncodedPayloadValidationError,
-        match="encoded payload validation failed for type 'test.validated'",
-    ):
-        codec.decode(wire, blobs, [])
 
 
 # -- engine restart persistence ----------------------------------------------

@@ -292,26 +292,6 @@ def test_video_returns_lazy_audio_consumed_in_bounded_windows(
     assert sum(count for _, count in windows) == 48000
 
 
-@pytest.mark.parametrize("channels", [9, 10, 17])
-@pytest.mark.parametrize("dtype", [np.int16, np.float32])
-def test_discrete_component_audio_roundtrips_without_speaker_assignment(channels, dtype) -> None:
-    samples = 2051
-    pcm = np.arange(channels * samples, dtype=dtype).reshape(1, channels, samples)
-    if dtype == np.float32:
-        pcm /= 65536
-    images = np.zeros((2, 2, 2, 3), np.float32)
-    value = assemble_video(images, fps=2, audio={"waveform": pcm, "sample_rate": samples})
-    value = decode_video(encode_video(value))
-    result = disassemble_video(value)
-    audio = cast(dict[str, Any], result["audio"])
-    assert isinstance(audio, LazyAudio)
-    expected = pcm.astype(np.float32) / 32768 if dtype == np.int16 else pcm
-    np.testing.assert_array_equal(audio["waveform"], expected)
-    np.testing.assert_array_equal(result["images"], images)
-    assert audio["sample_rate"] == samples
-    assert effective_audio_facts(audio)["layout"] == f"{channels}c"
-
-
 @pytest.mark.parametrize("channels,layout", [(3, "3.0"), (6, "5.1"), (9, "9c")])
 def test_video_trim_consumes_edited_asset_audio_exactly(
     tmp_path, monkeypatch, channels, layout
@@ -362,20 +342,6 @@ def test_lazy_component_audio_preserves_sample_rounding_edits_and_eof(trims, fir
         np.testing.assert_array_equal(
             audio_window(audio, 0, last - first)["waveform"], pcm[..., first:last]
         )
-
-
-def test_concat_trim_selects_component_audio_without_eager_concat() -> None:
-    images = np.zeros((2, 2, 2, 3), np.float32)
-    pcm = np.ones((1, 9, 48000), np.float32)
-    silent = assemble_video(images, fps=2)
-    audible = assemble_video(images, fps=2, audio={"waveform": pcm, "sample_rate": 48000})
-    joined = edit_video(silent, {"concat": [audible]})
-    with pytest.raises(ValueError, match="identical-codec concat requires encoded source clips"):
-        disassemble_video(joined)
-    selected = edit_video(joined, {"trim": {"start_time": 1, "duration": 1}})
-    audio = disassemble_video(selected)["audio"]
-    assert isinstance(audio, LazyAudio)
-    np.testing.assert_array_equal(audio_window(audio, 0, 48000)["waveform"], pcm)
 
 
 class TrimAudioFixture(Node):

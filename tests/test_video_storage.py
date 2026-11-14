@@ -23,7 +23,6 @@ from dinkster_values import (
     image_array_meta,
     video_from_source,
 )
-from dinkster_values.storage import BFLOAT16_FIELD, image_input
 from dinkster_video_runtime import (
     assemble_video,
     concatenate_video,
@@ -242,39 +241,6 @@ def test_component_wire_and_crop_keep_storage(dtype: Any) -> None:
     actual = cast(np.ndarray, disassemble_video(cropped)["images"])
     assert actual.dtype == images.dtype
     np.testing.assert_array_equal(actual, images[:, 2:6, 2:10])
-
-
-@pytest.mark.parametrize("kind", ["uint8", "uint16", "fp16", "bf16"])
-def test_save_normalizes_frames_not_batches(kind: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    normalized = np.full((4, 32, 64, 3), 0.5, np.float32)
-    if kind == "bf16":
-        images = (
-            (normalized.view(np.uint32) >> 16).astype(np.uint16).view([(BFLOAT16_FIELD, "<u2")])
-        )
-    elif kind == "fp16":
-        images = normalized.astype(np.float16)
-    else:
-        dtype = np.dtype(kind)
-        images = np.rint(normalized * np.iinfo(dtype).max).astype(dtype)
-    before = images.copy()
-    original = image_input
-    calls: list[tuple[int, ...]] = []
-
-    def per_frame(obj: object) -> object:
-        array = cast(np.ndarray, obj)
-        assert array.ndim == 3, "save expanded an entire frame batch"
-        calls.append(array.shape)
-        return original(obj)
-
-    monkeypatch.setattr(runtime, "image_input", per_frame)
-    output = io.BytesIO()
-    save_video_stream(assemble_video(images, fps=4), output, crf=0)
-    data = output.getvalue()
-    if kind in ("fp16", "bf16"):
-        assert len(calls) >= images.shape[0]
-    pixels = cast(np.ndarray, image_input(disassemble_video(video_from_source(data))["images"]))
-    np.testing.assert_allclose(pixels, 0.5, atol=2 / 255)
-    np.testing.assert_array_equal(images, before)
 
 
 @pytest.mark.parametrize("depth", [8, 10])

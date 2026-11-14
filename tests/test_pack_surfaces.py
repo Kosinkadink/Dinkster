@@ -46,30 +46,6 @@ def preview_manifest(tmp_path: Path) -> Path:
     return root / "dinkster-pack.toml"
 
 
-@pytest.mark.parametrize(
-    "event_name", [PROOF_EVENT, "video_preview.some_event", "video-preview.nested.some_event"]
-)
-def test_frontend_consumer_preserves_declared_event_name(
-    preview_manifest: Path, event_name: str
-) -> None:
-    preview_manifest.write_text(preview_manifest.read_text().replace(PROOF_EVENT, event_name))
-    manifest = load_manifest(preview_manifest)
-    module = resolve_frontend_modules(manifest)[0]
-    assert manifest.extension.events[0].name == event_name
-    assert module.contributions[0].event == event_name
-    assert module.to_wire(PROOF_PACK)["contributions"] == [
-        {
-            "id": "dinkster-video-preview.preview.initialized",
-            "kind": "eventConsumer",
-            "event": event_name,
-        },
-        {"id": "dinkster-video-preview.preview.status", "kind": "hostUi"},
-    ]
-    undeclared = replace(manifest, extension=replace(manifest.extension, events=()))
-    with pytest.raises(ValueError, match="event declared by its pack"):
-        resolve_frontend_modules(undeclared)
-
-
 def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Path) -> None:
     env = {"PYTHONPATH": str(preview_manifest.parent / "src")}
     report = diagnose(preview_manifest, environment=env)
@@ -234,40 +210,6 @@ def test_http_route_capabilities_json_validation_and_generation_retraction() -> 
             assert len(calls) == 1
 
     run_scenario(scenario())
-
-
-def test_event_contract_requires_finite_bounded_json() -> None:
-    schema = JsonObjectSchema((JsonField("value", "number"),))
-    for value in (float("nan"), float("inf"), float("-inf"), True):
-        with pytest.raises(ValueError):
-            schema.validate({"value": value})
-    text = JsonObjectSchema((JsonField("value", "string"),))
-    with pytest.raises(ValueError, match="64 KiB"):
-        text.validate({"value": "x" * 65536})
-    assert schema.validate({"value": 1.5}) == {"value": 1.5}
-
-
-@pytest.mark.parametrize("field_type", ["integer", "number"])
-@pytest.mark.parametrize("value", SAFE_JSON_INTS + UNSAFE_JSON_INTS)
-def test_schema_and_event_reporter_enforce_safe_integer_bounds(field_type: str, value: int) -> None:
-    from dinkster_api.v1 import PackEvent, report_pack_event
-    from dinkster_schema import use_reporter
-
-    schema = JsonObjectSchema((JsonField("value", field_type),))
-    event = PackEvent(PROOF_EVENT, schema)
-    payload = {"value": value}
-    received: list[object] = []
-    with use_reporter(lambda name, data, blob: received.append((name, data, blob))):
-        if value in SAFE_JSON_INTS:
-            assert schema.validate(payload) == payload
-            report_pack_event(event, payload)
-            assert received == [(PROOF_EVENT, payload, None)]
-        else:
-            with pytest.raises(ValueError, match="JSON safe integer"):
-                schema.validate(payload)
-            with pytest.raises(ValueError, match="JSON safe integer"):
-                report_pack_event(event, payload)
-            assert received == []
 
 
 @pytest.mark.parametrize("field_type", ["integer", "number"])

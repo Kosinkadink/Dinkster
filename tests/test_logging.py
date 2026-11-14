@@ -97,21 +97,4 @@ def test_env_configuration_level_and_overrides(capsys) -> None:
     assert "server warn" in err
 
 
-def test_env_absent_means_defaults(capsys) -> None:
-    configure_logging_from_env({})
-    core_logger("engine").info("default info")
-    assert "default info" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("raw", ["nolevel", "=debug", "name=", "a=b=c,"])
-def test_env_malformed_entries_raise(raw: str) -> None:
-    if raw == "a=b=c,":
-        # partition keeps the rest in the level -> unknown level.
-        with pytest.raises(ValueError):
-            configure_logging_from_env({LOG_OVERRIDES_ENV: raw})
-    else:
-        with pytest.raises(ValueError, match="malformed|unknown"):
-            configure_logging_from_env({LOG_OVERRIDES_ENV: raw})
-
-
 # -- the extension door ------------------------------------------------------

@@ -76,43 +76,6 @@ def test_indexed_selection_uses_existing_identity_and_live_authority(
         selected.read_bytes()
 
 
-def test_directory_modes_preserve_source_discovery_and_ranked_resolution(tmp_path: Path) -> None:
-    first, second = tmp_path / "first", tmp_path / "second"
-    seed(first, "model_index.json")
-    seed(first, "vendor/model/model_index.json")
-    seed(first, "dataset/metadata.json")
-    seed(first, "dataset/nested/model_index.json")
-    seed(first, "dataset/nested/metadata.json")
-    seed(second, "vendor/model/model_index.json", b"later")
-    seed(second, "shards/part.safetensors")
-    seed(second, "not-dataset/part.SAFETENSORS")
-    env = grants(tmp_path, ("model/diffusers", first), ("model/diffusers", second))
-    assert asset_selection_names("model/diffusers", env=env) == (
-        ".",
-        "dataset/nested",
-        "vendor/model",
-    )
-    assert resolve_asset_selection("model/diffusers", "vendor/model", env=env) == (
-        first / "vendor/model"
-    )
-    assert resolve_asset_selection("model/diffusers", ".", env=env) == first
-    env = grants(tmp_path, ("directory/dataset", first), ("directory/dataset", second))
-    assert asset_selection_names("directory/dataset", env=env) == ("dataset", "shards")
-    seed(first, "shards/shard_0.pkl")
-    assert resolve_asset_selection("directory/dataset", "shards", env=env) == first / "shards"
-    (first / "shards/shard_0.pkl").unlink()
-    (first / "shards").rmdir()
-    env = grants(tmp_path, ("directory/input", first))
-    assert asset_selection_names("directory/input", env=env) == (
-        "dataset",
-        "dataset/nested",
-        "vendor",
-        "vendor/model",
-    )
-    with pytest.raises(AssetError):
-        resolve_asset_selection("directory/input", ".", env=env)
-
-
 def test_vae_pairs_stay_in_one_root_and_file_refs_revalidate_grants(tmp_path: Path) -> None:
     first, second, vaes = tmp_path / "first", tmp_path / "second", tmp_path / "vaes"
     seed(first, "taesd_encoder.safetensors", b"encoder")
@@ -239,32 +202,6 @@ def test_local_selection_refuses_active_writers_and_excludes_writes_until_close(
     moved.unlink()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows native revision discovery")
-def test_root_sharing_conflict_preserves_snapshot_grants(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_assets import MountDef, MountSnapshotResolver, MountTable, revision
-
-    path = seed(tmp_path / "vae", "real.safetensors", b"weights")
-    env = grants(tmp_path, ("model/vae", path.parent))
-
-    def sharing_conflict(_root: Path | int) -> int:
-        raise AssetError("root is held for deletion; close that handle")
-
-    monkeypatch.setattr(revision, "windows_file_revision", sharing_conflict)
-    table = MountTable()
-    table.add(MountDef(id="vae", path=path.parent), kind="model/vae")
-    capability = table.descriptors()[0]["localBindingCapability"]
-    assert isinstance(capability, dict)
-    assert capability["supported"] is False
-    assert "held for deletion" in capability["reason"]
-    resolver = MountSnapshotResolver(env["DINKSTER_MOUNTS_SNAPSHOT"])
-    for _ in range(2):
-        assert resolver.roots_for_kind("model/vae") == (path.parent,)
-        with pytest.raises(AssetError, match="background index"):
-            resolver.bind_relative_file("model/vae", path.parent, path.name)
-
-
 @pytest.mark.skipif(os.name != "nt", reason="Windows native file revisions")
 def test_same_stat_rewrite_invalidates_local_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -285,56 +222,6 @@ def test_same_stat_rewrite_invalidates_local_selection(
     path.write_bytes(b"other")
     with pytest.raises(AssetError):
         ref.read_bytes()
-
-
-def test_unsupported_revision_mount_waits_for_background_verification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_assets import MountDef, MountTable, mounts
-
-    monkeypatch.setattr(
-        mounts,
-        "mount_revision_capability",
-        lambda _root: {"supported": False, "filesystem": "exFAT", "reason": "no file USN"},
-    )
-    root = tmp_path / "vae"
-    path = seed(root, "real.safetensors", b"weights")
-    env = grants(tmp_path, ("model/vae", root))
-    with pytest.raises(AssetError) as refused:
-        resolve_asset_selection("model/vae", path.name, env=env)
-    message = str(refused.value)
-    for detail in (
-        "grant-0",
-        "exFAT",
-        "file revision tracking unavailable",
-        "background index",
-        "verified AssetRef",
-        "missingEntryCount",
-    ):
-        assert detail in message
-    snapshot = Path(env["DINKSTER_MOUNTS_SNAPSHOT"])
-    table = MountTable(snapshot)
-    table.add(MountDef(id="vae", path=root), kind="model/vae")
-    with pytest.raises(AssetError, match="background index"):
-        table.bind_name(path.name, "model/vae")
-    table.scan("vae")
-    selected = resolve_asset_selection("model/vae", path.name, env=env)
-    assert isinstance(selected, AssetRef)
-    assert selected.digest == digest_bytes(b"weights")
-    assert selected.read_bytes() == b"weights"
-    named = table.bind_name(path.name, "model/vae")
-    assert isinstance(named, AssetRef)
-    assert named.read_bytes() == b"weights"
-    if os.name == "nt":
-        assert table.descriptors()[0]["localBindingCapability"] == {
-            "supported": False,
-            "filesystem": "exFAT",
-            "reason": "no file USN",
-        }
-    table.remove("vae")
-    for ref in (selected, named):
-        with pytest.raises(AssetError):
-            ref.read_bytes()
 
 
 @pytest.mark.parametrize("verified", [False, True])

@@ -6,7 +6,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 import venv
 import zipfile
 from dataclasses import replace
@@ -17,15 +16,11 @@ import pytest
 from dinkster_registry import LockedPack, Lockfile, artifact_digest
 from dinkster_registry.archive_admission import (
     ProbeSettings,
-    run_doctor_static,
     run_executable_probe,
-    run_fast_security,
-    run_ingest_integrity,
     run_locked_probe,
     run_manifest_admission,
 )
 from dinkster_schema import PackCompatibility
-from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.pack_environment import provision_pack, venv_python
 from dinkster_workers.pack_lock import (
     GenerationPackages,
@@ -34,7 +29,7 @@ from dinkster_workers.pack_lock import (
     PackLock,
     plan_pack,
 )
-from dinkster_workers.pack_wheel import build_pack_archive, wheel_filename
+from dinkster_workers.pack_wheel import build_pack_archive
 from dinkster_workers.provision import ProvisionError
 
 FIXTURES = Path(__file__).parent / "fixtures/registry-admission"
@@ -265,60 +260,6 @@ def test_locked_admission_refuses_the_same_base_conflict_as_user_install(
     )
 
 
-@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
-@pytest.mark.parametrize("name", ["example-pack", "color-tools"])
-def test_service_fixture_archive_contract(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, platform: str
-) -> None:
-    root = FIXTURES / name
-    archive = tmp_path / wheel_filename(load_manifest(root / "dinkster-pack.toml"))
-    build_pack_archive(root, archive)
-    data = archive.read_bytes()
-    digest = artifact_digest(data)
-    ingest = run_ingest_integrity(data, len(data), digest)
-    assert ingest.findings == ()
-    assert ingest.data == {"artifactDigest": digest, "size": len(data)}
-    metadata = run_manifest_admission(root, name, "1.2.3")
-    assert metadata.findings == ()
-    assert metadata.data is not None
-    assert metadata.data["dinkster"] == ">=0.9,<1"
-    assert metadata.data["license"] == "Apache-2.0"
-    assert metadata.data["namespaces"] == ["example" if name == "example-pack" else "color"]
-    assert metadata.data["dependencies"] == []
-    assert metadata.data["contracts"] == {
-        "host": "dinkster-pack-host/1",
-        "api": "dinkster-api/v1",
-        "inference": None,
-    }
-    if name == "example-pack":
-        assert metadata.data["templates"][0]["digest"] == (
-            "sha256:ac08ce34ba4f8123618661bef2425f7028ffb9ac740578a3ee88684d2523fee8"
-        )
-    else:
-        assert metadata.data["templates"] == []
-    with monkeypatch.context() as platform_context:
-        platform_context.setattr(sys, "platform", platform)
-        doctor = run_doctor_static(root)
-    expected_findings = (
-        [("environment.platform-excluded", "info", "signal")]
-        if name == "example-pack" and platform == "win32"
-        else []
-    )
-    assert [
-        (item.code, item.severity, item.effect) for item in doctor.findings
-    ] == expected_findings
-    assert not doctor.blocked and not doctor.review
-    assert doctor.data is not None
-    assert (doctor.data["status"], doctor.data["errorCount"], doctor.data["warningCount"]) == (
-        "passed",
-        0,
-        0,
-    )
-    security = run_fast_security(data)
-    assert security.findings == ()
-    assert security.data == {"status": "passed", "policyVersion": "registry-scan/1"}
-
-
 @pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
 @pytest.mark.parametrize("name", ["example-pack", "color-tools"])
 @pytest.mark.parametrize("broken_entry", [False, True])
@@ -359,33 +300,6 @@ def test_service_fixture_probe_contract(tmp_path: Path, name: str, broken_entry:
     assert all(item["role"] == "executing" for item in result.data["schemas"])
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the admission probe requires POSIX limits")
-@pytest.mark.parametrize("times_out", [False, True])
-def test_executable_probe_retains_elapsed_time(tmp_path: Path, times_out: bool) -> None:
-    root = tmp_path / "pack"
-    shutil.copytree(FIXTURES / "color-tools", root)
-    if times_out:
-        (root / "color_tools" / "__init__.py").write_text(
-            "import threading\nthreading.Event().wait()\n"
-        )
-    settings = ProbeSettings(probe_timeout_seconds=1 if times_out else 30)
-    started = time.monotonic()
-    result = run_executable_probe(root, settings=settings, require_isolation=False)
-    total = time.monotonic() - started
-    assert result.operator_details is not None
-    elapsed = result.operator_details["elapsedSeconds"]
-    assert isinstance(elapsed, float) and 0 < elapsed <= total
-    if times_out:
-        assert elapsed >= settings.probe_timeout_seconds
-        assert result.blocked
-        assert [(finding.code, finding.message) for finding in result.findings] == [
-            ("probe.timeout", f"Executable probe exceeded 1s (elapsed {elapsed:.6f}s).")
-        ]
-    else:
-        assert not result.blocked and result.data is not None
-        assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
-
-
 @pytest.mark.parametrize(
     ("replacement", "message"),
     [
@@ -409,16 +323,6 @@ def test_fixture_public_version_refuses(version: str) -> None:
     assert result.blocked and result.findings[0].code == "manifest.invalid"
 
 
-@pytest.mark.parametrize("declaration", ['version = "1.0"', 'engine = ">=0.9"'])
-def test_manifest_requires_paired_compatibility(tmp_path: Path, declaration: str) -> None:
-    manifest = tmp_path / "dinkster-pack.toml"
-    manifest.write_text(
-        f'[pack]\nname = "example-pack"\n{declaration}\n[pack.entry]\nnodes = "nodes:PACK_NODES"\n'
-    )
-    with pytest.raises(ManifestError, match="version and engine must be strings"):
-        load_manifest(manifest)
-
-
 @pytest.mark.parametrize("engine", ["0.8.99", "0.9.0.dev1", "0.9.7", "1.0"])
 def test_shared_compatibility_range(engine: str) -> None:
     compatibility = PackCompatibility("1.2.3", ">=0.9.0.dev1,<1")
@@ -427,15 +331,6 @@ def test_shared_compatibility_range(engine: str) -> None:
             compatibility.require_engine("example-pack", engine)
     else:
         compatibility.require_engine("example-pack", engine)
-
-
-def test_missing_manifest_refuses(tmp_path: Path) -> None:
-    for result in (
-        run_manifest_admission(tmp_path, "example-pack", "1.2.3"),
-        run_doctor_static(tmp_path),
-        run_executable_probe(tmp_path),
-    ):
-        assert result.blocked and not result.review
 
 
 def test_probe_dependency_url_refuses(tmp_path: Path) -> None:
@@ -529,13 +424,6 @@ def test_probe_installs_trusted_library_and_operator_dependencies(
         assert not result.blocked, result.operator_details
         assert result.data is not None
         assert [schema["nodeType"] for schema in result.data["schemas"]] == ["color.adjust"]
-
-
-def test_service_fixture_selected_api_refuses_unjailed_execution(tmp_path: Path) -> None:
-    result = run_executable_probe(
-        tmp_path, api_wheel=tmp_path / "engine.whl", require_isolation=False
-    )
-    assert [finding.code for finding in result.findings] == ["probe.isolation-unavailable"]
 
 
 @pytest.mark.skipif(

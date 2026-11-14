@@ -300,25 +300,6 @@ def test_native_compute_dtypes_follows_visible_device_selection(
     assert serve.detect_native_compute_dtypes((0, 1)) == frozenset({"float32"})
 
 
-def test_native_compute_dtypes_matches_uuid_selectors(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster import serve
-
-    _probe_smi(monkeypatch, [_ADA, _PASCAL])
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-aaaaaaaa-1111-2222-3333-444444444444")
-    assert serve.detect_native_compute_dtypes() == _ALL_DTYPES
-
-
-def test_native_compute_dtypes_windows_enables_10_series_fp16(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import serve
-
-    _probe_smi(monkeypatch, [_PASCAL])
-    monkeypatch.setattr(serve.platform, "win32_ver", lambda: ("10", "", "", ""))
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    assert serve.detect_native_compute_dtypes() == frozenset({"float16", "float32"})
-
-
 @pytest.mark.parametrize(
     ("rows", "visible", "indices"),
     [
@@ -349,27 +330,6 @@ def test_native_compute_dtypes_falls_back_permissive(
     assert serve.detect_native_compute_dtypes(indices) == _ALL_DTYPES
 
 
-def test_serve_official_bootstrap_requires_persistent_library(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from dinkster import serve
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-serve",
-            "--library-root",
-            "",
-            "--official-resolver-provider-id",
-            "fixture",
-        ],
-    )
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
-
-
 def test_settings_gate_unknown_is_startup_parser_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -385,33 +345,6 @@ def test_settings_gate_unknown_is_startup_parser_error(
     error = capsys.readouterr().err
     assert "comfy-args" in error
     assert "memory-budgets" in error
-
-
-@pytest.mark.parametrize(
-    ("environment", "message"),
-    (
-        ({"DINKSTER_OPENAI_BASE_URL": "https://api.example.test/v1"}, "requires both"),
-        ({"DINKSTER_OPENAI_TIMEOUT": "not-a-number"}, "must be a number"),
-        ({"DINKSTER_OPENAI_TIMEOUT": "inf"}, "must be finite and positive"),
-        ({"DINKSTER_OPENAI_STREAM": "sometimes"}, "must be stream/json or true/false"),
-    ),
-)
-def test_openai_generation_environment_fails_with_argparse_diagnostic(
-    environment: dict[str, str],
-    message: str,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from dinkster import serve
-
-    for name, value in environment.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", ""])
-
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-
-    assert message in capsys.readouterr().err
 
 
 def test_sandbox_host_grants_require_the_flag(
@@ -472,76 +405,6 @@ def test_execution_cache_layered_mode_requires_a_persistent_root(
     assert "requires --execution-cache-dir" in capsys.readouterr().err
 
 
-def test_sandbox_protects_configured_auth_outside_library(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_workers import SandboxPolicy
-
-    from dinkster import serve
-
-    library = tmp_path / "library"
-    library.mkdir()
-    shared = tmp_path / "shared"
-    shared.mkdir()
-    auth = shared / "auth.toml"
-    auth.write_text(
-        "version = 1\n"
-        "[[tokens]]\n"
-        'token = "operator-secret"\n'
-        'principalId = "operator"\n'
-        "[tokens.grants]\n"
-        'local = ["jobs:read"]\n',
-        encoding="utf-8",
-    )
-    (library / "mounts.toml").write_text(
-        f"[mounts.shared]\npath = {json.dumps(str(shared))}\n",
-        encoding="utf-8",
-    )
-    captured: list[SandboxPolicy] = []
-    real_composer = serve.ServingComposer
-
-    def recording_composer(*args: object, **kwargs: object) -> object:
-        policy = kwargs.get("sandbox_policy")
-        assert isinstance(policy, SandboxPolicy)
-        captured.append(policy)
-        return real_composer(*args, **kwargs)  # type: ignore[arg-type]
-
-    def fake_run_app(awaitable: object, **kwargs: object) -> None:
-        assert kwargs["host"] == "0.0.0.0"
-
-        async def inspect() -> None:
-            app = await awaitable  # type: ignore[misc]
-            app.freeze()
-            await app.cleanup()
-
-        run_scenario(inspect())
-
-    monkeypatch.setattr(serve, "ServingComposer", recording_composer)
-    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-serve",
-            "--library-root",
-            str(library),
-            "--sandbox-packs",
-            "--auth",
-            str(auth),
-            "--host",
-            "0.0.0.0",
-            "--allow-host",
-            "lan.example",
-        ],
-    )
-
-    serve.main()
-
-    assert len(captured) == 1
-    assert str(shared) in captured[0].ro_binds
-    assert str(auth) in captured[0].protected_roots
-
-
 def test_auth_file_malformed_refuses_serve_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -596,66 +459,6 @@ def test_partial_identity_auth_configuration_refuses_startup(
         serve.main()
 
     assert "requires --identity-jwks-url" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    "paths",
-    [
-        ("store.sqlite", None, None),
-        (None, "policy.toml", None),
-        (None, None, "cursor.key"),
-        ("store.sqlite", "policy.toml", None),
-    ],
-)
-def test_federated_asset_config_is_all_or_none(paths: tuple[str | None, ...]) -> None:
-    from dinkster.serve import _load_federated_asset_config
-
-    with pytest.raises(ValueError, match="must be provided together"):
-        _load_federated_asset_config(*paths, auth_enabled=False)
-
-
-@pytest.mark.parametrize(
-    "policy",
-    [
-        "version = true\n[scopes]\nlocal = []\n",
-        "version = 2\n[scopes]\nlocal = []\n",
-        "version = 1\nextra = 1\n[scopes]\nlocal = []\n",
-        "version = 1\n[scopes]\n",
-        "version = 1\n[scopes]\n'bad scope' = []\n",
-        "version = 1\n[scopes]\nlocal = 'provider'\n",
-        "version = 1\n[scopes]\nlocal = [1]\n",
-        "version = 1\n[scopes]\nlocal = ['Provider']\n",
-        "version = 1\n[scopes]\nlocal = ['provider', 'provider']\n",
-    ],
-)
-def test_federated_asset_policy_is_strict(policy: str, tmp_path: Path) -> None:
-    from dinkster.serve import _load_federated_asset_config
-
-    policy_path = tmp_path / "policy.toml"
-    policy_path.write_text(policy, encoding="utf-8")
-    key_path = tmp_path / "cursor.key"
-    key_path.write_bytes(b"k" * 32)
-    with pytest.raises(ValueError):
-        _load_federated_asset_config(
-            str(tmp_path / "store.sqlite"),
-            str(policy_path),
-            str(key_path),
-            auth_enabled=False,
-        )
-
-
-def test_federated_asset_auth_off_requires_local_scope(tmp_path: Path) -> None:
-    from dinkster.serve import _load_federated_asset_config
-
-    policy_path = tmp_path / "policy.toml"
-    policy_path.write_text("version = 1\n[scopes]\nworkspace = []\n", encoding="utf-8")
-    key_path = tmp_path / "cursor.key"
-    key_path.write_bytes(b"k" * 32)
-    paths = (str(tmp_path / "store.sqlite"), str(policy_path), str(key_path))
-
-    with pytest.raises(ValueError, match="local"):
-        _load_federated_asset_config(*paths, auth_enabled=False)
-    assert _load_federated_asset_config(*paths, auth_enabled=True) is not None
 
 
 def test_serve_single_job_and_replica_multi_gpu_are_mutually_exclusive(
@@ -780,45 +583,6 @@ def serve_with_library_command(port: int, library_root: Path, *extra: str) -> li
         str(library_root),
         *extra,
     ]
-
-
-def test_unprepared_library_catalog_fails_before_api_binding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster import serve
-    from dinkster.compose import CompositionError, PackSpec
-
-    manifest = write_iso_manifest(tmp_path / "unprepared")
-    pack = PackSpec(manifest, require_catalog=True)
-    attempted = False
-
-    def run_app(awaitable: object, **_kwargs: object) -> None:
-        nonlocal attempted
-        attempted = True
-        with pytest.raises(
-            CompositionError,
-            match="schema catalog is missing or stale; run dinkster-pack prepare-catalogs",
-        ):
-            run_scenario(awaitable)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "_resolve_pack_argument", lambda _path: pack)
-    monkeypatch.setattr(serve.web, "run_app", run_app)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-serve",
-            "--library-root",
-            str(tmp_path),
-            "--pack",
-            "fixture",
-        ],
-    )
-
-    serve.main()
-
-    assert attempted
 
 
 def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) -> None:

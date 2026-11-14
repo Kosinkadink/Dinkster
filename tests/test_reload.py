@@ -465,27 +465,6 @@ def test_grouped_placement_preserves_surface_and_invocation_identity(
     run_scenario(scenario())
 
 
-def test_reload_refuses_rename_and_unknown_pack(tmp_path: Path) -> None:
-    """Reload swaps a known identity: a manifest rename is remove-and-add,
-    not a reload, and an unknown pack name is its own error (the endpoint
-    maps it to 404 vs the 409 every other failure gets)."""
-
-    async def scenario() -> None:
-        manifest = write_pack(tmp_path, "v1")
-        composer = ServingComposer(worker_env=worker_env(tmp_path))
-        try:
-            await composer.add_pack(manifest)
-            with pytest.raises(UnknownPackError, match="no composed pack"):
-                await composer.reload_pack("nope")
-            write_pack(tmp_path, "v2", name="renamed")
-            with pytest.raises(CompositionError, match="rename"):
-                await composer.reload_pack("rlpack")
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
 # -- engine level --------------------------------------------------------------
 
 

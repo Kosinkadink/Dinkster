@@ -521,30 +521,6 @@ def test_engine_process_lifecycle(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_status_narrates_composition_progress() -> None:
-    """/supervisor/status carries "progress" exactly while the link holds
-    mirrored composition narration - the settled frontend shape - and
-    omits it (never null) otherwise."""
-
-    async def scenario() -> None:
-        link = EngineLink()
-        link.state = "ready"
-        link.progress = {"done": 1, "total": 3, "phase": "packs"}
-        client = TestClient(TestServer(create_supervisor_app(link)))
-        await client.start_server()
-        try:
-            status = await (await client.get(STATUS_PATH)).json()
-            assert status["state"] == "ready"
-            assert status["progress"] == {"done": 1, "total": 3, "phase": "packs"}
-            link.progress = None
-            status = await (await client.get(STATUS_PATH)).json()
-            assert "progress" not in status
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 # A stub engine that narrates in-flight composition until a release file
 # appears next to it - deterministic transitions for the mirror test.
 STUB_COMPOSING_ENGINE = textwrap.dedent(

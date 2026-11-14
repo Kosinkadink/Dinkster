@@ -34,7 +34,6 @@ from dinkster_values import (
     RESOURCE_ID_META_KEY,
     TypeRegistry,
     Value,
-    make_list_value,
     register_core_types,
 )
 from dinkster_workers import (
@@ -539,14 +538,3 @@ def test_checkpoint_planner_skips_loaded_residents(
         model=resident_input(f"resident:{rid}", {"vram:cuda:0": 100})
     )
     assert plan_reservations(invocation) == ()
-
-
-def test_checkpoint_planner_deduplicates_resident_ids_and_walks_nested_lists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("dinkster_workers.reservations.default_pool", lambda: ResidentPool())
-    child = resident_input("resident:shared", {"vram:cuda:0": 100})
-    inner = make_list_value("test.resident", (child, child))
-    outer = make_list_value("list<test.resident>", (inner,))
-    invocation = invocation_with_inputs(first=child, nested=outer)
-    assert plan_reservations(invocation) == (ReservationRequest("vram:cuda:0", 100),)

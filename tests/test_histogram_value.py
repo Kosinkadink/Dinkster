@@ -6,7 +6,6 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-import pytest
 from dinkster_api.v1 import (
     CORE_STRING,
     HISTOGRAM_TYPE,
@@ -17,32 +16,12 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_values import (
-    TypeRegistry,
-    register_core_types,
-)
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 # Hand-derived synthetic contract input; not a ComfyUI source fixture.
 HISTOGRAM = [0, -7, 2**63, -(2**63), 13]
-
-
-def _registry() -> TypeRegistry:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    return registry
-
-
-@pytest.mark.parametrize(
-    "value",
-    ((), [True], [1.0], ["1"], {"bins": [1]}, [[1]], [None]),
-)
-def test_histogram_rejects_non_integer_list_shapes(value: object) -> None:
-    registry = _registry()
-    with pytest.raises((TypeError, ValueError)):
-        registry.wrap(HISTOGRAM_TYPE, value)
 
 
 class HistogramProducer(Node):

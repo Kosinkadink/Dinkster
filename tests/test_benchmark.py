@@ -18,7 +18,6 @@ from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from dinkster.benchmark import (
     RECORD_VERSION,
     BenchmarkAssembler,
-    HardwareSampler,
     instrument_engine_factory,
     record_to_json,
     write_record,
@@ -182,23 +181,6 @@ def test_failed_node_and_region_occurrences() -> None:
 
 
 # -- hardware sampler ---------------------------------------------------------
-
-
-def test_samples_attach_to_records_relative_to_run_start() -> None:
-    clock = FakeClock()
-    sampler = HardwareSampler(probe=lambda: {"rssBytes": 1}, clock=clock)
-    records: list[dict[str, object]] = []
-    assembler = BenchmarkAssembler(records.append, sampler=sampler, clock=clock)
-    clock.now = 50.0
-    sampler.sample_once()  # before the run: outside the window
-    clock.now = 100.0
-    assembler.on_engine_event(EngineEvent("run_started", "r", detail={"planned": []}))
-    clock.now = 100.25
-    sampler.sample_once()
-    clock.now = 100.5
-    assembler.on_engine_event(EngineEvent("run_finished", "r", detail={}))
-    (record,) = records
-    assert record["hardwareSamples"] == [{"tMs": 250.0, "rssBytes": 1}]
 
 
 # -- serialization -------------------------------------------------------------

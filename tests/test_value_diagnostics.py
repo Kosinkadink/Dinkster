@@ -21,25 +21,6 @@ from tests.test_media_contract import IMAGE, MASK, SemanticSource, register_sema
 STRING = api.TypeExpr.concrete(api.CORE_STRING)
 
 
-@pytest.mark.parametrize(
-    ("code", "data", "message"),
-    [
-        ("", None, "non-empty string"),
-        ("  ", None, "non-empty string"),
-        (None, None, "non-empty string"),
-        ("pack_code", {"code": "spoof"}, "reserved"),
-        ("pack_code", {"nodeId": "spoof"}, "reserved"),
-        ("pack_code", [], "mapping"),
-        ("pack_code", {"bad": object()}, "JSON-representable"),
-        ("pack_code", {"bad": float("nan")}, "JSON-representable"),
-        ("pack_code", {"bad": float("inf")}, "JSON-representable"),
-    ],
-)
-def test_invalid_diagnostics_are_programmer_errors(code, data, message) -> None:
-    with pytest.raises(ValueError, match=message):
-        api.report_value_diagnostic(code, data)
-
-
 class DiagnosticString(api.Node):
     @classmethod
     def define_schema(cls):

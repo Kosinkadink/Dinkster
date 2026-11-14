@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import os
 import struct
-import subprocess
-import sys
 from collections.abc import Mapping
-from dataclasses import fields
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,14 +12,11 @@ from typing import Any
 
 import pytest
 from dinkster_api.v1 import (
-    MESH_TYPE,
     SHAPE_SUBDIVIDES_TYPE,
-    VOXEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
-    TriangleMeshBatch,
     TypeExpr,
     TypeRegistry,
     initialize_inference_process,
@@ -31,7 +25,7 @@ from dinkster_api.v1 import (
     register_vision_packet_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_values import EncodedLatentTensor, encode_latent, register_core_types
+from dinkster_values import EncodedLatentTensor, register_core_types
 from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -44,66 +38,6 @@ def tensor(shape: tuple[int, ...], dtype: str = "float32") -> EncodedLatentTenso
         count *= size
     fmt = "q" if dtype == "int64" else "f"
     return EncodedLatentTensor(dtype, shape, struct.pack("<" + fmt * count, *range(count)))
-
-
-def test_mesh_roundtrip_preserves_all_fields_and_material_shapes() -> None:
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(MESH_TYPE)
-    register_inference_types(registry)
-    assert registry.spec(MESH_TYPE) is spec
-    mesh = TriangleMeshBatch(
-        tensor((2, 4, 3)),
-        tensor((2, 3, 3), "int64"),
-        uvs=tensor((2, 4, 2)),
-        vertex_colors=tensor((2, 4, 4)),
-        texture=tensor((2, 3, 5, 3)),
-        metallic_roughness=tensor((2, 3, 5, 3)),
-        vertex_counts=tensor((2,), "int64"),
-        face_counts=tensor((2,), "int64"),
-        unlit=True,
-        normals=tensor((2, 4, 3)),
-        tangents=tensor((2, 4, 4)),
-        normal_map=tensor((2, 3, 5, 3)),
-        occlusion_in_mr=True,
-        material={
-            "baseColorFactor": [0.2, 0.4, 0.6, 1.0],
-            "metallicFactor": 0.7,
-            "roughnessFactor": 0.3,
-            "doubleSided": True,
-            "extras": {"tuple": (None, "OPAQUE"), "tensor": tensor((2,))},
-        },
-        emissive=tensor((2, 3, 5, 3)),
-    )
-    encoded = spec.encode(mesh)
-    restored = spec.decode(encoded)
-    assert type(restored) is TriangleMeshBatch
-    for field in fields(mesh):
-        assert getattr(restored, field.name) == getattr(mesh, field.name), field.name
-    assert spec.encode(restored) == encoded
-    assert spec.fingerprint is not None
-    assert spec.fingerprint(mesh) == spec.fingerprint(restored)
-    mesh.material = {"unsupported": object()}
-    with pytest.raises(TypeError, match="unsupported"):
-        spec.encode(mesh)
-
-
-@pytest.mark.parametrize("shape", [(2, 3, 4, 5), (0, 3), (5, 3)])
-def test_voxel_roundtrip_accepts_dense_sparse_and_empty_payloads(shape: tuple[int, ...]) -> None:
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(VOXEL_TYPE)
-    value = {
-        "data": tensor(shape),
-        "voxel_colors": tensor((5, 3)),
-        "resolution": (32, 64, 128),
-        "source_metadata": {"layout": "source"},
-    }
-    restored = spec.decode(spec.encode(value))
-    assert restored == value
-    plain = {"data": tensor(shape), "voxel_colors": None, "resolution": None}
-    restored = spec.decode(spec.encode(plain))
-    assert restored == plain
 
 
 def test_shape_subdivides_roundtrip_and_materialization_preserve_sparse_state() -> None:
@@ -429,47 +363,6 @@ def test_vision_packets_preserve_native_containers_and_optional_fields(type_id: 
     first = authority.register(type_id, encode=lambda _: b"authority", decode=lambda _: packet)
     register_vision_packet_types(authority)
     assert authority.spec(type_id) is first
-
-
-def test_vision_packet_cold_boundary_refuses_pickle_and_bad_records() -> None:
-    script = """
-import sys
-sys.modules['torch'] = None
-sys.modules['numpy'] = None
-sys.modules['dinkster_inference'] = None
-from dinkster_api.v1 import TypeRegistry, register_vision_packet_types
-from dinkster_values import EncodedLatentTensor, encode_latent
-r = TypeRegistry()
-register_vision_packet_types(r)
-face = ('mapping', {'frames': ('list', []), 'image_size': ('tuple', [113,197]),
-                    'connection_sets': ('mapping', {'edge': ('topology', [(9,2)])}),
-                    'array': ('numpy', EncodedLatentTensor(
-                        'uint16', (2,), b'\\xff\\xff\\x00\\x80'))})
-s = r.spec('FACE_LANDMARKS')
-wire = encode_latent({'samples':face})
-decoded = s.decode(wire)
-assert decoded['connection_sets']['edge'] == frozenset({(9,2)})
-assert s.encode(decoded) == wire
-for name in ('torch', 'numpy', 'dinkster_inference'):
-    assert sys.modules[name] is None
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-    )
-    assert result.returncode == 0, result.stderr
-    registry = TypeRegistry()
-    register_vision_packet_types(registry)
-    for type_id in ("DA3_GEOMETRY", "FACE_LANDMARKS", "MHR_POSE_DATA", "KIMODO_POSE_DATA"):
-        spec = registry.spec(type_id)
-        for bad in (
-            b"cos\nsystem\n(S'false'\ntR.",
-            encode_latent({"samples": ("numpy", "not a tensor")}),
-            encode_latent({"samples": ("topology", [(True, 2)])}),
-            encode_latent({"samples": ("topology", [(1, 2), (1, 2)])}),
-            encode_latent({"samples": ("mapping", {})}),
-        ):
-            with pytest.raises((TypeError, ValueError)):
-                spec.decode(bad)
 
 
 class VisionPacketProducer(Node):

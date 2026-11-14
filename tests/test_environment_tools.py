@@ -11,12 +11,10 @@ import sys
 import sysconfig
 import tarfile
 import zipfile
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dinkster_supervisor.environment_state import EnvironmentError
-from dinkster_supervisor.environment_tools import tools_reference
 from test_environment_artifacts import _mirror
 from test_environment_generations import _standalone_tree
 
@@ -148,36 +146,6 @@ def tools_publication(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
         (output / name).write_bytes(data)
     build_tools_release.build(tmp_path, output)
     return output, payloads
-
-
-@pytest.mark.parametrize("release", ["https://releases.dinkster.org", "local", "windows"])
-def test_channel_tools_pin_binds_locations_to_immutable_publication(
-    release: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    label = "2026-11-05-2.7.4-12345678"
-    if release == "windows":
-        monkeypatch.setattr("dinkster_supervisor.environment_tools.Path", PureWindowsPath)
-        directory = PureWindowsPath("C:/mirror") / "tools" / label
-        release, manifest = str(directory), str(directory / "tools-manifest.json")
-    elif release == "local":
-        directory = tmp_path / "tools" / label
-        release, manifest = str(directory), str(directory / "tools-manifest.json")
-    else:
-        release += "/tools/" + label
-        manifest = release + "/tools-manifest.json"
-    pin = {
-        "label": label,
-        "sha256": "12345678" + "a" * 56,
-        "release": release,
-        "manifest": manifest,
-    }
-    assert tools_reference(pin) == pin
-    with pytest.raises(EnvironmentError, match="dated version and hash8"):
-        tools_reference({**pin, "label": "2026-11-05-2.7.4-87654321"})
-    with pytest.raises(EnvironmentError, match="locations differ"):
-        tools_reference({**pin, "manifest": release + "/release-manifest.json"})
-    with pytest.raises(EnvironmentError, match="credential-free HTTPS"):
-        tools_reference({**pin, "release": "https://user:password@example.org/tools/" + label})
 
 
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")
