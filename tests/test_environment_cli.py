@@ -1980,6 +1980,54 @@ def test_inference_requests_report_oldest_containing_release(
         assert plan["inference"]["sourceCommit"] == commits["0.2.0"]
         assert plan["inference"]["fallback"] is True
         assert any("oldest containing tagged release 0.2.0" in line for line in plan["plan"])
+    before = {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+    original_page = page.read_text()
+    changed_page = original_page.replace(
+        '<a href="dinkster_inference-0.2.0-py3-none-any.whl">0.2.0</a>', ""
+    )
+    apply_arguments = [argument for argument in arguments if argument != "--plan"]
+    with monkeypatch.context() as approval_patch:
+        if operation == "setup":
+            resolve = environment_inference.resolve_inference
+
+            def change_after_planning(*args, **kwargs):
+                selected = resolve(*args, **kwargs)
+                page.write_text(changed_page)
+                return selected
+
+            approval_patch.setattr(
+                environment_inference, "resolve_inference", change_after_planning
+            )
+            approval_arguments = []
+        else:
+            page.write_text(changed_page)
+            approval_arguments = (
+                ["--approve", plan["sourceApproval"]]
+                if operation == "develop"
+                else ["--inference-approval", plan["inferenceApproval"]]
+            )
+        assert (
+            main(
+                [
+                    *apply_arguments,
+                    "--inference",
+                    commits["0.2.0.dev3"],
+                    "--yes",
+                    *approval_arguments,
+                ]
+            )
+            == 1
+        )
+        refused = capsys.readouterr()
+        error = refused.err if operation == "setup" else json.loads(refused.out)["error"]
+        assert "changed" in error and "request a new plan" in error
+    assert {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    } == before
+    assert root.exists() == (operation == "update")
+    page.write_text(original_page)
     assert main([*arguments, "--inference", "0.3.0.dev4"]) == 0
     assert json.loads(capsys.readouterr().out)["inference"]["version"] == "0.3.0.dev4"
     page.write_text(page.read_text().replace("0.3.0.dev4", "0.9.0.dev1"))

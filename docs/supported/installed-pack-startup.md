@@ -978,6 +978,9 @@ to both commands above. `setup --inference VERSION`, `update --inference VERSION
 and `develop --inference VERSION` select a published exact inference version or full commit.
 Setup and update retain the selected wheel identities separately from the engine
 release, so recovery reuses the exact selection without resolving the request again.
+Approved engine or base replacements keep that inference selection and its dependency
+wheels. A replacement base must match the retained base-owned wheels; recovery never
+silently returns to the engine's original inference pin.
 If its prerelease is unavailable, the command reports and selects the oldest published stable tag containing that
 commit; unknown provenance or no containing release refuses. Use
 `--inference 'https://github.com/Kosinkadink/dinkster-inference.git#ref=REF'`

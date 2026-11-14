@@ -606,17 +606,20 @@ def _replacement_wheel_receipt(
         for row in artifact_rows(engine["artifacts"], "name")
         if cast("str", row["name"]).endswith(".whl")
     ]
+    metadata = _metadata(snapshot)
+    provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
+    inference = cast("dict[str, object] | None", provenance.get("inference"))
     if "dependencies" in engine:
         engine_rows.extend(
-            dependency_wheels(cast("dict[str, object]", engine["dependencies"]).get(variant))
+            dependency_wheels(
+                inference or cast("dict[str, object]", engine["dependencies"]).get(variant)
+            )
         )
     rows.extend(
         row
         for row in engine_rows
         if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned
     )
-    metadata = _metadata(snapshot)
-    provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
     channel = cast("dict[str, object]", provenance["channel"])
     frontend = select_frontend(engine, channel)
     if frontend is not None:
@@ -624,7 +627,7 @@ def _replacement_wheel_receipt(
     wheels = selected_wheel_rows(
         metadata["constraints.txt"], rows, {"tags": tags, "markers": markers}
     )
-    wheels = installed_wheel_origins(wheels, base, engine, variant, channel)
+    wheels = installed_wheel_origins(wheels, base, engine, variant, channel, inference)
     return (
         json.dumps(
             {"format": "dinkster.installed-wheels/1", "wheels": wheels, "inherited": []},
@@ -715,7 +718,11 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
         try:
             if "dependencies" in engine:
                 requirements = frontend_requirements(
-                    engine_constraints(engine, variant),
+                    engine_constraints(
+                        engine,
+                        variant,
+                        inference=cast("dict[str, object] | None", provenance.get("inference")),
+                    ),
                     engine,
                     cast("dict[str, object]", provenance["channel"]),
                 )
@@ -751,7 +758,9 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
             # A replacement engine may require a base the historical engine cannot use.
             alternatives.extend(_base_alternatives(candidate))
             if "dependencies" in engine:
-                selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
+                selection = provenance.get("inference") or cast(
+                    "dict[str, object]", engine["dependencies"]
+                ).get(variant)
                 validate_dependency_base(selection, base)
             constraints = effective_constraints(requirements, base, strict="dependencies" in engine)
             candidate_metadata["constraints.txt"] = constraints
@@ -827,11 +836,16 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
         ):
             continue
         try:
+            inference = cast("dict[str, object] | None", provenance.get("inference"))
+            if inference is not None:
+                inference = {**inference, "base": identity}
             if "dependencies" in engine:
-                selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
+                selection = inference or cast("dict[str, object]", engine["dependencies"]).get(
+                    variant
+                )
                 validate_dependency_base(selection, base)
                 requirements = frontend_requirements(
-                    engine_constraints(engine, variant),
+                    engine_constraints(engine, variant, inference=inference),
                     engine,
                     cast("dict[str, object]", provenance["channel"]),
                 )
@@ -853,6 +867,8 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
             candidate_provenance.update(
                 base=list(roots), dependencyBase=base, dependencyVariant=variant
             )
+            if inference is not None:
+                candidate_provenance["inference"] = inference
             candidate_metadata["artifact-sources.json"] = (
                 json.dumps(candidate_provenance, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
             )
