@@ -1857,6 +1857,77 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     assert not (tmp_path / "project").exists()
 
 
+def test_development_inference_requests_report_oldest_containing_release(
+    tmp_path: Path, git_server, capsys, monkeypatch
+):
+    """A missing prerelease cannot silently select an unrelated or newer stable release."""
+    import pygit2
+    from dinkster_supervisor import environment_inference
+
+    from dinkster.cli import main
+
+    source = Path(__file__).resolve().parents[1]
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="example"\n')
+    index = tmp_path / "index"
+    index.mkdir()
+    page = index / "dinkster-inference"
+    versions = ["0.1.0", "0.2.0", "0.3.0", "0.3.0.dev4"]
+    page.write_text(
+        "".join(f'<a href="dinkster_inference-{v}-py3-none-any.whl">{v}</a>' for v in versions)
+    )
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+    parent = []
+    commits = {}
+    for version in ("0.1.0", "0.2.0.dev3", "0.2.0", "0.3.0", "0.3.0.dev4"):
+        tree = repository.TreeBuilder()
+        tree.insert("version", repository.create_blob(version.encode()), pygit2.GIT_FILEMODE_BLOB)
+        commit = repository.create_commit(
+            "refs/heads/inference-requests", signature, signature, version, tree.write(), parent
+        )
+        repository.create_tag(
+            "v" + version, commit, pygit2.enums.ObjectType.COMMIT, signature, version
+        )
+        commits[version] = str(commit)
+        parent = [commit]
+    repository.free()
+    monkeypatch.setattr(environment_inference, "INFERENCE_REPOSITORY", git_server["url"])
+    monkeypatch.setenv("PATH", "")
+    arguments = [
+        "develop",
+        "--root",
+        str(tmp_path / "project"),
+        "--source",
+        str(source),
+        "--pack-source",
+        str(pack),
+        "--variant",
+        {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu"),
+        "--python",
+        sys.executable,
+        "--package-index",
+        str(index),
+        "--plan",
+        "--json",
+    ]
+    for request in ("0.2.0.dev3", commits["0.2.0.dev3"]):
+        assert main([*arguments, "--inference", request]) == 0
+        plan = json.loads(capsys.readouterr().out)
+        assert plan["inference"]["version"] == "0.2.0"
+        assert plan["inference"]["requestedCommit"] == commits["0.2.0.dev3"]
+        assert plan["inference"]["sourceCommit"] == commits["0.2.0"]
+        assert plan["inference"]["fallback"] is True
+        assert any("oldest containing tagged release 0.2.0" in line for line in plan["plan"])
+    assert main([*arguments, "--inference", "0.3.0.dev4"]) == 0
+    assert json.loads(capsys.readouterr().out)["inference"]["version"] == "0.3.0.dev4"
+    page.write_text(page.read_text().replace("0.3.0.dev4", "0.9.0.dev1"))
+    assert main([*arguments, "--inference", commits["0.3.0.dev4"]]) == 1
+    assert "no published tagged release contains" in json.loads(capsys.readouterr().out)["error"]
+    assert not (tmp_path / "project").exists()
+
+
 @pytest.mark.parametrize("live", [False, True])
 def test_development_doctor_separates_runtime_drift_from_missing_recovery(
     tmp_path: Path, live: bool
