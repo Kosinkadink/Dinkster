@@ -357,7 +357,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Kosinkadink/Dinkster-Environments
-          ref: 022b8234976065d0d3344a9717dd150ec6347bfa
+          ref: d525a77a8f4a466450730279c7f2745ff014e45d
           path: .release/retention
           persist-credentials: false
       - uses: actions/download-artifact@v4
