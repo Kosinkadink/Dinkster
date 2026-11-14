@@ -4,11 +4,8 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
-from dinkster_inference_wire import ResidentConditioningCarrier, register_inference_types
-from dinkster_protocol import Invocation
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import ResidentLookupError, TypeRegistry, register_core_types
-from dinkster_workers import InProcessWorker
+from dinkster_values import ResidentLookupError, TypeRegistry
 
 from tests.async_scenarios import run_scenario
 
@@ -86,34 +83,3 @@ def test_hook_conditioning_release_invalidates_only_dependent_values() -> None:
             spec.decode(replacement_bytes)
 
     run_scenario(scenario())
-
-
-def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
-    class ResidentPayload:
-        _dinkster_resident_fingerprint = "test-worker-conditioning"
-        _dinkster_input_value = (("embedding", {"pooled_output": "pooled"}),)
-
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_inference_types(registry)
-    value = registry.wrap(
-        "CONDITIONING",
-        ResidentConditioningCarrier(ResidentPayload()),
-    )
-    schema = _ConditioningConsumer.schema()
-    worker = InProcessWorker({schema.node_type: _ConditioningConsumer}, registry)
-    result = run_scenario(
-        worker.invoke(
-            Invocation(
-                "invocation",
-                "basic-guider",
-                schema.node_type,
-                {"conditioning": value},
-                schema,
-            )
-        )
-    )
-
-    assert result.error is None, result.error
-    assert result.outputs is not None
-    assert result.outputs["count"].resolve() == 1

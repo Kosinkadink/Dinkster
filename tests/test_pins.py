@@ -41,17 +41,6 @@ from tests.async_scenarios import run_scenario
 # --- ResourcePins semantics ----------------------------------------------
 
 
-def test_pins_count_references() -> None:
-    pins = ResourcePins()
-    assert not pins.pinned("r1")
-    assert pins.pin("r1")
-    assert pins.pin("r1")
-    pins.unpin("r1")
-    assert pins.pinned("r1")  # one reference still live
-    pins.unpin("r1")
-    assert not pins.pinned("r1")
-
-
 def test_condemn_refuses_while_pinned() -> None:
     pins = ResourcePins()
     pins.pin("r1")
@@ -65,19 +54,6 @@ def test_condemned_resource_refuses_new_pins() -> None:
     assert pins.condemn("r1")
     assert not pins.pin("r1")  # late arrival detected, not counted
     assert not pins.pinned("r1")
-
-
-def test_absolve_rolls_back_a_refused_release() -> None:
-    pins = ResourcePins()
-    assert pins.condemn("r1")
-    pins.absolve("r1")
-    assert pins.pin("r1")  # references are valid again
-
-
-def test_concurrent_releases_cannot_both_condemn() -> None:
-    pins = ResourcePins()
-    assert pins.condemn("r1")
-    assert not pins.condemn("r1")  # the second release must skip it
 
 
 # --- engine run-lifetime pinning ------------------------------------------

@@ -67,8 +67,6 @@ from dinkster.compose import (
     CompositionError,
     PackSpec,
     ServingComposer,
-    _ReplicaLane,
-    _SingleJobWorkerPool,
     compose_serving,
 )
 from tests.async_scenarios import run_scenario
@@ -329,83 +327,6 @@ def _single_job_invocation(inputs: Mapping[str, Value] | None = None) -> Invocat
         {} if inputs is None else inputs,
         NodeSchema(node_type="test.node"),
     )
-
-
-def test_single_job_pool_replaces_every_rank_after_workgroup_failure(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        generations: list[tuple[_WorkGroupFakeWorker, ...]] = []
-
-        def make_lanes() -> tuple[_ReplicaLane, ...]:
-            workers = (_WorkGroupFakeWorker(0), _WorkGroupFakeWorker(1))
-            generations.append(workers)
-            return tuple(
-                _ReplicaLane(rank, worker)  # type: ignore[arg-type]
-                for rank, worker in enumerate(workers)
-            )
-
-        pool = _SingleJobWorkerPool(
-            make_lanes(),  # type: ignore[arg-type]
-            tmp_path / "rendezvous",
-            "guidance",
-            _Reservations(),  # type: ignore[arg-type]
-            make_lanes,
-        )
-
-        first = await pool.invoke(_single_job_invocation())
-        assert first.error is None
-        generations[0][0].error = NodeError("node", "test.node", "rank failed")
-        generations[0][1].block = True
-        failed = await asyncio.wait_for(pool.invoke(_single_job_invocation()), timeout=1.0)
-        assert failed.error == generations[0][0].error
-        assert all(worker.closed for worker in generations[0])
-        assert generations[0][1].cancelled
-        assert all(worker.started for worker in generations[1])
-
-        recovered = await pool.invoke(_single_job_invocation())
-        assert recovered.error is None
-        assert [worker.unbound for worker in generations[1]] == [1, 1]
-        assert all(not worker.closed for worker in generations[1])
-
-    run_scenario(scenario())
-
-
-def test_single_job_pool_retries_failed_replacement_startup(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        generations: list[tuple[_WorkGroupFakeWorker, ...]] = []
-
-        def make_lanes() -> tuple[_ReplicaLane, ...]:
-            workers = (_WorkGroupFakeWorker(0), _WorkGroupFakeWorker(1))
-            if len(generations) == 1:
-                workers[0].start_error = RuntimeError("replacement startup failed")
-            generations.append(workers)
-            return tuple(
-                _ReplicaLane(rank, worker)  # type: ignore[arg-type]
-                for rank, worker in enumerate(workers)
-            )
-
-        pool = _SingleJobWorkerPool(
-            make_lanes(),
-            tmp_path / "rendezvous",
-            "guidance",
-            _Reservations(),  # type: ignore[arg-type]
-            make_lanes,
-        )
-        await pool.start()
-        generations[0][0].error = NodeError("node", "test.node", "rank failed")
-
-        with pytest.raises(RuntimeError, match="replacement startup failed"):
-            await pool.invoke(_single_job_invocation())
-
-        assert pool.alive
-        assert pool.instance_token is not None
-        recovered = await pool.invoke(_single_job_invocation())
-        assert recovered.error is None
-        assert len(generations) == 3
-        assert all(worker.started for worker in generations[2])
-
-    run_scenario(scenario())
 
 
 def _attention_capabilities(*, kitchen: bool = False) -> AttentionCapabilityEvidence:

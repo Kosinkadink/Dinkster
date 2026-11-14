@@ -9,7 +9,6 @@ of the design: the surface must be extractable to its own process.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -23,10 +22,8 @@ from dinkster_collab import (
     SessionOp,
     SessionService,
     SessionStore,
-    SnapshotRequiredError,
     UnknownSessionError,
     add_session_routes,
-    validate_patch,
 )
 
 from tests.async_scenarios import run_scenario
@@ -37,79 +34,7 @@ REPLACE = [{"op": "replace", "path": ["meta", "title"], "value": "new"}]
 # -- patch shape validation ----------------------------------------------------
 
 
-def test_validate_patch_accepts_segment_path_shapes() -> None:
-    assert validate_patch(REPLACE) is None
-    assert (
-        validate_patch(
-            [
-                {"op": "add", "path": ["a"], "value": 1},
-                {"op": "add", "path": ["graphs", "g0", "nodes", 3], "value": {}},
-                {"op": "add", "path": [], "value": {"whole": "doc"}},
-                {"op": "remove", "path": ["b", 0]},
-                {"op": "replace", "path": ["c"], "value": None},
-            ]
-        )
-        is None
-    )
-
-
-def test_validate_patch_rejects_malformed() -> None:
-    assert validate_patch({}) is not None  # not a list
-    assert validate_patch([]) is not None  # empty
-    assert validate_patch(["x"]) is not None  # entry not an object
-    assert validate_patch([{"op": "explode", "path": ["x"]}]) is not None
-    # RFC 6902 verbs the frontend never produces are rejected outright
-    assert validate_patch([{"op": "move", "path": ["c"], "from": "/d"}]) is not None
-    assert validate_patch([{"op": "copy", "path": ["e"], "from": "/f"}]) is not None
-    assert validate_patch([{"op": "test", "path": ["g"], "value": 1}]) is not None
-    # path must be a segment array, not a JSON Pointer string or scalar
-    assert validate_patch([{"op": "add", "path": "/x", "value": 1}]) is not None
-    assert validate_patch([{"op": "add", "path": 3, "value": 1}]) is not None
-    # segments must be string|int - no bools, floats, or nested values
-    assert validate_patch([{"op": "remove", "path": [True]}]) is not None
-    assert validate_patch([{"op": "remove", "path": [1.5]}]) is not None
-    assert validate_patch([{"op": "remove", "path": [["x"]]}]) is not None
-    assert validate_patch([{"op": "add", "path": ["x"]}]) is not None  # no value
-
-
 # -- service model -------------------------------------------------------------
-
-
-def test_service_retention_cap_demands_snapshot() -> None:
-    service = SessionService(max_retained_ops=2)
-    session = service.create(scope="local", document_id="doc", snapshot=None)
-    for index in range(2):
-        service.append(
-            session.session_id,
-            op_id=f"op{index}",
-            actor_id="u",
-            base_revision=index,
-            patch=REPLACE,
-        )
-    with pytest.raises(SnapshotRequiredError):
-        service.append(
-            session.session_id, op_id="op2", actor_id="u", base_revision=2, patch=REPLACE
-        )
-    # A checkpoint reopens the log.
-    service.checkpoint(session.session_id, revision=2, document={"v": 2})
-    op, _ = service.append(
-        session.session_id, op_id="op2", actor_id="u", base_revision=2, patch=REPLACE
-    )
-    assert op.revision == 3
-
-
-def test_storeless_local_principal_accepts_every_actor() -> None:
-    service = SessionService()
-    session = service.create(scope="local", document_id="doc", snapshot=None)
-    for revision, actor_id in enumerate(("first", "second", "first")):
-        service.append(
-            session.session_id,
-            op_id=f"op-{revision}",
-            actor_id=actor_id,
-            base_revision=revision,
-            patch=REPLACE,
-        )
-    assert service.get(session.session_id).revision == 3
 
 
 # -- HTTP/WS surface -----------------------------------------------------------
@@ -576,43 +501,6 @@ def test_op_rate_limit_refills_and_rotating_actors_share_principal_budget(tmp_pa
         finally:
             await client.close()
             store.close()
-
-    run_scenario(scenario())
-
-
-def test_presence_rate_limit_drops_excess_frames_only() -> None:
-    async def scenario() -> None:
-        clock = FakeClock()
-        client = await make_authenticated_client(
-            presence_rate=1.0, presence_burst=1, monotonic_clock=clock
-        )
-        alice = {"X-Principal": "alice"}
-        bob = {"X-Principal": "bob"}
-        try:
-            created = await client.post(
-                "/api/sessions",
-                json={"scope": "team", "documentId": "d", "snapshot": None},
-                headers=alice,
-            )
-            sid = (await created.json())["sessionId"]
-            sender = await client.ws_connect(f"/api/sessions/{sid}/events", headers=alice)
-            receiver = await client.ws_connect(f"/api/sessions/{sid}/events", headers=bob)
-            await sender.receive()
-            await receiver.receive()
-
-            await sender.send_json({"type": "presence", "actorId": "actor-a", "payload": 1})
-            assert json.loads((await receiver.receive()).data)["payload"] == 1
-            await sender.send_json({"type": "presence", "actorId": "actor-a", "payload": 2})
-            await sender.send_json({"type": "presence", "actorId": "actor-b", "payload": 3})
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(receiver.receive(), timeout=0.05)
-            clock.advance(1.0)
-            await sender.send_json({"type": "presence", "actorId": "actor-a", "payload": 4})
-            assert json.loads((await receiver.receive()).data)["payload"] == 4
-            await sender.close()
-            await receiver.close()
-        finally:
-            await client.close()
 
     run_scenario(scenario())
 

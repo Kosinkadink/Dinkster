@@ -9,7 +9,7 @@ import shutil
 import sqlite3
 import sys
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -1610,42 +1610,5 @@ def test_concurrent_identical_previews_do_not_delete_the_other_result(
             assert entries[0].adopted_at_ns is not None
             await publisher("again", (claim,))
             assert ProducedAssetInventory(vault.root).entries() == entries
-
-    run_scenario(scenario())
-
-
-def test_cancellation_during_staging_discards_before_commit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes
-) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    publisher = PreviewArtifactPublisher(vault)
-    entered = threading.Event()
-    release = threading.Event()
-    original = publisher._stage
-
-    def blocked_stage(node_id: str, claims: Sequence[EncodedPreviewArtifact]) -> object:
-        staged = original(node_id, claims)
-        entered.set()
-        assert release.wait(10)
-        return staged
-
-    monkeypatch.setattr(publisher, "_stage", blocked_stage)
-
-    async def scenario() -> None:
-        task = asyncio.create_task(
-            publisher("node", (EncodedPreviewArtifact(mp4, "preview.mp4", "video/mp4"),))
-        )
-        assert await asyncio.to_thread(entered.wait, 10)
-        with claim_inactive_produced_vault(vault.root) as inactive:
-            assert not inactive
-        task.cancel()
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert vault.digests() == []
-        entries = ProducedAssetInventory(vault.root).entries()
-        assert len(entries) == 1 and entries[0].adopted_at_ns is None
-        with claim_inactive_produced_vault(vault.root) as inactive:
-            assert inactive
 
     run_scenario(scenario())

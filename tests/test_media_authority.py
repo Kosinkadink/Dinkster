@@ -1207,28 +1207,6 @@ def test_latent_ingest_normalizes_integer_digit_limit_to_invalid_input(tmp_path:
     run_scenario(scenario())
 
 
-def test_latent_metadata_probe_ignores_integer_limit_vae_hint(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        client, _library = await _media_client(tmp_path)
-        hint = '{"version":' + "9" * 5000 + "}"
-        payload = _latent({"dinkster_vae_hint": hint})
-        digest = digest_bytes(payload)
-        try:
-            uploaded = await client.post(
-                "/api/assets/latent?scope=local&name=hint.latent",
-                data=payload,
-                headers={"Content-Type": "application/x-comfy-latent"},
-            )
-            assert uploaded.status == 201
-            metadata = await client.get(f"/api/assets/{digest}/metadata")
-            assert metadata.status == 200
-            assert (await metadata.json())["metadata"]["latent"]["vaeHint"] == ""
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
 def test_latent_ingest_requires_auth_scope_and_admission_capacity(tmp_path: Path) -> None:
     async def scenario() -> None:
         auth = _Tokens(

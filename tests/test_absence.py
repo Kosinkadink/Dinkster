@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
-from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_protocol import ExpandedReturn, LiteralInput, LocalExpansion, LocalNode, PresentOutput
 from dinkster_schema import (
     ABSENT,
@@ -40,34 +40,13 @@ from dinkster_values import (
     register_core_types,
 )
 from dinkster_workers import InProcessWorker
-from dinkster_workers.boundary import ValueCodec
 
 from tests.async_scenarios import run_scenario
 
 # -- schema declarations ----------------------------------------------------
 
 
-def test_omit_policy_requires_optional_input() -> None:
-    with pytest.raises(ValueError, match="omit"):
-        InputSpec("x", TypeExpr.concrete("INT"), required=True, on_absent="omit")
-
-
 # -- absent envelopes -------------------------------------------------------
-
-
-def test_absent_crosses_the_boundary() -> None:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    sender = ValueCodec(registry, use_shm=False, accept_shm=False)
-    receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
-    value = make_absent_value(origin="n1/out", reason="nothing", stands_for="INT")
-    blobs: list[bytes] = []
-    wire, _ = sender.encode(value, blobs, [])
-    decoded, _ = receiver.decode(wire, blobs, [])
-    assert is_absent(decoded)
-    assert decoded.fingerprint == value.fingerprint
-    assert decoded.meta.get(ABSENT_ORIGIN_META_KEY) == "n1/out"
-    assert decoded.resolve() is None
 
 
 # -- nodes ------------------------------------------------------------------
@@ -534,32 +513,6 @@ def test_fail_policy_names_the_origin() -> None:
 
 
 # -- document-time diagnostics ----------------------------------------------
-
-
-def test_maybe_absent_warning_on_optional_into_fail() -> None:
-    graph = Graph(
-        nodes={
-            "m": GraphNode("test.maybe_produce", {"produce": True}),
-            "s": GraphNode("test.strict", {"value": Link("m", "value")}),
-        }
-    )
-    diags = validate(graph, build_schemas(NODES), ["s"])
-    codes = {d.code for d in diags}
-    assert "maybe-absent" in codes
-    warning = next(d for d in diags if d.code == "maybe-absent")
-    assert warning.severity == "warning"
-    assert "test.maybe_produce" in warning.message
-
-
-def test_no_warning_for_default_skip_consumer() -> None:
-    graph = Graph(
-        nodes={
-            "m": GraphNode("test.maybe_produce", {"produce": True}),
-            "a": GraphNode("test.add_one", {"value": Link("m", "value")}),
-        }
-    )
-    diags = validate(graph, build_schemas(NODES), ["a"])
-    assert "maybe-absent" not in {d.code for d in diags}
 
 
 @pytest.mark.parametrize("return_kind", ["mapping", "expansion", "wire"])

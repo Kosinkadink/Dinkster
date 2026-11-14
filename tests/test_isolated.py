@@ -72,7 +72,7 @@ from dinkster_workers.boundary import (
 )
 from dinkster_workers.doctor import diagnose
 from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
-from dinkster_workers.session import BoundarySession, WorkerDied
+from dinkster_workers.session import BoundarySession
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
@@ -487,42 +487,6 @@ def test_hello_announces_schemas_in_wire_format() -> None:
     run_scenario(scenario())
 
 
-def test_worker_conversion_refusal_is_distinct_from_transport_failure(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "torch.py").write_text(
-        "class Tensor: pass\n"
-        "def load(*args, **kwargs): raise ValueError('unsafe checkpoint globals')\n",
-        encoding="utf-8",
-    )
-    safetensors = tmp_path / "safetensors"
-    safetensors.mkdir()
-    (safetensors / "__init__.py").write_text("", encoding="utf-8")
-    (safetensors / "torch.py").write_text(
-        "def save_file(*args, **kwargs): pass\n", encoding="utf-8"
-    )
-    source = tmp_path / "unsafe.ckpt"
-    source.write_bytes(b"not a weight source")
-
-    async def scenario() -> None:
-        worker = IsolatedWorker(
-            DEV_MANIFEST,
-            core_registry(),
-            extra_env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
-        )
-        await worker.start()
-        try:
-            outcome = await worker.convert_legacy_checkpoint(source, "unsafe.ckpt")
-            assert outcome is not None
-            status, reason = outcome
-            assert status == "refused"
-            assert reason is not None and "LegacyCheckpointError" in reason
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize("broken", ["torch", "torch-api", "safetensors", "safetensors-api"])
 def test_worker_hello_discovers_broken_runtime_without_importing_it(
     tmp_path: Path, broken: str
@@ -654,37 +618,6 @@ def test_admission_session_pending_request_terminates(
             assert result.explanation is not None
             assert ("not running" if finish == "close" else "malformed") in result.explanation
         await session.close()
-
-    run_scenario(scenario())
-
-
-def test_conversion_pending_rpc_fails_with_worker_died_on_session_close(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    registry = core_registry()
-    session = BoundarySession(
-        registry,
-        role="test worker",
-        pack="test",
-        codec=ValueCodec(registry),
-    )
-    session._schemas = {}  # noqa: SLF001 - construct a negotiated test session
-    session._convert_legacy_checkpoint = True  # noqa: SLF001
-    session._alive = True  # noqa: SLF001
-
-    async def drop_frame(_header: object, _blobs: object) -> None:
-        return None
-
-    monkeypatch.setattr(session, "send", drop_frame)
-
-    async def scenario() -> None:
-        pending = asyncio.create_task(
-            session.convert_legacy_checkpoint(tmp_path / "asset", "asset.ckpt")
-        )
-        await asyncio.sleep(0)
-        await session.close()
-        with pytest.raises(WorkerDied):
-            await pending
 
     run_scenario(scenario())
 

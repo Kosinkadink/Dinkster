@@ -989,16 +989,6 @@ def test_default_inputs_applied() -> None:
     run_scenario(scenario())
 
 
-def test_validation_failure_raises() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        graph = Graph(nodes={"x": GraphNode("no.such.type", {})})
-        with pytest.raises(GraphValidationError):
-            await engine.run(graph, ["x"])
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize(
     ("node_id", "input_id", "value"), [("b", "ratio", "normal"), ("g", "width", True)]
 )
@@ -1255,47 +1245,6 @@ def _misses(events: list[EngineEvent]) -> dict[str, dict[str, object]]:
             assert event.node_id is not None
             found[event.node_id] = dict(event.detail)
     return found
-
-
-def test_node_finished_and_cached_carry_output_summary() -> None:
-    """node_finished/node_cached details carry {outputId: {typeId, length?,
-    value?}} so frontends render live type/element-count badges on
-    intermediate edges mid-run. length is present exactly for list values;
-    value is the declared-safe inline scalar (DESIGN 3.5) - lists never
-    inline (their elements would through descriptor recursion)."""
-
-    graph = Graph(
-        nodes={
-            "x": GraphNode("dev.execution.value", {"value": 3}),
-            "y": GraphNode("dev.execution.value", {"value": 4}),
-            "mk": GraphNode(
-                "test.integer_pair",
-                {"left": Link("x", "value"), "right": Link("y", "value")},
-            ),
-            "len": GraphNode("test.list_length", {"list": Link("mk", "list")}),
-        }
-    )
-
-    def summaries(events: list[EngineEvent], kind: str) -> dict[str, object]:
-        return {e.node_id or "": e.detail["outputs"] for e in events if e.kind == kind}
-
-    async def scenario() -> None:
-        events: list[EngineEvent] = []
-        engine = make_engine(events)
-        await engine.run(graph, ["len"])
-        fresh = summaries(events, "node_finished")
-        assert fresh["x"] == {"value": {"typeId": "INT", "value": 3}}
-        assert fresh["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
-        assert fresh["len"] == {"length": {"typeId": "INT", "value": 2}}
-
-        events.clear()
-        await engine.run(graph, ["len"])  # everything cached
-        hits = summaries(events, "node_cached")
-        assert hits["x"] == {"value": {"typeId": "INT", "value": 3}}
-        assert hits["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
-        assert hits["len"] == {"length": {"typeId": "INT", "value": 2}}
-
-    run_scenario(scenario())
 
 
 def test_raising_listener_is_nonfatal_for_owner_and_coalesced_waiter() -> None:

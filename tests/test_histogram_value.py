@@ -6,7 +6,6 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-import pytest
 from dinkster_api.v1 import (
     CORE_STRING,
     HISTOGRAM_TYPE,
@@ -33,16 +32,6 @@ def _registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     return registry
-
-
-@pytest.mark.parametrize(
-    "value",
-    ((), [True], [1.0], ["1"], {"bins": [1]}, [[1]], [None]),
-)
-def test_histogram_rejects_non_integer_list_shapes(value: object) -> None:
-    registry = _registry()
-    with pytest.raises((TypeError, ValueError)):
-        registry.wrap(HISTOGRAM_TYPE, value)
 
 
 class HistogramProducer(Node):

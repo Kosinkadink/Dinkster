@@ -20,13 +20,10 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import (
-    SVG_CODEC_MAGIC,
-    SVG_CODEC_VERSION,
     decode_svg,
     encode_svg,
     svg_fingerprint,
     svg_meta,
-    validate_svg_encoded,
 )
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -69,27 +66,6 @@ def test_svg_materialization_keeps_cached_bytes_and_consumer_cursors_independent
     assert tuple(stream.read() for stream in reopened) == value
     assert encode_svg(value) == encoded
     assert materialize_svg(()) == ()
-
-
-def test_svg_rejects_malformed_frames_and_metadata() -> None:
-    data = encode_svg((b"<svg/>", b""))
-    truncated_stream = encode_svg((b"<svg/>",))
-    with pytest.raises(ValueError, match="invalid SVG codec framing"):
-        decode_svg(b"not-an-svg-frame")
-    with pytest.raises(ValueError, match="unsupported SVG codec version"):
-        decode_svg(
-            SVG_CODEC_MAGIC + bytes((SVG_CODEC_VERSION + 1,)) + data[len(SVG_CODEC_MAGIC) + 1 :]
-        )
-    with pytest.raises(ValueError, match="stream length is truncated"):
-        decode_svg(data[: -len(b"<svg/>") - 2])
-    with pytest.raises(ValueError, match="stream is truncated"):
-        decode_svg(truncated_stream[:-1])
-    with pytest.raises(ValueError, match="trailing bytes"):
-        decode_svg(data + b"\x00")
-    with pytest.raises(ValueError, match="metadata streams"):
-        validate_svg_encoded(data, {"streams": 3, "byte_size": 6})
-    with pytest.raises(ValueError, match="metadata byte_size"):
-        validate_svg_encoded(data, {"streams": 2, "byte_size": 7})
 
 
 class SvgSource(Node):

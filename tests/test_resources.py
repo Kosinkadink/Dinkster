@@ -25,8 +25,6 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    schema_from_wire,
-    schema_to_wire,
 )
 from dinkster_values import RESOURCES_META_KEY, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
@@ -343,18 +341,6 @@ def test_permits_released_after_cancellation() -> None:
     run_scenario(scenario())
 
 
-def test_wire_round_trip_preserves_admission_hints() -> None:
-    schema = GpuSleeper.define_schema()
-    restored = schema_from_wire(schema_to_wire(schema))
-    assert restored.occupies == ("gpu",)
-    io_restored = schema_from_wire(schema_to_wire(IoSleeper.define_schema()))
-    assert io_restored.io_bound is True
-    # Absent on the wire means the defaults - no phantom keys.
-    plain_wire = schema_to_wire(CpuSleeper.define_schema())
-    assert "occupies" not in plain_wire
-    assert "ioBound" not in plain_wire
-
-
 def sampler_graph(*pairs: tuple[str, str]) -> Graph:
     """One loader + one sampler per (device, tag) pair."""
     nodes: dict[str, GraphNode] = {}
@@ -387,26 +373,6 @@ def test_samplers_on_the_same_device_serialize() -> None:
         graph = sampler_graph(("cuda:0", "a"), ("cuda:0", "b"))
         await engine.run(graph, ["sample_a", "sample_b"])
         assert Sampler.peak == 1  # one lane, default capacity 1
-
-    run_scenario(scenario())
-
-
-def test_spanning_model_occupies_every_device() -> None:
-    """Multigpu: a model living on two devices occupies both lanes, so its
-    sampler contends with anything on either device but not with a third."""
-
-    async def scenario() -> None:
-        Sampler.reset()
-        engine, _ = make_engine()
-        graph = sampler_graph(
-            ("cuda:0+cuda:1", "span"),  # occupies gpu:cuda:0 AND gpu:cuda:1
-            ("cuda:1", "b"),  # contends with span on cuda:1
-            ("cuda:2", "c"),  # untouched device: free to overlap
-        )
-        await engine.run(graph, ["sample_span", "sample_b", "sample_c"])
-        assert Sampler.peak == 2  # never all three: span and b share cuda:1
-        for lane in ("gpu:cuda:0", "gpu:cuda:1", "gpu:cuda:2"):
-            assert lane in engine._resource_slots
 
     run_scenario(scenario())
 

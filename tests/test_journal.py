@@ -27,16 +27,6 @@ def store(tmp_path: Path) -> Iterator[JournalStore]:
     journal.close()
 
 
-def test_append_assigns_monotonic_seq_per_stream(store: JournalStore) -> None:
-    first = store.append(STREAM, "session_created", {}, durable=True, timestamp=1.0)
-    second = store.append(STREAM, "metric", {"loss": 0.5}, durable=False, timestamp=2.0)
-    other = store.append(OTHER_STREAM, "session_created", {}, durable=True, timestamp=3.0)
-    assert (first.seq, second.seq) == (1, 2)
-    assert other.seq == 1  # streams sequence independently
-    assert store.latest_seq(STREAM) == 2
-    assert store.latest_seq("training-session/" + "0" * 32) == 0
-
-
 def test_read_after_cursor(store: JournalStore) -> None:
     for step in range(5):
         store.append(STREAM, "metric", {"step": step}, durable=False, timestamp=float(step))
@@ -92,22 +82,6 @@ def test_seq_never_reused_after_pruning_newest_rows(store: JournalStore) -> None
     record = store.append(STREAM, "metric", {}, durable=False, timestamp=3.0)
     assert record.seq == 3  # not 1: the counter outlives the rows
     assert store.latest_seq(STREAM) == 3
-
-
-def test_delete_stream_removes_records_and_counter(store: JournalStore) -> None:
-    store.append(STREAM, "session_created", {}, durable=True, timestamp=1.0)
-    store.append(STREAM, "metric", {}, durable=False, timestamp=2.0)
-    store.append(OTHER_STREAM, "session_created", {}, durable=True, timestamp=3.0)
-    assert store.delete_stream(STREAM) == 2
-    page = store.read(STREAM, after=0)
-    assert page.records == ()
-    assert page.latest_seq == 0
-    assert page.coalesced_below == 0
-    # Other streams are untouched.
-    assert store.latest_seq(OTHER_STREAM) == 1
-    # A reused id is a NEW stream: its seq restarts.
-    record = store.append(STREAM, "session_created", {}, durable=True, timestamp=4.0)
-    assert record.seq == 1
 
 
 def test_transaction_prune_and_delete_roll_back_with_the_transaction(

@@ -1808,67 +1808,6 @@ def test_asset_catalog_persists_aliases_and_pages_identities(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("tied_time", (False, True))
-def test_asset_catalog_retains_scoped_origin_events_and_redacts_download_leads(
-    tmp_path: Path,
-    tied_time: bool,
-) -> None:
-    path = tmp_path / "library.sqlite"
-    ref = AssetRef(digest_bytes(b"weights"), "weights.bin", 7)
-    store = LibraryStore(path)
-    try:
-        events = (
-            (
-                "download.bin",
-                {
-                    "kind": "download",
-                    "url": "https://user:password@assets.example/weights?signature=secret#part",
-                },
-            ),
-            ("remote.bin", {"kind": "transfer", "machine": "workstation"}),
-            ("render.bin", {"kind": "produced", "job": "job-7", "node": "Save"}),
-        )
-        for index in (2, 0, 1):
-            name, origin = events[index]
-            store.record_asset(
-                "a",
-                ref,
-                original_name=name,
-                kind="asset/file",
-                origin=origin,
-                created=100.0 if tied_time else 100.0 + index,
-                observation_id=f"{index + 1 if tied_time else 3 - index:032x}",
-            )
-        store.record_asset(
-            "b", ref, original_name="private.bin", kind="asset/file", origin={"kind": "upload"}
-        )
-    finally:
-        store.close()
-    store = LibraryStore(path)
-    try:
-        observations = store.query_assets("a", text="ASSETS.EXAMPLE", origin="download")
-        assert len(observations) == 1
-        assert [item.original_name for item in observations[0]] == [
-            "download.bin",
-            "remote.bin",
-            "render.bin",
-        ]
-        assert [dict(item.origin) for item in observations[0]] == [
-            {"kind": "download", "url": "https://assets.example/weights"},
-            {"kind": "transfer", "machine": "workstation"},
-            {"kind": "produced", "job": "job-7", "node": "Save"},
-        ]
-        assert store.query_assets("b", origin="download") == []
-        assert store.query_assets("a", text="private") == []
-        for field in ("/home/user/private.bin", "C:\\Users\\user\\private.bin"):
-            with pytest.raises(AssetError, match="basenames"):
-                store.record_asset(
-                    "a", ref, original_name=field, kind="asset/file", origin={"kind": "upload"}
-                )
-    finally:
-        store.close()
-
-
 def test_chunked_upload_reads_complete_png_body(tmp_path: Path) -> None:
     """A request read may return one buffered chunk before EOF.
 

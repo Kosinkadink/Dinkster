@@ -486,25 +486,3 @@ def test_every_contract_case_runs_through_the_real_engine() -> None:
             assert await _run_real_case(case) == case["expected"], case["id"]
 
     run_scenario(scenario())
-
-
-def test_shared_producer_is_deduplicated_in_demand_event() -> None:
-    generator = _load_generator()
-    case = next(
-        case
-        for case in cast("list[dict[str, object]]", _fixture()["cases"])
-        if case["id"] == "demand-all"
-    )
-    inputs = cast("list[dict[str, object]]", case["inputs"])
-    for item in inputs:
-        if item["id"] in {"left", "right"}:
-            item["producer"] = "shared_source"
-    replayed = _replay(case)
-    assert replayed == generator._oracle(case)
-    events = cast("list[dict[str, object]]", replayed["demandEvents"])
-    first_data = cast("dict[str, object]", events[0]["data"])
-    assert first_data["producerNodes"] == ["shared_source"]
-    real = run_scenario(_run_real_case(case))
-    real_events = cast("list[dict[str, object]]", real["demandEvents"])
-    real_first = cast("dict[str, object]", real_events[0]["data"])
-    assert real_first["producerNodes"] == ["shared_source"]

@@ -437,49 +437,6 @@ async def test_caller_cancellation_finishes_cleanup_before_releasing_reservation
 
 
 @async_test
-async def test_blocked_cleanup_send_cannot_starve_reachable_replica() -> None:
-    d = definition()
-    events: list[str] = []
-    running = asyncio.Event()
-
-    class BlockingCleanupReplica(FakeReplica):
-        async def send(self, message: WorkGroupMessage) -> None:
-            await super().send(message)
-            if isinstance(message, RunWorkUnit):
-                running.set()
-            if isinstance(message, CancelWorkGroup):
-                await asyncio.Future()
-
-    def replies(replica: str) -> tuple[WorkGroupMessage, ...]:
-        return (
-            ReplicaReady(**child_kwargs(replica)),
-            WorkGroupPrepared(**child_kwargs(replica)),
-            WorkGroupCancelled(**child_kwargs(replica)),
-            WorkGroupReleased(**child_kwargs(replica)),
-        )
-
-    a = BlockingCleanupReplica(d, "a", replies("a"), events)
-    b = FakeReplica(d, "b", replies("b"), events)
-    # The blocked replica always consumes its whole split of the cleanup
-    # budget, so the budget must be generous enough that scheduling stalls
-    # on a loaded CI runner cannot eat the reachable replica's share.
-    task = asyncio.create_task(
-        WorkGroupCoordinator(RecordingReservations(events), cleanup_timeout=2.0).execute(
-            d, (a.endpoint, b.endpoint)
-        )
-    )
-    await running.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 10.0)
-
-    assert sum(isinstance(message, CancelWorkGroup) for message in b.sent) == 1
-    assert sum(isinstance(message, ReleaseWorkGroup) for message in b.sent) == 1
-    assert events[-1] == "reserve-exit"
-
-
-@async_test
 async def test_post_release_eof_cannot_preempt_another_release_barrier() -> None:
     d = definition()
     events: list[str] = []

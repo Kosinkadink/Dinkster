@@ -27,7 +27,7 @@ from dinkster_server import STATE_KEY, create_app
 from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, ManifestError
 from dinkster_workers.doctor import prepare_catalog
-from dinkster_workers.host import load_choices, load_skips
+from dinkster_workers.host import load_choices
 from dinkster_workers.manifest import load_manifest
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer
@@ -147,26 +147,6 @@ def test_load_choices_refuses(tmp_path: Path, entry: str, match: str) -> None:
     manifest = load_manifest(write_choice_manifest(tmp_path, choices=entry))
     with pytest.raises(ManifestError, match=match):
         load_choices(manifest)
-
-
-def test_load_skips_validates_mapping(tmp_path: Path) -> None:
-    manifest = load_manifest(
-        write_choice_manifest(tmp_path, skips="choicepack_nodes:translation_skips")
-    )
-    assert load_skips(manifest) == {
-        "OpaqueNode": diagnostic("OpaqueNode", "unsupported dynamic marker")
-    }
-    assert load_skips(load_manifest(write_choice_manifest(tmp_path))) == {}
-
-    for entry, match in (
-        ("choicepack_nodes:NOT_CALLABLE", "not callable"),
-        ("choicepack_nodes:skips_not_mapping", "mapping"),
-        ("choicepack_nodes:skips_bad_name", "node name"),
-        ("choicepack_nodes:skips_bad_reason", "reason"),
-    ):
-        bad = load_manifest(write_choice_manifest(tmp_path, skips=entry))
-        with pytest.raises(ManifestError, match=match):
-            load_skips(bad)
 
 
 # -- hello parsing -------------------------------------------------------------

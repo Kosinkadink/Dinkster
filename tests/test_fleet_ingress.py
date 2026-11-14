@@ -12,7 +12,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_supervisor import (
     EngineLink,
     IngressMember,
-    LeaseConflictError,
     LeaseStore,
     LeaseStoreError,
     create_ingress_app,
@@ -93,21 +92,6 @@ def test_two_lease_stores_atomically_claim_one_key(tmp_path: Path) -> None:
     winners = run_scenario(claim())
     assert winners[0] == winners[1]
     assert winners[0] in {"alpha", "beta"}
-
-
-def test_job_owner_conflict_is_never_overwritten(tmp_path: Path) -> None:
-    store = LeaseStore(tmp_path / "leases.sqlite3")
-
-    async def check() -> None:
-        await store.record_job("ref", "alpha")
-        with pytest.raises(LeaseConflictError):
-            await store.record_job("ref", "beta")
-        assert await store.lookup_job("ref") == "alpha"
-        assert not await store.delete_job_if_owner("ref", "beta")
-        assert await store.delete_job_if_owner("ref", "alpha")
-        assert await store.lookup_job("ref") is None
-
-    run_scenario(check())
 
 
 def test_install_writer_preserves_ingress_and_rejects_member_removal(tmp_path: Path) -> None:

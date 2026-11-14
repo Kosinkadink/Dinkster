@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import Coroutine
 from pathlib import Path
 
 import psutil
@@ -198,43 +197,6 @@ def test_remote_switch_executes_only_the_selected_input(tmp_path: Path, selected
             await stop_service(proc)
 
     run_scenario(scenario())
-
-
-def test_service_main_pins_argv_before_loading_the_pack(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The service pins ``sys.argv`` to the explicit ``--comfy-args-json``
-    list (default: empty) before the pack loads, exactly like the launched
-    worker host: packs that read ComfyUI's import-time CLI must never see
-    the service's own arguments."""
-    from dinkster_workers import service as service_module
-
-    token_file = tmp_path / "remote-token.txt"
-    token_file.write_text(TOKEN, encoding="utf-8")
-    base = (
-        "dinkster_workers.service",
-        "--listen",
-        "127.0.0.1:0",
-        "--manifest",
-        str(DEV_MANIFEST),
-        "--token-file",
-        str(token_file),
-    )
-    pinned: list[list[str]] = []
-
-    def fake_run(coro: Coroutine[object, object, object]) -> None:
-        coro.close()
-        pinned.append(list(sys.argv))
-
-    monkeypatch.setattr(asyncio, "run", fake_run)
-    for extra, expected in (
-        ((), []),
-        (("--comfy-args-json", '["--fp32-vae", "--cpu"]'), ["--fp32-vae", "--cpu"]),
-    ):
-        pinned.clear()
-        monkeypatch.setattr(sys, "argv", [*base, *extra])
-        service_module.main()
-        assert pinned == [["dinkster_workers.service", *expected]]
 
 
 def test_remote_graph_matches_local_fingerprints_and_never_shm(

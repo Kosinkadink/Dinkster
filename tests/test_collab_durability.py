@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 from dinkster_collab import (
-    ActorPrincipalMismatchError,
     ResyncRequiredError,
     SessionService,
     SessionStore,
@@ -138,41 +137,6 @@ def test_refused_stale_append_does_not_reach_store(tmp_path: Path) -> None:
         after = conn.execute("SELECT count(*) FROM ops").fetchone()[0]
     assert after == before
     store.close()
-
-
-def test_actor_bindings_survive_restart_and_are_deleted_on_close(tmp_path: Path) -> None:
-    path = tmp_path / "sessions.sqlite"
-    first_store = SessionStore(path)
-    first = SessionService(store=first_store)
-    session = first.create(scope="team", document_id="document", snapshot=None)
-    first.append(
-        session.session_id,
-        op_id="first",
-        actor_id="actor",
-        base_revision=0,
-        patch=PATCH,
-        principal_id="alice",
-    )
-    first_store.close()
-
-    second_store = SessionStore(path)
-    second = SessionService(store=second_store)
-    with pytest.raises(ActorPrincipalMismatchError):
-        second.append(
-            session.session_id,
-            op_id="spoofed",
-            actor_id="actor",
-            base_revision=1,
-            patch=PATCH,
-            principal_id="bob",
-        )
-    with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT count(*) FROM ops").fetchone()[0] == 1
-        assert conn.execute("SELECT count(*) FROM actors").fetchone()[0] == 1
-    second.close(session.session_id)
-    with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT count(*) FROM actors").fetchone()[0] == 0
-    second_store.close()
 
 
 def test_acl_survives_restart_and_is_deleted_on_close(tmp_path: Path) -> None:

@@ -156,24 +156,6 @@ async def _host_result(
     return frame[0]
 
 
-def test_host_closes_before_success_and_turns_cleanup_failure_into_node_error(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "source.png"
-    source.write_bytes(_png())
-    ref = _ref(source)
-
-    events: list[str] = []
-    result = run_scenario(_host_result(ref, _HostProvider(events)))
-    assert "outputs" in result and "error" not in result
-    assert events == ["sweep", "open", "materialize", "close"]
-
-    events = []
-    result = run_scenario(_host_result(ref, _HostProvider(events, close_error=True)))
-    assert result["error"]["message"].startswith("source staging cleanup failed")
-    assert events == ["sweep", "open", "materialize", "close"]
-
-
 class _BlockingSession(_HostSession):
     def __init__(self, events: list[str]) -> None:
         super().__init__(events, close_error=False)

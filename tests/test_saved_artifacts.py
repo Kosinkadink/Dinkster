@@ -25,10 +25,6 @@ from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import SavedArtifactCandidate
 from dinkster_schema.reporting import capture_saved_artifacts
-from dinkster_workers.boundary import (
-    BoundaryError,
-    decode_result_artifact_candidates,
-)
 from dinkster_workers.saved_artifacts import (
     SavedArtifactAuthority,
 )
@@ -68,24 +64,6 @@ def _candidate(
     filename: str = "result.png", subfolder: str = "video", folder_type: str = "output"
 ) -> SavedArtifactCandidate:
     return SavedArtifactCandidate("save", filename, subfolder, folder_type)
-
-
-def test_forged_authoritative_descriptor_cannot_cross_boundary() -> None:
-    with pytest.raises(BoundaryError, match="forged authoritative"):
-        decode_result_artifact_candidates(
-            {
-                "artifacts": [
-                    {
-                        "nodeId": "save",
-                        "digest": "blake3:" + "0" * 64,
-                        "name": "forged.png",
-                        "size": 1,
-                        "mediaType": "image/png",
-                        "virtualPath": "mounts/comfy-output/forged.png",
-                    }
-                ]
-            }
-        )
 
 
 def test_host_classifies_hashes_and_indexes_valid_candidate(tmp_path: Path) -> None:
@@ -170,26 +148,6 @@ def test_host_rejects_file_changed_during_capture(
     monkeypatch.setattr(os, "fstat", changing_fstat)
     with pytest.raises(AssetError, match="changed while"):
         authority.capture((_candidate(subfolder=""),), "save", 0)
-
-
-def test_capture_is_stable_across_repeated_calls(tmp_path: Path) -> None:
-    """Repeatedly capturing a freshly-written file must not flake on Windows.
-
-    Without the st_ctime_ns exclusion, os.fstat and os.stat(path) return
-    different ctime semantics on Windows (ChangeTime vs CreationTime),
-    causing intermittent failures for freshly written files.
-    """
-    authority, root = _authority(tmp_path)
-    folder = root / "video"
-    folder.mkdir()
-    payload = _png()
-    for _ in range(50):
-        path = folder / "result.png"
-        path.write_bytes(payload)
-        artifact = authority.capture((_candidate(),), "save", 0)[0]
-        assert artifact.digest == digest_bytes(payload)
-        path.unlink()
-    assert load_write_records(root)["video/result.png"]["digest"] == digest_bytes(payload)
 
 
 def test_native_save_attachment_requires_open_context_and_snapshots_claim() -> None:

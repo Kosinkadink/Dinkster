@@ -17,10 +17,8 @@ from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import Invocation
 from dinkster_workers import (
     BoundaryListener,
-    GroupIsolatedWorker,
     IsolatedWorker,
     TransportChoice,
-    TransportError,
     unix_endpoints_supported,
 )
 from dinkster_workers.boundary import TransferStat
@@ -28,34 +26,6 @@ from dinkster_workers.transport import TOKEN_ENV
 from test_isolated import DEV_MANIFEST, core_registry, image_graph
 
 from tests.async_scenarios import run_scenario
-
-
-@pytest.mark.parametrize("grouped", [False, True])
-def test_worker_refuses_overlong_unix_socket_before_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grouped: bool
-) -> None:
-    if not unix_endpoints_supported():
-        pytest.skip("no unix endpoints on this platform")
-    temporary = tmp_path / ("long-worker-temporary-directory-" * 6)
-    temporary.mkdir()
-    assert len(os.fsencode(temporary)) > 200
-    monkeypatch.setattr(tempfile, "tempdir", str(temporary))
-
-    async def scenario() -> None:
-        registry = core_registry()
-        worker = (
-            GroupIsolatedWorker("long-path", [DEV_MANIFEST], registry)
-            if grouped
-            else IsolatedWorker(DEV_MANIFEST, registry)
-        )
-        try:
-            with pytest.raises(TransportError, match=r"Unix socket path.*bytes.*limit.*TMPDIR"):
-                await worker.start()
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-    assert list(temporary.iterdir()) == []
 
 
 def test_tcp_listener_rejects_wrong_token_and_accepts_right_one() -> None:

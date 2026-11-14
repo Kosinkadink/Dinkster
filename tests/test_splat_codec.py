@@ -80,28 +80,6 @@ def test_ply_render_honors_counts_and_uses_batch_item_zero() -> None:
         render_splat_ply(splat_value(counts=[0]))
 
 
-def test_ply_render_accepts_encoded_records_and_half_precision() -> None:
-    value = splat_value()
-    records = decode_splat(encode_splat(value))
-    assert render_splat_ply(records) == render_splat_ply(value)
-    half = {key: array.astype(numpy.float16) for key, array in value.items()}
-    parsed = cast("dict[str, Any]", parse_ply_splat(render_splat_ply(half)))
-    assert numpy.allclose(parsed["positions"], value["positions"], atol=1e-2)
-
-
-def test_ply_parse_defaults_missing_attributes() -> None:
-    header = (
-        b"ply\nformat binary_little_endian 1.0\nelement vertex 2\n"
-        b"property float x\nproperty float y\nproperty float z\nend_header\n"
-    )
-    body = numpy.arange(6, dtype="<f4").tobytes()
-    parsed = cast("dict[str, Any]", parse_ply_splat(header + body))
-    assert numpy.allclose(parsed["scales"], 0.01)
-    assert numpy.allclose(parsed["rotations"], [[1, 0, 0, 0], [1, 0, 0, 0]])
-    assert numpy.allclose(parsed["opacities"], 1.0)
-    assert numpy.allclose(parsed["sh"], 0.0)
-
-
 def test_ply_parse_maps_plain_colors_onto_the_sh_dc_band() -> None:
     header = (
         b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"

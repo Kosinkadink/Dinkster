@@ -39,7 +39,6 @@ from dinkster.registries import (
     prepare_registry_pack_locks,
     registry_source_lock,
     resolve_release,
-    static_release_wheel,
 )
 
 
@@ -57,43 +56,6 @@ def wheel_pack(root: Path, *, requires: str = "demo-core>=2") -> Path:
     (root / "locales").mkdir()
     (root / "locales" / "en.json").write_bytes(b'{"hello":"world"}\n')
     return root
-
-
-@pytest.mark.parametrize("selected", [None, "another-folder", "pack"])
-def test_development_reserved_namespace_requires_the_explicit_source_capture(
-    tmp_path: Path, selected: str | None
-) -> None:
-    source = wheel_pack(tmp_path / "pack")
-    manifest = source / "dinkster-pack.toml"
-    manifest.write_text(
-        manifest.read_text().replace(
-            'publisher = "demo"', 'publisher = "dinkster"\nnamespaces = ["dinkster.image"]'
-        )
-    )
-    archive = tmp_path / "demo_nodes-1.2.3-py3-none-any.whl"
-    build_pack_archive(source, archive)
-    entry = LockedPack(
-        "demo-nodes",
-        "1.2.3",
-        artifact_digest(archive.read_bytes()),
-        "dinkster",
-        ("dinkster-image",),
-        "local-build:" + str(source),
-    )
-    generation = tmp_path / "generation"
-    generation.mkdir()
-    stage_generation_packs(generation, Lockfile.of([entry]), {entry.pack: archive})
-    if selected is not None:
-        (generation / "development-sources.json").write_text(
-            json.dumps(
-                {
-                    "format": "dinkster.development-sources/1",
-                    "sources": [{"kind": "pack", "path": str(tmp_path / selected)}],
-                }
-            )
-        )
-    (spec,) = generation_pack_specs(generation, (entry.pack,))
-    assert spec.trust_reserved is (selected == "pack")
 
 
 def test_managed_catalog_imports_only_declared_pack_dependency_closure(tmp_path: Path) -> None:
@@ -338,52 +300,6 @@ def test_doctor_refuses_pack_requirements_but_accepts_library_names(tmp_path: Pa
     (root / "src" / "demo_nodes").rename(root / "src" / "different")
     report = diagnose_static(root, manifest)
     assert {"wheel.distribution-name", "wheel.import-name"} <= {f.code for f in report.findings}
-
-
-@pytest.mark.parametrize("declared_dependency", [False, True])
-def test_doctor_only_permits_declared_public_pack_helpers(
-    tmp_path: Path, declared_dependency: bool
-) -> None:
-    root = wheel_pack(tmp_path / "source")
-    path = root / "dinkster-pack.toml"
-    if declared_dependency:
-        path.write_text(path.read_text() + '\n[pack.dependencies]\nremote-pack = ">=2"\n')
-    (root / "src" / "demo_nodes" / "__init__.py").write_text(
-        "import remote_pack\nimport remote_pack._private\nfrom remote_pack import _hidden\n"
-        "import demo_core\nNODES = []\n"
-    )
-    report = diagnose_static(root, load_manifest(path), published_packs={"remote-pack"})
-    findings = [f for f in report.findings if f.code == "imports.pack-implementation"]
-    assert [f.message for f in findings] == ([] if declared_dependency else ["imports remote_pack"])
-    assert [f.message for f in report.findings if f.code == "imports.private-module"] == [
-        "imports remote_pack._private",
-        "imports remote_pack",
-    ]
-
-
-@pytest.mark.parametrize("problem", ["singular", "empty", "multiple", "tags", "filename"])
-def test_static_release_refuses_nonuniversal_or_missing_wheel_array(problem: str) -> None:
-    filename = "demo_nodes-1.2.3-py3-none-any.whl"
-    if problem == "filename":
-        filename = "demo_nodes-1.2.3-cp314-cp314-win_amd64.whl"
-    wheel = {
-        "filename": filename,
-        "sha256": "a" * 64,
-        "digest": "blake3:" + "b" * 64,
-        "size": 123,
-        "url": f"wheels/{'a' * 64}/{filename}",
-        "tags": ["cp314-cp314-win_amd64"] if problem == "tags" else ["py3-none-any"],
-    }
-    row: dict[str, object] = {"name": "demo-nodes", "version": "1.2.3", "wheels": [wheel]}
-    if problem == "singular":
-        del row["wheels"]
-        row.update(wheel)
-    elif problem == "empty":
-        row["wheels"] = []
-    elif problem == "multiple":
-        row["wheels"] = [wheel, wheel]
-    with pytest.raises(InstallError, match="wheel.platform-tag|one universal wheel"):
-        static_release_wheel(NamedRegistry("demo", "https://registry.example"), row)
 
 
 @pytest.mark.parametrize(

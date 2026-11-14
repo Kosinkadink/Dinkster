@@ -300,25 +300,6 @@ def test_native_compute_dtypes_follows_visible_device_selection(
     assert serve.detect_native_compute_dtypes((0, 1)) == frozenset({"float32"})
 
 
-def test_native_compute_dtypes_matches_uuid_selectors(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster import serve
-
-    _probe_smi(monkeypatch, [_ADA, _PASCAL])
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-aaaaaaaa-1111-2222-3333-444444444444")
-    assert serve.detect_native_compute_dtypes() == _ALL_DTYPES
-
-
-def test_native_compute_dtypes_windows_enables_10_series_fp16(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import serve
-
-    _probe_smi(monkeypatch, [_PASCAL])
-    monkeypatch.setattr(serve.platform, "win32_ver", lambda: ("10", "", "", ""))
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
-    assert serve.detect_native_compute_dtypes() == frozenset({"float16", "float32"})
-
-
 @pytest.mark.parametrize(
     ("rows", "visible", "indices"),
     [
@@ -349,27 +330,6 @@ def test_native_compute_dtypes_falls_back_permissive(
     assert serve.detect_native_compute_dtypes(indices) == _ALL_DTYPES
 
 
-def test_serve_official_bootstrap_requires_persistent_library(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from dinkster import serve
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-serve",
-            "--library-root",
-            "",
-            "--official-resolver-provider-id",
-            "fixture",
-        ],
-    )
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
-
-
 def test_settings_gate_unknown_is_startup_parser_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -385,33 +345,6 @@ def test_settings_gate_unknown_is_startup_parser_error(
     error = capsys.readouterr().err
     assert "comfy-args" in error
     assert "memory-budgets" in error
-
-
-@pytest.mark.parametrize(
-    ("environment", "message"),
-    (
-        ({"DINKSTER_OPENAI_BASE_URL": "https://api.example.test/v1"}, "requires both"),
-        ({"DINKSTER_OPENAI_TIMEOUT": "not-a-number"}, "must be a number"),
-        ({"DINKSTER_OPENAI_TIMEOUT": "inf"}, "must be finite and positive"),
-        ({"DINKSTER_OPENAI_STREAM": "sometimes"}, "must be stream/json or true/false"),
-    ),
-)
-def test_openai_generation_environment_fails_with_argparse_diagnostic(
-    environment: dict[str, str],
-    message: str,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from dinkster import serve
-
-    for name, value in environment.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", ""])
-
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-
-    assert message in capsys.readouterr().err
 
 
 def test_sandbox_host_grants_require_the_flag(

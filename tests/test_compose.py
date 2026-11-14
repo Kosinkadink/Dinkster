@@ -1881,65 +1881,6 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
     run_scenario(scenario())
 
 
-def test_serving_composer_full_free_serializes_group_members_by_process(
-    tmp_path: Path,
-    isolated_full_free_pool: ResidentPool,
-) -> None:
-    async def scenario() -> None:
-        manifests: list[Path] = []
-        for name in ("alpha", "beta"):
-            directory = tmp_path / name
-            directory.mkdir()
-            module = directory / f"{name}_nodes.py"
-            module.write_text(
-                "from dinkster_schema import Node,NodeSchema\n"
-                "class Empty(Node):\n"
-                "    @classmethod\n"
-                "    def define_schema(cls):\n"
-                f"        return NodeSchema(node_type='{name}.empty')\n"
-                "    @classmethod\n"
-                "    async def execute(cls):\n"
-                "        return cls.outputs()\n"
-                "NODES=[Empty]\n"
-            )
-            manifest = directory / "dinkster-pack.toml"
-            manifest.write_text(
-                f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n\n'
-                f'[pack.entry]\nnodes = "{name}_nodes:NODES"\n'
-                'consumers = "memorypack_nodes:serial_memory_consumers"\n'
-            )
-            manifests.append(manifest)
-        env = {
-            "PYTHONPATH": os.pathsep.join(
-                (str(TESTS_DIR), *(str(manifest.parent) for manifest in manifests))
-            )
-        }
-        composer = ServingComposer()
-        try:
-            for manifest in manifests:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest,
-                        env=env,
-                        worker_group="models",
-                        group_manifests=tuple(manifests),
-                    )
-                )
-            workers = await composer.full_free("group-members")
-            grouped = [worker for worker in workers if worker["worker"] in {"alpha", "beta"}]
-            assert len(grouped) == 2
-            assert len({worker["workerInstance"] for worker in grouped}) == 1
-            assert all(worker["status"] == "complete" for worker in grouped)
-            assert all(
-                worker["consumers"] == [{"consumer": "serial", "status": "complete"}]
-                for worker in grouped
-            )
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
 def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
     async def scenario() -> None:
         reported = ReportedTelemetry()

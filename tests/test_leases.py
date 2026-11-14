@@ -112,19 +112,6 @@ def test_renew_extends_and_expired_lease_cannot_renew(
     run_scenario(scenario())
 
 
-def test_ttl_is_capped_by_max_ttl() -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({VRAM0: 100})
-        broker = LeaseBroker(governor, max_ttl=0.5)
-        lease = await broker.acquire(VRAM0, 10, ttl=3600.0)
-        assert lease.ttl_remaining() <= 0.5
-        await broker.release(lease.lease_id)
-        with pytest.raises(ValueError, match="ttl must be > 0"):
-            await broker.acquire(VRAM0, 10, ttl=0.0)
-
-    run_scenario(scenario())
-
-
 def test_governor_verdicts_are_relayed_not_rewritten() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 100})

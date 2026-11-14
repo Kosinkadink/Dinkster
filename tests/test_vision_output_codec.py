@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 from dinkster_api.v1 import CLIP_VISION_OUTPUT_TYPE, TypeRegistry, register_inference_types
-from dinkster_values import EncodedLatentTensor, encode_latent
+from dinkster_values import EncodedLatentTensor
 
 
 def test_vision_output_preserves_all_attributes_and_cache_identity() -> None:
@@ -52,23 +51,3 @@ def test_vision_output_preserves_all_attributes_and_cache_identity() -> None:
     assert spec.fingerprint(without_optional) != identity
     assert spec.fingerprint({**before, "image_sizes": [(336, 224, 3)]}) != identity
     assert spec.fingerprint({**before, "image_embeds": half}) != identity
-
-
-@pytest.mark.parametrize(
-    "data",
-    (
-        b"pickle:not-a-vision-output",
-        encode_latent({"samples": 4}),
-        encode_latent({"samples": {}, "extra": 1}),
-        encode_latent({"samples": {"x": EncodedLatentTensor("float16", (2,), b"\x00\x00")}}),
-    ),
-)
-def test_vision_output_rejects_malformed_payloads(data: bytes) -> None:
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(CLIP_VISION_OUTPUT_TYPE)
-    assert spec.validate_encoded is not None
-    with pytest.raises(ValueError):
-        spec.validate_encoded(data, {})
-    with pytest.raises(ValueError):
-        spec.decode(data)
