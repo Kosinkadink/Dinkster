@@ -7,9 +7,11 @@
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
 - Registry pack updates select the newest version compatible with the engine API,
-  inference and other engine-provided package versions. Plans identify skipped
-  newer versions and their unmet minimums. Exact incompatible selections refuse
-  with upgrade guidance instead of installing a pack with silently missing nodes.
+  inference and other engine-provided package versions, including requirements in
+  the target variant's published dependency lock and its exact base binding.
+  Plans identify skipped newer versions and their unmet minimums. Exact incompatible
+  selections refuse with upgrade guidance instead of installing a pack with silently
+  missing nodes.
 - Equivalent requirement spelling and unordered namespace or base replacement
   declarations do not refuse admission. Namespaces must still match their grants,
   replacement names remain unique, and selected wheel identities stay exact.

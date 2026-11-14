@@ -890,6 +890,8 @@ def resolve_compatible_release(
     engine_packages: Mapping[str, str] | None = None,
     markers: Mapping[str, str] | None = None,
     skipped: list[str] | None = None,
+    variant: str | None = None,
+    base_id: str | None = None,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     index: StaticPackIndex | None = None,
 ) -> LockedPack:
@@ -897,6 +899,8 @@ def resolve_compatible_release(
 
     A pack's latest release need not support the target engine.
     """
+    if (variant is None) != (base_id is None):
+        raise InstallError("target variant and base identity must be supplied together")
     wanted_pack = canonical_name(pack)
     minimum_version = Version(minimum)
     target_engine = Version(engine_version)
@@ -930,6 +934,22 @@ def resolve_compatible_release(
             )
         if engine_packages is not None:
             reasons.extend(_release_requirement_conflicts(entry, engine_packages, markers))
+        if not reasons and variant is not None and base_id is not None:
+            entry_lock = resolve_release(
+                registry, wanted_pack, version, timeout=timeout, index=index
+            )
+            read_registry_pack_locks(
+                RegistryConfig(),
+                Lockfile.of((entry_lock,)),
+                variant=variant,
+                base_id=base_id,
+                selected=registry,
+                timeout=timeout,
+                index=index,
+                engine_packages=engine_packages,
+                markers=markers,
+                errors=reasons,
+            )
         if reasons:
             rejected[candidate] = "; ".join(reasons)
         elif selected is None or candidate > selected:
@@ -1021,6 +1041,8 @@ def prepare_registry_sources(
     engine_packages: Mapping[str, str] | None = None,
     markers: Mapping[str, str] | None = None,
     skipped: list[str] | None = None,
+    variant: str | None = None,
+    base_id: str | None = None,
     allow_missing: bool = False,
     index: StaticPackIndex | None = None,
 ) -> tuple[Lockfile, dict[str, str]]:
@@ -1044,6 +1066,8 @@ def prepare_registry_sources(
                 engine_packages=engine_packages,
                 markers=markers,
                 skipped=skipped,
+                variant=variant,
+                base_id=base_id,
                 index=index,
             )
             cached = pack_archive_path(artifacts, selected.artifact_digest)
@@ -1086,6 +1110,8 @@ def prepare_registry_update_sources(
     engine_packages: Mapping[str, str] | None = None,
     markers: Mapping[str, str] | None = None,
     skipped: list[str] | None = None,
+    variant: str | None = None,
+    base_id: str | None = None,
     selected: NamedRegistry | None = None,
     index: StaticPackIndex | None = None,
 ) -> Lockfile:
@@ -1112,6 +1138,8 @@ def prepare_registry_update_sources(
                 engine_packages=engine_packages,
                 markers=markers,
                 skipped=skipped,
+                variant=variant,
+                base_id=base_id,
                 index=index,
             )
             entries.extend(lock.packs)
@@ -1133,6 +1161,8 @@ def read_registry_pack_locks(
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     index: StaticPackIndex | None = None,
     errors: list[str] | None = None,
+    engine_packages: Mapping[str, str] | None = None,
+    markers: Mapping[str, str] | None = None,
 ) -> tuple[PackLock, ...]:
     """Inspect every binding before staging; never resolve dependency ranges."""
     index = index or StaticPackIndex()
@@ -1182,6 +1212,32 @@ def read_registry_pack_locks(
                 raise InstallError("dependency lock pack or variant differs")
             if any(package.name == entry.pack for package in lock.packages):
                 raise InstallError("dependency lock repeats the outer pack wheel")
+            if engine_packages is not None:
+                conflicts = _release_requirement_conflicts(
+                    {"requires": list(lock.requirements)}, engine_packages, markers
+                )
+                if (
+                    markers is not None
+                    and "python_full_version" in markers
+                    and not SpecifierSet(lock.requires_python).contains(
+                        markers["python_full_version"], prereleases=True
+                    )
+                ):
+                    conflicts.append(
+                        f"requires Python{lock.requires_python}; "
+                        f"target provides {markers['python_full_version']}"
+                    )
+                if lock.engine is not None:
+                    api_version = engine_packages.get("dinkster-api")
+                    if api_version is None or not SpecifierSet(lock.engine).contains(
+                        api_version, prereleases=True
+                    ):
+                        conflicts.append(
+                            f"requires dinkster-api{lock.engine}; "
+                            f"engine provides {api_version or 'absent'}"
+                        )
+                if conflicts:
+                    raise InstallError("; ".join(conflicts))
             locks.append(
                 replace(
                     lock,
@@ -1235,6 +1291,8 @@ def plan_registry_sources(
                     engine_packages=engine_packages,
                     markers=markers,
                     skipped=skipped,
+                    variant=variant,
+                    base_id=base_id,
                     index=index,
                 )
             )
@@ -1249,6 +1307,8 @@ def plan_registry_sources(
         selected=registry,
         index=index,
         errors=failures,
+        engine_packages=engine_packages,
+        markers=markers,
     )
     if errors is not None:
         errors.extend(failures)
@@ -1329,6 +1389,8 @@ def plan_registry_changes(
                     engine_packages=engine_packages,
                     markers=markers,
                     skipped=skipped,
+                    variant=variant,
+                    base_id=base_id,
                     index=index,
                 )
             else:
@@ -1353,6 +1415,8 @@ def plan_registry_changes(
         selected=selected,
         index=index,
         errors=failures,
+        engine_packages=engine_packages,
+        markers=markers,
     )
     if errors is not None:
         errors.extend(failures)

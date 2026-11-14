@@ -748,6 +748,8 @@ def prepare_registry_inputs(
                 )
             if "--index-snapshot" in help_result.stdout:
                 snapshot = ["--index-snapshot", str(scratch / "index")]
+            if "--base-id" in help_result.stdout:
+                snapshot.extend(["--variant", variant, "--base-id", base])
         sources = run(
             [
                 "prepare-registry-sources",

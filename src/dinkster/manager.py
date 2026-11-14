@@ -1361,14 +1361,30 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     if args.installed_lock is not None:
         installed_wheels = args.installed_lock.parent / "installed-wheels.json"
         if installed_wheels.is_file():
-            rows = json.loads(installed_wheels.read_bytes())["wheels"]
-            engine_packages = {
-                str(parse_wheel_filename(row["filename"])[0]): str(
-                    parse_wheel_filename(row["filename"])[1]
-                )
-                for row in rows
-            }
+            try:
+                rows = json.loads(installed_wheels.read_bytes())["wheels"]
+                engine_packages = {
+                    str(parse_wheel_filename(row["filename"])[0]): str(
+                        parse_wheel_filename(row["filename"])[1]
+                    )
+                    for row in rows
+                }
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise InstallError(f"target engine wheel identities cannot be read: {exc}") from exc
     markers = cast("dict[str, str]", dict(default_environment()))
+    if args.installed_lock is not None:
+        base_path = args.installed_lock.parent / "base-manifest.json"
+        if base_path.is_file():
+            try:
+                base = validate_manifest(base_path.read_bytes(), args.base_id, args.variant)
+                python = cast("str", base["python"])
+                markers.update(
+                    python_full_version=python,
+                    python_version=".".join(python.split(".")[:2]),
+                    implementation_version=python,
+                )
+            except (OSError, ValueError) as exc:
+                raise InstallError(f"target interpreter metadata refused: {exc}") from exc
     skipped: list[str] = []
     defaults = engine.get("defaultPacks")
     if args.installed_lock is None and (not isinstance(defaults, dict) or not defaults):
@@ -1565,6 +1581,8 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     engine_packages=generation.versions,
                     markers=generation.markers,
                     skipped=skipped,
+                    variant=args.variant,
+                    base_id=args.base_id,
                     selected=select_registry(config, args.registry) if args.registry else None,
                     index=index,
                 )
@@ -1622,6 +1640,8 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 engine_packages=generation.versions,
                 markers=generation.markers,
                 skipped=skipped,
+                variant=args.variant,
+                base_id=args.base_id,
                 allow_missing=args.allow_missing,
                 index=index,
             )
@@ -1860,6 +1880,8 @@ def main() -> None:
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
+    sources.add_argument("--variant")
+    sources.add_argument("--base-id")
     sources.add_argument(
         "--index-snapshot",
         type=Path,

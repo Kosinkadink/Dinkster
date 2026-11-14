@@ -18,6 +18,7 @@ from typing import cast
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
 from dinkster_registry import InstallError
 from dinkster_workers.provision import ProvisionError
+from packaging.markers import default_environment
 
 from .project_folders import ProjectFolders
 
@@ -116,6 +117,8 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
     missing: list[str] = []
     skipped: list[str] = []
+    platform = cast("dict[str, str]", base["platform"])
+    target_os = platform["os"]
     sources, locks = plan_registry_sources(
         config,
         select_registry(config, selector),
@@ -124,8 +127,20 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         engine_packages=artifacts.engine_package_versions(catalog.engine, variant, base),
         skipped=skipped,
         markers={
+            **cast("dict[str, str]", default_environment()),
             "python_full_version": cast("str", base["python"]),
             "python_version": ".".join(cast("str", base["python"]).split(".")[:2]),
+            "implementation_version": cast("str", base["python"]),
+            "implementation_name": "cpython",
+            "platform_python_implementation": "CPython",
+            "sys_platform": {"windows": "win32", "macos": "darwin"}.get(target_os, "linux"),
+            "os_name": "nt" if target_os == "windows" else "posix",
+            "platform_system": {"windows": "Windows", "macos": "Darwin"}.get(target_os, "Linux"),
+            "platform_machine": (
+                "AMD64"
+                if target_os == "windows" and platform["arch"] == "x86_64"
+                else platform["arch"]
+            ),
         },
         variant=variant,
         base_id=base_id,
