@@ -21,7 +21,8 @@ from dinkster_api.v1 import (
     JsonObjectSchema,
     PackRoute,
 )
-from dinkster_server import Principal, StaticBearerAuthenticator, create_app
+from dinkster_assets import AssetVault, LibraryStore
+from dinkster_server import Principal, ServerLibrary, StaticBearerAuthenticator, create_app
 from dinkster_server.auth import install_auth
 from dinkster_server.pack_surfaces import install_pack_surfaces
 from dinkster_workers import diagnose, load_manifest
@@ -73,10 +74,25 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
                 node_packs=composition.node_packs,
                 pack_route_dispatch=composer.call_pack_route,
                 frontend_module_read=composer.read_frontend_module,
+                library=ServerLibrary(
+                    AssetVault(preview_manifest.parent.parent / "vault"),
+                    LibraryStore(preview_manifest.parent.parent / "library.sqlite"),
+                ),
             )
             async with TestClient(TestServer(app)) as client:
-                nodes = await (await client.get("/api/nodes")).json()
-                raw = await (await client.get("/api/extensions/snapshot")).read()
+                census = "/api/library/retention-clients"
+                enrolled = await (await client.post(census, json={"revision": 0})).json()
+                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
+                nodes = await (await client.get("/api/nodes", headers=headers)).json()
+                raw = await (await client.get("/api/extensions/snapshot", headers=headers)).read()
+                snapshot = await (await client.get(census, headers=headers)).json()
+                acknowledged = await client.put(
+                    census,
+                    headers=headers,
+                    json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+                )
+                assert acknowledged.status == 200
+                assert (await acknowledged.json())["complete"]
                 assert (
                     nodes["extensionSnapshotDigest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
                 )
@@ -90,6 +106,12 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
                 assert "immutable" in response.headers["Cache-Control"]
                 assert response.headers["X-Content-Type-Options"] == "nosniff"
                 assert (await client.head(module["moduleUrl"])).status == 200
+                assert await (await client.get(census, headers=headers)).json() == {
+                    **snapshot,
+                    "complete": True,
+                }
+                storage = await (await client.get("/api/library/storage")).json()
+                assert "owner_completeness_unknown" not in storage["blocked"]
                 assert worker.cold and not worker.alive
                 assert not (set(sys.modules) - prior_imports) & {
                     "torch",
@@ -114,6 +136,8 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
                     "maxWidth": 512,
                 }
                 assert worker.alive
+                storage = await (await client.get("/api/library/storage")).json()
+                assert "owner_completeness_unknown" in storage["blocked"]
                 assert worker_declarations(worker) == worker_declarations(catalog)
                 assert (await client.post(PROOF_ROUTE, json={})).status == 405
                 assert (await client.get(PROOF_ROUTE + "?path=/etc/passwd")).status == 400
