@@ -1370,6 +1370,74 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
+def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+    from dinkster_assets.produced import ProducedAssetInventory
+
+    library = tmp_path / "library"
+    if inventory != "new":
+        vault = library / "vault"
+        vault.mkdir(parents=True)
+        if inventory == "corrupt":
+            (vault / ".produced-assets.sqlite").write_bytes(b"not a database")
+        elif inventory == "pending":
+            ProducedAssetInventory(vault).pending("blake3:" + "ab" * 32, 17)
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(port, library, "--no-default-packs"), tmp_path
+    )
+    error: BaseException | None = None
+    try:
+
+        async def scenario() -> None:
+            base = f"http://127.0.0.1:{port}"
+            async with aiohttp.ClientSession() as client:
+                async with asyncio.timeout(60):
+                    while True:
+                        assert process.poll() is None, "serve process died"
+                        try:
+                            async with client.get(base + "/api/health") as response:
+                                if response.status == 200:
+                                    break
+                        except aiohttp.ClientError:
+                            pass
+                        await asyncio.sleep(0.05)
+                async with client.post(
+                    base + "/api/library/retention-clients", json={"revision": 0}
+                ) as response:
+                    enrolled = await response.json()
+                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
+                async with client.put(
+                    base + "/api/library/retention-clients",
+                    headers=headers,
+                    json={"revision": enrolled["revision"], "holders": enrolled["holders"]},
+                ) as response:
+                    assert response.status == 200
+                async with client.get(base + "/api/library/storage", headers=headers) as response:
+                    assert response.status == 200
+                    status = await response.json()
+                if inventory == "new":
+                    assert status["adoptedBytes"] == 0
+                    assert status["vaultOwnershipAvailable"] is True
+                    assert status["collectionEnabled"]
+                    assert status["blocked"] == []
+                else:
+                    assert not status["collectionEnabled"]
+                    if inventory == "pending":
+                        assert "adoption_pending" in status["blocked"]
+                        assert "owner_completeness_unknown" in status["blocked"]
+                    else:
+                        assert status["adoptedBytes"] is None
+                        assert "adoption_state_unavailable" in status["blocked"]
+
+        run_scenario(scenario())
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        stop_logged_serve(process, log, error)
+
+
 def test_degraded_default_ordering_composes_provider_before_consumer(
     tmp_path: Path,
 ) -> None:

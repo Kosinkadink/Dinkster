@@ -25,7 +25,11 @@ from botocore.exceptions import (
     EndpointConnectionError,
     ReadTimeoutError,
 )
-from dinkster_supervisor.environment_artifacts import parse_metadata, validate_manifest
+from dinkster_supervisor.environment_artifacts import (
+    artifact_rows,
+    parse_metadata,
+    validate_manifest,
+)
 from dinkster_supervisor.environment_channels import engine_publication_names, write_channel
 from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
 from dinkster_supervisor.environment_frontend import (
@@ -178,6 +182,7 @@ def publish(
     channel: str,
     minimum_desktop_version: str,
     frontend: dict | None = None,
+    tools_release: Path | None = None,
 ) -> None:
     engine = json.loads((release / "release-manifest.json").read_bytes())
     identity = content_digest(release / "release-manifest.json")
@@ -200,6 +205,8 @@ def publish(
             "R2_PUBLIC_BASE_URL",
         )
     ):
+        if channel == "stable":
+            raise ValueError("Stable publication requires R2 credentials and configuration")
         print("R2 channel publication skipped: credentials or configuration are absent")
         return
     github_token = os.environ.get("GITHUB_TOKEN")
@@ -271,6 +278,37 @@ def publish(
         if read_metadata(public, "engine/index.json") != index.read_bytes():
             raise ValueError("public engine index differs after publication")
         path = work / "channels" / f"{channel}.json"
+        if channel == "stable":
+            if tools_release is None:
+                raise ValueError("Stable publication requires tools from the same engine source")
+            tools_data = (tools_release / "tools-manifest.json").read_bytes()
+            tools_digest = hashlib.sha256(tools_data).hexdigest()
+            tools_manifest = validate_tools_manifest(tools_data, tools_digest)
+            if tools_manifest["commit"] != engine["commit"]:
+                raise ValueError("Stable tools and engine must come from the same commit")
+            label = f"{tools_manifest['label']}-{tools_digest[:8]}"
+            tools_url = f"{public}/tools/{label}"
+            if read_metadata(tools_url, "tools-manifest.json") != tools_data:
+                raise ValueError("public Stable tools manifest differs from publication input")
+            for row in artifact_rows(tools_manifest["artifacts"], "name"):
+                fetch_artifact(
+                    (tools_url,),
+                    row["name"],
+                    work / "verified-tools" / row["name"],
+                    row["sha256"],
+                    row["size"],
+                )
+            document = parse_metadata(path.read_bytes())
+            document["tools"] = tools_reference(
+                {
+                    "label": label,
+                    "sha256": tools_digest,
+                    "manifest": f"{tools_url}/tools-manifest.json",
+                    "release": tools_url,
+                }
+            )
+            Channel.parse(document)
+            write_document(path, document)
         if channel == "main":
             try:
                 published_bytes = read_metadata(public, "channels/main.json")
@@ -365,6 +403,7 @@ if __name__ == "__main__":
     parser.add_argument("--channel", choices=("main", "stable"))
     parser.add_argument("--minimum-desktop-version")
     parser.add_argument("--frontend", type=Path, help="optional published frontend reference JSON")
+    parser.add_argument("--tools", type=Path, help="same-source published tools release for Stable")
     args = parser.parse_args()
     if args.preflight:
         check_collision(object_store(), content_digest(args.release / "release-manifest.json"))
@@ -377,4 +416,5 @@ if __name__ == "__main__":
             args.channel,
             args.minimum_desktop_version,
             parse_metadata(args.frontend.read_bytes()) if args.frontend is not None else None,
+            args.tools,
         )
