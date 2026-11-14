@@ -6,6 +6,8 @@
   declarations do not refuse admission. Namespaces must still match their grants,
   replacement names remain unique, and selected wheel identities stay exact.
 - Attention capability, provider and role declarations may arrive in any order.
+  Policy requests accept redundant overrides and overrides covering every role.
+  Explicit SDPA remains distinct from automatic VAE routing.
   Worker startup still requires every role exactly once and routes consistent
   with the authenticated capabilities and requested policies.
 

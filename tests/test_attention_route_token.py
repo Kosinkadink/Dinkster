@@ -16,6 +16,8 @@ from dinkster_protocol import (
     AttentionRouteToken,
     attention_capability_evidence_to_wire,
     attention_policy_config_from_wire,
+    attention_route_token_from_wire,
+    attention_route_token_to_wire,
     automatic_attention_route,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
@@ -142,7 +144,6 @@ def test_execution_context_rejects_cross_worker_route_token_replay() -> None:
         ([["flux", "flash"], ["flux", "sage"]], "at most once"),
         ([["flux", "missing"]], "unsupported attention policy"),
         ([["flux", "auto"]], "must name a concrete policy"),
-        ([["flux", "sdpa"]], "is a no-op"),
     ),
 )
 def test_attention_policy_config_wire_rejects_malformed_role_overrides(
@@ -170,6 +171,45 @@ def test_attention_policy_config_wire_rejects_malformed_role_overrides(
 def test_attention_policy_config_wire_rejects_invalid_envelopes(raw: object) -> None:
     with pytest.raises(ValueError):
         attention_policy_config_from_wire(raw)
+
+
+@pytest.mark.parametrize(
+    ("requested", "overrides", "expected"),
+    (
+        ("sdpa", [["flux", "sdpa"]], ("sdpa", None)),
+        ("sdpa", [[role, "sage"] for role in ATTENTION_ROLES], ("sage", "sdpa")),
+        ("auto", [["vae", "sdpa"]], ("sdpa", None)),
+    ),
+)
+def test_policy_wire_admits_redundant_and_complete_role_overrides(
+    requested: str, overrides: list[list[str]], expected: tuple[str, str | None]
+) -> None:
+    evidence = capability_evidence(sage=True)
+    config = attention_policy_config_from_wire(
+        {"requestedPolicy": requested, "requestedRolePolicies": overrides}
+    )
+    token = derive_attention_route_token(evidence, config)
+    if token.version == 1:
+        wire = attention_route_token_to_wire(token)
+        wire.update(version=2, requestedRolePolicies=overrides)
+        redundant_token = attention_route_token_from_wire(wire)
+        assert canonical_attention_route_token_bytes(
+            redundant_token
+        ) == canonical_attention_route_token_bytes(token)
+        token = redundant_token
+    ExecutionContext(
+        "native",
+        None,
+        attention_policy=config.requested_policy,
+        attention_route_token=token,
+        attention_capabilities=evidence,
+    )
+    routes = {route.role: (route.primary, route.fallback) for route in token.routes}
+    assert routes["vae"] == expected
+    if requested == "sdpa":
+        assert all(route == expected for route in routes.values())
+    else:
+        assert config.requested_role_policies == (("vae", "sdpa"),)
 
 
 def test_derivation_preserves_explicit_v1_bytes_and_mints_sparse_v4() -> None:

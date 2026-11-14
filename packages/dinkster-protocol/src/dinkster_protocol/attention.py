@@ -89,8 +89,6 @@ def automatic_attention_route(
 def _validate_requested_role_policies(
     requested_policy: AttentionPolicy,
     requested_role_policies: object,
-    *,
-    normalize_noops: bool = False,
 ) -> tuple[tuple[str, AttentionPolicy], ...]:
     validate_attention_policy(requested_policy)
     if not isinstance(requested_role_policies, tuple) or not all(
@@ -104,24 +102,13 @@ def _validate_requested_role_policies(
         raise ValueError("unknown attention role in requested role policies")
     if len(set(override_roles)) != len(override_roles):
         raise ValueError("requested role policies must name each role at most once")
-    default_policy = "sdpa" if requested_policy == "auto" else requested_policy
     normalized: list[tuple[str, AttentionPolicy]] = []
     for role, policy_raw in override_pairs:
         policy = validate_attention_policy(policy_raw)
         if policy == "auto":
             raise ValueError("a role policy override must name a concrete policy, not 'auto'")
-        if policy == default_policy:
-            if normalize_noops:
-                continue
-            raise ValueError(
-                "a role policy override equivalent to the requested policy is a no-op; "
-                "omit the role instead"
-            )
-        normalized.append((cast("str", role), policy))
-    if len(normalized) == len(ATTENTION_ROLES):
-        raise ValueError(
-            "requested role policies must leave at least one role to the default policy"
-        )
+        if policy != requested_policy:
+            normalized.append((cast("str", role), policy))
     return tuple(sorted(normalized, key=lambda pair: ATTENTION_ROLES.index(pair[0])))
 
 
@@ -134,7 +121,6 @@ class AttentionPolicyConfig:
         normalized = _validate_requested_role_policies(
             self.requested_policy,
             cast("object", self.requested_role_policies),
-            normalize_noops=True,
         )
         object.__setattr__(self, "requested_role_policies", normalized)
 
@@ -253,6 +239,10 @@ class AttentionRouteToken:
         if len(set(provider_names)) != len(provider_names):
             raise ValueError("provider version names must be unique")
         object.__setattr__(self, "provider_versions", tuple(sorted(self.provider_versions)))
+        if self.version == 1 and self.requested_role_policies:
+            raise ValueError("a version 1 attention route token cannot carry role policy overrides")
+        if self.version == 2 and not self.requested_role_policies:
+            raise ValueError("a version 2 attention route token requires role policy overrides")
         object.__setattr__(
             self,
             "requested_role_policies",
@@ -261,10 +251,8 @@ class AttentionRouteToken:
                 cast("object", self.requested_role_policies),
             ),
         )
-        if self.version == 1 and self.requested_role_policies:
-            raise ValueError("a version 1 attention route token cannot carry role policy overrides")
         if self.version == 2 and not self.requested_role_policies:
-            raise ValueError("a version 2 attention route token requires role policy overrides")
+            object.__setattr__(self, "version", ATTENTION_ROUTE_TOKEN_VERSION)
         if self.version == 4 and self.requested_policy != "auto":
             raise ValueError("a version 4 attention route token requires automatic policy")
         portable_fallback = False
@@ -369,7 +357,6 @@ def attention_policy_config_from_wire(raw: object) -> AttentionPolicyConfig:
     canonical: tuple[tuple[str, AttentionPolicy], ...] = tuple(
         (role, by_role[role]) for role in ATTENTION_ROLES if role in by_role
     )
-    _validate_requested_role_policies(requested_policy, canonical)
     return AttentionPolicyConfig(requested_policy, canonical)
 
 
