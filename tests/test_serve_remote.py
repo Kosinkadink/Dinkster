@@ -9,10 +9,8 @@ connection closed, the daemon free for the next client."""
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import socket
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -37,7 +35,6 @@ from dinkster_schema import (
 from dinkster_server import STATE_KEY, create_app
 from dinkster_values import CORE_STRING, list_children, value_resource_provenance_refs
 from dinkster_workers import RemoteWorker, TransportError
-from dinkster_workers.service import READY_LINE_PREFIX
 from test_choices import write_choice_manifest
 from test_compose_dispatch import _write_vision_provider_packs
 from test_isolated import DEV_MANIFEST, core_registry, write_iso_manifest
@@ -778,79 +775,6 @@ def test_nodes_allowlist_filters_announced_types(tmp_path: Path) -> None:
             await stop_service(proc)
 
     run_scenario(scenario())
-
-
-RESERVED_NODES_MODULE = '''\
-"""Scaffolding pack announcing a node type under the reserved "dinkster" root."""
-
-from collections.abc import Mapping
-
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import CORE_STRING
-
-STRING = TypeExpr.concrete(CORE_STRING)
-
-
-class ReservedEcho(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.remote_test.echo",
-            display_name="Reserved Echo",
-            category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
-        )
-
-    @classmethod
-    async def execute(cls, *, value: str) -> Mapping[str, object]:
-        return cls.outputs(value=value)
-
-
-NODES = [ReservedEcho]
-'''
-
-
-async def start_reserved_service(
-    tmp_path: Path,
-) -> tuple[asyncio.subprocess.Process, str, int]:
-    """Launch a daemon whose pack announces a reserved-root node type; the
-    pack module lives in tmp_path, so it rides PYTHONPATH beside the shared
-    test scaffolding."""
-    (tmp_path / "reservedpack_nodes.py").write_text(RESERVED_NODES_MODULE, encoding="utf-8")
-    manifest = tmp_path / "reserved-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "reservedpack"\npublisher = "dinkster"\n\n'
-        '[pack.entry]\nnodes = "reservedpack_nodes:NODES"\n',
-        encoding="utf-8",
-    )
-    token_file = tmp_path / "remote-token.txt"
-    token_file.write_text(TOKEN, encoding="utf-8")
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "dinkster_workers.service",
-        "--listen",
-        "127.0.0.1:0",
-        "--manifest",
-        str(manifest),
-        "--token-file",
-        str(token_file),
-        stdout=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
-    )
-    assert proc.stdout is not None
-    try:
-        line = (await asyncio.wait_for(proc.stdout.readline(), 60.0)).decode()
-    except BaseException:
-        proc.kill()
-        await proc.wait()
-        raise
-    assert line.startswith(READY_LINE_PREFIX), f"unexpected ready line: {line!r}"
-    endpoint = line[len(READY_LINE_PREFIX) :].strip()
-    kind, host, port_text = endpoint.split(":")
-    assert kind == "tcp"
-    return proc, host, int(port_text)
 
 
 def test_dead_daemon_fails_atomically(tmp_path: Path) -> None:

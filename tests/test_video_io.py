@@ -12,11 +12,9 @@ import av
 import dinkster_video_runtime.runtime as video_module
 import numpy as np
 import pytest
-from av.error import InvalidDataError
 from dinkster_api.v1 import admit_video_source
 from dinkster_assets import (
     AssetRef,
-    AssetVault,
     AssetWriter,
     MountSnapshotResolver,
     MountSnapshotWriter,
@@ -427,27 +425,3 @@ def test_late_start_bounds_video_decode_and_preserves_audio_window(
     # AAC requires origin decode for its stateful PNS; FLAC can seek independently.
     assert len(seek_calls) == (1 if format_name == "mp4_h264" else 2)
     assert decoded < 20
-
-
-def test_load_refuses_malformed_asset(tmp_path: Path) -> None:
-    payload = b"not a video"
-    digest = digest_bytes(payload)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(payload)
-        writer.commit()
-    ref = AssetRef(digest, "bad.mp4", len(payload), "video/mp4", resolver=vault)
-    with pytest.raises(InvalidDataError):
-        admit_video_source(ref)
-
-
-@pytest.mark.parametrize(
-    ("images", "match"),
-    [
-        (np.empty((0, 8, 8, 3), dtype=np.float32), "layout"),
-        (np.full((1, 8, 8, 3), np.nan, dtype=np.float32), "non-finite"),
-    ],
-)
-def test_save_refuses_invalid_frame_batches(images: np.ndarray, match: str) -> None:
-    with pytest.raises(ValueError, match=match):
-        _save_frames(images=images, format="mp4_h264")

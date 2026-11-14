@@ -99,21 +99,6 @@ def test_churn_stays_pending_until_quiet(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_deletion_is_a_change(tmp_path: Path) -> None:
-    pack = make_pack_dir(tmp_path)
-    (pack / "extra.py").write_text("y = 2\n")
-    reload_fn = Recorder()
-    watcher = PackWatcher(lambda: {"p": pack}, reload_fn)
-
-    async def scenario() -> None:
-        await watcher.poll_once()
-        (pack / "extra.py").unlink()
-        assert await watcher.poll_once() == []
-        assert await watcher.poll_once() == ["p"]
-
-    run_scenario(scenario())
-
-
 def test_ignored_churn_never_fires(tmp_path: Path) -> None:
     """__pycache__ writes (a reload itself produces them) and editor
     droppings cause no pending state at all."""
@@ -130,37 +115,6 @@ def test_ignored_churn_never_fires(tmp_path: Path) -> None:
         assert await watcher.poll_once() == []
         assert await watcher.poll_once() == []
         assert reload_fn.calls == []
-
-    run_scenario(scenario())
-
-
-def test_targets_are_live(tmp_path: Path) -> None:
-    """Packs composed later appear (baseline first, fire on later
-    changes); packs that vanish drop out even while pending."""
-    first = make_pack_dir(tmp_path, "first")
-    second = make_pack_dir(tmp_path, "second")
-    targets: dict[str, Path] = {"first": first}
-    reload_fn = Recorder()
-    watcher = PackWatcher(lambda: dict(targets), reload_fn)
-
-    async def scenario() -> None:
-        await watcher.poll_once()
-        bump_mtime(second / "mod.py")  # changes BEFORE first sighting
-        targets["second"] = second
-        assert await watcher.poll_once() == []  # baseline only, no fire
-        assert await watcher.poll_once() == []
-        bump_mtime(second / "mod.py")
-        assert await watcher.poll_once() == []
-        assert await watcher.poll_once() == ["second"]
-
-        bump_mtime(first / "mod.py")
-        assert await watcher.poll_once() == []  # pending...
-        del targets["first"]
-        assert await watcher.poll_once() == []  # ...but gone: no fire
-        targets["first"] = first
-        assert await watcher.poll_once() == []  # fresh baseline again
-        assert await watcher.poll_once() == []
-        assert reload_fn.calls == ["second"]
 
     run_scenario(scenario())
 

@@ -437,21 +437,6 @@ def test_layered_cache_keeps_unencodable_values_in_memory(tmp_path: Path) -> Non
 # -- boundary cas transport ---------------------------------------------------
 
 
-def _payload_wire(wire: dict[str, object]) -> dict[str, object]:
-    from typing import cast
-
-    return cast("dict[str, object]", wire["payload"])
-
-
-def _paired_cas_codecs() -> tuple[ValueCodec, ValueCodec, TypeRegistry]:
-    registry = make_registry()
-    left = ValueCodec(registry, use_shm=False, accept_shm=False, cas_threshold=16)
-    right = ValueCodec(registry, use_shm=False, accept_shm=False, cas_threshold=16)
-    left.enable_cas()
-    right.enable_cas()
-    return left, right, registry
-
-
 # -- engine restart persistence ----------------------------------------------
 
 

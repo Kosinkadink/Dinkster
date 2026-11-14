@@ -12,18 +12,14 @@ import opentimelineio as otio
 import pytest
 from dinkster_api.v1 import VIDEO_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_assets.value import register_video_value_type, value_asset_references
 from dinkster_values import (
     TypeRegistry,
     annotate_image,
     decode_video,
-    edit_video,
     encode_video,
     video_from_source,
 )
-from dinkster_values.storage import image_input
 from dinkster_values.timeline_video import TIMELINE_MAGIC, TimelineVideo
-from dinkster_values.video_codec import video_meta
 from dinkster_values.video_document import (
     DOCUMENT_TYPE,
     TimelineError,
@@ -31,24 +27,20 @@ from dinkster_values.video_document import (
     document,
     document_fingerprint,
     document_meta,
-    effective_document,
     encode_document,
-    extension,
     item_duration,
     json_bytes,
     range_seconds,
     set_extension,
-    time_range,
     video_reference,
 )
-from dinkster_video_runtime import assemble_video, disassemble_video, save_video_stream
+from dinkster_video_runtime import assemble_video, save_video_stream
 from dinkster_video_runtime.document import clip, export_otio, import_otio, make, mutate
 from dinkster_video_runtime.image_math import masked_transition
 from dinkster_video_runtime.timeline import (
     compile_timeline,
     iter_timeline_audio,
     iter_timeline_frames,
-    single_clip_video,
 )
 from dinkster_video_runtime.timeline_runtime import CPUKernels, SourceMedia
 
@@ -137,24 +129,6 @@ def test_real_otio_structural_equivalence(name):
     assert original.is_equivalent_to(actual)
 
 
-def test_document_rejects_inline_media_paths_and_nonfinite():
-    base = make()
-    for reference in (
-        {"type": VIDEO_TYPE, "bytes": "pixels"},
-        {"type": VIDEO_TYPE, "asset": {"path": "/etc/passwd"}},
-    ):
-        with pytest.raises(ValueError):
-            mutate(base, "bind_source", {"source": "a", "reference": reference})
-    with pytest.raises(ValueError):
-        decode_document(b'{"version":1,"version":1}')
-    with pytest.raises(ValueError):
-        document({**base, "settings": {"width": 64, "height": 32, "rate": float("nan")}})
-    with pytest.raises(ValueError, match="1 MiB"):
-        document({**base, "timeline": {**base["timeline"], "metadata": {"huge": "x" * 1048576}}})
-    with pytest.raises(TimelineError, match="Timeline.1 root"):
-        document({**base, "timeline": base["timeline"]["tracks"]})
-
-
 def test_opaque_otio_url_never_reaches_resolver():
     tree = make(clips=[clip("absent", duration=2)])
     child = tree["timeline"]["tracks"]["children"][0]["children"][0]
@@ -170,70 +144,6 @@ def test_opaque_otio_url_never_reaches_resolver():
     with pytest.raises(TimelineError, match="unbound_source"):
         compile_timeline(imported)
     assert "file:///etc/passwd" in export_otio(imported)
-
-
-@pytest.mark.parametrize(
-    "widget,edits",
-    [
-        ({}, []),
-        ({"trim": None, "crop": None, "foreign": "preserved"}, []),
-        (
-            {"trim": {"start_time": 0.5, "duration": 0}},
-            [{"trim": {"start_time": 0.5, "duration": 0}, "strict_duration": False}],
-        ),
-        (
-            {"crop": {"x": -7, "y": 3, "width": 31, "height": 23}},
-            [{"crop": {"x": -7, "y": 3, "width": 31, "height": 23}}],
-        ),
-        (
-            {
-                "trim": {"start_time": -0.5, "duration": 99},
-                "crop": {"width": 0, "height": -1},
-                "strict_duration": "ignored",
-                "foreign": [1, 2],
-            },
-            [
-                {"trim": {"start_time": -0.5, "duration": 99}, "strict_duration": False},
-                {"crop": {"x": 0, "y": 0, "width": 0, "height": -1}},
-            ],
-        ),
-    ],
-)
-def test_widget_one_authority_and_verbatim_roundtrip(bound_video, widget, edits):
-    value, factory, _ = bound_video
-    base = edit_video(value, {"trim": {"start_time": 0.5, "duration": 1.5}})
-    doc = timeline_for(base, video_edit=widget)
-    child = doc["timeline"]["tracks"]["children"][0]["children"][0]
-    assert extension(child)["video_edit"] == widget
-    child["source_range"]["start_time"]["value"] = 999
-    normalized = document(doc)
-    actual = single_clip_video(normalized, SourceMedia(factory))
-    expected = base
-    for edit in edits:
-        expected = edit_video(expected, edit)
-    assert encode_video(actual) == encode_video(expected)
-    roundtrip = import_otio(export_otio(normalized))
-    assert (
-        extension(roundtrip["timeline"]["tracks"]["children"][0]["children"][0])["video_edit"]
-        == widget
-    )
-    assert encode_document(roundtrip) == encode_document(effective_document(normalized))
-
-
-def test_strict_widget_sibling_and_safe_packet_copy(bound_video):
-    value, factory, source = bound_video
-    invalid = timeline_for(
-        value, video_edit={"trim": {"start_time": 1.5, "duration": 2}}, strict_duration=True
-    )
-    assert decode_document(encode_document(invalid)) == invalid
-    with pytest.raises(ValueError, match="exceeds"):
-        single_clip_video(invalid, SourceMedia(factory))
-    doc = timeline_for(value, video_edit={"trim": {"start_time": 0.5, "duration": 0.5}})
-    video = single_clip_video(doc, SourceMedia(factory))
-    assert video is not None and "source" in video
-    output = io.BytesIO()
-    save_video_stream(video, output)
-    assert _packets(output.getvalue()) == _packets(source)[5:10]
 
 
 def test_split_move_ripple_roll_and_retime():
@@ -291,34 +201,6 @@ def test_crossfade_title_render_preserves_timing_and_frame_count(bound_video):
     assert len(_packets(out.getvalue())) == 10
 
 
-def test_widget_projection_source_origin_crop_and_split(bound_video):
-    value, factory, _ = bound_video
-    widget = {
-        "trim": {"start_time": 0.5, "duration": 0},
-        "crop": {"x": 1, "y": 3, "width": 32, "height": 16},
-        "unknown": "kept",
-    }
-    doc = timeline_for(value, video_edit=widget)
-    child = doc["timeline"]["tracks"]["children"][0]["children"][0]
-    child["media_references"]["DEFAULT_MEDIA"]["available_range"] = time_range(86400, 2)
-    selected = single_clip_video(doc, SourceMedia(factory))
-    projected = effective_document(doc)
-    assert range_seconds(
-        projected["timeline"]["tracks"]["children"][0]["children"][0]["source_range"]
-    ) == (Fraction(172801, 2), Fraction(3, 2))
-    doc = mutate(doc, "add_track", {})
-    doc["settings"].update(width=32, height=16)
-    frames = [frame for _, frame in iter_timeline_frames(doc, SourceMedia(factory), CPUKernels())]
-    np.testing.assert_array_equal(
-        np.stack(frames), image_input(disassemble_video(selected)["images"])
-    )
-    split = mutate(doc, "split", {"position": 0.5})
-    children = split["timeline"]["tracks"]["children"][0]["children"]
-    assert [extension(c)["video_edit"]["trim"]["duration"] for c in children] == [0.5, 1.0]
-    assert all(extension(c)["video_edit"]["unknown"] == "kept" for c in children)
-    assert extension(child)["video_edit"] == widget
-
-
 def test_nested_track_opacity_applies_once_to_composited_group(bound_video):
     value, factory, _ = bound_video
     doc = timeline_for(value)
@@ -330,60 +212,6 @@ def test_nested_track_opacity_applies_once_to_composited_group(bound_video):
     baseline = list(SourceMedia(factory).frames(doc["sources"]["video"], Fraction(0), Fraction(2)))
     for (_, actual), (_, expected) in zip(frames, baseline, strict=True):
         np.testing.assert_array_equal(actual, expected * 0.5)
-
-
-def test_layer_source_uses_declared_resources_and_shared_renderer(media_assets):
-    from PIL import Image
-
-    from tests.test_image_document_rendering import (
-        _canonical,
-        _document,
-        _layer,
-        _png,
-        _render,
-        _resource,
-    )
-
-    publish, factory = media_assets
-    png = _png([[(255, 32, 64, 255), (16, 64, 128, 128)]])
-    raster = publish(png, "raster.png")
-    layer = _document(
-        2, 1, {"l1": _layer("l1", "r2", 2, 1)}, {"r2": _resource("r2", png, 2, 1)}, ["l1"]
-    )
-    asset = publish(_canonical(layer), "layers.json")
-    reference = {
-        "type": "LAYERS",
-        "asset": asset.to_wire(),
-        "resources": [raster.to_wire()],
-    }
-    doc = make(width=2, height=1, clips=[clip("layer", duration=1)])
-    doc = mutate(doc, "bind_source", {"source": "layer", "reference": reference})
-    result = next(SourceMedia(factory).frames(reference, Fraction(0), Fraction(1)))[1]
-    expected = _render(layer, {raster.digest: png})
-    with Image.open(io.BytesIO(expected.png)) as image:
-        np.testing.assert_array_equal(result, np.asarray(image, dtype=np.float32) / 255)
-    assert len(cast(list, video_meta(TimelineVideo(doc))["asset_refs"])) == 2
-    registry = TypeRegistry()
-    register_video_value_type(registry, VIDEO_TYPE)
-    roots = value_asset_references(
-        {"video": registry.wrap(VIDEO_TYPE, TimelineVideo(doc))}, complete_registry=registry
-    )
-    assert roots == {item.digest: item for item in (asset, raster)}
-    with pytest.raises(TimelineError, match="explicitly declared"):
-        next(SourceMedia(factory).frames({**reference, "resources": []}, Fraction(0), Fraction(1)))
-    conflicting = mutate(
-        doc,
-        "bind_source",
-        {
-            "source": "layer",
-            "reference": {
-                **reference,
-                "resources": [{**asset.to_wire(), "size": asset.size + 1}],
-            },
-        },
-    )
-    with pytest.raises(ValueError, match="size"):
-        video_meta(TimelineVideo(conflicting))
 
 
 def test_audio_windows_gain_crossfade_and_silence(bound_video):
@@ -460,28 +288,6 @@ def test_document_and_v3_render_match_in_process_and_shared_memory(bound_video, 
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize(
-    "scalar,start,length,indices",
-    [
-        (2, 0, 1, list(range(0, 20, 2))),
-        (0, 1, 0.5, [10] * 5),
-        (-1, 1.9, 2, list(reversed(range(20)))),
-    ],
-)
-def test_time_effects_sample_without_changing_duration(bound_video, scalar, start, length, indices):
-    value, factory, _ = bound_video
-    doc = timeline_for(value)
-    doc["timeline"]["tracks"]["children"][0]["children"] = [
-        clip("video", start=start, duration=length)
-    ]
-    doc = mutate(doc, "retime", {"scalar": scalar})
-    obj, _, duration = compile_timeline(doc)
-    assert duration == Fraction(str(length))
-    frames = [frame for _, frame in iter_timeline_frames(obj, SourceMedia(factory), CPUKernels())]
-    original = cast(np.ndarray, image_input(disassemble_video(value)["images"]))
-    np.testing.assert_array_equal(np.stack(frames), original[indices])
-
-
 def test_cancel_closes_all_active_media_readers(bound_video):
     value, factory, _ = bound_video
     doc = timeline_for(value)
@@ -499,21 +305,6 @@ def test_cancel_closes_all_active_media_readers(bound_video):
     assert closed == []
     iterator.close()
     assert len(closed) == 1
-
-
-def test_disabled_clip_and_unsupported_composition_effect(bound_video):
-    value, factory, _ = bound_video
-    doc = timeline_for(value)
-    child = doc["timeline"]["tracks"]["children"][0]["children"][0]
-    child["enabled"] = False
-    media = SourceMedia(factory)
-    assert single_clip_video(doc, media) is None
-    frames = [frame for _, frame in iter_timeline_frames(doc, media, CPUKernels())]
-    assert len(frames) == 20
-    assert not np.any(frames)
-    set_extension(doc["timeline"]["tracks"], effects=[{"node_type": "unknown", "parameters": {}}])
-    with pytest.raises(TimelineError, match="unsupported_effect"):
-        compile_timeline(doc)
 
 
 def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(

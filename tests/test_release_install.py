@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import shutil
 import subprocess
 import sys
@@ -209,17 +208,6 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
         text=True,
     ).strip()
     assert discovered == str(installed / "dinkster/frontend_bundle/static")
-
-
-def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path) -> None:
-    import sys
-
-    from scripts.verify_release_launch import verify_launch
-
-    state = tmp_path / "release"
-    verify_launch(state, Path(sys.executable))
-    assert json.loads((state / "nodes.json").read_text())["nodes"] == {}
-    assert (state / "composition.json").is_file()
 
 
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(

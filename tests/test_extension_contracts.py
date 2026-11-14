@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 from dinkster_protocol import (
     EXTENSION_SCOPES,
-    ActiveExtension,
-    ExtensionSnapshot,
 )
 from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.host import load_extension_contributions
@@ -49,31 +47,3 @@ def test_pack_worker_never_resolves_inference_or_training_entries(tmp_path: Path
     )
     assert load_extension_contributions(manifest) == ()
     assert module_name not in sys.modules
-
-
-def _snapshot(
-    *,
-    mode: str = "strict",
-    contributions: tuple[str, ...],
-    selector_point: str = "double-block/0/attn",
-    provider: str = "example.guidance/reducer",
-) -> ExtensionSnapshot:
-    return ExtensionSnapshot(
-        (
-            ActiveExtension(
-                id="example.guidance",
-                version="2.1.0",
-                package_digest="sha256:" + "a" * 64,
-                contribution_ids=contributions,
-                selector_resolutions=(("attention:cross", (selector_point,)),),
-                service_providers=(("guidance.reducer", provider),),
-                capabilities=("background-jobs", "routes"),
-                behavior_configuration=(
-                    ("enabled", True),
-                    ("limit", 3),
-                    ("mode", mode),
-                    ("optional", None),
-                ),
-            ),
-        )
-    )

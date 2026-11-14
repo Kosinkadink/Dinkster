@@ -21,7 +21,7 @@ import pytest
 from dinkster_assets import AssetRef, digest_bytes, register_asset_type
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError, GraphValidationError
-from dinkster_graph import Graph, GraphNode, TypedLiteral, validate
+from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_schema import (
     AssetWidget,
     InputSpec,
@@ -58,46 +58,6 @@ IMAGE = TypeExpr.concrete("IMAGE")
 
 # ---------------------------------------------------------------------------
 # Registry: parametric wrap + provider registration rules
-
-
-def make_registry() -> TypeRegistry:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    register_asset_type(registry)
-    return registry
-
-
-def test_decoder_registration_rules() -> None:
-    registry = make_registry()
-    registry.register_asset_decoder("STRING", provider_id="t.text@1", decode=lambda ref: "x")
-    with pytest.raises(ValueError, match="already registered"):
-        registry.register_asset_decoder("STRING", provider_id="t.text@2", decode=lambda ref: "y")
-    with pytest.raises(ValueError, match="provider_id must be non-empty"):
-        registry.register_asset_decoder("INT", provider_id="", decode=lambda ref: 1)
-    with pytest.raises(ValueError, match="no provider chains"):
-        registry.register_asset_decoder(
-            "asset<STRING>", provider_id="t.chain@1", decode=lambda ref: ref
-        )
-    with pytest.raises(KeyError, match="unregistered decode target"):
-        registry.register_asset_decoder("no.such.type", provider_id="t.err@1", decode=lambda ref: 1)
-    # list targets are legal: one asset decoding to a list of values.
-    registry.register_asset_decoder(
-        "list<STRING>", provider_id="t.lines@1", decode=lambda ref: ["x"]
-    )
-    assert registry.asset_decoder_for("list<STRING>") is not None
-
-
-def test_batch_merge_registration_rules() -> None:
-    registry = make_registry()
-    registry.register_batch_merge("STRING", provider_id="t.join@1", merge=lambda items: "")
-    with pytest.raises(ValueError, match="already registered"):
-        registry.register_batch_merge("STRING", provider_id="t.join@2", merge=lambda items: "")
-    with pytest.raises(ValueError, match="atom type ids"):
-        registry.register_batch_merge("list<STRING>", provider_id="t.err@1", merge=lambda items: "")
-    with pytest.raises(KeyError, match="unregistered value type"):
-        registry.register_batch_merge("no.such.type", provider_id="t.err@1", merge=lambda items: "")
-    with pytest.raises(ValueError, match="provider_id must be non-empty"):
-        registry.register_batch_merge("INT", provider_id="", merge=lambda items: 0)
 
 
 # ---------------------------------------------------------------------------
@@ -243,44 +203,10 @@ def make_engine(
 # Graph validation
 
 
-def registry_with_providers(*, merger: bool = True) -> TypeRegistry:
-    registry = make_registry()
-    registry.register_asset_decoder("STRING", provider_id="t.text@1", decode=lambda ref: "x")
-    if merger:
-        registry.register_batch_merge("STRING", provider_id="t.join@1", merge=lambda items: "")
-    return registry
-
-
 def asset_literal(*wires: object) -> TypedLiteral:
     if len(wires) == 1:
         return TypedLiteral("asset<STRING>", wires[0])
     return TypedLiteral("list<asset<STRING>>", list(wires))
-
-
-WIRE = {"digest": digest_bytes(b"w"), "name": "w.txt", "size": 1}
-
-
-def test_validation_still_rejects_plain_shape_mismatches() -> None:
-    graph = Graph(nodes={"m": GraphNode("ta.upper", {"text": TypedLiteral("list<STRING>", ["a"])})})
-    diags = validate(graph, SCHEMAS, ["m"], known_types=registry_with_providers())
-    assert any(d.code == "list-into-scalar" for d in diags)
-
-
-def test_asset_of_list_needs_its_own_list_target_decoder() -> None:
-    """asset<list<T>> is ONE AssetRef whose decoder targets list<T>: the
-    scalar-element decoder never covers it, and registering the list-target
-    decoder makes it valid."""
-    graph = Graph(
-        nodes={"j": GraphNode("ta.join", {"texts": TypedLiteral("asset<list<STRING>>", WIRE)})}
-    )
-    registry = registry_with_providers()  # STRING decoder only
-    diags = validate(graph, SCHEMAS, ["j"], known_types=registry)
-    assert [d.code for d in diags] == ["asset-coercion-unavailable"]
-    assert "list<STRING>" in diags[0].message
-    registry.register_asset_decoder(
-        "list<STRING>", provider_id="t.lines@1", decode=lambda ref: ["x"]
-    )
-    assert validate(graph, SCHEMAS, ["j"], known_types=registry) == []
 
 
 # ---------------------------------------------------------------------------

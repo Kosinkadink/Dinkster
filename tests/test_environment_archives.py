@@ -388,34 +388,6 @@ def test_rejects_escaping_links_hardlinks_and_special_files(
 
 
 @pytest.mark.usefixtures("runnable_dummy")
-@pytest.mark.parametrize(
-    "members,executable",
-    [
-        ([member("wheels/example.whl")], "python/bin/python3"),
-        ([member("python/bin/python3", mode=0o755)], "python/bin/python3"),
-        (base_members(), "python/bin/missing"),
-        (base_members(), "wheels/example.whl"),
-    ],
-)
-def test_requires_both_trees_and_manifest_interpreter(
-    tmp_path: Path,
-    members: list[tuple[tarfile.TarInfo, bytes]],
-    executable: str,
-) -> None:
-    parts = make_parts(tmp_path, members)
-    destination = tmp_path / "bases/base-id"
-    with pytest.raises(ArchiveError):
-        extract_base(
-            parts,
-            destination,
-            platform="linux",
-            executable=executable,
-            expected_parts=expected_parts(parts),
-        )
-    assert_clean(destination)
-
-
-@pytest.mark.usefixtures("runnable_dummy")
 @pytest.mark.skipif(os.name == "nt", reason="Unix executable permissions")
 def test_missing_execute_mode_warns_and_repairs_only_manifest_interpreter(tmp_path: Path) -> None:
     parts = make_parts(

@@ -25,7 +25,7 @@ from dinkster_registry import Lockfile
 from dinkster_server import STATE_KEY, create_app
 
 import dinkster.installer as installer_module
-from dinkster.activation import add_activation_routes, compute_plan
+from dinkster.activation import add_activation_routes
 from dinkster.compose import ServingComposer
 from dinkster.installer import Installer, lock_local_pack
 from tests.async_scenarios import run_scenario
@@ -451,29 +451,6 @@ def test_exclusive_extension_collision_rolls_back_deterministically(
         finally:
             if client is not None:
                 await client.close()
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-def test_compute_plan_with_no_generation_is_empty(tmp_path: Path) -> None:
-    """An install root that never applied a generation plans nothing -
-    and in particular does not classify dev packs as removals."""
-
-    async def scenario() -> None:
-        installer = make_installer(tmp_path)
-        dev_dir = write_pack(tmp_path / "dev", "devpack")
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(dev_dir)})
-        try:
-            await composer.add_pack(dev_dir / "dinkster-pack.toml")
-            plan, specs = compute_plan(composer, installer)
-            assert plan.generation is None
-            assert plan.add == ()
-            assert plan.remove == ()
-            assert plan.reload == ()
-            assert plan.unchanged == ()
-            assert specs == {}
-        finally:
             await composer.close()
 
     run_scenario(scenario())

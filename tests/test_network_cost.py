@@ -1,15 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
-from dinkster_server import NWPath, detect_network_cost
-
-
-@dataclass(frozen=True)
-class Path:
-    is_expensive: bool = False
-    is_constrained: bool = False
+from dinkster_server import detect_network_cost
 
 
 class Runner:
@@ -23,14 +15,6 @@ class Runner:
         if self.error:
             return None
         return self.output
-
-
-class PathReader:
-    def __init__(self, path: NWPath) -> None:
-        self.path = path
-
-    def __call__(self) -> NWPath:
-        return self.path
 
 
 @pytest.mark.parametrize(

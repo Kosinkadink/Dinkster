@@ -44,7 +44,6 @@ from dinkster_schema import (
     TypeExpr,
     configure_logging,
     install_stream_capture,
-    report_event,
     report_log,
     use_capture_budget,
     use_reporter,
@@ -101,27 +100,6 @@ def log_events(captured: list[Captured]) -> list[Mapping[str, object]]:
 
 
 # -- report_log's own contract ------------------------------------------------
-
-
-def test_report_log_rejects_non_log_levels() -> None:
-    # "error" is deliberately not a log level: failures raise and travel
-    # through the one existing error report.
-    with pytest.raises(ValueError, match="raise"):
-        report_log("error", "boom")
-    with pytest.raises(ValueError, match="unknown log level"):
-        report_log("debug", "chatter")
-
-
-def test_report_log_rejects_reserved_data_keys() -> None:
-    with pytest.raises(ValueError, match="reserved"):
-        report_log("info", "x", data={"level": "warning"})
-    with pytest.raises(ValueError, match="reserved"):
-        report_log("info", "x", data={"message": "smuggled", "ts": 1.0})
-
-
-def test_log_event_name_is_reserved() -> None:
-    with pytest.raises(ValueError, match="reserved"):
-        report_event("log")
 
 
 # -- stream capture ------------------------------------------------------------

@@ -288,22 +288,6 @@ async def make_client() -> TestClient:
     return client
 
 
-async def wait_for_http_state(
-    client: TestClient,
-    client_id: str,
-    job_id: str,
-    expected: str,
-) -> dict[str, Any]:
-    async with asyncio.timeout(5):
-        while True:
-            status = await (await client.get(f"/api/jobs/{client_id}/{job_id}")).json()
-            if status["state"] == expected:
-                return cast(dict[str, Any], status)
-            if status["state"] in ("completed", "failed", "cancelled"):
-                raise AssertionError(f"job reached {status['state']}, expected {expected}")
-            await asyncio.sleep(0.005)
-
-
 class StubAuthenticator:
     def __init__(self, principal: Principal) -> None:
         self.principal = principal
@@ -2657,23 +2641,6 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
 
 
 # -- progressive schema announcement -------------------------------------------
-
-
-class Late(Node):
-    """A node type that does not exist at create_app time: announced onto
-    the live surface mid-test, the progressive-startup shape."""
-
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="late.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
-        )
-
-    @classmethod
-    async def execute(cls, *, text: str) -> Mapping[str, object]:
-        return cls.outputs(out=text)
 
 
 async def poll_job(client: TestClient, job_id: str) -> dict[str, object]:

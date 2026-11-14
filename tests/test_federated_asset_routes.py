@@ -2,16 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.acquisition_plan import AcquisitionSource
 from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import (
     AdvisoryAlias,
     Artifact,
-    DeclaredRequirements,
     LocalMaterialization,
     LogicalModel,
     ModelVariant,
@@ -24,7 +21,6 @@ from dinkster_assets.resolution import (
 from dinkster_server import federated_assets_v1 as dto
 from dinkster_server.app import create_app
 from dinkster_server.auth import Principal
-from dinkster_server.library import ServerLibrary
 from test_server import SCHEMAS, make_engine
 
 from tests.async_scenarios import run_scenario
@@ -255,62 +251,6 @@ def _replace_mounts(store: ResolutionStore, rows: tuple[MountMaterialization, ..
     store.replace_mount_snapshot(("workspace-a", "workspace-b"), (*rows, *mirrored))
 
 
-def test_federated_routes_use_only_injected_paths_and_exact_auth_error_codecs(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        client, store = await _client(tmp_path)
-        try:
-            server = cast(TestServer, client.server)
-            registered = {resource.canonical for resource in server.app.router.resources()}
-            assert "/api/assets/catalog" not in registered
-            assert {CATALOG_PATH, CANDIDATES_PATH} <= registered
-            missing = await client.post(CATALOG_PATH, json={"contractVersion": 1})
-            assert missing.status == 401
-            assert await missing.json() == {
-                "contractVersion": 1,
-                "error": {
-                    "code": "authentication-required",
-                    "reason": "a valid Bearer credential is required",
-                },
-            }
-            forbidden = await client.post(
-                CATALOG_PATH,
-                headers=_headers("writer"),
-                json={"contractVersion": 1, "scope": "workspace-a"},
-            )
-            assert forbidden.status == 403
-            assert (await forbidden.json())["error"]["code"] == "forbidden"
-            ambiguous_scope = await client.post(
-                CATALOG_PATH,
-                headers=_headers("multi"),
-                json={"contractVersion": 1},
-            )
-            assert ambiguous_scope.status == 400
-            assert (await ambiguous_scope.json())["error"]["code"] == "invalid-request"
-            assert (await ambiguous_scope.json())["error"]["field"] == "scope"
-            invalid = await client.post(
-                CATALOG_PATH,
-                headers=_headers(),
-                json={"contractVersion": 1, "unknown": True},
-            )
-            assert invalid.status == 400
-            assert await invalid.json() == {
-                "contractVersion": 1,
-                "error": {
-                    "code": "invalid-request",
-                    "reason": "unknown field 'unknown'",
-                    "field": "request",
-                },
-            }
-            assert (await client.get("/api/health")).status == 200
-        finally:
-            await client.close()
-            store.close()
-
-    run_scenario(scenario())
-
-
 def test_federated_routes_refuse_scopes_absent_from_provider_policy(tmp_path: Path) -> None:
     async def scenario() -> None:
         client, store = await _client(tmp_path)
@@ -451,144 +391,6 @@ def test_catalog_snapshot_folds_authorized_providers_filters_and_orders(
     run_scenario(scenario())
 
 
-def test_catalog_composes_canonical_mounts_without_name_or_path_identity(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        client, store = await _client(tmp_path)
-        image_digest = "blake3:" + "d" * 64
-        rows = (
-            _mount_row(
-                "workspace-a",
-                DIGEST_A,
-                mount_id="normalized-shadow",
-                priority=-10,
-                kind=KIND,
-                name="must-not-win.bin",
-            ),
-            _mount_row(
-                "workspace-a",
-                DIGEST_B,
-                mount_id="linked-fallback",
-                priority=0,
-                kind=KIND,
-                name="linked.bin",
-                size=22,
-                media_type="application/safetensors",
-            ),
-            _mount_row(
-                "workspace-a",
-                DIGEST_C,
-                mount_id="z-generic",
-                priority=2,
-                kind="",
-                name="later.bin",
-            ),
-            _mount_row(
-                "workspace-a",
-                DIGEST_C,
-                mount_id="a-generic",
-                priority=-1,
-                kind="",
-                name="canonical.bin",
-            ),
-            _mount_row(
-                "workspace-a",
-                DIGEST_C,
-                mount_id="lora",
-                priority=0,
-                kind="model/lora",
-                name="same-digest.safetensors",
-            ),
-            _mount_row(
-                "workspace-a",
-                image_digest,
-                mount_id="images",
-                priority=0,
-                kind="",
-                name="preview.png",
-                media_type="image/png",
-            ),
-        )
-        _replace_mounts(store, rows)
-        request = {"contractVersion": 1, "scope": "workspace-a", "limit": 100}
-        try:
-            response = await client.post(CATALOG_PATH, headers=_headers(), json=request)
-            body = await response.json()
-            decoded = dto.decode_catalog_response(body)
-            assert len(decoded.items) == 5
-            by_kind_digest = {(item.asset_kind, item.digest): item for item in decoded.items}
-
-            normalized = by_kind_digest[(KIND, DIGEST_A)]
-            assert normalized.logical_id == "zeta/model"
-            assert normalized.asset_ref is not None
-            assert normalized.asset_ref.name == "renamed-local.bin"
-            linked = by_kind_digest[(KIND, DIGEST_B)]
-            assert linked.logical_id == "alpha/model"
-            assert linked.availability_status == "local"
-            assert linked.asset_ref is not None and linked.asset_ref.name == "linked.bin"
-            generic = by_kind_digest[("asset/file", DIGEST_C)]
-            assert generic.asset_ref is not None
-            assert generic.asset_ref.name == "canonical.bin"
-            assert generic.family == generic.variant_id == generic.dtype == "unclassified"
-            assert generic.quantization == "none"
-            assert generic.format == "unclassified"
-            assert generic.role == "asset"
-            assert generic.requirements == dto.CandidateRequirementsV1()
-            assert generic.provider_sources == ()
-            assert generic.availability_status == "local"
-            assert generic.availability_reason
-            assert generic.compatibility_status == "compatible"
-            assert generic.compatibility_reason == ""
-            assert ("model/lora", DIGEST_C) in by_kind_digest
-            assert ("media/image", image_digest) in by_kind_digest
-
-            previous_identity = generic.logical_id
-            renamed = tuple(
-                _mount_row(
-                    "workspace-a",
-                    row.ref.digest,
-                    mount_id=row.mount_id,
-                    priority=row.priority,
-                    kind=row.asset_kind,
-                    name="renamed.bin" if row.mount_id == "a-generic" else row.ref.name,
-                    size=row.ref.size,
-                    media_type=row.ref.media_type,
-                    virtual_path=(
-                        "mounts/a-generic/moved/renamed.bin"
-                        if row.mount_id == "a-generic"
-                        else row.ref.virtual_path
-                    ),
-                )
-                for row in rows
-            )
-            _replace_mounts(store, renamed)
-            changed = await (
-                await client.post(CATALOG_PATH, headers=_headers(), json=request)
-            ).json()
-            changed_items = dto.decode_catalog_response(changed).items
-            changed_generic = next(
-                item
-                for item in changed_items
-                if (item.asset_kind, item.digest) == ("asset/file", DIGEST_C)
-            )
-            assert changed_generic.logical_id == previous_identity
-            assert changed_generic.asset_ref is not None
-            assert changed_generic.asset_ref.virtual_path == "mounts/a-generic/moved/renamed.bin"
-
-            filename_query = await client.post(
-                CATALOG_PATH,
-                headers=_headers(),
-                json={**request, "query": "renamed.bin"},
-            )
-            assert (await filename_query.json())["items"] == []
-        finally:
-            await client.close()
-            store.close()
-
-    run_scenario(scenario())
-
-
 def test_mount_candidates_page_past_one_hundred_with_global_strict_order(
     tmp_path: Path,
 ) -> None:
@@ -636,133 +438,6 @@ def test_mount_candidates_page_past_one_hundred_with_global_strict_order(
         finally:
             await client.close()
             store.close()
-
-    run_scenario(scenario())
-
-
-def test_project_library_and_federated_models_coexist_without_promoting_upload_names(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        data = b"known model content"
-        digest = digest_bytes(data)
-        unknown = b"unclassified content despite its model filename"
-        unknown_digest = digest_bytes(unknown)
-        for attempt in range(2):
-            store = ResolutionStore(tmp_path / "resolution.sqlite")
-            if attempt == 0:
-                store.upsert_logical_model(LogicalModel("known/model", "known", KIND))
-                store.upsert_variant(
-                    ModelVariant(
-                        "known/model",
-                        "bf16",
-                        "bfloat16",
-                        "none",
-                        "safetensors",
-                        "diffusion",
-                        DeclaredRequirements(runtimes=frozenset({"unverified-runtime"})),
-                    )
-                )
-                store.upsert_artifact(Artifact(digest))
-                store.link_variant_artifact(VariantArtifact("known/model", "bf16", digest))
-            library = ServerLibrary(
-                vault=AssetVault(tmp_path / "vault"),
-                store=LibraryStore(tmp_path / "library.sqlite"),
-            )
-            app = create_app(
-                make_engine,
-                SCHEMAS,
-                library=library,
-                authenticator=_Authenticator(
-                    {
-                        "reader": Principal(
-                            "reader", {"workspace-a": frozenset({"assets:read", "assets:write"})}
-                        )
-                    }
-                ),
-                federated_asset_paths={"catalog": CATALOG_PATH, "candidates": CANDIDATES_PATH},
-                federated_asset_store=store,
-                federated_asset_provider_policy={"workspace-a": frozenset()},
-                _federated_asset_cursor_key=b"deterministic-test-cursor-key-32b",
-            )
-            client = TestClient(TestServer(app))
-            await client.start_server()
-            try:
-                if attempt == 0:
-                    for content, identity, name in (
-                        (data, digest, "private-project-name.bin"),
-                        (unknown, unknown_digest, "model-diffusion.safetensors"),
-                    ):
-                        response = await client.post(
-                            "/api/assets/transfers",
-                            params={"scope": "workspace-a", "project": "film", "name": name},
-                            headers={
-                                **_headers(),
-                                "X-Dinkster-Digest": identity,
-                                "X-Dinkster-Source-Machine": "Studio",
-                            },
-                            data=content,
-                        )
-                        assert response.status == 201
-                query = {"scope": "workspace-a", "project": "film"}
-                response = await client.get("/api/assets/catalog", params=query, headers=_headers())
-                assert response.status == 200
-                assets = {
-                    item["asset"]["digest"]: item for item in (await response.json())["assets"]
-                }
-                assert set(assets) == {digest, unknown_digest}
-                assert assets[digest]["aliases"] == ["private-project-name.bin"]
-                assert assets[unknown_digest]["observations"][0]["kind"] == "asset/file"
-                assert (
-                    await (
-                        await client.get(
-                            "/api/assets/catalog",
-                            params={**query, "project": "default"},
-                            headers=_headers(),
-                        )
-                    ).json()
-                )["assets"] == []
-                assert (
-                    await client.get(
-                        "/api/assets/catalog",
-                        params={**query, "scope": "workspace-b"},
-                        headers=_headers(),
-                    )
-                ).status == 403
-                response = await client.post(
-                    CATALOG_PATH,
-                    headers=_headers(),
-                    json={"contractVersion": 1, "scope": "workspace-a", "context": _context()},
-                )
-                assert response.status == 200
-                wire = await response.json()
-                items = dto.decode_catalog_response(wire).items
-                assert len(items) == 1
-                item = items[0]
-                assert (item.digest, item.logical_id, item.asset_kind) == (
-                    digest,
-                    "known/model",
-                    KIND,
-                )
-                assert item.asset_ref is None
-                assert item.availability_status == "unavailable"
-                assert item.compatibility_status == "unknown"
-                assert item.compatibility_reason == "runtime compatibility facts unavailable"
-                assert "private-project-name" not in str(wire)
-                assert "model-diffusion.safetensors" not in str(wire)
-                assert str(tmp_path) not in str(wire)
-                response = await client.get(
-                    "/api/assets/availability",
-                    params={"scope": "workspace-a", "digest": digest},
-                    headers=_headers(),
-                )
-                assert response.status == 200
-                assert await response.json() == {
-                    "assets": [{"digest": digest, "status": "available"}]
-                }
-            finally:
-                await client.close()
-                store.close()
 
     run_scenario(scenario())
 

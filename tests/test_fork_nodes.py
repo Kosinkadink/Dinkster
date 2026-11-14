@@ -1,31 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, cast
-
 import pytest
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import TypeExpr
 from dinkster_values import ResidentLookupError, TypeRegistry
 
 from tests.async_scenarios import run_scenario
 
 CONDITIONING = TypeExpr.concrete("CONDITIONING")
 INT = TypeExpr.concrete("INT")
-
-
-class _ConditioningConsumer(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="test.conditioning-consumer",
-            inputs=(InputSpec("conditioning", CONDITIONING),),
-            outputs=(OutputSpec("count", INT),),
-        )
-
-    @classmethod
-    def execute(cls, *, conditioning: object) -> Mapping[str, object]:
-        values = list(cast("Any", conditioning))
-        return cls.outputs(count=len(values))
 
 
 def test_hook_conditioning_release_invalidates_only_dependent_values() -> None:

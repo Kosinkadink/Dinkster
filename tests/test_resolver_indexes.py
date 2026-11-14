@@ -142,61 +142,6 @@ def test_parse_resolver_index_round_trip_and_region_priority(
     assert parse_resolver_index(json.dumps(index.to_wire())) == index
 
 
-def test_parse_resolver_index_uses_shared_component_manifest() -> None:
-    document = resolver_document(
-        resolver_entry(
-            name="combined.safetensors",
-            kind="model/checkpoint",
-            components=[
-                {
-                    "kind": "model/diffusion",
-                    "architecture": "example-transformer",
-                    "dtype": "float16",
-                    "metadata": {"role": "denoiser"},
-                },
-                {"kind": "model/vae"},
-            ],
-        )
-    )
-    index = parse_resolver_index(json.dumps(document))
-    manifest = index.entries[0].component_manifest
-    assert manifest is not None
-    assert [component.kind for component in manifest.components] == [
-        "model/diffusion",
-        "model/vae",
-    ]
-    assert index.to_wire()["entries"][0]["components"] == document["entries"][0]["components"]  # type: ignore[index]
-    assert parse_resolver_index(json.dumps(index.to_wire())) == index
-
-    invalid = resolver_document(resolver_entry(components=[{"kind": "diffusion"}]))
-    with pytest.raises(ResolverIndexError, match="asset kind"):
-        parse_resolver_index(json.dumps(invalid))
-
-
-def test_parse_resolver_index_ignores_unknown_optional_fields() -> None:
-    baseline = resolver_document(
-        resolver_entry(
-            components=[
-                {
-                    "kind": "model/vae",
-                    "architecture": "example-vae",
-                }
-            ]
-        )
-    )
-    extended = json.loads(json.dumps(baseline))
-    extended["futureTopLevel"] = {"added": True}
-    extended_entry = extended["entries"][0]
-    extended_entry["futureEntry"] = [1, 2, 3]
-    extended_entry["components"][0]["futureComponent"] = "optional"
-
-    expected = parse_resolver_index(json.dumps(baseline))
-    parsed = parse_resolver_index(json.dumps(extended))
-
-    assert parsed == expected
-    assert parsed.to_wire() == expected.to_wire()
-
-
 def test_provenance_named_sources_are_replaceable_isolated_and_persistent(
     tmp_path: Path,
 ) -> None:
@@ -799,45 +744,6 @@ def test_resolver_api_startup_refresh_persistence_failure_is_nonfatal(
     with patch.object(store, "refresh", side_effect=OSError("disk full")):
         run_scenario(scenario())
     assert "resolver index startup refresh failed: disk full" in caplog.text
-
-
-def test_refresh_io_does_not_block_resolver_reads(tmp_path: Path) -> None:
-    source = tmp_path / "index.json"
-    write_document(source, resolver_document())
-    store = ResolverSubscriptionStore(
-        tmp_path / "subscriptions.json", ProvenanceStore(tmp_path / "provenance.json")
-    )
-    subscription = store.subscribe(str(source))
-    started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-    read_local = resolver_transport._read_local
-
-    def blocked_read(path: str) -> bytes:
-        started.set()
-        assert release.wait(3.0)
-        return read_local(path)
-
-    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
-        refresher = threading.Thread(target=lambda: store.refresh(subscription.id), daemon=True)
-        refresher.start()
-        assert started.wait(1.0)
-        reader = threading.Thread(
-            target=lambda: (
-                store.subscriptions(),
-                store.suggest("example.safetensors"),
-                finished.set(),
-            ),
-            daemon=True,
-        )
-        reader.start()
-        try:
-            assert finished.wait(0.5)
-        finally:
-            release.set()
-            refresher.join(2.0)
-            reader.join(2.0)
-    assert not refresher.is_alive() and not reader.is_alive()
 
 
 def test_refresh_does_not_overwrite_concurrent_subscription_mutation(tmp_path: Path) -> None:

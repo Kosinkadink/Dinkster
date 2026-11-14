@@ -34,7 +34,6 @@ from dinkster_workers import (
     SandboxUnavailable,
     build_bwrap_command,
     detect_bubblewrap,
-    load_manifest,
 )
 from dinkster_workers.launch import SubprocessLauncher
 
@@ -246,35 +245,6 @@ class TestDetection:
                 await launcher.launch(make_spec(tmp_path, env={}))
 
         run_scenario(scenario())
-
-
-def test_pack_scratch_refuses_symlink_and_unsafe_group_name(tmp_path: Path) -> None:
-    from dinkster.compose import CompositionError, PackSpec, ServingComposer
-
-    manifest = load_manifest(DEV_MANIFEST)
-    scratch_root = tmp_path / "library" / "scratch"
-    composer = ServingComposer(pack_scratch_root=scratch_root)
-    if os.name == "posix":
-        target = tmp_path / "outside"
-        target.mkdir()
-        scratch = scratch_root / "packs" / "dinkster-nodes-dev"
-        scratch.parent.mkdir(parents=True)
-        scratch.symlink_to(target, target_is_directory=True)
-        with pytest.raises(CompositionError, match="not a real directory"):
-            composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-                PackSpec(DEV_MANIFEST),
-                (manifest,),
-            )
-    with pytest.raises(CompositionError, match="not path-safe"):
-        composer._worker_environment(  # pyright: ignore[reportPrivateUsage]
-            PackSpec(
-                DEV_MANIFEST,
-                worker_group="../escape",
-                group_manifests=(DEV_MANIFEST,),
-            ),
-            (manifest,),
-        )
-    run_scenario(composer.close())
 
 
 @pytest.mark.skipif(

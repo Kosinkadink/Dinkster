@@ -19,7 +19,6 @@ from dinkster_memory import (
 )
 from dinkster_values import (
     COST_META_KEY,
-    ResourceHandle,
     TypeRegistry,
     Value,
 )
@@ -48,18 +47,6 @@ def test_parse_budget_size_uses_binary_suffixes() -> None:
     for bad in ("", "-1", "1.5G", "5X", "G"):
         with pytest.raises(ValueError):
             parse_size(bad)
-
-
-def make_handle(**overrides: object) -> ResourceHandle:
-    fields: dict[str, object] = {
-        "resource_id": "blake3:ab12?dtype=fp16",
-        "kind": "model",
-        "residency": {"gpu": ("cuda:0", "cuda:1")},
-        "cost": {VRAM0: 4_000_000_000, "ram": 500_000_000},
-        "obj": object(),
-    }
-    fields.update(overrides)
-    return ResourceHandle(**fields)  # type: ignore[arg-type]
 
 
 # -- ResourceHandle values ----------------------------------------------

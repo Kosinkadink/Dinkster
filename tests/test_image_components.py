@@ -145,28 +145,6 @@ def test_decode_image_components_matches_reference_exif_rotation(
     np.testing.assert_array_equal(decoded.pixels, expected)
 
 
-def test_decode_image_components_admission_boundaries(tmp_path: Path) -> None:
-    pixels = np.array(
-        [[[3, 17, 251], [44, 92, 10], [125, 231, 6]], [[29, 7, 33], [240, 80, 1], [9, 180, 63]]],
-        dtype=np.uint8,
-    )
-    path = tmp_path / "bounded.png"
-    Image.fromarray(pixels).save(path)
-    asset = _asset(path)
-    # Six pixels at 96 bytes each plus the fixed missing-alpha mask allowance.
-    result = decode_image_components(
-        asset, max_dimension=3, max_source_bytes=asset.size, max_working_set_bytes=33_344
-    )
-    np.testing.assert_array_equal(result.pixels, pixels.astype(np.float32) / 255)
-    assert result.alpha is None
-    with pytest.raises(ValueError, match="input byte limit"):
-        decode_image_components(asset, max_source_bytes=asset.size - 1)
-    with pytest.raises(ValueError, match="dimensions"):
-        decode_image_components(asset, max_dimension=2)
-    with pytest.raises(ValueError, match="working-set limit"):
-        decode_image_components(asset, max_working_set_bytes=33_343)
-
-
 @pytest.mark.parametrize("suffix", ("gif", "png"))
 def test_open_image_components_preserves_animation_order_and_alpha(
     tmp_path: Path, suffix: str

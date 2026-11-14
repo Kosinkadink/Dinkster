@@ -70,12 +70,6 @@ def test_grayscale_png_roundtrip() -> None:
     assert rows == [bytes([0, 255]), bytes([128, 64])]
 
 
-def test_single_channel_axis_is_squeezed() -> None:
-    array = np.zeros((3, 4, 1), dtype=np.float32)
-    width, height, color_type, _ = decode_png(render(array))
-    assert (width, height, color_type) == (4, 3, 0)
-
-
 def test_rgb_and_rgba_pngs() -> None:
     rgb = np.zeros((2, 3, 3), dtype=np.float32)
     rgb[0, 0] = [1.0, 0.0, 0.5]

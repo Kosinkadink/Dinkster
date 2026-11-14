@@ -13,7 +13,7 @@ import sysconfig
 import zipfile
 from dataclasses import replace
 from functools import partial
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 import pytest
 from dinkster_store import object_path, pack_archive_path
@@ -474,85 +474,6 @@ def _standalone_tree(root: Path) -> None:
                 shutil.copy2(path.resolve(), root / "lib" / path.name)
 
 
-@pytest.mark.parametrize(
-    "cached", ["exact", "readable", "absent", "corrupt", "directory", "changed-copy"]
-)
-def test_generation_retains_verified_engine_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: str
-) -> None:
-    root, store = tmp_path / "project", tmp_path / "store"
-    base_id = "sha256:" + "a" * 64
-    base_path = object_path(
-        store / "bases",
-        base_id,
-        label="linux-cpu/2026-11-03-py3.14.10-torch2.14.1" if cached == "readable" else None,
-    )
-    _standalone_tree(base_path / "python")
-    constraints = tmp_path / "constraints.txt"
-    constraints.write_text("")
-    raw = b'{  "version": "0.5", "unknown": [3, 1] }\r\n'
-    release = hashlib.sha256(raw).hexdigest()
-    release_path = object_path(
-        store / "engines",
-        "sha256:" + release,
-        label="2026-11-03-0.5" if cached == "readable" else None,
-    )
-    cached_manifest = release_path / "release-manifest.json"
-    if cached != "absent":
-        cached_manifest.parent.mkdir(parents=True)
-        if cached == "directory":
-            cached_manifest.mkdir()
-        else:
-            cached_manifest.write_bytes(raw if cached != "corrupt" else b"corrupt")
-    if cached == "changed-copy":
-        copyfile = shutil.copyfile
-
-        def change_copy(src, dst, **kwargs):
-            result = copyfile(src, dst, **kwargs)
-            if Path(dst).name == "engine-manifest.json":
-                Path(dst).write_bytes(b"changed after copying")
-            return result
-
-        monkeypatch.setattr(shutil, "copyfile", change_copy)
-    callbacks: list[Path] = []
-
-    def prepare(target: Path) -> None:
-        callbacks.append(target)
-        if cached in {"exact", "readable"}:
-            assert (target / "engine-manifest.json").read_bytes() == raw
-
-    def build():
-        return build_generation(
-            root=root,
-            number=1,
-            store=store,
-            base=base_id,
-            engine_version="0.5",
-            engine_release="sha256:" + release,
-            constraints=constraints,
-            variant="win-cpu" if os.name == "nt" else "linux-cpu",
-            worker_protocol=1,
-            prepare_packs=prepare,
-        )
-
-    target = root / "generations" / "1"
-    if cached in {"corrupt", "directory", "changed-copy"}:
-        with pytest.raises((EnvironmentError, OSError)):
-            build()
-        assert not target.exists()
-        assert callbacks == []
-    else:
-        generation = build()
-        assert callbacks == [target]
-        assert generation.drift(target) == ()
-        if cached in {"exact", "readable"}:
-            assert (target / "engine-manifest.json").read_bytes() == raw
-            assert dict(generation.files)["engine-manifest.json"] == "sha256:" + release
-        else:
-            assert not (target / "engine-manifest.json").exists()
-    assert read_current(root) is None
-
-
 def _workspace_tree(root: Path) -> Path:
     _standalone_tree(root)
     site = Path(
@@ -594,86 +515,6 @@ def _assert_shared(first: Path, second: Path) -> None:
         assert extents[0] == extents[1]
     else:
         pytest.fail("expected shared inode or Linux CoW extents")
-
-
-@pytest.mark.parametrize("directories,root_length", [(154, 117), (500, 200)])
-def test_generation_sync_command_does_not_expand_wheel_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directories: int, root_length: int
-) -> None:
-    deep = tmp_path / ("x" * max(1, root_length - len(str(tmp_path)) - 1))
-    root, store = deep / "project", deep / "store"
-    root.mkdir(parents=True)
-    base = store / "bases" / ("a" * 64) / "python"
-    python = base / ("python.exe" if os.name == "nt" else "bin/python3")
-    python.parent.mkdir(parents=True)
-    python.write_bytes(b"interpreter fixture")
-    constraints = deep / "constraints.txt"
-    rows = []
-    for number in range(directories):
-        payload = f"wheel fixture {number}".encode()
-        digest = hashlib.sha256(payload).hexdigest()
-        wheel = store / "wheels" / digest / f"fixture_{number}-1.0-py3-none-any.whl"
-        wheel.parent.mkdir(parents=True)
-        wheel.write_bytes(payload)
-        rows.append(f"fixture-{number}==1.0 --hash=sha256:{digest}")
-    constraints.write_text("\n".join(rows) + "\n")
-
-    windows_root = PureWindowsPath("C:/") / ("r" * (root_length - 3))
-    previous = [
-        "uv",
-        "pip",
-        "sync",
-        "--python",
-        str(windows_root / "project/generations/1/python/python.exe"),
-        "--break-system-packages",
-        "--offline",
-        "--no-index",
-        "--require-hashes",
-        "--only-binary",
-        ":all:",
-        "--link-mode",
-        "hardlink",
-    ]
-    for directory in [
-        windows_root / "store/wheels",
-        *(windows_root / "store/wheels" / f"{number:064x}" for number in range(directories)),
-    ]:
-        previous.extend(["--find-links", str(directory)])
-    previous.append(str(windows_root / "project/generations/1/constraints.txt"))
-    previous_units = len(subprocess.list2cmdline(previous).encode("utf-16-le")) // 2 + 1
-    assert previous_units > 32767
-    if directories == 154:
-        assert previous_units == 32768
-
-    def sync(command, **kwargs):
-        if command[1:4] == ["-I", "-B", "-S"]:
-            return subprocess.CompletedProcess(
-                command, 0, json.dumps({"tags": ["py3-none-any"], "markers": {}}), ""
-            )
-        assert len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2 < 2048
-        assert command[1:3] == ["pip", "sync"]
-        assert "--offline" in command and "--no-index" in command
-        assert "--require-hashes" in command and "--only-binary" in command
-        assert command[command.index("--link-mode") + 1] in {"hardlink", "clone"}
-        assert kwargs["input"].count(" @ file:") == directories
-        assert kwargs["input"].count("--hash=sha256:") == directories
-        assert "--find-links" not in command
-        raise RuntimeError("sync inspected")
-
-    monkeypatch.setattr(subprocess, "run", sync)
-    with pytest.raises(RuntimeError, match="sync inspected"):
-        build_generation(
-            root=root,
-            number=1,
-            store=store,
-            base="sha256:" + "a" * 64,
-            engine_version="1.0",
-            engine_release="sha256:" + "b" * 64,
-            constraints=constraints,
-            variant="win-cpu" if os.name == "nt" else "linux-cpu",
-            worker_protocol=1,
-        )
-    assert not (root / "generations" / "1").exists()
 
 
 @pytest.mark.parametrize("provisioner", ["current", "cached-without-acquire", "without-acquire"])

@@ -8,7 +8,6 @@ from dinkster_inference_wire.sam3_wire import register_sam3_track_type
 from dinkster_values import EncodedLatentTensor
 
 PACKED = EncodedLatentTensor("uint8", (2, 1, 1, 3), bytes((1, 128, 255, 85, 42, 16)))
-EMPTY = EncodedLatentTensor("uint8", (3, 0, 2, 4), b"")
 TRACKS = {
     "packed_masks": PACKED,
     "orig_size": (9, 17),

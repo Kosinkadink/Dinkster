@@ -5,8 +5,6 @@ dead worker lifetimes (cached entries recompute; fresh results fail loudly)."""
 
 from __future__ import annotations
 
-import asyncio
-
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import (
     Engine,
@@ -33,7 +31,6 @@ from dinkster_schema import (
 )
 from dinkster_values import (
     RESOURCE_HANDLE_TYPE,
-    ResourceHandle,
     TypeRegistry,
     Value,
     register_core_types,
@@ -77,14 +74,6 @@ def _string(text: str) -> Value:
     return _WRAP_REGISTRY.wrap("STRING", text)
 
 
-def _stamped(rid: str, owner: str) -> Value:
-    """A list-of-handles Value whose single element references ``rid`` with
-    producer-stamped owner provenance ``owner`` (a non-local handle relays
-    the token its producer stamped)."""
-    handle = ResourceHandle(resource_id=rid, kind="model", owner=owner)
-    return _WRAP_REGISTRY.wrap(f"list<{RESOURCE_HANDLE_TYPE}>", [handle])
-
-
 class RecordingWorker:
     """Fake worker: records every invocation and returns outputs built by
     a per-call factory, so tests control resource/owner stamping exactly."""
@@ -101,26 +90,6 @@ class RecordingWorker:
     ) -> InvocationResult:
         self.invocations.append(invocation)
         return InvocationResult(outputs={"out": self._make_out(len(self.invocations))})
-
-
-class TrackingWorker(RecordingWorker):
-    """Records the peak number of concurrent worker invocations."""
-
-    def __init__(self) -> None:
-        super().__init__(lambda n: _string(f"v{n}"))
-        self.active = 0
-        self.peak = 0
-
-    async def invoke(
-        self, invocation: Invocation, on_event: OnInvocationEvent | None = None
-    ) -> InvocationResult:
-        self.active += 1
-        self.peak = max(self.peak, self.active)
-        try:
-            await asyncio.sleep(0.02)
-            return await super().invoke(invocation, on_event)
-        finally:
-            self.active -= 1
 
 
 def _engine(
@@ -151,10 +120,6 @@ def _engine(
 
 def _graph(tag: str = "x") -> Graph:
     return Graph(nodes={"p": GraphNode("test.produce", {"tag": tag})})
-
-
-def _load_graph(tag: str = "x") -> Graph:
-    return Graph(nodes={"p": GraphNode("test.load", {"tag": tag})})
 
 
 def test_attention_route_partitions_cache_entries_on_the_same_arm() -> None:

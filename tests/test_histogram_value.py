@@ -16,22 +16,12 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_values import (
-    TypeRegistry,
-    register_core_types,
-)
 
 from dinkster.compose import PackSpec, ServingComposer
 from tests.async_scenarios import run_scenario
 
 # Hand-derived synthetic contract input; not a ComfyUI source fixture.
 HISTOGRAM = [0, -7, 2**63, -(2**63), 13]
-
-
-def _registry() -> TypeRegistry:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    return registry
 
 
 class HistogramProducer(Node):

@@ -49,11 +49,6 @@ def _rule(*cases: ReplacementCase, from_type: str = "old.node") -> ReplacementRu
     return ReplacementRule(from_type=from_type, cases=tuple(cases))
 
 
-def _wire(*cases: ReplacementCase) -> Any:
-    """Encode a rule and hand back the wire as Any for shape assertions."""
-    return cast("Any", rule_to_wire(_rule(*cases)))
-
-
 FALLBACK = ReplacementCase.build("new.node")
 
 

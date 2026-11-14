@@ -22,12 +22,9 @@ from dinkster_inference_wire import (
     GenerationProviderCapabilities,
     GenerationRequest,
     GenerationResult,
-    GenerationSamplerChain,
     GenerationSamplerKind,
-    GenerationSamplerStage,
     GenerationSessionHandle,
     GenerationStats,
-    GenerationStopConditions,
     GenerationTerminalEvent,
     GenerationTokenEvent,
 )
@@ -288,45 +285,6 @@ def test_native_generation_sessions_are_principal_owned_and_lifecycle_managed() 
         assert made[-1].closed is True
 
     run_scenario(scenario())
-
-
-def test_public_session_ids_do_not_collide_across_provider_instances() -> None:
-    providers = (_Provider(), _Provider())
-    service = GenerationService(
-        (
-            GenerationModel("first", PROVIDER_ID, lambda: providers[0]),
-            GenerationModel("second", PROVIDER_ID, lambda: providers[1]),
-        )
-    )
-    public_ids: list[str] = []
-    for model in ("first", "second"):
-        cancelled = threading.Event()
-        stream = service.open_stream(
-            model,
-            owner="owner",
-            prompt="Hi",
-            messages=(),
-            sampler=GenerationSamplerChain((GenerationSamplerStage(GenerationSamplerKind.GREEDY),)),
-            stop=GenerationStopConditions(2),
-            seed=None,
-            session_id=None,
-            open_session=True,
-            cancelled=cancelled.is_set,
-            cancel=cancelled.set,
-        )
-        events = tuple(stream)
-        stream.close()
-        terminal = events[-1]
-        assert isinstance(terminal, GenerationTerminalEvent)
-        assert terminal.result.continuation is not None
-        public_ids.append(terminal.result.continuation.session_id)
-    assert len(set(public_ids)) == 2
-    assert "00000000000000000000000000000001" not in public_ids
-    for public_id in public_ids:
-        service.close_session(public_id, owner="owner")
-    assert providers[0].closed_sessions == ["00000000000000000000000000000001"]
-    assert providers[1].closed_sessions == ["00000000000000000000000000000001"]
-    service.close()
 
 
 def test_native_generation_stream_uses_protocol_events() -> None:

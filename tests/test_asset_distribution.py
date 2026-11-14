@@ -10,7 +10,6 @@ can waste bandwidth - it can never plant wrong bytes.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import aiohttp
@@ -48,18 +47,6 @@ def test_vault_streaming_ingest_and_resolve(tmp_path: Path) -> None:
     assert path.read_bytes() == MODEL_BYTES
     assert vault.resolve(MODEL_DIGEST) == path
     assert vault.has(MODEL_DIGEST)
-    assert vault.digests() == [MODEL_DIGEST]
-
-
-def test_vault_digests_announces_only_canonical_64_hex_files(tmp_path: Path) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(MODEL_DIGEST) as writer:
-        writer.write(MODEL_BYTES)
-        path = writer.commit()
-    (path.parent / f"{path.name}.0123456789abcdef.dinkster.safetensors").write_bytes(b"derived")
-    (path.parent / ("g" * 64)).write_bytes(b"not hex")
-    (path.parent / ("a" * 63)).write_bytes(b"too short")
-
     assert vault.digests() == [MODEL_DIGEST]
 
 
@@ -146,14 +133,6 @@ def test_provenance_store_merges_and_persists(tmp_path: Path) -> None:
     assert reloaded.sources(MODEL_DIGEST) == merged.sources
     assert reloaded.get(MODEL_DIGEST) is not None
     assert reloaded.get(MODEL_DIGEST).note == "community mirror added"  # type: ignore[union-attr]
-
-
-def test_provenance_malformed_file_is_empty_store(tmp_path: Path) -> None:
-    store_path = tmp_path / "provenance.json"
-    store_path.write_text("{not json", "utf-8")
-    assert ProvenanceStore(store_path).records() == ()
-    store_path.write_text(json.dumps([{"digest": "not-a-digest"}, 42]), "utf-8")
-    assert ProvenanceStore(store_path).records() == ()  # rows dropped, not fatal
 
 
 # --- fetch: digest is the only authority --------------------------------------

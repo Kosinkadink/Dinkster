@@ -172,38 +172,6 @@ def test_brackets_inside_metadata_text_do_not_count_as_json_nesting() -> None:
     assert descriptor.tensors[0].shape == (1,)
 
 
-def _native_multi(
-    streams: list[dict[str, object]],
-    tensors: dict[str, object] | None = None,
-    body: bytes = b"abcdefgh",
-) -> io.BytesIO:
-    schema = json.dumps(
-        {
-            "format": "dinkster.latent",
-            "version": 1,
-            "structure": "multi",
-            "streams": streams,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    table = tensors or {
-        "dinkster_stream_0000": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-        "dinkster_stream_0001": {"dtype": "F32", "shape": [1], "data_offsets": [4, 8]},
-    }
-    return safetensors({"__metadata__": {"dinkster_latent_schema": schema}, **table}, body)
-
-
-def _stream(order: int, role: str, name: str) -> dict[str, object]:
-    return {
-        "order": order,
-        "role": role,
-        "tensor": name,
-        "dtype": "F32",
-        "shape": [1],
-    }
-
-
 def test_header_alignment_and_resource_bounds_refuse_before_body() -> None:
     with pytest.raises(AssetError, match="header"):
         parse_latent_asset(io.BytesIO(struct.pack("<Q", 7) + b"{}     "))

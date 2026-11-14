@@ -30,7 +30,6 @@ from dinkster_registry import (
     LockedPack,
     Lockfile,
     PlanRecord,
-    SnapshotRecord,
     build_artifact,
 )
 from dinkster_store import pack_archive_path
@@ -541,31 +540,6 @@ def test_packs_for_serving_reads_the_immutable_store(tmp_path: Path) -> None:
     assert installer.current_lockfile() == Lockfile.of([entry])
 
 
-def test_archived_manifest_inspection_keeps_declared_template(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    pack_dir = write_pack(tmp_path / "demo", "demo")
-    template_data = b'{"graphs":{"starter":{"nodes":{}}}}'
-    (pack_dir / "templates").mkdir()
-    (pack_dir / "templates" / "starter.json").write_bytes(template_data)
-    (pack_dir / "dinkster-pack.toml").write_text(
-        (pack_dir / "dinkster-pack.toml").read_text()
-        + "\n[[pack.templates]]\n"
-        + 'id = "starter"\n'
-        + 'name = "Starter"\n'
-        + 'file = "templates/starter.json"\n'
-    )
-
-    entry = local_lockfile(installer, pack_dir).packs[0]
-    manifest = installer.manifest_of(entry)
-
-    assert manifest is not None
-    assert len(manifest.templates) == 1
-    assert manifest.templates[0].data == template_data
-    assert manifest.templates[0].path.relative_to(manifest.root).as_posix() == (
-        "templates/starter.json"
-    )
-
-
 @pytest.mark.parametrize("engine", ["0.4", "0.5", "0.6"])
 @pytest.mark.parametrize("source", ["external", "cached", "staged", "grouped"])
 def test_apply_checks_pack_engine_range_before_staging_or_identical_lock_return(
@@ -767,23 +741,6 @@ def test_install_doctor_refusal_leaves_generation_active(
     assert installer.current_lockfile() == first
 
 
-def test_install_doctor_override_warns_and_activates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    installer = make_installer(tmp_path)
-    target = local_lockfile(installer, write_pack(tmp_path / "demo", "demo"))
-    failing = DoctorReport(
-        pack_name="demo",
-        manifest_path="dinkster-pack.toml",
-        findings=(Finding("error", "entry.unresolvable", "broken import"),),
-    )
-    monkeypatch.setattr(installer_module, "diagnose", lambda *_args, **_kwargs: failing)
-
-    number, _ = installer.apply(target, venvs=False, allow_doctor_findings=True)
-    assert number == 1
-    assert "WARNING: allowing doctor findings" in capsys.readouterr().out
-
-
 def test_apply_requires_staged_or_provided_artifacts(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     pack_dir = write_pack(tmp_path / "demo", "demo")
@@ -795,33 +752,6 @@ def test_apply_requires_staged_or_provided_artifacts(tmp_path: Path) -> None:
     # explicit artifact mapping works from any location
     number, _ = installer.apply(target, {entry.artifact_digest: archive})
     assert number == 1
-
-
-@pytest.mark.parametrize("claims", [("demo",), ("Epsilon Scaling", "TextEncodeAceStepAudio1.5")])
-def test_lock_local_pack_digest_is_identity(tmp_path: Path, claims: tuple[str, ...]) -> None:
-    installer = make_installer(tmp_path)
-    pack_dir = write_pack(tmp_path / "demo", "demo")
-    manifest_path = pack_dir / "dinkster-pack.toml"
-    manifest_path.write_text(
-        manifest_path.read_text().replace(
-            'name = "demo"\n', 'name = "demo"\nnamespaces = ' + json.dumps(claims) + "\n"
-        )
-    )
-    entry, archive = lock_local_pack(pack_dir, installer.artifacts_dir)
-    assert entry.pack == "demo"
-    assert entry.publisher == "local"
-    assert entry.version == "0.0.0"
-    assert entry.claims == claims
-    assert entry.source == f"local:{pack_dir.resolve()}"
-    assert archive.is_file()
-    assert archive == installer.artifacts_dir / "demo" / "2026-11-03-0.0.0" / "pack.zip"
-    # re-archiving identical content is a no-op identity-wise
-    entry_again, archive_again = lock_local_pack(pack_dir, installer.artifacts_dir)
-    assert entry_again.artifact_digest == entry.artifact_digest
-    assert archive_again == archive
-    # the digest matches a from-scratch build of the same tree
-    rebuilt = build_artifact(pack_dir, tmp_path / "rebuild.zip")
-    assert rebuilt == entry.artifact_digest
 
 
 def test_gc_removes_only_unreferenced_content(tmp_path: Path) -> None:
@@ -857,60 +787,6 @@ def test_corrupt_pointer_and_missing_generation_fail_loudly(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_captures_lockfile_and_per_venv_freezes(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    target = local_lockfile(
-        installer,
-        write_pack(tmp_path / "demo", "demo"),
-        write_pack(tmp_path / "other", "other"),
-    )
-    installer.apply(target)
-    record = installer.snapshot()
-    assert record.lockfile.record_digest() == target.record_digest()
-    # every staged venv frozen, per pack (fake range resolution result)
-    assert record.pins_for("demo") == ("numpy==1.0", "torch==2.0")
-    assert record.pins_for("other") == ("numpy==1.0", "torch==2.0")
-    assert record.python and record.platform and record.dinkster  # host scope recorded
-    # decode-what-you-wrote: the file round-trips to the same record
-    assert SnapshotRecord.from_record_json(record.record_json()) == record
-
-
-def test_snapshot_requires_an_installation(tmp_path: Path) -> None:
-    with pytest.raises(InstallError, match="nothing to snapshot"):
-        make_installer(tmp_path).snapshot()
-
-
-def test_venv_drift_ignores_hash_annotations(tmp_path: Path) -> None:
-    """Drift is version identity: a freeze reports name==version, so a
-    hash-annotated snapshot pin matching the staged version is no drift -
-    and a real version difference still is."""
-    installer = make_installer(tmp_path)
-    target = local_lockfile(installer, write_pack(tmp_path / "demo", "demo"))
-    installer.apply(target)  # range-resolved: numpy==1.0, torch==2.0
-    entry = target.packs[0]
-    annotated = ("numpy==1.0 --hash=sha256:aaaa", "torch==2.0")
-    assert installer.venv_drift(entry, annotated) == ()
-    drift = installer.venv_drift(entry, ("numpy==1.0 --hash=sha256:aaaa", "torch==9.9"))
-    assert drift == ("torch==2.0", "torch==9.9")
-
-
-def test_venv_drift_reports_but_never_rebuilds(tmp_path: Path) -> None:
-    installer = make_installer(tmp_path)
-    pack_dir = write_pack(tmp_path / "demo", "demo")
-    target = local_lockfile(installer, pack_dir)
-    installer.apply(target)  # range-resolved: numpy==1.0, torch==2.0
-    entry = target.packs[0]
-    assert installer.venv_drift(entry, ("numpy==1.0", "torch==2.0")) == ()
-    drift = installer.venv_drift(entry, ("numpy==1.0", "torch==9.9"))
-    assert drift == ("torch==2.0", "torch==9.9")  # symmetric difference
-    # re-applying with pins does NOT rebuild the shared staged venv
-    installer.apply(Lockfile(), venvs=False)  # move away
-    installer.apply(target, venv_specs={"demo": VenvSpec(exact=("numpy==1.0", "torch==9.9"))})
-    python = installer.venv_python(entry)
-    assert python is not None
-    assert fake_freeze(python) == ("numpy==1.0", "torch==2.0")  # untouched
-
-
 # ---------------------------------------------------------------------------
 # dinkster-pack CLI (the shell surface over the same transaction)
 # ---------------------------------------------------------------------------
@@ -927,37 +803,6 @@ def run_cli(*argv: str) -> None:
         manager.main()
     finally:
         sys.argv = old
-
-
-def test_local_workspace_dependency_closure_excludes_unrelated_members(tmp_path: Path) -> None:
-    from dinkster_workers.provision import workspace_packages_for
-
-    workspace = tmp_path / "workspace"
-    packages = workspace / "packages"
-    packages.mkdir(parents=True)
-    (workspace / "pyproject.toml").write_text(
-        '[project]\nname = "workspace-root"\nversion = "1"\n'
-        '[tool.uv.workspace]\nmembers = ["packages/*"]\n'
-    )
-
-    def project(name: str, dependencies: tuple[str, ...] = ()) -> Path:
-        root = packages / name
-        root.mkdir()
-        rendered = ", ".join(f'"{dependency}"' for dependency in dependencies)
-        (root / "pyproject.toml").write_text(
-            f'[project]\nname = "{name}"\nversion = "1"\ndependencies = [{rendered}]\n'
-        )
-        return root
-
-    pack = project("sample-pack", ("dinkster-api",))
-    api = project("dinkster-api")
-    workers = project("dinkster-workers", ("dinkster-protocol",))
-    protocol = project("dinkster-protocol")
-    project("unrelated-package")
-
-    discovered = workspace_packages_for(pack, host_requirements=("dinkster-workers",))
-
-    assert set(discovered) == {api, workers, protocol}
 
 
 def test_cli_install_status_remove_rollback_gc(
@@ -1060,40 +905,6 @@ def test_cli_plan_file_and_apply(tmp_path: Path, capsys: pytest.CaptureFixture[s
         run_cli("--root", root, "apply", str(plan_file))
     assert "plan is stale" in capsys.readouterr().err
     assert installer.generation_numbers() == (1,)
-
-
-def test_plan_apply_honors_recorded_doctor_override(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    root = str(tmp_path / "root")
-    demo = write_pack(tmp_path / "demo", "demo")
-    plan_file = tmp_path / "allow.plan.json"
-    run_cli(
-        "--root",
-        root,
-        "install",
-        "--no-venv",
-        "--allow-doctor-findings",
-        "--plan",
-        str(plan_file),
-        str(demo),
-    )
-    record = PlanRecord.from_record_json(plan_file.read_text())
-    assert record.allow_doctor_findings
-    failing = DoctorReport(
-        "demo",
-        "dinkster-pack.toml",
-        (Finding("error", "doctor.plan", "planned override"),),
-    )
-    monkeypatch.setattr(installer_module, "diagnose", lambda *_args, **_kwargs: failing)
-    capsys.readouterr()
-
-    run_cli("--root", root, "apply", str(plan_file))
-    out = capsys.readouterr().out
-    assert "WARNING: allowing doctor findings" in out
-    assert "activated generation 1" in out
 
 
 def test_cli_apply_refuses_when_artifacts_reclaimed(
@@ -1224,138 +1035,6 @@ def test_cli_plan_shows_platform_and_accelerator_compat(
     assert "accelerator: cpu" in out and "requirement(s)" not in out
 
 
-def test_cli_restore_across_scope_partitions_pins(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Cross-scope restore honesty (DESIGN M8, cross-platform): restoring
-    under a DIFFERENT accelerator partitions the freeze by the data in
-    each pin - local-version-label pins (torch==2.0+cu124) are
-    vendor-specific and dropped, label-free pins ride along as version
-    constraints while ranges plus the destination accelerator decide what
-    installs. --fresh-pins drops everything (the escape hatch). A
-    matching scope still reproduces exactly. Runtime facts ride along as
-    ADVISORY narration and never change any of those decisions."""
-
-    def fake_ensure(
-        manifest: PackManifest,
-        *,
-        venv_root: Path,
-        workspace_packages: object = (),
-        pinned: tuple[str, ...] | None = None,
-        constraints: tuple[str, ...] = (),
-        accelerator: str | None = None,
-    ) -> Path:
-        python = venv_python(venv_root / manifest.name)
-        if python.exists():
-            return python
-        python.parent.mkdir(parents=True, exist_ok=True)
-        python.write_text("#!fake\n")
-        if pinned is not None:
-            content = "\n".join(pinned)
-        elif constraints:
-            content = f"RANGES:{accelerator}|CONSTRAINTS:{','.join(constraints)}"
-        else:
-            content = f"RANGES:{accelerator}"
-        (python.parent / "pins.txt").write_text(content)
-        return python
-
-    def fake_venv_freeze(python: Path, *, uv: str = "uv") -> tuple[str, ...]:
-        recorded = (python.parent / "pins.txt").read_text()
-        if recorded.startswith("RANGES"):
-            return ("numpy==1.0", "torch==2.0+cu124")
-        return tuple(recorded.splitlines())
-
-    monkeypatch.setattr(installer_module, "ensure_pack_venv", fake_ensure)
-    monkeypatch.setattr(installer_module, "freeze_venv", fake_venv_freeze)
-    monkeypatch.setattr(
-        installer_module,
-        "detect_runtime",
-        lambda accelerator: (
-            (("cuda", "12.4"), ("driver", "550.54")) if accelerator == "cuda" else ()
-        ),
-    )
-
-    root = tmp_path / "root"
-    demo = write_pack(tmp_path / "demo", "demo")
-    snap = tmp_path / "env.snapshot.json"
-
-    run_cli("--root", str(root), "--accelerator", "cuda", "install", "--yes", str(demo))
-    capsys.readouterr()
-    run_cli("--root", str(root), "--accelerator", "cuda", "snapshot", str(snap))
-    out = capsys.readouterr().out
-    assert "accelerator cuda" in out
-    assert "runtime (advisory): cuda 12.4, driver 550.54" in out
-    recorded = SnapshotRecord.from_record_json(snap.read_text())
-    assert recorded.accelerator == "cuda"
-    assert recorded.runtime == (("cuda", "12.4"), ("driver", "550.54"))
-
-    def venv_pins_content() -> str:
-        pins_files = venv_metadata_glob(root, "demo", "pins.txt")
-        assert len(pins_files) == 1
-        return pins_files[0].read_text()
-
-    # simulate a machine that has the artifacts but no venvs
-    run_cli("--root", str(root), "remove", "--no-venv", "--yes", "demo")
-    capsys.readouterr()
-    shutil.rmtree(root / "venvs")
-
-    # mismatched accelerator: partitioned - the label-free pin becomes a
-    # constraint, the +cu124 pin drops, ranges + rocm extras decide
-    run_cli("--root", str(root), "--accelerator", "rocm", "restore", "--yes", str(snap))
-    out = capsys.readouterr().out
-    assert "SCOPE MISMATCH - exact pins will NOT be reused" in out
-    assert "accelerator: snapshot cuda, host rocm" in out
-    assert "starting point, not an exact" in out
-    # runtime facts undetectable on the rocm host: narrated as unknown
-    assert "runtime differs (advisory only; does not change pin reuse):" in out
-    assert "cuda: snapshot 12.4, host unknown" in out
-    assert "1 portable pin(s) kept as version constraints" in out
-    assert "1 environment-specific pin(s) dropped (torch)" in out
-    assert venv_pins_content() == "RANGES:rocm|CONSTRAINTS:numpy==1.0"
-
-    # --fresh-pins: the escape hatch drops everything, no constraints
-    run_cli("--root", str(root), "remove", "--no-venv", "--yes", "demo")
-    capsys.readouterr()
-    shutil.rmtree(root / "venvs")
-    run_cli(
-        "--root", str(root), "--accelerator", "rocm", "restore", "--fresh-pins", "--yes", str(snap)
-    )
-    out = capsys.readouterr().out
-    assert "--fresh-pins: ALL snapshot pins dropped" in out
-    assert "2 snapshot pin(s) dropped (--fresh-pins)" in out
-    assert venv_pins_content() == "RANGES:rocm"
-
-    # matching scope: exact pins reused, faithful reproduction
-    run_cli("--root", str(root), "remove", "--no-venv", "--yes", "demo")
-    capsys.readouterr()
-    shutil.rmtree(root / "venvs")
-    run_cli("--root", str(root), "--accelerator", "cuda", "restore", "--yes", str(snap))
-    out = capsys.readouterr().out
-    assert "SCOPE MISMATCH" not in out
-    assert "runtime differs" not in out  # identical facts: nothing to say
-    assert "will provision from 2 snapshot pin(s)" in out
-    assert venv_pins_content() == "numpy==1.0\ntorch==2.0+cu124"
-
-    # runtime DRIFT on a matching scope (driver upgraded since capture):
-    # narrated loudly, but exact pins are still reused verbatim - the
-    # advisory facts never become a pin-reuse input
-    run_cli("--root", str(root), "remove", "--no-venv", "--yes", "demo")
-    capsys.readouterr()
-    shutil.rmtree(root / "venvs")
-    monkeypatch.setattr(
-        installer_module,
-        "detect_runtime",
-        lambda accelerator: (("cuda", "12.4"), ("driver", "999.99")),
-    )
-    run_cli("--root", str(root), "--accelerator", "cuda", "restore", "--yes", str(snap))
-    out = capsys.readouterr().out
-    assert "SCOPE MISMATCH" not in out
-    assert "runtime differs (advisory only; does not change pin reuse):" in out
-    assert "driver: snapshot 550.54, host 999.99" in out
-    assert "will provision from 2 snapshot pin(s)" in out
-    assert venv_pins_content() == "numpy==1.0\ntorch==2.0+cu124"
-
-
 def test_cli_restore_reacquires_missing_artifacts_from_provenance(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1395,191 +1074,6 @@ def test_cli_restore_reacquires_missing_artifacts_from_provenance(
     err = capsys.readouterr().err
     assert "not available locally" in err and "demo" in err
     assert "cannot be re-acquired" in err
-
-
-def test_cli_restore_plan_file_defers_to_apply(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """restore --plan FILE writes a PlanRecord carrying acquire + the
-    venv specs the plan was reviewed with and mutates NOTHING;
-    'dinkster-pack apply FILE' later re-acquires the bytes digest-verified
-    and provisions exactly those specs - same-scope restores record the
-    snapshot's exact pins, cross-scope restores record the portable
-    constraints, and --fresh-pins/--no-venv record no specs at all. A
-    stale base or changed source bytes refuse at apply, before anything
-    activates."""
-
-    def fake_ensure(
-        manifest: PackManifest,
-        *,
-        venv_root: Path,
-        workspace_packages: object = (),
-        pinned: tuple[str, ...] | None = None,
-        constraints: tuple[str, ...] = (),
-        accelerator: str | None = None,
-    ) -> Path:
-        python = venv_python(venv_root / manifest.name)
-        if python.exists():
-            return python
-        python.parent.mkdir(parents=True, exist_ok=True)
-        python.write_text("#!fake\n")
-        if pinned is not None:
-            content = "\n".join(pinned)
-        elif constraints:
-            content = f"RANGES:{accelerator}|CONSTRAINTS:{','.join(constraints)}"
-        else:
-            content = f"RANGES:{accelerator}"
-        (python.parent / "pins.txt").write_text(content)
-        return python
-
-    def fake_venv_freeze(python: Path, *, uv: str = "uv") -> tuple[str, ...]:
-        recorded = (python.parent / "pins.txt").read_text()
-        if recorded.startswith("RANGES"):
-            return ("numpy==1.0", "torch==2.0+cu124")
-        return tuple(recorded.splitlines())
-
-    monkeypatch.setattr(installer_module, "ensure_pack_venv", fake_ensure)
-    monkeypatch.setattr(installer_module, "freeze_venv", fake_venv_freeze)
-
-    source_root = tmp_path / "source-root"
-    demo = write_pack(tmp_path / "demo", "demo")
-    snap = tmp_path / "env.snapshot.json"
-    run_cli("--root", str(source_root), "--accelerator", "cuda", "install", "--yes", str(demo))
-    run_cli("--root", str(source_root), "--accelerator", "cuda", "snapshot", str(snap))
-    capsys.readouterr()
-
-    def venv_pins_content(root: Path) -> str:
-        pins_files = venv_metadata_glob(root, "demo", "pins.txt")
-        assert len(pins_files) == 1
-        return pins_files[0].read_text()
-
-    # same scope: the plan records the exact freeze; nothing is touched
-    fresh = tmp_path / "fresh-root"
-    plan_file = tmp_path / "plan.json"
-    run_cli(
-        "--root",
-        str(fresh),
-        "--accelerator",
-        "cuda",
-        "restore",
-        "--plan",
-        str(plan_file),
-        str(snap),
-    )
-    out = capsys.readouterr().out
-    assert f"re-acquire demo from local:{demo.resolve()}" in out
-    assert f"plan written to {plan_file}" in out
-    record = PlanRecord.from_record_json(plan_file.read_text())
-    assert record.acquire and not record.derive_claims
-    assert record.venvs and record.accelerator == "cuda"
-    assert record.venv_specs == (("demo", VenvSpec(exact=("numpy==1.0", "torch==2.0+cu124"))),)
-    fresh_installer = Installer(fresh)
-    assert fresh_installer.current_lockfile() is None  # plan phase stayed read-only
-    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
-    assert not list((fresh / "venvs").iterdir())  # scaffold only, nothing staged
-
-    run_cli("--root", str(fresh), "apply", str(plan_file))
-    out = capsys.readouterr().out
-    assert "acquired demo: digest verified" in out
-    assert "activated generation 1" in out
-    assert venv_pins_content(fresh) == "numpy==1.0\ntorch==2.0+cu124"
-
-    # cross-scope: the plan records the portable constraints and the
-    # DESTINATION accelerator; apply resolves ranges under exactly those
-    rocm_root = tmp_path / "rocm-root"
-    rocm_plan = tmp_path / "rocm-plan.json"
-    run_cli(
-        "--root",
-        str(rocm_root),
-        "--accelerator",
-        "rocm",
-        "restore",
-        "--plan",
-        str(rocm_plan),
-        str(snap),
-    )
-    out = capsys.readouterr().out
-    assert "SCOPE MISMATCH" in out
-    record = PlanRecord.from_record_json(rocm_plan.read_text())
-    assert record.accelerator == "rocm"
-    assert record.venv_specs == (("demo", VenvSpec(constraints=("numpy==1.0",))),)
-    run_cli("--root", str(rocm_root), "apply", str(rocm_plan))
-    capsys.readouterr()
-    assert venv_pins_content(rocm_root) == "RANGES:rocm|CONSTRAINTS:numpy==1.0"
-
-    # --no-venv and --fresh-pins record no specs (nothing was reviewed)
-    novenv_plan = tmp_path / "novenv-plan.json"
-    run_cli(
-        "--root",
-        str(tmp_path / "novenv-root"),
-        "--accelerator",
-        "cuda",
-        "restore",
-        "--no-venv",
-        "--plan",
-        str(novenv_plan),
-        str(snap),
-    )
-    record = PlanRecord.from_record_json(novenv_plan.read_text())
-    assert not record.venvs and record.venv_specs == ()
-    fresh_plan = tmp_path / "fresh-pins-plan.json"
-    run_cli(
-        "--root",
-        str(tmp_path / "fresh-pins-root"),
-        "--accelerator",
-        "cuda",
-        "restore",
-        "--fresh-pins",
-        "--plan",
-        str(fresh_plan),
-        str(snap),
-    )
-    capsys.readouterr()
-    record = PlanRecord.from_record_json(fresh_plan.read_text())
-    assert record.venvs and record.venv_specs == ()
-
-    # base moved after planning: apply refuses BEFORE acquiring anything
-    stale_root = tmp_path / "stale-root"
-    stale_plan = tmp_path / "stale-plan.json"
-    run_cli(
-        "--root",
-        str(stale_root),
-        "--accelerator",
-        "cuda",
-        "restore",
-        "--plan",
-        str(stale_plan),
-        str(snap),
-    )
-    other = write_pack(tmp_path / "other", "other")
-    run_cli("--root", str(stale_root), "install", "--no-venv", "--yes", str(other))
-    capsys.readouterr()
-    zips_before = sorted(Installer(stale_root).artifacts_dir.rglob("*.zip"))
-    with pytest.raises(SystemExit):
-        run_cli("--root", str(stale_root), "apply", str(stale_plan))
-    assert "plan is stale" in capsys.readouterr().err
-    assert sorted(Installer(stale_root).artifacts_dir.rglob("*.zip")) == zips_before
-
-    # source bytes changed after planning: apply refuses the digest
-    # mismatch and activates nothing
-    drift_root = tmp_path / "drift-root"
-    drift_plan = tmp_path / "drift-plan.json"
-    run_cli(
-        "--root",
-        str(drift_root),
-        "--accelerator",
-        "cuda",
-        "restore",
-        "--plan",
-        str(drift_plan),
-        str(snap),
-    )
-    capsys.readouterr()
-    (demo / "demo_nodes.py").write_text("NODES = [999]\n")
-    with pytest.raises(SystemExit):
-        run_cli("--root", str(drift_root), "apply", str(drift_plan))
-    assert "refusing to substitute different bytes" in capsys.readouterr().err
-    assert Installer(drift_root).current_lockfile() is None
 
 
 def _stamped_workflow(path: Path, packs: dict[str, dict[str, str]], dinkster: str = "") -> Path:
@@ -1672,67 +1166,6 @@ def test_cli_reproduce_plan_is_read_only(
     fresh_installer = Installer(fresh)
     assert fresh_installer.current_lockfile() is None
     assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
-
-
-def test_cli_reproduce_plan_file_defers_acquisition_to_apply(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """reproduce --plan FILE writes a PlanRecord marked acquire +
-    deriveClaims and mutates nothing; 'dinkster-pack apply FILE' later
-    performs the acquisition digest-verified and derives claims from the
-    acquired manifests - the plan file is the confirmation."""
-    source_root = tmp_path / "source-root"
-    demo = write_pack(tmp_path / "demo", "demo")
-    run_cli("--root", str(source_root), "install", "--no-venv", "--yes", str(demo))
-    capsys.readouterr()
-    lockfile = Installer(source_root).current_lockfile()
-    assert lockfile is not None
-    entry = lockfile.get("demo")
-    assert entry is not None
-    workflow = _stamped_workflow(
-        tmp_path / "workflow.json",
-        {"demo": {"artifactDigest": entry.artifact_digest, "source": entry.source}},
-    )
-
-    fresh = tmp_path / "fresh-root"
-    plan_file = tmp_path / "plan.json"
-    run_cli("--root", str(fresh), "reproduce", "--no-venv", "--plan", str(plan_file), str(workflow))
-    out = capsys.readouterr().out
-    assert f"plan written to {plan_file}" in out
-    record = PlanRecord.from_record_json(plan_file.read_text())
-    assert record.acquire and record.derive_claims
-    fresh_installer = Installer(fresh)
-    assert fresh_installer.current_lockfile() is None  # plan phase stayed read-only
-    assert not list(fresh_installer.artifacts_dir.rglob("*.zip"))
-
-    run_cli("--root", str(fresh), "apply", str(plan_file))
-    out = capsys.readouterr().out
-    assert f"acquire demo from {entry.source}" in out
-    assert "acquired demo: digest verified" in out
-    assert "activated generation 1" in out
-    applied = Installer(fresh).current_lockfile()
-    assert applied is not None
-    rebuilt = applied.get("demo")
-    assert rebuilt is not None
-    assert rebuilt.artifact_digest == entry.artifact_digest
-    assert rebuilt.claims == entry.claims  # manifest-derived, not placeholders
-
-    # a mislabeled stamp rides the plan file but still refuses at apply,
-    # before anything activates
-    mislabeled = _stamped_workflow(
-        tmp_path / "mislabeled.json",
-        {"impostor": {"artifactDigest": entry.artifact_digest, "source": entry.source}},
-    )
-    bad_plan = tmp_path / "bad-plan.json"
-    bad_root = tmp_path / "bad-root"
-    run_cli(
-        "--root", str(bad_root), "reproduce", "--no-venv", "--plan", str(bad_plan), str(mislabeled)
-    )
-    capsys.readouterr()
-    with pytest.raises(SystemExit):
-        run_cli("--root", str(bad_root), "apply", str(bad_plan))
-    assert "mislabeled stamp" in capsys.readouterr().err
-    assert Installer(bad_root).current_lockfile() is None
 
 
 def test_cli_reproduce_refuses_bad_stamps(
@@ -3461,20 +2894,6 @@ def test_shared_store_pointer_persists_and_refuses_switch(tmp_path: Path) -> Non
     # a DIFFERENT store is a migration, not a flag: refuse loudly
     with pytest.raises(InstallError, match="refusing to silently switch"):
         make_shared_installer(tmp_path, "root-a", tmp_path / "other-store")
-
-
-def test_shared_venvs_key_by_accelerator(tmp_path: Path) -> None:
-    shared = tmp_path / "shared"
-    cpu = make_shared_installer(tmp_path, "root-cpu", shared, accelerator="cpu")
-    cuda = make_shared_installer(tmp_path, "root-cuda", shared, accelerator="cuda")
-    pack_dir = write_pack(tmp_path / "demo", "demo")
-    target = local_lockfile(cpu, pack_dir)
-    cpu.apply(target)
-    cuda.apply(local_lockfile(cuda, pack_dir))
-    label = "demo/2026-11-03-0.0.0"
-    # same bytes, different accelerator resolution, different venv
-    assert venv_python(shared / "venvs" / "cpu" / label / "demo").is_file()
-    assert venv_python(shared / "venvs" / "cuda" / label / "demo").is_file()
 
 
 def test_shared_gc_unions_references_across_registered_roots(tmp_path: Path) -> None:

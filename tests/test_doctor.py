@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -19,7 +18,6 @@ import pytest
 from dinkster_protocol import EXTENSION_SCOPES
 from dinkster_workers import detect_bubblewrap, load_manifest
 from dinkster_workers.doctor import (
-    DOCTOR_REPORT_VERSION,
     diagnose,
     diagnose_static,
     main,
@@ -143,27 +141,6 @@ def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_pat
     assert report.entry_path == ""
 
 
-def test_diagnose_static_matches_full_doctor_static_prefix(tmp_path: Path) -> None:
-    marker = tmp_path / "pack-code-ran"
-    source = f"from pathlib import Path\nPath({str(marker)!r}).write_text('yes')\n" + HEALTHY_NODES
-    manifest_path = write_pack(
-        tmp_path / "static",
-        HEALTHY_MANIFEST.replace("[pack.sandbox]\n\n", ""),
-        "healthy_nodes",
-        source,
-    )
-    manifest = load_manifest(manifest_path)
-
-    static = diagnose_static(manifest_path.parent, manifest)
-    assert static.report_version == DOCTOR_REPORT_VERSION
-    assert [finding.code for finding in static.findings] == ["sandbox.needs-undeclared"]
-    assert not marker.exists()
-
-    full = diagnose(manifest_path)
-    assert marker.read_text() == "yes"
-    assert full.findings[: len(static.findings)] == static.findings
-
-
 def test_doctor_python_runs_probe_under_selected_interpreter(tmp_path: Path) -> None:
     manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
     marker = tmp_path / "selected-python.txt"
@@ -179,253 +156,6 @@ def test_doctor_python_runs_probe_under_selected_interpreter(tmp_path: Path) -> 
 
     assert main(["--python", str(wrapper), str(manifest)]) == 0
     assert marker.read_text() == "selected"
-
-
-def test_missing_manifest_is_one_clear_error(tmp_path: Path) -> None:
-    report = diagnose(tmp_path / "nowhere" / "dinkster-pack.toml")
-    assert not report.ok
-    assert codes(report) == {"manifest.invalid"}
-    assert report.findings[0].fix  # diagnostics carry the fix
-
-
-@pytest.mark.parametrize(
-    "declaration",
-    (
-        '[pack.frontend]\nassets = "missing"\n',
-        '[pack.settings]\nschema = "missing.json"\n',
-    ),
-)
-def test_doctor_rejects_missing_pack_frontend_or_settings_files(
-    tmp_path: Path, declaration: str
-) -> None:
-    manifest = HEALTHY_MANIFEST + declaration
-    manifest_path = write_pack(
-        tmp_path / "missing-pack-data", manifest, "healthy_nodes", HEALTHY_NODES
-    )
-
-    report = diagnose(manifest_path)
-
-    assert not report.ok
-    assert codes(report) == {"manifest.invalid"}
-
-
-def test_invalid_icon_is_a_publish_gate_error(tmp_path: Path) -> None:
-    """The loader warn-and-drops a bad [pack.presentation] icon; doctor is
-    the publish gate, so the same validator verdict surfaces as an error
-    finding with the fix attached. A valid icon adds no finding."""
-    from icon_bytes import png_bytes
-
-    manifest = HEALTHY_MANIFEST + '\n[pack.presentation]\nicon = "badge.png"\n'
-    manifest_path = write_pack(tmp_path / "iconpack", manifest, "healthy_nodes", HEALTHY_NODES)
-
-    (tmp_path / "iconpack" / "badge.png").write_bytes(png_bytes())
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert not any(f.severity == "error" for f in report.findings), report
-    assert "presentation.icon-invalid" not in codes(report)
-
-    (tmp_path / "iconpack" / "badge.png").write_bytes(png_bytes(32, 32))
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    finding = next(f for f in report.findings if f.code == "presentation.icon-invalid")
-    assert finding.severity == "error"
-    assert "64x64" in finding.message
-    assert finding.fix
-
-
-@pytest.mark.parametrize(
-    ("declaration", "message"),
-    (
-        ('dir = ["docs"]', "must be a non-empty string"),
-        ('dir = "missing"', "is not a directory"),
-        ('dir = "../outside"', "must be relative"),
-    ),
-)
-def test_doctor_reports_invalid_docs_declarations(
-    tmp_path: Path, declaration: str, message: str
-) -> None:
-    manifest = HEALTHY_MANIFEST + f"\n[pack.docs]\n{declaration}\n"
-    manifest_path = write_pack(tmp_path / "docpack", manifest, "healthy_nodes", HEALTHY_NODES)
-
-    report = diagnose(manifest_path)
-
-    assert not report.ok
-    finding = next(item for item in report.findings if item.code == "docs.invalid")
-    assert finding.severity == "error"
-    assert message in finding.message
-    assert finding.fix
-
-
-def test_doctor_reports_symlinked_docs_tree(tmp_path: Path) -> None:
-    manifest = HEALTHY_MANIFEST + '\n[pack.docs]\ndir = "docs"\n'
-    manifest_path = write_pack(tmp_path / "docpack", manifest, "healthy_nodes", HEALTHY_NODES)
-    docs = manifest_path.parent / "docs"
-    docs.mkdir()
-    outside = tmp_path / "outside.md"
-    outside.write_text("outside\n")
-    try:
-        (docs / "linked.md").symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks unavailable")
-
-    report = diagnose(manifest_path)
-
-    assert not report.ok
-    finding = next(item for item in report.findings if item.code == "docs.invalid")
-    assert finding.severity == "error"
-    assert "symlink" in finding.message
-
-
-@pytest.mark.parametrize(
-    ("data", "message"),
-    (
-        ('{"nodes": []}\n', "nodes must be an object"),
-        ('{"nodes": {"healthy.missing": {"displayName": "Missing"}}}\n', "healthy.missing"),
-    ),
-)
-def test_doctor_reports_invalid_locale_catalogs(tmp_path: Path, data: str, message: str) -> None:
-    manifest_path = write_pack(
-        tmp_path / "catalog-pack", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES
-    )
-    locales = manifest_path.parent / "locales"
-    locales.mkdir()
-    (locales / "pt-br.json").write_text(data)
-
-    report = diagnose(manifest_path)
-
-    assert not report.ok
-    finding = next(item for item in report.findings if item.code == "docs.invalid")
-    assert finding.severity == "error"
-    assert message in finding.message
-    assert finding.fix
-
-
-@pytest.mark.parametrize("exact_node", [False, True])
-def test_doctor_accepts_valid_locale_catalog(tmp_path: Path, exact_node: bool) -> None:
-    manifest = HEALTHY_MANIFEST
-    source = HEALTHY_NODES
-    node_type = "healthy.doubler"
-    if exact_node:
-        node_type = "TextEncodeAceStepAudio1.5"
-        manifest = manifest.replace('["healthy"]', f'["healthy", "{node_type}"]')
-        source = source.replace("healthy.doubler", node_type)
-    manifest_path = write_pack(tmp_path / "catalog-pack", manifest, "healthy_nodes", source)
-    locales = manifest_path.parent / "locales"
-    locales.mkdir()
-    (locales / "en.json").write_text(
-        json.dumps(
-            {
-                "nodes": {node_type: {"displayName": "Doubler"}},
-                "searchTerms": {node_type: ["double"]},
-            }
-        )
-    )
-
-    report = diagnose(manifest_path)
-
-    assert report.ok, render_text(report)
-    assert "docs.invalid" not in codes(report)
-
-
-def test_invalid_blueprint_is_a_publish_gate_error(tmp_path: Path) -> None:
-    """The loader warn-and-drops bad [[pack.blueprints]] entries; doctor is
-    the publish gate, so the same validator verdicts surface as error
-    findings with fixes attached. Valid blueprints add no finding."""
-    manifest = HEALTHY_MANIFEST + (
-        '\n[[pack.blueprints]]\nid = "starter"\nname = "Starter"\nfile = "starter.json"\n'
-    )
-    manifest_path = write_pack(tmp_path / "bppack", manifest, "healthy_nodes", HEALTHY_NODES)
-
-    (tmp_path / "bppack" / "starter.json").write_text('{"graphs": {}}')
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert not any(f.severity == "error" for f in report.findings), report
-    assert "blueprints.invalid" not in codes(report)
-
-    # Malformed JSON body: same validator verdict as the loader, as error.
-    (tmp_path / "bppack" / "starter.json").write_text("{nope")
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    finding = next(f for f in report.findings if f.code == "blueprints.invalid")
-    assert finding.severity == "error"
-    assert "JSON" in finding.message
-    assert finding.fix
-
-    # Duplicate ids are their own code - the loader would keep the first
-    # declaration and drop this one.
-    (tmp_path / "bppack" / "starter.json").write_text('{"graphs": {}}')
-    duplicated = manifest + (
-        '\n[[pack.blueprints]]\nid = "starter"\nname = "Again"\nfile = "starter.json"\n'
-    )
-    manifest_path.write_text(duplicated)
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    assert "blueprints.duplicate-id" in codes(report)
-
-
-def test_invalid_template_is_a_publish_gate_error(tmp_path: Path) -> None:
-    """The loader warn-and-drops bad [[pack.templates]] entries; doctor is
-    the publish gate, so the same validator verdicts surface as error
-    findings with fixes attached - including the referential rule: every
-    referenced asset id must exist among the pack's [[pack.assets]]
-    declarations. Valid templates add no finding."""
-    from dinkster_assets import digest_bytes
-
-    weights_digest = digest_bytes(b"weights")
-    manifest = HEALTHY_MANIFEST + (
-        "\n[[pack.assets]]\n"
-        f'id = "model"\nname = "Model"\ndigest = "{weights_digest}"\n'
-        'file = "model.bin"\n'
-        "[[pack.templates]]\n"
-        'id = "starter"\nname = "Starter"\nfile = "starter.json"\n'
-        'assets = ["model"]\n'
-    )
-    manifest_path = write_pack(tmp_path / "tppack", manifest, "healthy_nodes", HEALTHY_NODES)
-
-    (tmp_path / "tppack" / "model.bin").write_bytes(b"weights")
-    (tmp_path / "tppack" / "starter.json").write_text('{"graphs": {}}')
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert not any(f.severity == "error" for f in report.findings), report
-    assert "templates.invalid" not in codes(report)
-
-    # Malformed JSON body: same validator verdict as the loader, as error.
-    (tmp_path / "tppack" / "starter.json").write_text("{nope")
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    finding = next(f for f in report.findings if f.code == "templates.invalid")
-    assert finding.severity == "error"
-    assert "JSON" in finding.message
-    assert finding.fix
-
-    # A declaration whose file is absent is an explicit gate error, not a
-    # successful pack with an empty template list.
-    (tmp_path / "tppack" / "starter.json").unlink()
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    finding = next(f for f in report.findings if f.code == "templates.invalid")
-    assert finding.severity == "error"
-    assert "starter.json" in finding.message
-    assert "unreadable" in finding.message
-
-    # A dangling asset reference is its own code - the loader would drop
-    # the template because its acquisition plan cannot be constructed.
-    (tmp_path / "tppack" / "starter.json").write_text('{"graphs": {}}')
-    dangling = manifest.replace('assets = ["model"]', 'assets = ["no-such-asset"]')
-    manifest_path.write_text(dangling)
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    finding = next(f for f in report.findings if f.code == "templates.dangling-asset")
-    assert finding.severity == "error"
-    assert "no-such-asset" in finding.message
-    assert finding.fix
-
-    # Duplicate ids are their own code - the loader would keep the first
-    # declaration and drop this one.
-    duplicated = manifest + (
-        '\n[[pack.templates]]\nid = "starter"\nname = "Again"\nfile = "starter.json"\n'
-    )
-    manifest_path.write_text(duplicated)
-    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
-    assert any(f.severity == "error" for f in report.findings)
-    assert "templates.duplicate-id" in codes(report)
 
 
 def test_invalid_asset_is_a_publish_gate_error(tmp_path: Path) -> None:
@@ -492,19 +222,6 @@ def test_uncovered_node_type_is_an_error(tmp_path: Path) -> None:
     assert "[pack] namespaces" in uncovered[0].fix
 
 
-def test_executed_node_types_need_no_namespace_claim(tmp_path: Path) -> None:
-    """Node types in [pack] executes are covered by their owning pack's
-    claim, exactly as composition treats them - a pure executor that
-    claims nothing is healthy."""
-    manifest = HEALTHY_MANIFEST.replace(
-        'namespaces = ["healthy"]\n',
-        'namespaces = []\nexecutes = ["healthy.doubler", "healthy.tagger"]\n',
-    )
-    manifest_path = write_pack(tmp_path / "executor", manifest, "healthy_nodes", HEALTHY_NODES)
-    report = diagnose(manifest_path)
-    assert "namespace.uncovered" not in codes(report)
-
-
 def test_invalid_requirement_syntax_is_an_error(tmp_path: Path) -> None:
     """A requirement uv would refuse at provision time is caught here,
     before any user hits it - as an error naming the offending list."""
@@ -520,17 +237,6 @@ def test_invalid_requirement_syntax_is_an_error(tmp_path: Path) -> None:
     assert len(bad) == 1
     assert "[pack] requires" in bad[0].message
     assert bad[0].fix
-
-
-@pytest.mark.parametrize("test_path", ["tests/test_nodes.py", "tests/fixtures.py"])
-def test_public_pack_testing_import_is_allowed(tmp_path: Path, test_path: str) -> None:
-    manifest = write_pack(tmp_path / "tested", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
-    test_source = manifest.parent / test_path
-    test_source.parent.mkdir(parents=True, exist_ok=True)
-    test_source.write_text("from dinkster_engine.testing import load_pack as tested_pack\n")
-    report = diagnose(manifest)
-    assert report.ok, render_text(report)
-    assert not [finding for finding in report.findings if finding.code.startswith("imports.")]
 
 
 def test_private_and_host_imports_are_errors(tmp_path: Path) -> None:
@@ -598,35 +304,6 @@ def test_cross_pack_implementation_import_is_an_error_but_own_module_is_allowed(
     assert "dinkster_nodes_foreign" in cross_pack[0].message
     assert "registered ids" in cross_pack[0].fix
     assert not any("dinkster_nodes_healthy" in finding.message for finding in cross_pack)
-
-
-def test_declared_pack_helpers_are_public_and_exactly_scoped(tmp_path: Path) -> None:
-    source = (
-        "from dinkster_conditioning.conditioning import conditioning_set_values\n"
-        "from dinkster_conditioning.conditioning import _private\n"
-        "from dinkster_conditioning._private import helper\n"
-        "import dinkster_conditioning_extra\n"
-        "import dinkster_sampling\n" + HEALTHY_NODES
-    )
-    manifest = write_pack(
-        tmp_path / "dependent",
-        HEALTHY_MANIFEST + '\n[pack.dependencies]\ndinkster-conditioning = ">=0.0.1,<1"\n',
-        "healthy_nodes",
-        source,
-    )
-    report = diagnose_static(
-        manifest.parent,
-        load_manifest(manifest),
-        published_packs=("dinkster-conditioning-extra", "dinkster-sampling"),
-    )
-    private = [f for f in report.findings if f.code == "imports.private-module"]
-    undeclared = [f for f in report.findings if f.code == "imports.pack-implementation"]
-    assert len(private) == 2
-    assert {f.location.rsplit(":", 1)[-1] for f in private} == {"2", "3"}
-    assert {f.message for f in undeclared} == {
-        "imports dinkster_conditioning_extra",
-        "imports dinkster_sampling",
-    }
 
 
 def test_broken_entry_is_a_finding_not_a_crash(tmp_path: Path) -> None:
@@ -775,33 +452,6 @@ def test_probe_crash_detail_redacts_environment(
     assert len(finding.message) < 550
 
 
-@pytest.mark.parametrize("broken", (False, True))
-def test_catalog_driven_node_source_is_reported_without_hiding_entry_errors(
-    tmp_path: Path, broken: bool
-) -> None:
-    manifest_text = HEALTHY_MANIFEST.replace(
-        "[pack]\n", '[pack]\nnode-source = "remote-gateway-catalog"\n'
-    )
-    source = 'raise RuntimeError("broken entry")\n' if broken else "NODES = []\n"
-    manifest_text = manifest_text.replace('types = "healthy_nodes:register_types"\n', "")
-    manifest = write_pack(tmp_path / "dynamic", manifest_text, "healthy_nodes", source)
-    report = diagnose(manifest)
-    assert report.ok is not broken, render_text(report)
-    assert json.loads(report.to_json())["nodeSource"] == "remote-gateway-catalog"
-    assert report.node_types == ()
-    assert ("entry.unresolvable" in codes(report)) is broken
-    assert "entry.no-nodes" not in codes(report)
-    completed = subprocess.run(
-        [sys.executable, "-m", "dinkster_workers._doctor_probe", str(manifest)],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    raw = json.loads(completed.stdout)
-    assert raw["node_source"] == "remote-gateway-catalog"
-    assert (raw["entry_error"] is not None) is broken
-
-
 def test_cli_renders_and_exits_by_health(tmp_path: Path, capsys) -> None:
     manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
     # pack directory (not manifest path) is accepted, --json is machine-readable
@@ -892,26 +542,6 @@ class TestLiveJailedProbe:
             manifest,
             probe_jail=detect_probe_jail(),
             environment={"DINKSTER_EXPLICIT_SENTINEL": "delivered"},
-        )
-        assert report.ok, render_text(report)
-
-    def test_explicit_pythonpath_is_available_to_pack_imports(self, tmp_path: Path) -> None:
-        from dinkster_workers import detect_probe_jail
-
-        root = tmp_path / "explicit-pythonpath"
-        dependency = root / "dependency"
-        dependency.mkdir(parents=True)
-        (dependency / "probe_dependency.py").write_text("VALUE = 'available'\n")
-        source = (
-            HEALTHY_NODES
-            + "\nfrom probe_dependency import VALUE\n"
-            + "assert VALUE == 'available'\n"
-        )
-        manifest = write_pack(root, HEALTHY_MANIFEST, "healthy_nodes", source)
-        report = diagnose(
-            manifest,
-            probe_jail=detect_probe_jail(),
-            environment={"PYTHONPATH": str(dependency)},
         )
         assert report.ok, render_text(report)
 

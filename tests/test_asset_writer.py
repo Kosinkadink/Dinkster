@@ -889,8 +889,3 @@ def test_written_asset_is_listed_before_any_rescan(tmp_path: Path) -> None:
     assert [entry.virtual_path for entry in library.list_folder("mounts/out").entries] == [
         "mounts/out/fresh_00001.bin"
     ]
-
-
-def _sidecar_resolve(root: Path, digest: str) -> Path | None:
-    library = LocalAssetLibrary(root, namespace="mounts/out")
-    return library.resolve(digest)

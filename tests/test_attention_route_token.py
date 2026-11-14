@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import replace
 
 import pytest
 from dinkster_protocol import (
-    ATTENTION_ROLES,
     AttentionCapabilityEvidence,
     AttentionPolicy,
     AttentionPolicyConfig,
     AttentionRoute,
-    AttentionRouteToken,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
 )
@@ -20,41 +17,6 @@ from dinkster_workers import ExecutionContext
 from dinkster_workers.execution import use_execution_context
 
 from tests.async_scenarios import run_scenario
-
-
-def route_token(*, policy: str = "auto", torch_version: str = "2.13.0") -> AttentionRouteToken:
-    return AttentionRouteToken(
-        version=1,
-        routes=tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
-        provider_versions=(("torch", torch_version),),
-        adapter_contract_revision="dinkster.attention-kernel.v1",
-        device_kind="cpu",
-        device_sm=None,
-        sdpa_torch_runtime=torch_version,
-        requested_policy=policy,  # type: ignore[arg-type]
-    )
-
-
-def route_token_v2(
-    *, overrides: tuple[tuple[str, str], ...] = (("flux", "comfy_kitchen_int8"),)
-) -> AttentionRouteToken:
-    overridden = dict(overrides)
-    return AttentionRouteToken(
-        version=2,
-        routes=tuple(
-            AttentionRoute(role, "comfy_kitchen_int8", "sdpa")
-            if overridden.get(role) == "comfy_kitchen_int8"
-            else AttentionRoute(role, "sdpa")
-            for role in ATTENTION_ROLES
-        ),
-        provider_versions=(("comfy-kitchen", "0.2.31"), ("torch", "2.13.0")),
-        adapter_contract_revision="dinkster.attention-kernel.v1",
-        device_kind="cpu",
-        device_sm=None,
-        sdpa_torch_runtime="2.13.0",
-        requested_policy="auto",
-        requested_role_policies=overrides,  # type: ignore[arg-type]
-    )
 
 
 def capability_evidence(
@@ -87,11 +49,6 @@ def capability_evidence(
         device_sm=None,
         sdpa_torch_runtime="2.13.0",
     )
-
-
-def identity(token: AttentionRouteToken | None = None) -> str:
-    payload = b"legacy-auto" if token is None else canonical_attention_route_token_bytes(token)
-    return hashlib.sha256(payload).hexdigest()
 
 
 def test_execution_context_rejects_cross_worker_route_token_replay() -> None:

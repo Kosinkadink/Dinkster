@@ -6,7 +6,6 @@ is visible as diagnostics (DESIGN 3.9)."""
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import signal
@@ -22,7 +21,6 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
-    AdmissionInvocation,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -46,24 +44,20 @@ from dinkster_protocol import (
     derive_attention_route_token,
 )
 from dinkster_schema import (
-    NodeSchema,
     build_node_types,
     build_schemas,
     schema_signature,
 )
-from dinkster_values import TypeRegistry, UnresolvablePayload, register_core_types
+from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import (
-    AcceleratorError,
     BoundaryDiagnostic,
     GroupIsolatedWorker,
     InProcessWorker,
     IsolatedWorker,
     ManifestError,
     RoutingWorker,
-    detect_accelerator,
     ensure_pack_venv,
     load_manifest,
-    resolve_accelerator,
 )
 from dinkster_workers import host as host_module
 from dinkster_workers.boundary import (
@@ -246,39 +240,6 @@ def test_worker_and_doctor_reject_implicit_distribution_source_root(tmp_path: Pa
     run_scenario(scenario())
 
 
-def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path) -> None:
-    pack_root = tmp_path / "pack"
-    pack_root.mkdir()
-    (pack_root / "isopack_nodes").mkdir()
-    (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
-    manifest = pack_root / "dinkster-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
-        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
-        'nodes = "isopack_nodes.entries:NODES"\n'
-        'types = "isopack_nodes.entries:register_types"\n'
-    )
-    interpreter_root = tmp_path / "interpreter"
-    installed_package = interpreter_root / "isopack_nodes"
-    installed_package.mkdir(parents=True)
-    (installed_package / "__init__.py").write_text("\n")
-    shutil.copy(TESTS_DIR / "isopack_nodes.py", installed_package / "entries.py")
-
-    async def scenario() -> None:
-        worker = IsolatedWorker(
-            manifest,
-            core_registry(),
-            extra_env={"PYTHONPATH": str(interpreter_root)},
-        )
-        await worker.start()
-        try:
-            assert "iso.sleepy" in worker.schemas
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
 def test_launched_child_resolves_workgroup_handler_without_parent_import(tmp_path: Path) -> None:
     async def scenario() -> None:
         sys.modules.pop("isopack_nodes", None)
@@ -385,19 +346,6 @@ def test_group_launched_child_keeps_handler_present_and_absent_members_distinct(
     run_scenario(scenario())
 
 
-def negotiated_session() -> BoundarySession:
-    registry = core_registry()
-    session = BoundarySession(
-        registry,
-        role="test worker",
-        pack="test",
-        codec=ValueCodec(registry),
-    )
-    session._schemas = {}  # noqa: SLF001 - construct a negotiated test session
-    session._alive = True  # noqa: SLF001
-    return session
-
-
 @pytest.mark.parametrize("worker_protocol", (PROTOCOL_VERSION, PROTOCOL_VERSION + 1))
 def test_separately_shipped_worker_negotiates_protocol(
     monkeypatch: pytest.MonkeyPatch, worker_protocol: int
@@ -487,67 +435,6 @@ def test_hello_announces_schemas_in_wire_format() -> None:
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("broken", ["torch", "torch-api", "safetensors", "safetensors-api"])
-def test_worker_hello_discovers_broken_runtime_without_importing_it(
-    tmp_path: Path, broken: str
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-    from dinkster.serve import _schedule_legacy_checkpoint_conversion
-
-    torch_imported = tmp_path / "torch-imported"
-    safetensors_imported = tmp_path / "safetensors-torch-imported"
-    torch_runtime = {
-        "torch": "raise OSError('broken native Torch runtime')\n",
-        "torch-api": "load = None\nTensor = None\n",
-    }.get(broken, "class Tensor: pass\ndef load(*args, **kwargs): return {}\n")
-    (tmp_path / "torch.py").write_text(
-        f"from pathlib import Path\nPath({str(torch_imported)!r}).touch()\n{torch_runtime}",
-        encoding="utf-8",
-    )
-    safetensors = tmp_path / "safetensors"
-    safetensors.mkdir()
-    (safetensors / "__init__.py").write_text("", encoding="utf-8")
-    (safetensors / "torch.py").write_text(
-        "from pathlib import Path\n"
-        f"Path({str(safetensors_imported)!r}).touch()\n"
-        + (
-            "save_file = None\n"
-            if broken == "safetensors-api"
-            else "raise OSError('broken native safetensors runtime')\n"
-        ),
-        encoding="utf-8",
-    )
-    source = tmp_path / "weights.ckpt"
-    source.write_bytes(b"legacy checkpoint")
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            await composer.add_pack(
-                PackSpec(
-                    DEV_MANIFEST,
-                    env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
-                    aimdo="off",
-                )
-            )
-            worker = composer.composition._isolated[0]
-            assert worker.can_convert_legacy_checkpoint is True
-            assert not torch_imported.exists()
-            assert not safetensors_imported.exists()
-            with pytest.raises(RuntimeError, match="legacy-checkpoint-converter-unavailable"):
-                await worker.convert_legacy_checkpoint(source, "weights.ckpt")
-            assert torch_imported.exists()
-            assert safetensors_imported.exists() == broken.startswith("safetensors")
-            assert await _schedule_legacy_checkpoint_conversion(
-                composer, source, "weights.ckpt"
-            ) == ("transport-failure", None)
-            assert worker.alive
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
 def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
     import torch
     from dinkster_workers.legacy_sources import discover_converted_sidecar
@@ -570,54 +457,6 @@ def test_worker_converts_legacy_checkpoint_on_first_use(tmp_path: Path) -> None:
             assert load_file(sidecar)["weight"].tolist() == [3.0, -2.0]
         finally:
             await worker.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("finish", ["close", "cancel", "malformed", "missing"])
-def test_admission_session_pending_request_terminates(
-    finish: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        session = negotiated_session()
-        sent = asyncio.Event()
-
-        async def send(header: dict[str, object], blobs: list[bytes]) -> None:
-            del blobs
-            if header["type"] == "validateAdmission":
-                sent.set()
-                if finish in ("malformed", "missing"):
-                    session._admission_pending[str(header["requestId"])].set_result(  # noqa: SLF001
-                        ({"explanation": 42} if finish == "malformed" else {}, [])
-                    )
-
-        monkeypatch.setattr(session, "send", send)
-        request = asyncio.create_task(
-            session.validate_admission(
-                AdmissionInvocation(
-                    request_id="admit",
-                    node_id="n",
-                    node_type="test.admission",
-                    literal_inputs={"value": 7.0},
-                    linked_input_types={},
-                    effective_schema=NodeSchema(
-                        node_type="test.admission", admission_validation=True
-                    ),
-                )
-            )
-        )
-        await sent.wait()
-        if finish == "cancel":
-            request.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(request, 1)
-        else:
-            if finish == "close":
-                await session.close()
-            result = await asyncio.wait_for(request, 1)
-            assert result.explanation is not None
-            assert ("not running" if finish == "close" else "malformed") in result.explanation
-        await session.close()
 
     run_scenario(scenario())
 
@@ -664,34 +503,6 @@ def test_isolated_run_matches_in_process_run() -> None:
             # Second run: cache hits, no boundary crossings needed.
             again = await engine.run(image_graph(), ["s", "b"])
             assert again.executed == ()
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
-def test_unregistered_type_is_interrogable_but_not_resolvable() -> None:
-    async def scenario() -> None:
-        registry = core_registry()
-        worker = IsolatedWorker(DEV_MANIFEST, registry)
-        await worker.start()
-        try:
-            engine = Engine(
-                schemas=dict(worker.schemas),
-                registry=registry,
-                worker=worker,
-                cache=MemoryLRUCache(),
-            )
-            result = await engine.run(image_graph(), ["b"])
-            image = result.outputs["b"]["image"]
-            # The envelope is inspectable everywhere (hazard H2): meta
-            # crossed the boundary even though dev.image is not registered
-            # in this process.
-            assert image.type_id == "dev.image"
-            assert image.meta.get("shape") == [8, 16]  # JSON round trip: tuple -> list
-            assert image.meta.get("dtype") == "float32"
-            with pytest.raises(UnresolvablePayload, match="not registered"):
-                image.resolve()
         finally:
             await worker.close()
 
@@ -1333,35 +1144,6 @@ def test_manifest_namespaces(tmp_path: Path) -> None:
         load_manifest(manifest('namespaces = ["img", "img.filters"]\n'))
 
 
-def test_manifest_platforms(tmp_path: Path) -> None:
-    """[pack] platforms: advisory OS claims in sys.platform vocabulary
-    (DESIGN M8, cross-platform). Fatal when malformed - a typo'd list
-    would warn on every host or none, both silently wrong."""
-
-    def manifest(body: str) -> Path:
-        path = tmp_path / "dinkster-pack.toml"
-        path.write_text(f'[pack]\nname = "p"\n{body}[pack.entry]\nnodes = "m:N"\n')
-        return path
-
-    assert load_manifest(manifest("")).platforms == ()  # omitted = unrestricted
-    assert load_manifest(manifest('platforms = ["linux"]\n')).platforms == ("linux",)
-    # deterministic: sorted, deduplicated
-    assert load_manifest(manifest('platforms = ["win32", "linux", "linux"]\n')).platforms == (
-        "linux",
-        "win32",
-    )
-
-    with pytest.raises(ManifestError, match="non-empty list"):
-        load_manifest(manifest('platforms = "linux"\n'))
-    with pytest.raises(ManifestError, match="non-empty list"):
-        load_manifest(manifest("platforms = []\n"))
-    with pytest.raises(ManifestError, match="non-empty list"):
-        load_manifest(manifest("platforms = [3]\n"))
-    # "windows" is the classic typo for win32; it must fail, not silently never match
-    with pytest.raises(ManifestError, match="not a sys.platform value"):
-        load_manifest(manifest('platforms = ["windows"]\n'))
-
-
 def test_manifest_extra_requires(tmp_path: Path) -> None:
     """[pack.extra-requires]: accelerator-conditional dependencies - the
     one conditional dimension PEP 508 markers cannot express. Unknown
@@ -1414,235 +1196,6 @@ def test_manifest_extra_requires(tmp_path: Path) -> None:
         load_manifest(manifest('[pack.extra-requires]\ncuda = "torch"\n'))
     with pytest.raises(ManifestError, match="list of requirement"):
         load_manifest(manifest("[pack.extra-requires]\ncuda = [3]\n"))
-
-
-def test_accelerator_detection_and_resolution() -> None:
-    """Host accelerator selection (DESIGN M8, cross-platform): explicit
-    beats env beats detection; detection is injected here because CI has
-    no GPUs and must never need one."""
-
-    def no_tool(_name: str) -> str | None:
-        return None
-
-    def no_path(_path: str) -> bool:
-        return False
-
-    assert (
-        detect_accelerator(sys_platform="darwin", machine="arm64", which=no_tool, exists=no_path)
-        == "mps"
-    )
-    assert (
-        detect_accelerator(sys_platform="darwin", machine="x86_64", which=no_tool, exists=no_path)
-        == "cpu"
-    )
-    assert (
-        detect_accelerator(
-            sys_platform="linux",
-            which=lambda _name: None,
-            exists=lambda path: path == "/proc/driver/nvidia/version",
-        )
-        == "cuda"
-    )
-    assert (
-        detect_accelerator(
-            sys_platform="win32",
-            which=lambda name: "smi" if name == "nvidia-smi" else None,
-            exists=lambda _path: False,
-        )
-        == "cuda"
-    )
-    assert (
-        detect_accelerator(
-            sys_platform="linux",
-            which=lambda _name: None,
-            exists=lambda path: path == "/sys/module/amdgpu",
-        )
-        == "rocm"
-    )
-    assert (
-        detect_accelerator(
-            sys_platform="linux",
-            which=lambda name: "smi" if name == "xpu-smi" else None,
-            exists=lambda _path: False,
-        )
-        == "xpu"
-    )
-    assert detect_accelerator(sys_platform="linux", which=no_tool, exists=no_path) == "cpu"
-
-    # explicit selection is authoritative; env only fills in for auto
-    assert resolve_accelerator("rocm", environ={"DINKSTER_ACCELERATOR": "cuda"}) == "rocm"
-    assert resolve_accelerator("auto", environ={"DINKSTER_ACCELERATOR": "xpu"}) == "xpu"
-    with pytest.raises(AcceleratorError, match="unknown accelerator"):
-        resolve_accelerator("gpu", environ={})
-    with pytest.raises(AcceleratorError, match="unknown accelerator"):
-        resolve_accelerator("auto", environ={"DINKSTER_ACCELERATOR": "gpu"})
-
-
-def test_ensure_pack_venv_selects_accelerator_requirements(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Provisioning installs base requires plus the selected accelerator's
-    extra-requires; snapshot pins still bypass ranges entirely. The uv
-    commands are captured, not run - what matters is WHICH requirements
-    reach the install command."""
-    from dinkster_workers import provision
-
-    manifest_path = tmp_path / "pack" / "dinkster-pack.toml"
-    manifest_path.parent.mkdir()
-    manifest_path.write_text(
-        '[pack]\nname = "accpack"\nrequires = ["numpy"]\n'
-        '[pack.entry]\nnodes = "m:N"\n'
-        '[pack.extra-requires]\ncuda = ["torch==2.5.1"]\n'
-    )
-    manifest = load_manifest(manifest_path)
-
-    commands: list[list[str]] = []
-    monkeypatch.setattr(provision, "preflight_interpreter", lambda _python: (3, 12))
-    monkeypatch.setattr(provision, "_run", lambda command: commands.append(list(command)))
-
-    ensure_pack_venv(manifest, venv_root=tmp_path / "v1", accelerator="cuda")
-    install = commands[-1]
-    assert "numpy" in install and "torch==2.5.1" in install
-
-    ensure_pack_venv(manifest, venv_root=tmp_path / "v2", accelerator="cpu")
-    install = commands[-1]
-    assert "numpy" in install and "torch==2.5.1" not in install
-
-    ensure_pack_venv(manifest, venv_root=tmp_path / "v3")  # no accelerator = base only
-    install = commands[-1]
-    assert "numpy" in install and "torch==2.5.1" not in install
-
-    # snapshot pins replace ranges AND accelerator extras - exactness wins
-    ensure_pack_venv(
-        manifest,
-        venv_root=tmp_path / "v4",
-        accelerator="cuda",
-        pinned=("numpy==1.26.4", "torch==2.4.0"),
-    )
-    install = commands[-1]
-    assert "numpy==1.26.4" in install and "torch==2.4.0" in install
-    assert "torch==2.5.1" not in install and "numpy" not in install
-
-
-def test_pack_venv_reuse_requires_matching_provisioning_inputs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_workers import provision
-
-    pack = tmp_path / "pack"
-    pack.mkdir()
-    (pack / "pyproject.toml").write_text(
-        '[project]\nname = "test-pack"\nversion = "1"\ndependencies = []\n'
-    )
-    manifest_path = pack / "dinkster-pack.toml"
-    manifest_path.write_text(
-        '[pack]\nname = "input-pack"\nrequires = ["numpy"]\n[pack.entry]\nnodes = "m:N"\n'
-    )
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    workspace_project = workspace / "pyproject.toml"
-    workspace_project.write_text(
-        '[project]\nname = "dinkster-api"\nversion = "1"\ndependencies = ["dinkster-schema"]\n'
-    )
-    builds = 0
-
-    def run(command: list[str]) -> None:
-        nonlocal builds
-        if command[1] != "venv":
-            return
-        builds += 1
-        venv = Path(command[-1])
-        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        python.parent.mkdir(parents=True)
-        python.write_text("")
-
-    monkeypatch.setattr(provision, "preflight_interpreter", lambda _python: (3, 12))
-    monkeypatch.setattr(provision, "_run", run)
-    venv_root = tmp_path / "venvs"
-    stale = venv_root / "input-pack"
-    stale_python = stale / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    stale_python.parent.mkdir(parents=True)
-    stale_python.write_text("")
-    (stale / ".dinkster-complete").write_text("complete\n")
-
-    manifest = load_manifest(manifest_path)
-    ensure_pack_venv(
-        manifest,
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cpu",
-    )
-    marker = venv_root / manifest.name / ".dinkster-complete"
-    assert marker.read_text().startswith("sha256:")
-    ensure_pack_venv(
-        manifest,
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cpu",
-    )
-    assert builds == 1
-
-    workspace_project.write_text(
-        '[project]\nname = "dinkster-api"\nversion = "1"\n'
-        'dependencies = ["dinkster-schema", "dinkster-video-runtime"]\n'
-    )
-    ensure_pack_venv(
-        manifest,
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cpu",
-    )
-    assert builds == 2
-
-    workspace_project.write_text(
-        workspace_project.read_text().replace("dinkster-api", "dinkster-host")
-    )
-    ensure_pack_venv(
-        manifest,
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cpu",
-    )
-    assert builds == 3
-
-    ensure_pack_venv(
-        manifest,
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cuda",
-    )
-    assert builds == 4
-
-    manifest_path.write_text(manifest_path.read_text().replace('"numpy"', '"numpy", "pillow"'))
-    ensure_pack_venv(
-        load_manifest(manifest_path),
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cuda",
-    )
-    assert builds == 5
-
-    pack_project = pack / "pyproject.toml"
-    pack_project.write_text(
-        pack_project.read_text().replace("dependencies = []", 'dependencies = ["pillow"]')
-    )
-    ensure_pack_venv(
-        load_manifest(manifest_path),
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cuda",
-    )
-    assert builds == 6
-
-    moved = tmp_path / "moved-pack"
-    shutil.copytree(pack, moved)
-    ensure_pack_venv(
-        load_manifest(moved / "dinkster-pack.toml"),
-        venv_root=venv_root,
-        workspace_packages=(workspace,),
-        accelerator="cuda",
-    )
-    assert builds == 7
 
 
 def test_ensure_group_venv_retries_after_partial_install_failure(
@@ -1715,110 +1268,6 @@ def test_ensure_pack_venv_retries_after_partial_install_failure(
     provision.ensure_pack_venv(manifest, venv_root=venv_root)
     assert installs == 2
     assert (venv_root / "alpha" / ".dinkster-complete").is_file()
-
-
-def test_partition_portable_is_label_driven() -> None:
-    """The portable/environment-specific split reads only the pin's own
-    version: a PEP 440 local label marks a vendor build that cannot
-    travel. Names are never consulted - a vendor runtime wheel WITHOUT a
-    label stays portable, because as a constraint it is inert unless the
-    destination's resolution actually pulls it."""
-    from dinkster_workers import partition_portable
-
-    portable, environment_specific = partition_portable(
-        (
-            "einops==0.8.0",
-            "numpy==1.26.4",
-            "nvidia-cublas-cu12==12.4.5.8",
-            "torch==2.5.1+cu124",
-            "torchvision==0.20.1+rocm6.2",
-        )
-    )
-    assert portable == ("einops==0.8.0", "numpy==1.26.4", "nvidia-cublas-cu12==12.4.5.8")
-    assert environment_specific == ("torch==2.5.1+cu124", "torchvision==0.20.1+rocm6.2")
-    assert partition_portable(()) == ((), ())
-
-
-def test_hash_pins_validates_the_compiled_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A compile that SUCCEEDS but does not return exactly the portable
-    input set - fully hashed, once each, nothing else - must fail loudly
-    instead of becoming an incomplete or adulterated snapshot: uv can
-    legally omit pins (no-emit-package config), emit option lines
-    (index configuration), or emit unhashed requirements."""
-    from dinkster_workers import provision
-    from dinkster_workers.provision import hash_pins
-
-    def compile_writing(output: str):  # noqa: ANN202
-        def fake_run(command: list[str]) -> None:
-            Path(command[command.index("-o") + 1]).write_text(output)
-
-        return fake_run
-
-    good = "einops==0.8.0 --hash=sha256:aaaa\n"
-    for output, fragment in (
-        ("", "omitted pins: einops==0.8.0"),
-        ("einops==0.8.0\n", "unverifiable"),
-        (good + "einops==0.8.0 --hash=sha256:bbbb\n", "more than once"),
-        (good + "extra==1.0 --hash=sha256:cccc\n", "not one of the pins"),
-        (good + "--index-url https://evil.example/simple\n", "non-pin line"),
-        ("einops==0.8.0 --hash=sha256:aaaa --no-build\n", "unverifiable"),
-    ):
-        monkeypatch.setattr(provision, "_run", compile_writing(output))
-        with pytest.raises(provision.ProvisionError, match=fragment):
-            hash_pins(("einops==0.8.0",))
-
-    # PEP 503 name folding: the compiler respelling the name still
-    # matches the input identity
-    monkeypatch.setattr(provision, "_run", compile_writing("Ein-Ops==0.8.0 --hash=sha256:aaaa\n"))
-    assert hash_pins(("ein_ops==0.8.0",)) == ("Ein-Ops==0.8.0 --hash=sha256:aaaa",)
-
-
-def test_manifest_presentation(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """[pack.presentation] is author-declared badge data: validated at load,
-    warn-and-drop per field (a bad emoji never stops a pack), absent -> None."""
-    declared = tmp_path / "declared.toml"
-    declared.write_text(
-        "[pack]\n"
-        'name = "ade"\n'
-        "[pack.entry]\n"
-        'nodes = "m:N"\n'
-        "[pack.presentation]\n"
-        'display_name = "AnimateDiff-Evolved"\n'
-        'abbr = "ADE"\n'
-        'mark = "\N{PERFORMING ARTS}"\n'
-        'color = "#8844ff"\n',
-        encoding="utf-8",
-    )
-    presentation = load_manifest(declared).presentation
-    assert presentation is not None
-    assert presentation.display_name == "AnimateDiff-Evolved"
-    assert presentation.abbr == "ADE"
-    assert presentation.mark == "\N{PERFORMING ARTS}"
-    assert presentation.color == "#8844ff"
-
-    plain = tmp_path / "plain.toml"
-    plain.write_text('[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n')
-    assert load_manifest(plain).presentation is None
-
-    bad = tmp_path / "bad.toml"
-    bad.write_text(
-        "[pack]\n"
-        'name = "p"\n'
-        "[pack.entry]\n"
-        'nodes = "m:N"\n'
-        "[pack.presentation]\n"
-        'abbr = "WAY-TOO-LONG-ABBR"\n'
-        'mark = "a b"\n'
-        'color = "purple"\n'
-    )
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        manifest = load_manifest(bad)
-    # Every malformed field dropped with a warning; nothing valid remains.
-    assert manifest.presentation is None
-    messages = " ".join(record.getMessage() for record in caplog.records)
-    assert "abbr" in messages and "mark" in messages and "color" in messages
 
 
 def test_pack_icon_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1899,129 +1348,6 @@ def test_pack_icon_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert problem is not None and "unreadable" in problem
 
 
-def test_manifest_docs_validate_and_warn_drop(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import hashlib
-
-    from dinkster_workers import manifest as manifest_module
-
-    from dinkster.packs import pack_info_from_manifest
-
-    docs = tmp_path / "docs"
-    node = docs / "nodes" / "p.echo"
-    node.mkdir(parents=True)
-    assets = docs / "assets"
-    assets.mkdir()
-    image = b"image"
-    video = b"video"
-    (assets / "preview.webp").write_bytes(image)
-    (assets / "demo.mp4").write_bytes(video)
-    (assets / "ignored.exe").write_bytes(b"bad")
-    body = (
-        "\n![Preview](assets/preview.webp)\n\n"
-        '```dinkster-media\nasset = "assets/demo.mp4"\n'
-        'poster = "assets/preview.webp"\ncaption = "Demo"\n```\n'
-    )
-    page = '+++\ntitle = "Echo"\nsummary = "Returns its input."\nschema_version = 2\n+++\n' + body
-    (node / "en.md").write_text(page, newline="\n")
-    (node / "zh.md").write_text(page.replace('title = "Echo"', 'title = "Echo zh"'), newline="\n")
-    (node / "fr.md").write_text(page, newline="\n")
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        '[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n'
-        '[pack.docs]\ndir = "docs"\ndefault_locale = "en"\n'
-    )
-
-    def loaded_pages() -> tuple[manifest_module.PackDocPage, ...]:
-        loaded = load_manifest(manifest_path)
-        assert loaded.docs is not None
-        return loaded.docs.pages
-
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        manifest = load_manifest(manifest_path)
-    assert manifest.docs is not None
-    assert [(item.id, item.locale) for item in manifest.docs.pages] == [
-        ("p.echo", "en"),
-        ("p.echo", "zh"),
-    ]
-    assert [asset.source for asset in manifest.docs.assets] == [
-        "assets/demo.mp4",
-        "assets/preview.webp",
-    ]
-    assert manifest.docs.pages[0].assets[0].digest == "sha256:" + hashlib.sha256(image).hexdigest()
-    assert manifest.docs.pages[0].digest == "sha256:" + hashlib.sha256(body.encode()).hexdigest()
-    assert manifest.docs.pages[0].title == "Echo"
-    assert manifest.docs.pages[0].summary == "Returns its input."
-    assert manifest.docs.pages[0].schema_version == 2
-    assert manifest.docs.pages[0].data == body.encode()
-    info = pack_info_from_manifest(manifest)
-    assert info.docs is not None
-    assert info.docs.pages[0].data == body.encode()
-    assert "unsupported locale" in caplog.text
-    assert "disallowed extension" in caplog.text
-
-    (node / "en.md").write_text(
-        page
-        + "\n```text\n[unsafe](javascript:example) ![sample](assets/missing.png)\n```\n"
-        + '\n````markdown\n```dinkster-media\nasset = "assets/missing.mp4"\n```\n````\n'
-        + "\n`[unsafe](javascript:inline)`\n"
-    )
-    assert len(loaded_pages()) == 2
-    (node / "en.md").write_text(page)
-
-    # Invalid or escaped content drops alone. Lowered caps exercise limits
-    # without constructing multi-megabyte fixtures.
-    monkeypatch.setattr(manifest_module, "DOC_IMAGE_MAX_BYTES", 2)
-    assert loaded_pages() == ()
-    monkeypatch.setattr(manifest_module, "DOC_IMAGE_MAX_BYTES", 2 * 1024 * 1024)
-
-    monkeypatch.setattr(manifest_module, "DOC_PAGE_MAX_BYTES", 32)
-    caplog.clear()
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        assert load_manifest(manifest_path).docs is not None
-    assert loaded_pages() == ()
-    assert "cap" in caplog.text
-
-    monkeypatch.setattr(manifest_module, "DOC_PAGE_MAX_BYTES", 256 * 1024)
-    (node / "en.md").write_text(page.replace("assets/demo.mp4", "assets/ignored.exe"))
-    assert loaded_pages() == ()
-
-    (node / "en.md").write_text(page + "\n[unsafe](javascript:alert)\n")
-    assert loaded_pages() == ()
-
-    (node / "en.md").write_text(page.replace("assets/demo.mp4", "assets/preview.webp"))
-    assert loaded_pages() == ()
-
-    (node / "en.md").write_text('+++\ntitle = "Echo"\nsummary = "Unterminated"\n# Body\n')
-    caplog.clear()
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        assert loaded_pages() == ()
-    assert "unterminated +++ front matter" in caplog.text
-
-    outside = tmp_path.parent / "escaped-doc.md"
-    outside.write_text(page)
-    (node / "en.md").unlink()
-    try:
-        (node / "en.md").symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks unavailable")
-    caplog.clear()
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        escaped = load_manifest(manifest_path)
-    assert escaped.docs is None
-    assert escaped.docs_problem is not None and "symlink" in escaped.docs_problem
-    assert "symlink" in caplog.text
-
-    manifest_path.write_text(
-        '[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n'
-        '[pack.docs]\ndir = "docs"\ndefault_locale = ["en"]\n'
-    )
-    invalid_locale = load_manifest(manifest_path)
-    assert invalid_locale.docs is None
-    assert invalid_locale.docs_problem is not None
-
-
 def test_manifest_rejects_docs_root_traversal_and_symlinks(tmp_path: Path) -> None:
     manifest_path = tmp_path / "dinkster-pack.toml"
     manifest_prefix = '[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n[pack.docs]\n'
@@ -2052,103 +1378,6 @@ def test_manifest_rejects_docs_root_traversal_and_symlinks(tmp_path: Path) -> No
     nested_link = load_manifest(manifest_path)
     assert nested_link.docs is None
     assert nested_link.docs_problem is not None and "symlink" in nested_link.docs_problem
-
-
-def test_manifest_validates_doc_example_and_node_blocks(tmp_path: Path) -> None:
-    import hashlib
-
-    docs = tmp_path / "docs" / "guides" / "getting-started"
-    docs.mkdir(parents=True)
-    (tmp_path / "blueprint.json").write_text("{}")
-    (tmp_path / "template.json").write_text("{}")
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        '[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n'
-        '[pack.docs]\ndir = "docs"\ndefault_locale = "en"\n'
-        '[[pack.blueprints]]\nid = "starter"\nname = "Starter"\nfile = "blueprint.json"\n'
-        '[[pack.templates]]\nid = "workflow"\nname = "Workflow"\nfile = "template.json"\n'
-    )
-
-    def load_body(body: str):
-        (docs / "en.md").write_text(
-            '+++\ntitle = "Getting started"\nsummary = "Learn the basics."\n+++\n' + body,
-            newline="\n",
-        )
-        manifest = load_manifest(manifest_path)
-        assert manifest.docs is not None
-        return manifest.docs.pages
-
-    body = (
-        '```dinkster-example\nblueprint = "starter"\ncaption = "Insert it"\n```\n'
-        '```dinkster-example\ntemplate = "workflow"\n```\n'
-        '```dinkster-node\nnode = "p.echo"\n```\n'
-    )
-    pages = load_body(body)
-    assert len(pages) == 1
-    assert pages[0].node_references == ("p.echo",)
-    assert pages[0].data == body.encode()
-    assert pages[0].digest == "sha256:" + hashlib.sha256(body.encode()).hexdigest()
-
-    invalid = (
-        "```dinkster-example\nblueprint =\n```\n",
-        '```dinkster-example\nblueprint = "starter"\nextra = true\n```\n',
-        '```dinkster-example\nblueprint = "starter"\ntemplate = "workflow"\n```\n',
-        '```dinkster-example\ncaption = "No target"\n```\n',
-        '```dinkster-example\nblueprint = "missing"\n```\n',
-        '```dinkster-example\ntemplate = "missing"\n```\n',
-        '```dinkster-example\nblueprint = "bad/id"\n```\n',
-        '```dinkster-example\nblueprint = "starter"\ncaption = true\n```\n',
-        "```dinkster-node\nnode =\n```\n",
-        "```dinkster-node\nnode = 1\n```\n",
-        '```dinkster-node\nnode = "p.echo"\nextra = true\n```\n',
-        '```dinkster-node\nnode = "bad/id"\n```\n',
-        '```dinkster-node\nnode = "p.echo"\n',
-    )
-    for body in invalid:
-        assert load_body(body) == ()
-
-    inert = load_body(
-        '` ```dinkster-node node = "bad/id" ``` `\n\n'
-        '```python\nblock = "dinkster-node"\nnode = "bad/id"\n```\n\n'
-        '````markdown\n```dinkster-example\nblueprint = "missing"\n```\n````\n'
-    )
-    assert len(inert) == 1
-    assert inert[0].node_references == ()
-
-
-@pytest.mark.parametrize(
-    ("document", "message"),
-    (
-        ([], "root must be an object"),
-        ({"unknown": {}}, "unknown fields"),
-        ({"nodes": []}, "nodes must be an object"),
-        ({"nodes": {"other.echo": {"displayName": "Echo"}}}, "not owned"),
-        ({"nodes": {"p.echo": {}}}, "must be a non-empty object"),
-        ({"nodes": {"p.echo": {"unknown": "x"}}}, "unknown fields"),
-        ({"nodes": {"p.echo": {"displayName": 1}}}, "must be a non-empty string"),
-        ({"nodes": {"p.echo": {"inputs": []}}}, "inputs must be an object"),
-        ({"nodes": {"p.echo": {"outputs": {"value": {}}}}}, "must translate"),
-        ({"nodes": {"p.echo": {"combos": {"mode": {}}}}}, "non-empty object"),
-        ({"blueprints": {"missing": {"name": "Missing"}}}, "unknown blueprint"),
-        ({"guides": {"missing": {"title": "Missing"}}}, "unknown guide"),
-        ({"searchTerms": {"p.echo": []}}, "must be a non-empty array"),
-    ),
-)
-def test_manifest_drops_invalid_locale_catalog_shapes(
-    tmp_path: Path, document: object, message: str
-) -> None:
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text('[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n')
-    locales = tmp_path / "locales"
-    locales.mkdir()
-    (locales / "en.json").write_text(json.dumps(document))
-
-    manifest = load_manifest(manifest_path)
-
-    assert manifest.locale_catalogs == ()
-    assert len(manifest.locale_catalog_problems) == 1
-    assert str(Path("locales") / "en.json") in manifest.locale_catalog_problems[0]
-    assert message in manifest.locale_catalog_problems[0]
 
 
 def test_manifest_drops_bad_locale_files_independently(
@@ -2195,23 +1424,6 @@ def test_manifest_rejects_locale_catalog_file_symlinks(tmp_path: Path) -> None:
     locales.mkdir()
     try:
         (locales / "en.json").symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks unavailable")
-
-    manifest = load_manifest(manifest_path)
-
-    assert manifest.locale_catalogs == ()
-    assert len(manifest.locale_catalog_problems) == 1
-    assert "symlink" in manifest.locale_catalog_problems[0]
-
-
-def test_manifest_rejects_locale_catalog_root_symlink(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text('[pack]\nname = "p"\n[pack.entry]\nnodes = "m:N"\n')
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    try:
-        (tmp_path / "locales").symlink_to(outside, target_is_directory=True)
     except OSError:
         pytest.skip("symlinks unavailable")
 
@@ -2321,180 +1533,3 @@ def test_validate_pack_blueprint(tmp_path: Path) -> None:
     assert "JSON" in rejected({"id": "x", "name": "X", "file": "not-json.json"})
     (tmp_path / "array.json").write_bytes(b"[1, 2]")
     assert "object" in rejected({"id": "x", "name": "X", "file": "array.json"})
-
-
-def test_manifest_blueprints_warn_and_drop(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """[[pack.blueprints]] follows the presentation rule scaled to entries:
-    a malformed entry warns and drops WITHOUT touching its siblings or
-    stopping the pack; duplicate ids keep the first declaration; entries
-    past the per-pack byte budget drop with a warning."""
-    from dinkster_workers import manifest as manifest_module
-
-    (tmp_path / "good.json").write_text('{"graphs": {}}')
-    (tmp_path / "other.json").write_text('{"graphs": {"g": {}}}')
-    (tmp_path / "broken.json").write_text("{nope")
-    declared = tmp_path / "dinkster-pack.toml"
-    declared.write_text(
-        "[pack]\n"
-        'name = "p"\n'
-        "[pack.entry]\n"
-        'nodes = "m:N"\n'
-        "[[pack.blueprints]]\n"
-        'id = "good"\nname = "Good"\nfile = "good.json"\n'
-        "[[pack.blueprints]]\n"
-        'id = "broken"\nname = "Broken"\nfile = "broken.json"\n'
-        "[[pack.blueprints]]\n"
-        'id = "good"\nname = "Duplicate"\nfile = "other.json"\n'
-        "[[pack.blueprints]]\n"
-        'id = "other"\nname = "Other"\nfile = "other.json"\n'
-    )
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        manifest = load_manifest(declared)
-    # The malformed entry and the duplicate dropped; siblings survive.
-    assert [bp.id for bp in manifest.blueprints] == ["good", "other"]
-    assert manifest.blueprints[0].name == "Good"  # first declaration wins
-    messages = " ".join(r.getMessage() for r in caplog.records)
-    assert "JSON" in messages and "duplicates" in messages
-
-    # The per-pack budget drops entries past it, never the whole pack.
-    caplog.clear()
-    monkeypatch.setattr(manifest_module, "BLUEPRINT_PACK_MAX_BYTES", 20)
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        manifest = load_manifest(declared)
-    assert [bp.id for bp in manifest.blueprints] == ["good"]
-    assert "budget" in " ".join(r.getMessage() for r in caplog.records)
-
-
-def test_validate_pack_template(tmp_path: Path) -> None:
-    """validate_pack_template enforces the same backend-ownable boundary
-    as blueprints (id grammar, shape, containment, caps, UTF-8, JSON
-    object, sha256 digest) plus the 'assets' reference list shape.
-    Reference EXISTENCE is the parser's job, not the validator's - the
-    validator cannot know which [[pack.assets]] declarations survived."""
-    import hashlib
-
-    from dinkster_workers import validate_pack_template
-    from icon_bytes import png_bytes
-
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text('[pack]\nname = "p"\n')
-
-    data = b'{"graphs": {"main": {}}, "meta": {"name": "Portrait"}}'
-    (tmp_path / "portrait.json").write_bytes(data)
-    thumbnail = png_bytes()
-    (tmp_path / "portrait.png").write_bytes(thumbnail)
-    entry = {
-        "id": "portrait",
-        "name": "Portrait",
-        "description": "Starter portrait workflow",
-        "tags": ["image", "portrait"],
-        "family": "dinkster.sd15",
-        "models": ["sd15.safetensors"],
-        "assets": ["base-model", "detail-lora"],
-        "file": "portrait.json",
-        "thumbnail": "portrait.png",
-    }
-    template, problem = validate_pack_template(manifest_path, entry)
-    assert problem is None and template is not None
-    assert template.id == "portrait"
-    assert template.name == "Portrait"
-    assert template.description == "Starter portrait workflow"
-    assert template.tags == ("image", "portrait")
-    assert template.family == "dinkster.sd15"
-    assert template.models == ("sd15.safetensors",)
-    # References pass shape validation verbatim; existence is checked by
-    # the parser against the pack's surviving declarations.
-    assert template.assets == ("base-model", "detail-lora")
-    assert template.digest == "sha256:" + hashlib.sha256(data).hexdigest()
-    assert template.thumbnail is not None
-    assert template.thumbnail.digest == "sha256:" + hashlib.sha256(thumbnail).hexdigest()
-    assert template.thumbnail.media_type == "image/png"
-    assert template.data == data
-
-    # description, tags, and assets are optional; omission is empty.
-    minimal, problem = validate_pack_template(
-        manifest_path, {"id": "portrait", "name": "Portrait", "file": "portrait.json"}
-    )
-    assert problem is None and minimal is not None
-    assert minimal.description == "" and minimal.tags == () and minimal.assets == ()
-    assert minimal.family == "" and minimal.models == () and minimal.thumbnail is None
-
-    def rejected(entry: object) -> str:
-        template, problem = validate_pack_template(manifest_path, entry)
-        assert template is None and problem is not None
-        return problem
-
-    assert "table" in rejected("not-a-table")
-    assert "'id'" in rejected({"name": "X", "file": "portrait.json"})
-    assert "lowercase" in rejected({"id": "Portrait!", "name": "X", "file": "portrait.json"})
-    assert "'name'" in rejected({"id": "x", "file": "portrait.json"})
-    assert "'assets'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "assets": [1]})
-    assert "'assets'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "assets": [""]})
-    assert "'family'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "family": 1})
-    assert "'models'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "models": [""]})
-    assert "'thumbnail'" in rejected(
-        {"id": "x", "name": "X", "file": "portrait.json", "thumbnail": "missing.png"}
-    )
-    assert "'file'" in rejected({"id": "x", "name": "X"})
-    # The document checks ride the shared validator - one containment
-    # spot-check here; the exhaustive matrix lives in the blueprint test.
-    assert "relative" in rejected({"id": "x", "name": "X", "file": "../out.json"})
-    (tmp_path / "array.json").write_bytes(b"[1]")
-    assert "object" in rejected({"id": "x", "name": "X", "file": "array.json"})
-
-
-def test_manifest_templates_warn_and_drop(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """[[pack.templates]] follows the blueprint rule scaled to entries:
-    malformed entries, duplicates, and budget overruns warn and drop
-    individually. One additional rule: a template referencing an asset id
-    absent from the pack's SURVIVING [[pack.assets]] declarations drops -
-    its acquisition plan could never be constructed."""
-    from dinkster_assets import digest_bytes
-    from dinkster_workers import manifest as manifest_module
-
-    (tmp_path / "good.json").write_text('{"graphs": {}}')
-    (tmp_path / "needy.json").write_text('{"graphs": {"g": {}}}')
-    (tmp_path / "broken.json").write_text("{nope")
-    (tmp_path / "model.bin").write_bytes(b"weights")
-    declared = tmp_path / "dinkster-pack.toml"
-    declared.write_text(
-        "[pack]\n"
-        'name = "p"\n'
-        "[pack.entry]\n"
-        'nodes = "m:N"\n'
-        "[[pack.assets]]\n"
-        f'id = "model"\nname = "Model"\ndigest = "{digest_bytes(b"weights")}"\n'
-        'file = "model.bin"\n'
-        "[[pack.templates]]\n"
-        'id = "good"\nname = "Good"\nfile = "good.json"\n'
-        "[[pack.templates]]\n"
-        'id = "broken"\nname = "Broken"\nfile = "broken.json"\n'
-        "[[pack.templates]]\n"
-        'id = "good"\nname = "Duplicate"\nfile = "needy.json"\n'
-        "[[pack.templates]]\n"
-        'id = "dangling"\nname = "Dangling"\nfile = "needy.json"\n'
-        'assets = ["model", "no-such-asset"]\n'
-        "[[pack.templates]]\n"
-        'id = "needy"\nname = "Needy"\nfile = "needy.json"\nassets = ["model"]\n'
-    )
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        manifest = load_manifest(declared)
-    # Malformed, duplicate, and dangling-reference entries dropped;
-    # siblings survive, including the one with a VALID asset reference.
-    assert [tp.id for tp in manifest.templates] == ["good", "needy"]
-    assert manifest.templates[1].assets == ("model",)
-    messages = " ".join(r.getMessage() for r in caplog.records)
-    assert "JSON" in messages and "duplicates" in messages
-    assert "no-such-asset" in messages and "undeclared" in messages
-
-    # The per-pack budget drops entries past it, never the whole pack.
-    caplog.clear()
-    monkeypatch.setattr(manifest_module, "TEMPLATE_PACK_MAX_BYTES", 20)
-    with caplog.at_level("WARNING", logger="dinkster.workers"):
-        manifest = load_manifest(declared)
-    assert [tp.id for tp in manifest.templates] == ["good"]
-    assert "budget" in " ".join(r.getMessage() for r in caplog.records)

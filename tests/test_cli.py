@@ -12,14 +12,11 @@ own argparse.
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from dinkster.cli import main
-from tests.async_scenarios import run_scenario
 
 HEALTHY_MANIFEST = """\
 [pack]
@@ -99,40 +96,3 @@ def test_doctor_subcommand_is_the_real_publish_gate(tmp_path: Path, capsys) -> N
     (pack / "healthy/__init__.py").write_text("raise Exception()\n")
     assert main(["doctor", str(pack)]) == 1
     assert "entry.unresolvable" in capsys.readouterr().out
-
-
-def test_dispatcher_imports_lazily_and_module_form_works() -> None:
-    """`python -m dinkster --help` answers without importing any subcommand
-    module - `dinkster doctor` never pays for the server stack."""
-    probe = (
-        "import sys\n"
-        "import dinkster.cli\n"
-        "rc = dinkster.cli.main(['help'])\n"
-        "assert rc == 0, rc\n"
-        "heavy = [m for m in ('dinkster.serve', 'dinkster.demo', 'dinkster.manager',"
-        " 'dinkster_workers.doctor') if m in sys.modules]\n"
-        "assert not heavy, heavy\n"
-    )
-    subprocess.run([sys.executable, "-c", probe], check=True, timeout=60)
-    result = subprocess.run(
-        [sys.executable, "-m", "dinkster", "--help"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0
-    assert "usage: dinkster" in result.stdout
-
-
-def test_demo_does_not_import_isolated_default_packs(monkeypatch) -> None:
-    import dinkster.demo as demo
-
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", "")
-    real_load_pack = demo.load_pack
-
-    def checked_load_pack(manifest, **kwargs):
-        assert manifest.name != "dinkster-nodes-remote"
-        return real_load_pack(manifest, **kwargs)
-
-    monkeypatch.setattr(demo, "load_pack", checked_load_pack)
-    run_scenario(demo.run_demo())

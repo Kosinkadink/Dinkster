@@ -99,28 +99,6 @@ SCAFFOLD_NODES = (*BASE_NODES, JoinStrings, ConcatStrings, SplitString)
 # --- elaboration is pure, stable, and order-preserving ---
 
 
-# --- schema-level guardrails ---
-
-
-# --- wire format: input and output families round-trip ---
-
-
-# --- graph validation on the effective interface ---
-
-
-def _schemas() -> dict[str, NodeSchema]:
-    schemas = build_schemas(SCAFFOLD_NODES)
-    schemas[JOIN_SCHEMA.node_type] = JOIN_SCHEMA
-    return schemas
-
-
-FANOUT_SCHEMA = NodeSchema(
-    node_type="test.fanout",
-    inputs=(InputSpec("seed", STRING),),
-    output_families=(OutputFamilySpec("results", STRING),),
-)
-
-
 # --- engine + worker end-to-end ---
 
 

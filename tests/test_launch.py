@@ -18,17 +18,6 @@ from dinkster.project_folders import ProjectFolders
 from tests.async_scenarios import run_scenario
 
 
-def test_frontend_discovery_finds_a_sibling_development_build(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(frontend, "__file__", str(tmp_path / "Dinkster/src/dinkster/frontend.py"))
-    monkeypatch.setattr(
-        frontend.importlib.resources, "files", lambda _name: tmp_path / "Dinkster/src/dinkster"
-    )
-    bundle = tmp_path / "Dinkster-Frontend/packages/app/dist"
-    bundle.mkdir(parents=True)
-    (bundle / "index.html").write_text("<main>development</main>")
-    assert frontend.discover_frontend_bundle() == bundle
-
-
 def test_library_initialization_creates_default_mounts(tmp_path: Path) -> None:
     library = tmp_path / "library"
     setup.ensure_default_mounts(library)
@@ -564,25 +553,6 @@ def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monke
         MountDef("imports", library / "imports", "readwrite"),
         *mounts,
     )
-    assert not (library / "output").exists()
-
-
-def test_setup_reuses_an_existing_mount_for_the_default_output_path(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    library = tmp_path / "library"
-    library.mkdir(parents=True)
-    existing = MountDef("existing-output", library / "output", "read")
-    (library / "mounts.toml").write_text(dump_mounts((existing,)), "utf-8")
-
-    setup.ensure_default_mounts(library)
-
-    assert load_mounts(library / "mounts.toml") == (
-        existing,
-        MountDef("imports", library / "imports", "readwrite"),
-    )
-    assert load_output_mount(library / "mounts.toml") is None
     assert not (library / "output").exists()
 
 

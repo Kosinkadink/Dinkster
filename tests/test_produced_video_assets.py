@@ -6,14 +6,11 @@ import asyncio
 import multiprocessing
 import os
 import shutil
-import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
-from contextlib import closing
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
-from multiprocessing.synchronize import Barrier
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,7 +26,6 @@ from dinkster_assets import (
     register_video_value_type,
     resolver_from_env,
 )
-from dinkster_assets._sqlite import connect_journal
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
@@ -69,43 +65,6 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
-
-
-def _open_new_journals(channel: Connection, root: Path, barrier: Barrier) -> None:
-    results = []
-    try:
-        for index in range(32):
-            barrier.wait(timeout=60)
-            try:
-                with closing(connect_journal(root / f"journal-{index}.sqlite")) as db:
-                    results.append(db.execute("PRAGMA journal_mode").fetchone())
-            except sqlite3.Error as exc:
-                results.append(repr(exc))
-        channel.send(results)
-    finally:
-        channel.close()
-
-
-def _publish_with_database_lock(channel: Connection, root: Path, hold: bool) -> None:
-    state = ProducedScratchState(root)
-    data = b"lock holder" if hold else b"contending publisher"
-    try:
-        if hold:
-            state.published(digest_bytes(data), len(data))
-            with sqlite3.connect(root / ".produced-scratch.sqlite") as db:
-                db.execute("BEGIN IMMEDIATE")
-                channel.send("locked")
-                assert channel.poll(60), "lock holder was not released"
-                assert channel.recv() == "release"
-        else:
-            channel.send("publishing")
-            state.published(digest_bytes(data), len(data))
-            state.offer((digest_bytes(data),))
-        channel.send(None)
-    except Exception as exc:
-        channel.send(repr(exc))
-    finally:
-        channel.close()
 
 
 def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:

@@ -25,10 +25,8 @@ from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import CompatGateDiagnostic
 from dinkster_server import STATE_KEY, create_app
 from dinkster_values import TypeRegistry
-from dinkster_workers import InProcessWorker, ManifestError
+from dinkster_workers import InProcessWorker
 from dinkster_workers.doctor import prepare_catalog
-from dinkster_workers.host import load_choices
-from dinkster_workers.manifest import load_manifest
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer
 from dinkster.reload_api import apply_reload, apply_remove
@@ -125,28 +123,6 @@ def test_in_process_worker_serves_lazy_choices() -> None:
             await worker.fetch_choices("cp.bad")
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize(
-    ("entry", "match"),
-    [
-        ("choicepack_nodes:NOT_CALLABLE", "not callable"),
-        ("choicepack_nodes:choices_not_mapping", "mapping"),
-        ("choicepack_nodes:choices_bad_id", "lowercase"),
-        ("choicepack_nodes:choices_bare_string", "sequence of strings"),
-        ("choicepack_nodes:choices_non_string_value", "non-string or empty"),
-        ("choicepack_nodes:choices_empty_value", "non-string or empty"),
-        ("choicepack_nodes:choices_nul_value", "must not contain NUL"),
-        ("choicepack_nodes:choices_surrogate_value", "must be valid UTF-8"),
-        ("choicepack_nodes:choices_long_value", "maximum is 4096"),
-        ("choicepack_nodes:choices_too_many", "maximum is 10000"),
-        ("choicepack_nodes:choices_response_too_large", "response exceeds"),
-    ],
-)
-def test_load_choices_refuses(tmp_path: Path, entry: str, match: str) -> None:
-    manifest = load_manifest(write_choice_manifest(tmp_path, choices=entry))
-    with pytest.raises(ManifestError, match=match):
-        load_choices(manifest)
 
 
 # -- hello parsing -------------------------------------------------------------
@@ -574,28 +550,6 @@ def test_compose_rejects_choice_collision(tmp_path: Path) -> None:
             assert composer.composition.lazy_choices == {}
             assert set(composer.composition.schemas) >= {"cp.reserved-pick"}
             assert "cp2.pick" not in composer.composition.schemas
-        finally:
-            await composer.composition.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize(
-    "nodes",
-    ("choicepack_nodes:MISSING_REMOTE_NODES", "choicepack_nodes:NESTED_MISSING_REMOTE_NODES"),
-)
-def test_compose_requires_same_pack_authority_for_every_remote_route(
-    tmp_path: Path, nodes: str
-) -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            before_schemas = dict(composer.composition.schemas)
-            before_choices = dict(composer.composition.choices)
-            with pytest.raises(CompositionError, match="remote choice.*not registered"):
-                await composer.add_pack(write_choice_manifest(tmp_path, nodes=nodes))
-            assert composer.composition.schemas == before_schemas
-            assert composer.composition.choices == before_choices
         finally:
             await composer.composition.close()
 

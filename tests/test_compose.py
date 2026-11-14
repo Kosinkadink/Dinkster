@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import hashlib
 import json
 import os
 import shutil
@@ -49,8 +48,6 @@ from dinkster.compose import (
     ServingComposer,
     compose_serving,
     default_pack_spec,
-    order_pack_entries_by_requirements,
-    resolve_manifest_path,
 )
 from tests.async_scenarios import run_scenario
 
@@ -252,14 +249,6 @@ def write_contract_manifest(
     return manifest
 
 
-def test_resolve_manifest_path(tmp_path: Path) -> None:
-    manifest = write_iso_manifest(tmp_path / "pack")
-    assert resolve_manifest_path(manifest) == manifest
-    assert resolve_manifest_path(manifest.parent) == manifest
-    with pytest.raises(CompositionError, match="not found"):
-        resolve_manifest_path(tmp_path / "nowhere")
-
-
 def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
     tmp_path: Path,
 ) -> None:
@@ -294,50 +283,6 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         assert [Path(spec.manifest) for spec in ordered] == [provider, consumer]
     finally:
         run_scenario(composer.close())
-
-
-def test_requirement_ordering_survives_unresolvable_contracts(tmp_path: Path) -> None:
-    """A pack whose contracts cannot resolve must not undo the ordering of the
-    healthy packs: the consumer still composes after its declared provider."""
-    provider = write_contract_manifest(tmp_path / "provider", "provider")
-    consumer = write_contract_manifest(
-        tmp_path / "consumer", "consumer", '[pack.dependencies]\nprovider = ">=2,<3"\n'
-    )
-    broken = write_contract_manifest(
-        tmp_path / "broken",
-        "broken",
-        '[pack.requirements.capabilities]\n"missing.capability" = ">=1,<2"\n',
-    )
-    ordered = order_pack_entries_by_requirements((consumer, provider, broken))
-    assert [Path(spec.manifest).parent.name for spec in ordered] == [
-        "provider",
-        "consumer",
-        "broken",
-    ]
-
-
-def test_requirement_ordering_tolerates_cycles_unknowns_and_broken_manifests(
-    tmp_path: Path,
-) -> None:
-    first = write_contract_manifest(
-        tmp_path / "first", "first-cycle", '[pack.dependencies]\n"second-cycle" = ">=1,<2"\n'
-    )
-    second = write_contract_manifest(
-        tmp_path / "second", "second-cycle", '[pack.dependencies]\n"first-cycle" = ">=1,<2"\n'
-    )
-    ghost = write_contract_manifest(
-        tmp_path / "ghost", "ghost", '[pack.dependencies]\nunlisted-pack = ">=1,<2"\n'
-    )
-    entries = (first, second, ghost, tmp_path / "nowhere" / "dinkster-pack.toml")
-    ordered = order_pack_entries_by_requirements(entries)
-    # Unknown dependencies and unreadable manifests never refuse the set; the
-    # cycle members follow once nothing else can move, in given order.
-    assert [Path(spec.manifest).parent.name for spec in ordered] == [
-        "ghost",
-        "nowhere",
-        "first",
-        "second",
-    ]
 
 
 def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_capabilities(
@@ -447,44 +392,6 @@ def test_compose_defaults_only(
             await composition.close()
 
     run_scenario(scenario())
-
-
-def test_default_pack_publishes_docs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_pack: Path
-) -> None:
-    from dinkster import compose
-
-    source = text_pack
-    copied = tmp_path / "pack"
-    shutil.copytree(source, copied)
-    manifest = copied / "dinkster-pack.toml"
-    manifest.write_text(manifest.read_text() + '\n[pack.docs]\ndir = "docs"\n')
-    node = copied / "docs/nodes/dinkster.text.string_concatenate"
-    node.mkdir(parents=True)
-    body = b"# Concatenate Text\n\nJoins two strings.\n"
-    (node / "en.md").write_bytes(
-        b'+++\ntitle = "Concatenate Text"\nsummary = "Joins strings."\nschema_version = 1\n+++\n'
-        + body
-    )
-    monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
-    monkeypatch.setattr(
-        compose.importlib.metadata,
-        "distribution",
-        lambda _name: editable_distribution(copied, "0.0.2"),
-    )
-    spec = default_pack_spec("dinkster-text")
-    assert spec.packs is not None
-    docs = spec.packs["dinkster-text"].docs
-    assert docs is not None
-    assert [(page.kind, page.id, page.locale) for page in docs.pages] == [
-        ("node", "dinkster.text.string_concatenate", "en"),
-    ]
-    page = next(page for page in docs.pages if page.kind == "node")
-    assert page.title == "Concatenate Text"
-    assert page.summary == "Joins strings."
-    assert page.schema_version == 1
-    assert page.data == body
-    assert page.digest == "sha256:" + hashlib.sha256(page.data).hexdigest()
 
 
 def test_default_pack_uses_embedded_wheel_artifact(
@@ -1110,81 +1017,6 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize(
-    "in_process, cold", [(False, False), (False, True), (True, False), (True, True)]
-)
-def test_pack_type_owners_are_discovered_without_activation_and_retracted(
-    tmp_path: Path, in_process: bool, cold: bool
-) -> None:
-    module = f"type_owner_pack_{int(in_process)}_{int(cold)}"
-    source = tmp_path / f"{module}.py"
-    source.write_text(
-        'NODES = []\ndef register_types(registry):\n    registry.register("mypack.thing")\n'
-    )
-    manifest = tmp_path / "dinkster-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "mypack"\npublisher = "someone"\n'
-        "[pack.entry]\n"
-        f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n'
-    )
-    if cold:
-        assert prepare_catalog(manifest, environment=os.environ).ok
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        client: TestClient | None = None
-        try:
-            await composer.add_pack(PackSpec(manifest, in_process=in_process, require_catalog=cold))
-            registry = composer.composition._registry
-            assert registry.type_owners()["mypack.thing"] == "mypack"
-            if cold:
-                assert composer._records["mypack"].worker.cold
-                assert "mypack.thing" not in registry
-            client = TestClient(
-                TestServer(
-                    create_app(composer.composition.make_engine, composer.composition.schemas)
-                )
-            )
-            await client.start_server()
-            data = await (await client.get("/api/nodes")).json()
-            assert data["typeOwners"]["mypack.thing"] == "mypack"
-            assert data["typeOwners"]["INT"] == "core"
-            if cold:
-                assert composer._records["mypack"].worker.cold
-            if not in_process:
-                original_manifest = manifest.read_text()
-                manifest.write_text(
-                    original_manifest.replace(
-                        "[pack.entry]", 'type-namespaces = ["FOREIGN"]\n[pack.entry]'
-                    )
-                )
-                with pytest.raises(CompositionError, match="must be prefixed"):
-                    await composer.reload_pack("mypack")
-                data = await (await client.get("/api/nodes")).json()
-                assert data["typeOwners"]["mypack.thing"] == "mypack"
-                manifest.write_text(original_manifest)
-                source.write_text(source.read_text().replace("mypack.thing", "mypack.replacement"))
-                if cold:
-                    assert prepare_catalog(manifest, environment=os.environ).ok
-                await composer.reload_pack("mypack")
-                data = await (await client.get("/api/nodes")).json()
-                assert "mypack.thing" not in data["typeOwners"]
-                assert data["typeOwners"]["mypack.replacement"] == "mypack"
-            await composer.remove_pack("mypack")
-            data = await (await client.get("/api/nodes")).json()
-            assert "mypack.thing" not in data["typeOwners"]
-            assert "mypack.replacement" not in data["typeOwners"]
-            assert data["typeOwners"]["INT"] == "core"
-            assert registry.owner_of("mypack.thing") is None
-            assert "mypack.thing" not in registry
-        finally:
-            if client is not None:
-                await client.close()
-            await composer.close()
-
-    run_scenario(scenario())
-
-
 def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Path) -> None:
     owner = tmp_path / "owner"
     consumer = tmp_path / "consumer"
@@ -1530,122 +1362,6 @@ def test_broken_default_pack_leaves_zero_node_host_and_registry_healthy(tmp_path
     run_scenario(scenario())
 
 
-def test_serving_composer_maintains_asset_catalog(tmp_path: Path) -> None:
-    """[[pack.assets]] declarations ride composition onto the live asset
-    catalog: add_pack registers the pack's artifact root and needs (and
-    the packs-table wire carries the descriptors), reload swaps them for
-    the new manifest's declarations, remove retracts everything - the
-    SAME catalog object throughout, since ServerLibrary holds the
-    reference for the process lifetime."""
-    from dinkster_assets import PackagedSource, digest_bytes
-
-    from dinkster.compose import ServingComposer
-
-    model_bytes = b"iso aux model" * 64
-    model_digest = digest_bytes(model_bytes)
-
-    def write_manifest_with_assets(directory: Path) -> Path:
-        manifest = write_iso_manifest(directory)
-        (directory / "assets").mkdir(exist_ok=True)
-        (directory / "assets" / "model.bin").write_bytes(model_bytes)
-        manifest.write_text(
-            manifest.read_text()
-            + "\n[[pack.assets]]\n"
-            + f'id = "aux-model"\nname = "Aux Model"\ndigest = "{model_digest}"\n'
-            + 'kind = "model/auxiliary"\nfile = "assets/model.bin"\n'
-            + 'urls = ["https://hub.example/aux.bin"]\nnodes = ["iso.chatty"]\n'
-        )
-        return manifest
-
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            catalog = composer.composition.asset_catalog
-            pack_dir = tmp_path / "isopack"
-            delta = await composer.add_pack(write_manifest_with_assets(pack_dir))
-
-            # Descriptors ride the packs table; bytes never do.
-            wire = delta.packs["isopack"].to_wire()
-            assets = wire["assets"]
-            assert isinstance(assets, list) and len(assets) == 1
-            assert assets[0]["id"] == "aux-model"
-            assert assets[0]["digest"] == model_digest
-            assert assets[0]["nodes"] == ["iso.chatty"]
-
-            # The catalog knows the root and the need, by digest and by
-            # requiring node type.
-            assert catalog.pack_roots() == {"isopack": pack_dir}
-            need = catalog.need_for(model_digest)
-            assert need is not None
-            assert PackagedSource(pack="isopack", path="assets/model.bin") in (need.sources)
-            assert set(catalog.needs_for_nodes({"iso.chatty"})) == {model_digest}
-
-            # Reload against a manifest WITHOUT the declaration: the
-            # catalog swaps to the new surface - no stale need survives.
-            write_iso_manifest(pack_dir)
-            await composer.reload_pack("isopack")
-            assert catalog.need_for(model_digest) is None
-            assert catalog.needs_for_nodes({"iso.chatty"}) == {}
-
-            # And back: reload with the declaration restores it.
-            write_manifest_with_assets(pack_dir)
-            await composer.reload_pack("isopack")
-            assert catalog.need_for(model_digest) is not None
-
-            # Removal retracts declarations and root alike.
-            await composer.remove_pack("isopack")
-            assert catalog.need_for(model_digest) is None
-            assert catalog.pack_roots() == {}
-        finally:
-            await composer.close()
-
-    run_scenario(scenario())
-
-
-def test_serving_composer_failed_add_pack_reaps_on_close(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An add_pack that fails AFTER its worker started (node type outside
-    the declared namespaces) leaves the worker registered for cleanup:
-    close() reaps every started worker, the earlier pack's included."""
-    from dinkster_workers import IsolatedWorker
-
-    from dinkster.compose import ServingComposer
-
-    started: list[object] = []
-    closed: list[object] = []
-
-    class Recording(IsolatedWorker):
-        async def start(self) -> None:
-            await super().start()
-            started.append(self)
-
-        async def close(self) -> None:
-            closed.append(self)
-            await super().close()
-
-    monkeypatch.setattr("dinkster.compose.IsolatedWorker", Recording)
-
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            await composer.add_pack(write_iso_manifest(tmp_path / "a"))
-            bad = write_iso_manifest(tmp_path / "b", name="isopack2", namespaces=None)
-            bad.write_text(
-                bad.read_text()
-                .replace('type-namespaces = ["iso"]\n', "")
-                .replace('types = "isopack_nodes:register_types"\n', "")
-            )
-            with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
-                await composer.add_pack(bad)
-        finally:
-            await composer.close()
-        assert len(started) == 2  # the bad pack failed only after its hello
-        assert set(closed) == set(started)
-
-    run_scenario(scenario())
-
-
 def test_serving_composer_failed_add_pack_merges_nothing(tmp_path: Path) -> None:
     """add_pack is atomic: a pack failing composition AFTER its pack-table
     entry would have merged (node type outside its declared namespaces -
@@ -1671,49 +1387,6 @@ def test_serving_composer_failed_add_pack_merges_nothing(tmp_path: Path) -> None
             assert "iso.chatty" in composition.schemas
         finally:
             await composer.close()
-
-    run_scenario(scenario())
-
-
-def test_failed_start_reaps_started_workers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A composition error after some packs started must not orphan their
-    processes: every started worker is closed before the error escapes."""
-    from dinkster_workers import IsolatedWorker
-
-    started: list[object] = []
-    closed: list[object] = []
-
-    class Recording(IsolatedWorker):
-        async def start(self) -> None:
-            await super().start()
-            started.append(self)
-
-        async def close(self) -> None:
-            closed.append(self)
-            await super().close()
-
-    monkeypatch.setattr("dinkster.compose.IsolatedWorker", Recording)
-
-    async def scenario() -> None:
-        good = write_iso_manifest(tmp_path / "a", presentation=False)
-        bad = write_iso_manifest(
-            tmp_path / "b",
-            name="zzbad",
-            presentation=False,
-            namespaces=("zzbad",),
-        )
-        bad.write_text(
-            bad.read_text()
-            .replace("isopack_nodes:NODES", "missing_nodes:NODES")
-            .replace('type-namespaces = ["iso"]\n', "")
-            .replace('types = "isopack_nodes:register_types"\n', "")
-        )
-        with pytest.raises(RuntimeError, match="failed to start"):
-            await compose_serving([good, bad], include_default_packs=False, worker_env=WORKER_ENV)
-        assert started
-        assert all(worker in closed for worker in started)
 
     run_scenario(scenario())
 

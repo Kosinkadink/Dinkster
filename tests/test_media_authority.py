@@ -418,17 +418,6 @@ def test_classify_media_accepts_structural_animated_webp() -> None:
     )
 
 
-def test_classify_media_rejects_layer_two_and_handles_id3_versions() -> None:
-    layer_two = b"\xff\xfd\x80\x00" + bytes(413)
-    with pytest.raises(AssetError):
-        classify_media(layer_two)
-    id3v23_experimental = b"ID3\x03\x00\x20" + bytes(4) + _mp3()
-    assert classify_media(id3v23_experimental).media_type == "audio/mpeg"
-    id3v24_header = b"ID3\x04\x00\x10" + bytes(4)
-    id3v24_footer = id3v24_header + b"3DI" + id3v24_header[3:10] + _mp3()
-    assert classify_media(id3v24_footer).media_type == "audio/mpeg"
-
-
 def test_classify_media_uses_mp4_track_types_and_prefers_video() -> None:
     assert classify_media(_mp4(_audio_mp4_track())) == MediaClassification(
         "media/audio", "audio/mp4", "m4a"

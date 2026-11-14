@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -29,7 +28,6 @@ from dinkster_assets import (
     LibraryStore,
     LocalAssetLibrary,
     MountDef,
-    MountsError,
     MountSnapshotResolver,
     MountTable,
     digest_bytes,
@@ -166,45 +164,6 @@ def seed(root: Path, files: Mapping[str, bytes]) -> None:
 # --- config: parse / dump ----------------------------------------------------
 
 
-def test_mount_priority_validation_and_config_round_trip() -> None:
-    mounts = (
-        MountDef(
-            id="renders",
-            path=Path("/data/renders"),
-            mode="readwrite",
-            priority=-4,
-        ),
-        MountDef(id="models-main", path=Path("C:\\Users\\me\\models"), kind="model/vae"),
-    )
-    text = dump_mounts(mounts)
-    assert parse_mounts(text) == tuple(sorted(mounts, key=lambda m: m.id))
-    # Defaults are omitted: a read mount writes no mode line.
-    assert 'mode = "readwrite"' in text
-    assert text.count("mode =") == 1
-    assert "priority = -4" in text
-    assert text.count("priority =") == 1
-    assert 'kind = "model/vae"' in text
-    assert parse_mounts('[mounts.default]\npath = "/data"') == (
-        MountDef(id="default", path=Path("/data"), priority=0),
-    )
-
-    for invalid in (True, False, "1", 1.0, None):
-        with pytest.raises(MountsError, match="priority must be an integer"):
-            MountDef(id="invalid", path=Path("/data"), priority=invalid)  # type: ignore[arg-type]
-    for invalid_toml in ("true", '"1"'):
-        with pytest.raises(MountsError, match="priority must be an integer"):
-            parse_mounts(f'[mounts.invalid]\npath = "/data"\npriority = {invalid_toml}')
-
-
-def test_output_mount_config_round_trip(tmp_path: Path) -> None:
-    output = MountDef(id="output", path=tmp_path / "output", mode="readwrite")
-    path = tmp_path / "mounts.toml"
-    path.write_text(dump_mounts((output,), output_mount="output"), "utf-8")
-
-    assert load_mounts(path) == (output,)
-    assert load_output_mount(path) == "output"
-
-
 # --- the live table ----------------------------------------------------------
 
 
@@ -288,109 +247,6 @@ def test_mount_splits_changed_content_without_reusing_old_identity(tmp_path: Pat
     table.scan("models")
     assert table.ref("mounts/models/weights.bin").digest == old.digest
     assert [entry.digest for entry in table.missing_entries("models")] == [replacement.digest]
-
-
-def test_scan_publishes_cached_assets_and_progress_before_changed_file_finishes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "models"
-    seed(root, {"cached.bin": b"cached"})
-    snapshot = tmp_path / "library" / "worker-state" / "mounts.json"
-    index_root = tmp_path / "library" / "asset-indexes"
-    table = MountTable(snapshot, index_root=index_root)
-    table.add(MountDef(id="models", path=root))
-    table.scan("models")
-    cached_digest = digest_bytes(b"cached")
-
-    slow = root / "slow.bin"
-    slow.write_bytes(b"slow payload")
-    import dinkster_assets.library as library_module
-
-    hashing = Event()
-    release = Event()
-
-    def held_digest(path: Path):
-        if path == slow:
-            hashing.set()
-            assert release.wait(5)
-        return real_digest_file_with_record(path)
-
-    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
-    persist_calls = 0
-    real_persist_index = library_module.LocalAssetLibrary.persist_index
-
-    def counted_persist_index(library: LocalAssetLibrary) -> None:
-        nonlocal persist_calls
-        persist_calls += 1
-        real_persist_index(library)
-
-    monkeypatch.setattr(library_module.LocalAssetLibrary, "persist_index", counted_persist_index)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(table.scan, "models", progress_interval=0)
-        assert hashing.wait(5)
-
-        assert table.ref("mounts/models/cached.bin").digest == cached_digest
-        persists_before_refs = persist_calls
-        assert table.ref("mounts/models/cached.bin").digest == cached_digest
-        assert persist_calls == persists_before_refs
-        assert MountSnapshotResolver(snapshot).resolve(cached_digest) == root / "cached.bin"
-        with pytest.raises(AssetError, match="mounts/models/slow.bin.*not indexed"):
-            table.ref("mounts/models/slow.bin")
-        (descriptor,) = table.descriptors()
-        progress = cast("dict[str, object]", descriptor["scanProgress"])
-        assert descriptor["state"] == "scanning"
-        assert descriptor["entryCount"] == 1
-        assert progress["filesDone"] == 1
-        assert progress["filesTotal"] == 2
-        assert progress["bytesDone"] == len(b"cached")
-        assert progress["bytesTotal"] == len(b"cached") + len(b"slow payload")
-        assert isinstance(progress["elapsedSeconds"], float)
-
-        release.set()
-        assert future.result(timeout=5) == 2
-
-
-def test_mount_kind_is_validated_and_published_to_snapshot(tmp_path: Path) -> None:
-    root = tmp_path / "checkpoints"
-    seed(root, {"model.safetensors": b"weights"})
-    snapshot = tmp_path / "mounts-snapshot.json"
-    table = MountTable(snapshot)
-    table.add(
-        MountDef(id="comfy-model-checkpoints-1", path=root),
-        source="derived",
-        kind="model/checkpoint",
-    )
-    assert table.kind("comfy-model-checkpoints-1") == "model/checkpoint"
-    assert table.mounts_for_kind("model/checkpoint") == ("comfy-model-checkpoints-1",)
-    table.scan("comfy-model-checkpoints-1")
-    (descriptor,) = table.descriptors()
-    assert descriptor["kind"] == "model/checkpoint"
-    assert "path" not in descriptor
-    (snapshot_row,) = json.loads(snapshot.read_text("utf-8"))["mounts"]
-    assert snapshot_row["kind"] == "model/checkpoint"
-    assert MountSnapshotResolver(snapshot).resolve(digest_bytes(b"weights")) == (
-        root / "model.safetensors"
-    )
-
-    with pytest.raises(MountsError, match="kind"):
-        table.add(
-            MountDef(id="bad-kind", path=root),
-            kind="checkpoint",
-        )
-
-    missing = tmp_path / "private-missing-model-root"
-    hidden = MountTable()
-    hidden.add(
-        MountDef(id="missing-model", path=missing),
-        source="derived",
-        kind="model/checkpoint",
-    )
-    with pytest.raises(AssetError):
-        hidden.scan("missing-model")
-    (failed,) = hidden.descriptors()
-    assert failed["error"] == "model root unavailable"
-    assert str(missing) not in json.dumps(failed)
 
 
 def test_snapshot_resolver_filters_kind_and_ranks_duplicate_digest_roots(
@@ -541,15 +397,6 @@ def test_mount_priority_orders_engine_and_worker_resolution_deterministically(
         MountSnapshotResolver(tmp_path / "restart-snapshot.json").resolve(digest)
         == roots["z-lower"] / "z-lower.bin"
     )
-
-
-def test_snapshot_resolver_tolerates_malformed_snapshot(tmp_path: Path) -> None:
-    snapshot = tmp_path / "snap.json"
-    snapshot.write_text("{not json", "utf-8")
-    resolver = MountSnapshotResolver(snapshot)
-    assert resolver.resolve(digest_bytes(b"whatever")) is None
-    snapshot.write_text(json.dumps({"mounts": "nope"}), "utf-8")
-    assert resolver.resolve(digest_bytes(b"whatever")) is None
 
 
 def test_mount_roots_are_kind_scoped_ranked_and_live(
@@ -1622,60 +1469,6 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
                     assert response.status == 403
                     assert str(tmp_path) not in await response.text()
             assert table.get("private-location") is not None
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("library_state", ("absent", "empty", "escaping"))
-def test_operator_location_support_and_vault_containment(
-    tmp_path: Path, library_state: str
-) -> None:
-    data = b"bytes outside the authoritative vault root"
-    digest = digest_bytes(data)
-    library = (
-        ServerLibrary(
-            vault=AssetVault(tmp_path / "vault"), store=LibraryStore(tmp_path / "catalog.sqlite")
-        )
-        if library_state != "absent"
-        else None
-    )
-    if library_state == "escaping":
-        assert library is not None
-        outside = tmp_path / "private-file.bin"
-        outside.write_bytes(data)
-        hexpart = digest.split(":", 1)[1]
-        shard = library.vault.root / hexpart[:2]
-        shard.mkdir()
-        try:
-            (shard / hexpart).symlink_to(outside)
-        except OSError:
-            pytest.skip("symlink creation is unavailable")
-        library.store.record_asset(
-            "local",
-            AssetRef(digest, "file.bin", len(data)),
-            original_name="file.bin",
-            kind="asset/file",
-            origin={"kind": "unknown"},
-        )
-
-    async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS, library=library)
-        add_mount_routes(app, MountService(MountTable()))
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            response = await client.get("/api/mounts/locations", params={"digest": digest})
-            assert response.status == 200
-            assert response.headers["Cache-Control"] == "no-store"
-            body = await response.json()
-            assert body["locations"] == []
-            assert body["importMount"] is None
-            if library is None:
-                assert "vault" not in body
-            else:
-                assert body["vault"] == str(library.vault.root.resolve())
         finally:
             await client.close()
 

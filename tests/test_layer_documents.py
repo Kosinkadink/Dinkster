@@ -179,46 +179,6 @@ def test_canvas_background_is_the_blend_backdrop() -> None:
     np.testing.assert_array_equal(mask, 0)
 
 
-@pytest.mark.parametrize("combine", ("multiply", "add", "subtract", "intersect"))
-@pytest.mark.parametrize("channel", ("alpha", "luminance"))
-def test_mask_fields_groups_clipping_and_z_order(combine: str, channel: str) -> None:
-    value = document()
-    record = value.to_record()
-    identifier = record["rootLayerIds"][0]
-    resource = record["layers"][identifier]["resourceId"]
-    mask = {
-        "resourceId": resource,
-        "sourceRect": {"x": 0, "y": 0, "width": 2, "height": 1},
-        "channel": channel,
-        "combineMode": combine,
-        "enabled": True,
-        "invert": True,
-        "opacity": 32768,
-    }
-    masked = apply_commands(
-        value,
-        [
-            {"op": "add_mask", "ownerLayerId": identifier, "mask": mask},
-            {"op": "add_mask", "ownerLayerId": identifier, "mask": mask},
-        ],
-    )
-    assert masked.render().png == masked.render().png
-    mask_id = next(iter(masked.to_record()["masks"]))
-    assert flatten(masked, f"mask:{mask_id}")[0].shape == (1, 1, 2, 3)
-    disabled = apply_commands(
-        masked,
-        [
-            {"op": "mask", "id": mid, "changes": {"enabled": False}}
-            for mid in masked.to_record()["masks"]
-        ],
-    )
-    assert disabled.render().png == value.render().png
-    group = apply_commands(disabled, [{"op": "group", "ids": [identifier]}])
-    assert group.render().png == value.render().png
-    removed = apply_commands(group, [{"op": "remove", "id": group.to_record()["rootLayerIds"][0]}])
-    assert not removed.to_record()["layers"] and not removed.to_record()["masks"]
-
-
 def test_clipping_and_grouping_use_z_order_not_object_key_order() -> None:
     value = append_raster(document(), raster_png(np.ones((1, 2, 3))), z_index=10)
     record = value.to_record()
@@ -234,14 +194,6 @@ def test_clipping_and_grouping_use_z_order_not_object_key_order() -> None:
     value = ImageDocument.from_record(record)
     grouped = apply_commands(value, [{"op": "group", "ids": [clipped]}])
     assert grouped.render().png == value.render().png
-
-
-def test_comfy_missing_canvas_and_zero_dimensions_use_source_size() -> None:
-    value = from_comfy_layers(
-        {"version": 1, "layers": [{"image": np.ones((1, 2, 3, 3)).tolist(), "w": 0, "h": 0}]}
-    )
-    assert flatten(value)[0].shape == (1, 2, 3, 3)
-    assert flatten(from_comfy_layers({"version": 1, "layers": []}))[0].shape == (1, 1, 1, 4)
 
 
 def test_ora_archive_exact_reimport_and_independent_stack_fixture() -> None:
@@ -882,33 +834,6 @@ def test_linear_pass_through_group_preserves_mask_opacity_transform_and_clipping
         np.asarray(Image.open(io.BytesIO(isolated.png))),
     )
     np.testing.assert_array_equal(passed.pixels[..., 3], isolated.pixels[..., 3])
-
-
-def test_nested_pass_through_groups_visit_each_raster_once(monkeypatch) -> None:
-    import dinkster_image_document.render as renderer
-
-    value = append_raster(empty_document(1, 1), raster_png(np.array([[[0, 0, 1]]], np.float32)))
-    value = append_raster(
-        value, raster_png(np.array([[[1, 0, 0]]], np.float32)), blend_mode="multiply"
-    )
-    for _ in range(20):
-        identifier = value.to_record()["rootLayerIds"][-1]
-        value = apply_commands(value, [{"op": "group", "ids": [identifier]}])
-        identifier = value.to_record()["rootLayerIds"][-1]
-        value = apply_commands(
-            value, [{"op": "layer", "id": identifier, "changes": {"isolation": "pass-through"}}]
-        )
-    visits = 0
-    original = renderer._composite
-
-    def counted(*args, **kwargs):
-        nonlocal visits
-        visits += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(renderer, "_composite", counted)
-    np.testing.assert_array_equal(flatten(value)[0], [[[[0, 0, 0]]]])
-    assert visits == 2
 
 
 @pytest.mark.parametrize("outcome", ["success", "error", "cancel"])

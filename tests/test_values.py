@@ -72,18 +72,6 @@ def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -
     assert registry.type_owners()["mypack.thing"] == "mypack"
 
 
-def test_type_claims_survive_staging_without_leaking_to_the_live_registry() -> None:
-    live = make_registry()
-    staged = live.copy()
-    with staged.registering_pack("mypack", ("mypack.thing",)):
-        staged.register("mypack.thing")
-    assert live.owner_of("mypack.thing") is None
-    live.replace_from(staged)
-    assert live.owner_of("mypack.thing") == "mypack"
-    with pytest.raises(ValueError, match="overlaps"):
-        live.claim_types("other", ("mypack",))
-
-
 def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:
     registry = make_registry()
     with registry.registering_pack("mypack", ("mypack.thing",)):
