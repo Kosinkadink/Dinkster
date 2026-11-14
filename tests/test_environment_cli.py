@@ -1702,6 +1702,19 @@ def test_development_setup_shares_the_generations_selected_library(
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     library, _ = _wheel(tmp_path, "selected_helper", "1.0", 73)
     pack = write_publishable_pack(tmp_path / "pack")
+    (pack / "src/demo/__init__.py").write_text(
+        "from dinkster_api.v1 import CORE_INT, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from selected_helper import VALUE\n"
+        "class Helper(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='demo.helper', display_name='Helper', "
+        "outputs=(OutputSpec('value', TypeExpr.concrete(CORE_INT)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        return cls.outputs(value=VALUE)\n"
+        "NODES = [Helper]\n"
+    )
     manifest = pack / "dinkster-pack.toml"
     manifest.write_text(
         manifest.read_text().replace(
