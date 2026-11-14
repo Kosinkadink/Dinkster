@@ -562,7 +562,9 @@
   source pack needs a dependency lock, including empty closures. Confirmed setup
   and updates acquire missing pack wheels from their locked URLs and verify size
   and SHA256 before offline construction, including wheels absent from release
-  assets. Download failures identify the pack, URL and verification outcome.
+  assets. Compatibility checks may acquire verified private-wheel metadata when
+  shared dependency versions differ; a cold wheel cache does not by itself refuse
+  an online setup. Download failures identify the pack, URL and verification outcome.
   Offline repair and move still require intact retained wheels. Releases without
   pack acquisition support can still build from complete cached wheels. Confirmed
   updates can select another channel or variant, retaining the old selection until candidate health
