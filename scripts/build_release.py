@@ -532,9 +532,18 @@ def build(
         raise ValueError("release output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
     with versioned_sources(root, version) as staged:
-        verify_and_extract(
+        frontend = verify_and_extract(
             frontend_artifact.read_bytes(), sources, staged / "src/dinkster/frontend_bundle/static"
         )
+        schema = (root / "packages/dinkster-schema/src/dinkster_schema/wire.py").read_text()
+        schema_api = re.search(r"(?m)^SCHEMA_WIRE_VERSION = ([0-9]+)$", schema)
+        if schema_api is None:
+            raise ValueError("engine schema must declare SCHEMA_WIRE_VERSION")
+        api = int(schema_api[1])
+        if not frontend["engineApi"]["min"] <= api <= frontend["engineApi"]["max"]:
+            raise ValueError(
+                f"frontend {sources['version']} does not support engine schema API {api}"
+            )
         for name in PUBLISHED_PROJECTS:
             subprocess.run(
                 [uv, "build", "--package", name, "--wheel", "--out-dir", str(output)],
@@ -567,6 +576,8 @@ def build(
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),
+        "schemaApi": api,
+        "frontend": sources,
         "workspaceWheels": [wheel.name for wheel in wheels],
         "dependencies": dependencies,
         "defaultPacks": tomllib.loads(

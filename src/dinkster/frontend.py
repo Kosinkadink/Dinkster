@@ -29,6 +29,14 @@ _HOP_BY_HOP = frozenset(
 
 def discover_frontend_bundle() -> Path | None:
     """Find the installed release bundle or a sibling development build."""
+    try:
+        released = Path(str(importlib.resources.files("dinkster_frontend").joinpath("static")))
+    except ModuleNotFoundError:
+        pass
+    else:
+        if (released / "index.html").is_file():
+            return released
+
     packaged = importlib.resources.files("dinkster").joinpath("frontend_bundle", "static")
     packaged_path = Path(str(packaged))
     if (packaged_path / "index.html").is_file():

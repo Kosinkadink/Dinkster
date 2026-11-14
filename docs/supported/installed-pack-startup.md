@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Managed environments select the engine's versioned frontend or a channel-selected
+  frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
+  refuse before activation; compatible frontend-only updates retain the engine.
+
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
 

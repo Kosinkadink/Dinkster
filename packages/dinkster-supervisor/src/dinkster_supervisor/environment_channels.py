@@ -18,6 +18,7 @@ from .environment_artifacts import (
     validate_manifest,
 )
 from .environment_constraints import effective_constraints
+from .environment_frontend import select_frontend
 from .environment_state import (
     Channel,
     EnvironmentError,
@@ -51,6 +52,7 @@ def write_channel(
     channel: str,
     output_root: Path,
     minimum_desktop_version: str,
+    frontend: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Validate all inputs before atomically replacing one local channel document."""
     if channel not in {"stable", "main"}:
@@ -111,6 +113,9 @@ def write_channel(
         "minimumDesktopVersion": minimum_desktop_version,
         "signature": None,
     }
+    if frontend is not None:
+        select_frontend(engine, {"frontend": frontend})
+        document["frontend"] = frontend
     Channel.parse(document)
     write_document(output_root / "channels" / f"{channel}.json", document)
     return document
@@ -123,6 +128,7 @@ def main() -> None:
     parser.add_argument("--channel", choices=("stable", "main"), required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--minimum-desktop-version", required=True)
+    parser.add_argument("--frontend", type=Path, help="optional published frontend reference JSON")
     args = parser.parse_args()
     try:
         write_channel(
@@ -131,6 +137,9 @@ def main() -> None:
             channel=args.channel,
             output_root=args.output_root,
             minimum_desktop_version=args.minimum_desktop_version,
+            frontend=parse_metadata(args.frontend.read_bytes())
+            if args.frontend is not None
+            else None,
         )
     except (OSError, ValueError) as exc:
         print(f"channel refused: {exc}", file=sys.stderr)

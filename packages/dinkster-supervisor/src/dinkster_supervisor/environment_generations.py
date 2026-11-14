@@ -25,6 +25,7 @@ from .environment_constraints import (
     selected_wheel_requirements,
 )
 from .environment_downloads import fetch_artifact
+from .environment_frontend import validate_installed_frontend
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -644,6 +645,7 @@ def prepare_engine_interpreter(
     )
     if result.returncode:
         raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+    validate_installed_frontend(destination)
     write_document(
         destination / "installed-wheels.json",
         {"format": "dinkster.installed-wheels/1", "wheels": selected, "inherited": []},
