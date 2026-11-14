@@ -42,6 +42,7 @@ def test_library_initialization_creates_default_mounts(tmp_path: Path) -> None:
     [
         "json",
         "text",
+        "newer-inference",
         "missing-locks",
         "no-defaults",
         "offline",
@@ -62,7 +63,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     from dinkster_store import object_path
     from dinkster_supervisor.environment_artifacts import acquire, discover
     from dinkster_workers.pack_lock import PackLock
-    from test_environment_artifacts import _json, _mirror
+    from test_environment_artifacts import _artifact, _json, _mirror
     from test_installer import _serve_artifacts, _static_indexes, _static_release
 
     from dinkster.registries import (
@@ -80,6 +81,10 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     monkeypatch.delenv("DINKSTER_REGISTRIES", raising=False)
     base, engine, channel = _mirror(mirror)
     defaults = {"example-pack": "1.2.0", "other-pack": "1.2.3"}
+    if mode == "newer-inference":
+        engine["artifacts"].append(
+            _artifact("dinkster_inference-0.1.2-py3-none-any.whl", b"inference")
+        )
     if mode != "no-defaults":
         engine["defaultPacks"] = defaults
     previous = mirror / "engine" / channel["engine"]["release"][7:]
@@ -116,6 +121,12 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         )
         files["/static/" + path] = lock_bytes
         releases.append(row)
+        if mode == "newer-inference" and name == "example-pack":
+            newer = _static_release(
+                LockedPack(name, "2.0", artifact_digest(b"newer pack"), "acme", ()), b"newer pack"
+            )
+            newer["requires"] = ["dinkster-inference>=0.1.3"]
+            releases.append(newer)
     files.update(_static_indexes(releases))
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(files, requests)
@@ -224,6 +235,12 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
                 assert result["baseId"] == base["id"]
                 assert set(result["dependencyLocks"]) == set(defaults)
                 assert result["maximumPackPayloadBytes"] == 22
+                if mode == "newer-inference":
+                    assert result["sources"]["packs"][0]["version"] == "1.2.3"
+                    assert "example-pack@2.0 skipped" in result["skippedPackVersions"][0]
+                    assert "dinkster-inference>=0.1.3" in result["skippedPackVersions"][0]
+                    assert "dinkster-inference==0.1.2" in result["skippedPackVersions"][0]
+                    assert result["skippedPackVersions"][0] in result["plan"]
                 assert all(
                     row["source"] == f"registry:{endpoint}" for row in result["sources"]["packs"]
                 )

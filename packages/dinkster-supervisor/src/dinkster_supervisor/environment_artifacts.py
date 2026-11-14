@@ -542,6 +542,36 @@ def validate_dependency_base(selection: object, base: dict[str, object]) -> None
         raise EnvironmentError("engine lock contains a removed base-owned distribution")
 
 
+def engine_package_versions(
+    engine: dict[str, object], variant: str, base: dict[str, object] | None = None
+) -> dict[str, str]:
+    """Describe the target engine's shared packages without inspecting the planning host."""
+    versions: dict[str, str] = {}
+    if engine.get("dependencies") is not None:
+        selections = cast("dict[str, object]", engine["dependencies"])
+        versions.update(
+            {
+                cast("str", row["name"]): cast("str", row["version"])
+                for row in dependency_wheels(selections.get(variant))
+            }
+        )
+    for row in artifact_rows(engine["artifacts"], "name"):
+        filename = cast("str", row["name"])
+        if filename.endswith(".whl"):
+            name, version, _, _ = parse_wheel_filename(filename)
+            versions[name] = str(version)
+    if base is not None:
+        for name in cast("list[str]", base["replaces"]):
+            versions.pop(name, None)
+        versions.update(
+            {
+                cast("str", row["name"]): cast("str", row["version"])
+                for row in cast("list[dict[str, object]]", base["wheels"])
+            }
+        )
+    return versions
+
+
 def engine_constraints(engine: dict[str, object], variant: str) -> str:
     """Use the same exact variant requirements for native pack builds and user installs."""
     selections = cast("dict[str, object]", engine["dependencies"])

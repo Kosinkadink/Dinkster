@@ -115,11 +115,18 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
     )
     selector = args.registry or ("" if config.registries else "https://registry.dinkster.org")
     missing: list[str] = []
+    skipped: list[str] = []
     sources, locks = plan_registry_sources(
         config,
         select_registry(config, selector),
         cast("dict[str, str]", defaults),
         engine_version=cast("str", catalog.engine["version"]),
+        engine_packages=artifacts.engine_package_versions(catalog.engine, variant, base),
+        skipped=skipped,
+        markers={
+            "python_full_version": cast("str", base["python"]),
+            "python_version": ".".join(cast("str", base["python"]).split(".")[:2]),
+        },
         variant=variant,
         base_id=base_id,
         index=StaticPackIndex(
@@ -228,6 +235,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         f"CUDA_VISIBLE_DEVICES={','.join(args.gpu)}",
         f"Engine: {catalog.engine['version']} ({catalog.channel.engine_release})",
         f"Runtime: Python {base['python']}; {variant}; base {base_id}",
+        *skipped,
         *(
             f"Pack: {entry.pack}@{entry.version}; {entry.source}; {entry.artifact_digest}"
             for entry in sources.packs
@@ -271,6 +279,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         "runtimeInputs": runtime,
         "sources": json.loads(sources.record_json()),
         "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+        "skippedPackVersions": skipped,
         "maximumPackPayloadBytes": sum(wheel.size for wheel in payloads.values()),
         "cachedPackPayloads": cached_payloads,
         "plan": plan,
