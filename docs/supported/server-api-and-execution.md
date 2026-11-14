@@ -98,8 +98,13 @@
   reference declarations refuse inspection, including inside nested containers
   and after disk-cache restart. Recognized inactive job scratch reports its
   bytes while host-job and store ownership are exclusively held; live, unsafe
-  or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
-  cleanup remains disabled regardless of individual complete registrations.
+  or unknown scratch remains unavailable. Individual owner registrations do
+  not enable collection. Server-admitted client generations can acknowledge
+  their exact eight-class owner census separately from vault-wide eligibility.
+  Legacy admission, historical unknown owners, disconnected clients and stale
+  acknowledgments block collection. Operator Clear and size-policy enforcement
+  collect only relinquished produced assets while all reference and publication
+  barriers are held; retained bytes remain protected.
   Vault ownership inspection reports busy for active managed readers, writers
   and server jobs, or unavailable for unknown ownership state. Server jobs keep
   that ownership through terminal recovery and durable history publication;
