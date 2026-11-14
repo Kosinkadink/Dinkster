@@ -188,8 +188,12 @@ class PackSettingsSchema:
         if not all(isinstance(name, str) for name in untyped_names):
             raise ValueError("pack setting property names must be strings")
         names = cast(list[str], untyped_names)
-        if list(required_items) != names:
-            raise ValueError("every pack setting must be required in property order")
+        if (
+            not all(isinstance(name, str) for name in required_items)
+            or len(required_items) != len(names)
+            or set(required_items) != set(names)
+        ):
+            raise ValueError("every pack setting must be required exactly once")
         fields: dict[str, PackSettingField] = {}
         for name, untyped in cast(Mapping[str, object], props).items():
             if not isinstance(untyped, Mapping):
