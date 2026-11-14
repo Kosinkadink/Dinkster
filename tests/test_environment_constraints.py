@@ -177,9 +177,7 @@ def test_unhashed_resolving_or_url_requirements_are_refused(requirement: str):
 def test_replacement_membership_order_does_not_change_selected_wheels():
     base = _base()
     base["replaces"] = ["torch", "nvidia-cublas"]
-    assert effective_constraints("", base) == (
-        "torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n"
-    )
+    assert effective_constraints("", base) == ("torch==2.14.1+cpu --hash=sha256:" + "b" * 64 + "\n")
 
 
 @pytest.mark.parametrize("membership", [[], ["torch", "torch"], ["Torch"]])
