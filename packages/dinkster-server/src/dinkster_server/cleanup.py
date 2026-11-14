@@ -225,6 +225,7 @@ def recover_produced_publications(
     recovered = 0
     blocked = 0
     reclaimed = {"reclaimedBytes": 0, "reclaimedFiles": 0}
+    eligible = False
     try:
         for pack, root in _scratch_roots(scratch):
             try:
@@ -241,13 +242,14 @@ def recover_produced_publications(
                         reasons: list[str] = []
                         with store.hold_asset_references(collection_blocked=reasons):
                             if not reasons:
+                                eligible = True
                                 _remove_scratch(vault, root, state, reclaimed)
             except (AssetError, OSError):
                 blocked += 1
     except (AssetError, OSError):
         blocked += 1
     result = {"verifiedPublications": recovered, "blockedInspections": blocked}
-    if store is not None:
+    if eligible:
         result.update(reclaimed)
     return result
 
