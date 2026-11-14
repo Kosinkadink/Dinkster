@@ -124,12 +124,12 @@ def add_retention_clients(app: web.Application) -> None:
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
         route = request.match_info.route
-        # Native imports cannot carry headers; selected immutable pack code exposes no vault values.
+        # These reads expose neither vault values nor job publications.
         if (
             request.method in {"GET", "HEAD"}
             and isinstance(route, ResourceRoute)
             and route.resource is not None
-            and route.resource.canonical == FRONTEND_ASSET_PATH
+            and route.resource.canonical in {FRONTEND_ASSET_PATH, "/api/queue/idle"}
         ):
             return await handler(request)
         if (

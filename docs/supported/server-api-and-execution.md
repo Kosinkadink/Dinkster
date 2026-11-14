@@ -103,7 +103,9 @@
   their exact eight-class owner census separately from vault-wide eligibility.
   Native browser imports of selected immutable pack modules need no retention
   header and do not invalidate the census; their authentication and digest
-  checks still apply. Executable pack routes and asset reads remain admitted.
+  checks still apply. Management can observe whether queues are idle without
+  changing the asset census or reading job values. Full queue reads, executable
+  pack routes and asset reads remain admitted.
   Legacy admission, historical unknown owners, disconnected clients, active
   streams, pending reads and stale acknowledgments block collection. Closing
   streams alone does not authorize collection; a quiescent client must still

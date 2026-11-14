@@ -838,6 +838,15 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
             assert (await acknowledged.json())["complete"]
             reconciled = await (await client.get(census, headers=headers)).json()
             assert reconciled["complete"]
+            for method in (client.get, client.head):
+                response = await method("/api/queue/idle")
+                assert response.status == 200
+            assert await (await client.get("/api/queue/idle")).json() == {"idle": True}
+            assert await (await client.get(census, headers=headers)).json() == reconciled
+            assert (
+                "owner_completeness_unknown"
+                not in (await (await client.get(storage)).json())["blocked"]
+            )
             assert claim in reconciled["holders"]["5"] and claim in reconciled["holders"]["6"]
             entered = asyncio.Event()
             release = asyncio.Event()
@@ -1002,7 +1011,7 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
             assert not reopened["complete"]
             assert reopened["generation"] != second["generation"]
             assert (await client.get("/api/nodes", headers=second_headers)).status == 409
-            assert (await client.get("/api/nodes")).status == 200
+            assert (await client.get("/api/queue")).status == 200
             status = await (await client.get(storage)).json()
             assert "owner_completeness_unknown" in status["blocked"]
             assert path.read_bytes() == payloads[0]
