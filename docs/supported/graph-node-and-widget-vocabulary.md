@@ -5,6 +5,9 @@
   helper-node links, dynamic-family order and nested region exports; optional
   source-signature guards refuse unrelated historical shapes. Saving a migrated
   graph records successor IDs so reopening does not apply the rule again.
+  Admission refuses replacements that would drop live connections instead of
+  silently executing downstream defaults. Stored dynamic choices participate in
+  value guards and mappings; new count-bound outputs use the mapped count.
   Currently served IDs are never reinterpreted. Native input reordering and
   defaulted additions need no replacement because values are keyed by input ID.
 

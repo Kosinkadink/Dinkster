@@ -24,6 +24,7 @@ from dinkster_schema import (
     MappingSource,
     Node,
     NodeSchema,
+    OutputCountSpec,
     OutputFamilyMapping,
     OutputFamilySpec,
     OutputSpec,
@@ -42,6 +43,104 @@ SCHEMAS["test.list_input"] = NodeSchema(
     node_type="test.list_input",
     inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
 )
+
+
+@pytest.mark.parametrize("lost", ["incoming", "outgoing", "region-input"])
+def test_retired_node_refuses_to_silently_drop_live_connections(lost: str) -> None:
+    integer = TypeExpr.concrete("INT")
+    schemas = {
+        "current": NodeSchema(
+            "current",
+            inputs=(InputSpec("value", integer, default=99),),
+            outputs=(OutputSpec("value", integer),),
+            replacements=(
+                ReplacementRule(
+                    "retired", (ReplacementCase.build("current", outputs={"value": "result"}),)
+                ),
+            ),
+        )
+    }
+    nodes: dict[str, GraphNode | RegionNode] = {"old": GraphNode("retired")}
+    if lost == "incoming":
+        nodes["source"] = GraphNode("current", {"value": 37})
+        nodes["old"] = GraphNode("retired", {"operand": Link("source", "value")})
+    elif lost == "outgoing":
+        nodes["sink"] = GraphNode("current", {"value": Link("old", "unmapped")})
+    else:
+        nodes["region"] = RegionNode("map", Graph({}), inputs={"input": Link("old", "unmapped")})
+    original = Graph(nodes)
+    with pytest.raises(ValueError, match="connection"):
+        migrate_node_replacements(original, schemas)
+    assert original == Graph(nodes)
+
+
+def test_replacement_materializes_count_outputs_for_primary_and_helper() -> None:
+    integer = TypeExpr.concrete("INT")
+    schemas = {
+        "current": NodeSchema(
+            "current",
+            inputs=(InputSpec("count", integer, default=2),),
+            output_families=(OutputFamilySpec("results", integer, count=OutputCountSpec("count")),),
+            replacements=(
+                ReplacementRule(
+                    "retired",
+                    (
+                        ReplacementCase.build(
+                            "current", nodes={"helper": ReplacementNode("helper")}
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        "helper": NodeSchema(
+            "helper",
+            inputs=(InputSpec("count", integer, default=1),),
+            output_families=(OutputFamilySpec("extra", integer, count=OutputCountSpec("count")),),
+        ),
+    }
+    migrated = migrate_node_replacements(Graph({"old": GraphNode("retired")}), schemas)
+    for node_id, expected in (("old", {"results": ("0", "1")}), ("old:helper", {"extra": ("0",)})):
+        node = migrated.nodes[node_id]
+        assert isinstance(node, GraphNode)
+        assert node.output_members == expected
+    assert migrate_node_replacements(graph_from_wire(graph_to_wire(migrated)), schemas) == migrated
+
+
+def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connections() -> None:
+    string = TypeExpr.concrete("STRING")
+    case = ReplacementCase.build(
+        "current",
+        when=ReplacementPredicate.all_of(
+            ReplacementPredicate.value_present("payload"),
+            ReplacementPredicate.value_equals("payload", "image"),
+            ReplacementPredicate.input_connected("payload"),
+        ),
+        inputs={
+            "kind": MappingSource.from_value("payload"),
+            "payload": MappingSource.link("payload"),
+        },
+    )
+    schemas = {
+        "current": NodeSchema(
+            "current",
+            inputs=(InputSpec("kind", string), InputSpec("payload", string)),
+            replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
+        ),
+        "wrong": NodeSchema("wrong"),
+        "source": NodeSchema("source", outputs=(OutputSpec("value", string),)),
+    }
+    graph = Graph(
+        {
+            "old": GraphNode(
+                "retired", {"payload": Link("source", "value")}, slot_variants={"payload": "image"}
+            ),
+            "source": GraphNode("source"),
+        }
+    )
+    migrated = migrate_node_replacements(graph, schemas)
+    node = migrated.nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == "current"
+    assert node.inputs == {"kind": "image", "payload": Link("source", "value")}
 
 
 def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reopen() -> None:

@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import cast
 
 from dinkster_schema import (
+    MAX_FAMILY_MEMBERS,
     InputSpec,
     MappingSource,
     NodeSchema,
@@ -40,6 +41,13 @@ def _equal_value(left: object, right: object) -> bool:
     return type(cast("object", left)) is type(right) and left == right
 
 
+def _stored_value(node: GraphNode, input_id: str) -> tuple[bool, object]:
+    value = node.inputs.get(input_id)
+    if input_id in node.inputs and not isinstance(value, Link):
+        return True, value.value if isinstance(value, TypedLiteral) else value
+    return input_id in node.slot_variants, node.slot_variants.get(input_id)
+
+
 def _matches(predicate: ReplacementPredicate | None, node: GraphNode) -> bool:
     if predicate is None or predicate.kind == "always":
         return True
@@ -49,33 +57,25 @@ def _matches(predicate: ReplacementPredicate | None, node: GraphNode) -> bool:
         return all(_matches(child, node) for child in predicate.of)
     if predicate.kind == "any":
         return any(_matches(child, node) for child in predicate.of)
-    value = node.inputs.get(predicate.input)
     if predicate.kind == "inputConnected":
-        return isinstance(value, Link)
-    present = predicate.input in node.inputs and not isinstance(value, Link)
+        return isinstance(node.inputs.get(predicate.input), Link)
+    present, value = _stored_value(node, predicate.input)
     if predicate.kind == "valuePresent":
         return present
-    if isinstance(value, TypedLiteral):
-        value = value.value
     return present and _equal_value(value, predicate.value)
 
 
 def _mapped_value(mapping: MappingSource, node: GraphNode) -> tuple[bool, object]:
     if mapping.kind == "constant":
         return True, mapping.value
-    if mapping.input not in node.inputs:
-        return False, None
-    value = node.inputs[mapping.input]
+    connected = node.inputs.get(mapping.input)
     if mapping.kind == "link":
-        return isinstance(value, Link), value
-    if mapping.kind == "copy":
-        return True, value
-    if isinstance(value, Link):
-        return False, None
-    if mapping.transform is None:
-        return True, value
-    if isinstance(value, TypedLiteral):
-        value = value.value
+        return isinstance(connected, Link), connected
+    if mapping.kind == "copy" and mapping.input in node.inputs:
+        return True, connected
+    present, value = _stored_value(node, mapping.input)
+    if not present or mapping.transform is None:
+        return present, value
     transform = mapping.transform
     if transform.kind == "enumRename":
         names = dict(transform.map)
@@ -129,11 +129,23 @@ def _apply_case(
     }
     for local_id, helper in case.nodes or ():
         inputs[local_id].update(dict(helper.values))
+    consumed_connections: set[str] = set()
+
+    def consume(input_id: str, mapping: MappingSource) -> None:
+        if mapping.kind not in ("copy", "link") or not isinstance(
+            source.inputs.get(input_id), Link
+        ):
+            return
+        if input_id in consumed_connections:
+            raise ValueError(f"replacement maps connection {input_id!r} twice")
+        consumed_connections.add(input_id)
+
     for raw, mapping in case.inputs:
         local_id, port = address(raw)
         present, value = _mapped_value(mapping, source)
         if present:
             inputs[local_id][port] = value
+            consume(mapping.input, mapping)
     for raw, mapping in case.input_families:
         local_id, family_id = address(raw)
         family = next(
@@ -152,6 +164,9 @@ def _apply_case(
         input_members: list[tuple[str, tuple[tuple[str, MappingSource], ...], GraphNode]]
         if mapping.kind == "members":
             input_members = [(member.suffix, member.inputs, source) for member in mapping.members]
+            for member in mapping.members:
+                for _, value_mapping in member.inputs:
+                    consume(value_mapping.input, value_mapping)
         else:
             if not mapping.source_template:
                 raise ValueError("retired input family requires its sourceTemplate")
@@ -183,6 +198,13 @@ def _apply_case(
                     )
                     in source.inputs
                 }
+                for _, value_mapping in mapping.inputs:
+                    original_path = (
+                        prefix
+                        + suffix
+                        + ("" if len(mapping.source_template) == 1 else "." + value_mapping.input)
+                    )
+                    consume(original_path, value_mapping)
                 input_members.append(
                     (target_suffix, mapping.inputs, replace(source, inputs=source_inputs))
                 )
@@ -198,6 +220,9 @@ def _apply_case(
                 present, value = _mapped_value(value_mapping, member_source)
                 if present:
                     inputs[local_id][port] = value
+    for input_id, value in source.inputs.items():
+        if isinstance(value, Link) and input_id not in consumed_connections:
+            raise ValueError(f"replacement would drop incoming connection {input_id!r}")
     variants: dict[str, dict[str, str]] = {local_id: {} for local_id in targets}
     for raw, choice in case.slot_variants:
         local_id, port = address(raw)
@@ -233,14 +258,31 @@ def _apply_case(
         for key, value in original.items():
             if isinstance(value, Link) and value.node_id == node_id:
                 if value.output_id not in outputs:
-                    continue
+                    raise ValueError(
+                        f"replacement would drop outgoing connection {value.output_id!r}"
+                    )
                 value = outputs[value.output_id]
             result[key] = value
         return result
 
     nodes = dict(graph.nodes)
     for local_id, (target_id, target_type) in targets.items():
-        membership = output_members if not local_id else {}
+        membership = dict(output_members) if not local_id else {}
+        for family in schemas[target_type].output_families:
+            if family.count is None:
+                continue
+            count = inputs[local_id].get(family.count.input)
+            if type(count) is not int or not 0 <= count <= MAX_FAMILY_MEMBERS:
+                raise ValueError(
+                    f"replacement output family {family.id!r} requires a stored count "
+                    f"from 0 to {MAX_FAMILY_MEMBERS}"
+                )
+            canonical = tuple(str(index) for index in range(count))
+            if family.id in membership and membership[family.id] != canonical:
+                raise ValueError(
+                    f"replacement output family {family.id!r} has incompatible membership"
+                )
+            membership[family.id] = canonical
         effective = elaborate(
             schemas[target_type], inputs[local_id], membership, variants[local_id]
         )
