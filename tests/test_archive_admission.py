@@ -125,6 +125,92 @@ def test_locked_probe_imports_only_supplied_pack_sources(
         assert any(finding.code == "entry.unresolvable" for finding in result.findings)
 
 
+@pytest.mark.parametrize("conflict", ["release", "variant", "base", "python", "api"])
+def test_default_admission_prepares_newest_pack_for_target_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conflict: str
+) -> None:
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
+    from test_pack_environment import _generation, _wheel
+
+    from scripts import check_default_pack_admission as admission
+
+    python = _generation(
+        tmp_path / "generation",
+        [
+            _wheel(tmp_path, "dinkster-api", "0.5", "target_api", ""),
+            _wheel(tmp_path, "dinkster-inference", "0.1.2", "target_inference", ""),
+        ],
+    )
+    base = "sha256:" + "a" * 64
+    rows = []
+    files = {}
+    for version in ("1.2.3", "2.0.0"):
+        source = tmp_path / version
+        shutil.copytree(FIXTURES / "color-tools", source)
+        manifest = source / "dinkster-pack.toml"
+        manifest.write_text(
+            manifest.read_text()
+            .replace('version = "1.2.3"', f'version = "{version}"')
+            .replace('engine = ">=0.9,<1"', 'engine = ">=0.4,<0.6"')
+        )
+        archive = tmp_path / f"color_tools-{version}-py3-none-any.whl"
+        build_pack_archive(source, archive)
+        payload = archive.read_bytes()
+        entry = LockedPack("color-tools", version, artifact_digest(payload), "dinkster", ())
+        row = _static_release(entry, payload)
+        row["requires"] = [f"dinkster-inference>=99; sys_platform != '{sys.platform}'"]
+        requirements = ("dinkster-inference>=0.1.2",)
+        lock_base, requires_python, engine = base, ">=3.12", ">=0.4,<0.6"
+        if version == "2.0.0":
+            if conflict == "release":
+                row["requires"] = ["dinkster-inference>=0.1.3"]
+            elif conflict == "variant":
+                requirements = ("dinkster-inference>=0.1.3",)
+            elif conflict == "base":
+                lock_base = "sha256:" + "b" * 64
+            elif conflict == "python":
+                requires_python = ">=99"
+            else:
+                engine = ">=0.6"
+        lock = PackLock("color-tools", "linux-cpu", requires_python, requirements, (), (), engine)
+        lock_bytes = lock.to_json().encode()
+        digest = artifact_digest(lock_bytes)
+        lock_path = "locks/" + digest.replace(":", "/") + ".json"
+        row["installLocks"] = {
+            "linux-cpu": {
+                "baseId": lock_base,
+                "artifactDigest": entry.artifact_digest,
+                "digest": digest,
+                "size": len(lock_bytes),
+                "url": lock_path,
+            }
+        }
+        rows.append(row)
+        files["/static/" + lock_path] = lock_bytes
+        filename = f"color_tools-{version}-py3-none-any.whl"
+        files[f"/static/wheels/{hashlib.sha256(payload).hexdigest()}/{filename}"] = payload
+    files.update(_static_indexes(rows))
+    server = _serve_artifacts(files, [])
+    monkeypatch.setattr(admission, "default_pack_minimums", lambda: {"color-tools": "1.2.3"})
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    output = tmp_path / "prepared"
+    try:
+        admission.check_defaults(
+            admission.NamedRegistry("", f"http://127.0.0.1:{server.server_port}"),
+            engine_version="0.5",
+            generation_python=python,
+            base_id=base,
+            constraints=constraints,
+            prepare_output=output,
+        )
+        selected = Lockfile.from_record_json((output / "catalog.lock").read_text())
+        assert [(pack.pack, pack.version) for pack in selected.packs] == [("color-tools", "1.2.3")]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_locked_admission_refuses_the_same_base_conflict_as_user_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
