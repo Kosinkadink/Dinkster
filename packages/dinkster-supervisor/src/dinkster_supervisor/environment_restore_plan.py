@@ -37,6 +37,7 @@ from .environment_constraints import (
     selected_wheel_rows,
 )
 from .environment_downloads import artifact_available, read_metadata
+from .environment_frontend import frontend_filename, frontend_requirements, select_frontend
 from .environment_generations import ACQUIRE_PACK_SOURCES, retained_pack_archive, verify_base_inputs
 from .environment_history import history, validate_import
 from .environment_state import (
@@ -303,6 +304,18 @@ def missing_inputs(
                 (source,),
                 cached,
             )
+    frontend = select_frontend(engine, cast("dict[str, object]", provenance["channel"]))
+    if frontend is not None:
+        name = frontend_filename(frontend)
+        cached = object_path(store / "wheels", "sha256:" + cast("str", frontend["sha256"])) / name
+        check(
+            "frontend",
+            cast("str", frontend["version"]),
+            {**frontend, "filename": name},
+            "filename",
+            (str(cached.parent) if offline else cast("str", frontend["url"]).rsplit("/", 1)[0],),
+            cached,
+        )
     return [*missing, *_pack_missing_inputs(snapshot, store)]
 
 
@@ -594,10 +607,16 @@ def _replacement_wheel_receipt(
         for row in engine_rows
         if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned
     )
+    metadata = _metadata(snapshot)
+    provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
+    channel = cast("dict[str, object]", provenance["channel"])
+    frontend = select_frontend(engine, channel)
+    if frontend is not None:
+        rows.append({**frontend, "filename": frontend_filename(frontend)})
     wheels = selected_wheel_rows(
-        _metadata(snapshot)["constraints.txt"], rows, {"tags": tags, "markers": markers}
+        metadata["constraints.txt"], rows, {"tags": tags, "markers": markers}
     )
-    wheels = installed_wheel_origins(wheels, base, engine, variant)
+    wheels = installed_wheel_origins(wheels, base, engine, variant, channel)
     return (
         json.dumps(
             {"format": "dinkster.installed-wheels/1", "wheels": wheels, "inherited": []},
@@ -687,7 +706,11 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
             continue
         try:
             if "dependencies" in engine:
-                requirements = engine_constraints(engine, variant)
+                requirements = frontend_requirements(
+                    engine_constraints(engine, variant),
+                    engine,
+                    cast("dict[str, object]", provenance["channel"]),
+                )
             else:
                 requirements = next(
                     read_metadata(root, "constraints.txt").decode("utf-8") for root in roots
@@ -799,7 +822,11 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
             if "dependencies" in engine:
                 selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
                 validate_dependency_base(selection, base)
-                requirements = engine_constraints(engine, variant)
+                requirements = frontend_requirements(
+                    engine_constraints(engine, variant),
+                    engine,
+                    cast("dict[str, object]", provenance["channel"]),
+                )
             else:
                 requirements = metadata["constraints.txt"]
             constraints = effective_constraints(requirements, base, strict="dependencies" in engine)

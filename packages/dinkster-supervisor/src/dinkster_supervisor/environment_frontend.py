@@ -70,6 +70,15 @@ def select_frontend(
     return row
 
 
+def frontend_requirements(
+    requirements: str, engine: dict[str, object], channel: dict[str, object] | None = None
+) -> str:
+    row = select_frontend(engine, channel)
+    if row is None:
+        return requirements
+    return requirements + f"\ndinkster-frontend=={row['version']} --hash=sha256:{row['sha256']}\n"
+
+
 def frontend_filename(row: dict[str, object]) -> str:
     return f"dinkster_frontend-{row['version']}-py3-none-any.whl"
 

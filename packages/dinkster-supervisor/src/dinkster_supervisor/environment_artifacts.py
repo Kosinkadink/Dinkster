@@ -25,7 +25,12 @@ from packaging.version import Version
 from .environment_archives import extract_base
 from .environment_constraints import effective_constraints, validate_base_requirements
 from .environment_downloads import fetch_artifact, read_metadata
-from .environment_frontend import frontend_filename, select_frontend, verify_frontend_wheel
+from .environment_frontend import (
+    frontend_filename,
+    frontend_requirements,
+    select_frontend,
+    verify_frontend_wheel,
+)
 from .environment_state import (
     ArtifactLocation,
     Channel,
@@ -770,7 +775,7 @@ def acquire(
         fetch_artifact((source,), name, destination, sha, cast("int", frontend["size"]))
         verify_frontend_wheel(destination, frontend)
         nonbase_wheels.append(destination)
-        requirements += f"\ndinkster-frontend=={frontend['version']} --hash=sha256:{sha}\n"
+    requirements = frontend_requirements(requirements, catalog.engine, catalog.document)
     context = published_base if custom else None
     if selected is not None or custom:
         validate_base_requirements(tuple(nonbase_wheels), base, published_base=context)

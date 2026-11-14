@@ -10,6 +10,7 @@ import re
 import tempfile
 import time
 from pathlib import Path
+from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -27,6 +28,11 @@ from botocore.exceptions import (
 from dinkster_supervisor.environment_artifacts import parse_metadata, validate_manifest
 from dinkster_supervisor.environment_channels import engine_publication_names, write_channel
 from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
+from dinkster_supervisor.environment_frontend import (
+    frontend_filename,
+    select_frontend,
+    verify_frontend_wheel,
+)
 from dinkster_supervisor.environment_state import Channel, content_digest, write_document
 from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
 
@@ -166,7 +172,13 @@ def upload(client, path: Path, key: str, *, extra: dict[str, str] | None = None)
             time.sleep(delay)
 
 
-def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_version: str) -> None:
+def publish(
+    release: Path,
+    bases: list[Path],
+    channel: str,
+    minimum_desktop_version: str,
+    frontend: dict | None = None,
+) -> None:
     engine = json.loads((release / "release-manifest.json").read_bytes())
     identity = content_digest(release / "release-manifest.json")
     name, tag = engine_publication_names(engine, identity, channel)
@@ -202,6 +214,7 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
             channel=channel,
             output_root=work,
             minimum_desktop_version=minimum_desktop_version,
+            frontend=frontend,
         )
         github = "https://github.com/Kosinkadink/Dinkster/releases/download/"
         with urlopen(
@@ -268,6 +281,11 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
             else:
                 published_document = parse_metadata(published_bytes)
                 published = Channel.parse(published_document)
+                if frontend is None and "frontend" in published_document:
+                    document = parse_metadata(path.read_bytes())
+                    document["frontend"] = published_document["frontend"]
+                    select_frontend(engine, document)
+                    write_document(path, document)
                 if "tools" in published_document:
                     tools = tools_reference(published_document["tools"])
                     tools_manifest = validate_tools_manifest(
@@ -299,18 +317,35 @@ def publish(release: Path, bases: list[Path], channel: str, minimum_desktop_vers
                 with urlopen(request, timeout=120) as response:
                     status = json.load(response)["status"]
                 if status == "identical":
-                    if published_bytes != path.read_bytes():
+                    if published_bytes == path.read_bytes():
+                        print(f"Verified main channel for engine {identity}")
+                        return
+                    candidate = parse_metadata(path.read_bytes())
+                    unchanged = dict(published_document)
+                    candidate.pop("frontend", None)
+                    unchanged.pop("frontend", None)
+                    if frontend is None or candidate != unchanged:
                         raise ValueError("public channel differs for the same engine commit")
-                    print(f"Verified main channel for engine {identity}")
-                    return
                 if status in {"behind", "diverged"}:
                     print(
                         f"Main channel skipped: published {published_commit}, "
                         f"candidate {engine['commit']} ({status})"
                     )
                     return
-                if status != "ahead":
+                if status not in {"ahead", "identical"}:
                     raise ValueError(f"unexpected GitHub comparison status: {status}")
+        selected_frontend = select_frontend(engine, parse_metadata(path.read_bytes()))
+        if selected_frontend is not None:
+            wheel_name = frontend_filename(selected_frontend)
+            wheel_path = work / "verified" / wheel_name
+            fetch_artifact(
+                (cast("str", selected_frontend["url"]).rsplit("/", 1)[0],),
+                wheel_name,
+                wheel_path,
+                cast("str", selected_frontend["sha256"]),
+                cast("int", selected_frontend["size"]),
+            )
+            verify_frontend_wheel(wheel_path, selected_frontend)
         upload(
             client,
             path,
@@ -329,10 +364,17 @@ if __name__ == "__main__":
     parser.add_argument("--base-manifest", type=Path, action="append")
     parser.add_argument("--channel", choices=("main", "stable"))
     parser.add_argument("--minimum-desktop-version")
+    parser.add_argument("--frontend", type=Path, help="optional published frontend reference JSON")
     args = parser.parse_args()
     if args.preflight:
         check_collision(object_store(), content_digest(args.release / "release-manifest.json"))
     elif not args.base_manifest or not args.channel or not args.minimum_desktop_version:
         parser.error("publication requires base manifests, channel and minimum Desktop version")
     else:
-        publish(args.release, args.base_manifest, args.channel, args.minimum_desktop_version)
+        publish(
+            args.release,
+            args.base_manifest,
+            args.channel,
+            args.minimum_desktop_version,
+            parse_metadata(args.frontend.read_bytes()) if args.frontend is not None else None,
+        )

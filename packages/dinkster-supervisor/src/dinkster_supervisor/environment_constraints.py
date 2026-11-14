@@ -17,6 +17,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
+from .environment_frontend import frontend_filename, select_frontend
 from .environment_state import EnvironmentError, digest, relative_file
 
 _HASH = re.compile(r"(?<!\S)--hash=sha256:([0-9a-f]{64})(?=\s|$)")
@@ -151,6 +152,7 @@ def installed_wheel_origins(
     base: dict[str, object],
     engine: dict[str, object],
     variant: str,
+    channel: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Bind selected bytes to manifest origins, never to their acquisition cache paths."""
     origins: dict[tuple[object, object, object], object] = {}
@@ -169,6 +171,9 @@ def installed_wheel_origins(
             and parse_wheel_filename(cast("str", row["name"]))[0] not in owned
         ):
             origins[row["name"], row["size"], row["sha256"]] = issuer
+    frontend = select_frontend(engine, channel)
+    if frontend is not None:
+        origins[frontend_filename(frontend), frontend["size"], frontend["sha256"]] = frontend["url"]
     return [
         {**row, "registry": origins.get((row["filename"], row["size"], row["sha256"]))}
         for row in wheels
