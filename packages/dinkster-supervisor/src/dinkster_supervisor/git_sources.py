@@ -100,7 +100,9 @@ def _check_tree(tree: pygit2.Tree) -> None:
 
 
 @contextmanager
-def fetched_git_source(value: str) -> Generator[tuple[Path, dict[str, object]]]:
+def fetched_git_source(
+    value: str, *, include_tags: bool = False
+) -> Generator[tuple[Path, dict[str, object]]]:
     """Yield a checked-out selected folder and its credential-free provenance."""
     url, ref, subdirectory = parse_git_source(value)
     with TemporaryDirectory(prefix="dinkster-git-") as directory:
@@ -134,6 +136,8 @@ def fetched_git_source(value: str) -> Generator[tuple[Path, dict[str, object]]]:
                     if selected_ref in advertised
                     else ["+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"]
                 )
+                if include_tags and "+refs/tags/*:refs/tags/*" not in refspecs:
+                    refspecs.append("+refs/tags/*:refs/tags/*")
                 remote.fetch(refspecs, callbacks=callbacks, proxy=proxy or True)
                 target = advertised.get(selected_ref, selected_ref)
                 if target not in repository:

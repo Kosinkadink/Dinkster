@@ -557,14 +557,18 @@ def engine_constraints(engine: dict[str, object], variant: str) -> str:
     return "\n".join(additions) + "\n"
 
 
-class _WheelLinks(HTMLParser):
+class WheelLinks(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.links: list[str] = []
+        self.yanked: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "a":
-            self.links.extend(value for key, value in attrs if key == "href" and value is not None)
+            links = [value for key, value in attrs if key == "href" and value is not None]
+            self.links.extend(links)
+            if any(key == "data-yanked" for key, _ in attrs):
+                self.yanked.update(links)
 
 
 def dependency_source(row: dict[str, object], package_index: str | None) -> str:
@@ -572,7 +576,7 @@ def dependency_source(row: dict[str, object], package_index: str | None) -> str:
         return cast("str", row["url"]).rsplit("/", 1)[0]
     project = cast("str", row["name"])
     page = package_index.rstrip("/") + "/" + project + "/"
-    links = _WheelLinks()
+    links = WheelLinks()
     links.feed(read_metadata(package_index, project).decode("utf-8"))
     matches: set[str] = set()
     for link in links.links:
