@@ -824,6 +824,10 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(tmp_p
             acknowledged = await client.put(census, headers=headers, json=acknowledgment)
             assert acknowledged.status == 200, await acknowledged.text()
             assert (await acknowledged.json())["complete"]
+            policy = await client.put(storage + "/policy", json={"limitBytes": None})
+            assert policy.status == 200
+            assert await policy.json() == {"limitBytes": None, "collectionEnabled": False}
+            assert (await (await client.get(storage)).json())["collectionEnabled"]
             cleared = await client.post(storage + "/clear", json={})
             assert cleared.status == 200, await cleared.text()
             assert (await cleared.json())["reclaimedBytes"] == 0

@@ -1834,23 +1834,11 @@ async def handle_cleanup_policy(request: web.Request) -> web.Response:
         await run_owned_thread(lambda: request.app[LIBRARY_KEY].store.set_cleanup_limit(limit))
     except (AssetError, sqlite3.Error):
         raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
-    from .app import STATE_KEY
-    from .cleanup import POLICY_WAKE_KEY, inspect_cleanup
+    from .cleanup import POLICY_WAKE_KEY
 
     request.app[POLICY_WAKE_KEY].set()
-    library = request.app[LIBRARY_KEY]
-    state = request.app[STATE_KEY]
-    status = await inspect_cleanup(
-        library.vault,
-        library.store,
-        state.history,
-        state.engine.cache,
-        registry=state.engine.registry,
-        scratch_root=library.scratch_root,
-    )
     return web.json_response(
-        {"limitBytes": limit, "collectionEnabled": status["collectionEnabled"]},
-        headers={"Cache-Control": "no-store"},
+        {"limitBytes": limit, "collectionEnabled": False}, headers={"Cache-Control": "no-store"}
     )
 
 

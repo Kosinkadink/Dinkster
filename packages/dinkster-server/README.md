@@ -426,9 +426,11 @@ returns `Cache-Control: no-store`.
 unavailable policy reports false and null instead of inventing a default.
 `PUT /api/library/storage/policy` requires an operator and `assets:write`, and
 accepts exactly `{limitBytes: number | null}` with a positive JSON-safe integer.
-It returns the acknowledged limit and evaluated `collectionEnabled`. Unknown
-keys, filesystem targets and query parameters are rejected. Changes survive
-restart but do not enable deletion or enforce the limit while ownership is unknown.
+It returns `{limitBytes, collectionEnabled:false}`: the policy acknowledgment
+is not collection authority, even when GET reports the vault eligible. Read
+current eligibility through GET before offering Clear. Unknown keys, filesystem
+targets and query parameters are rejected. Changes survive restart but do not
+enable deletion or enforce the limit while ownership is unknown.
 
 `POST /api/library/storage/clear` requires the same operator/write authority and
 an empty JSON object, with no query parameters. It returns HTTP 200 only when
