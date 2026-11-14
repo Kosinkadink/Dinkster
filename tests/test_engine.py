@@ -153,10 +153,20 @@ def test_saved_retired_node_executes_with_mapped_values_outputs_and_added_defaul
                     ReplacementRule(
                         from_type="test.fraction",
                         from_signature="fraction-v1",
+                        cases=(ReplacementCase.build("test.unavailable"),),
+                    ),
+                    ReplacementRule(
+                        from_type="test.fraction",
+                        from_signature="fraction-v1",
                         cases=(
                             case(10, ReplacementPredicate.value_equals("mode", False)),
                             case(100),
                         ),
+                    ),
+                    ReplacementRule(
+                        from_type="test.fraction",
+                        from_signature="fraction-v1",
+                        cases=(case(1000),),
                     ),
                 ),
             )

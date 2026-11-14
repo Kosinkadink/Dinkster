@@ -8,6 +8,8 @@
   Admission refuses replacements that would drop live connections instead of
   silently executing downstream defaults. Stored dynamic choices participate in
   value guards and mappings; new count-bound outputs use the mapped count.
+  Multiple declared rules for one retired ID are tried in declaration order;
+  the first applicable mapping wins, including when an earlier target is absent.
   Currently served IDs are never reinterpreted. Native input reordering and
   defaulted additions need no replacement because values are keyed by input ID.
 

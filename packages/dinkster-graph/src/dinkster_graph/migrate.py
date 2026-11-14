@@ -376,11 +376,18 @@ def _migrate(
             ]
             if not candidates:
                 break
-            if len(candidates) != 1:
-                raise ValueError(f"ambiguous replacements for {node.node_type!r}")
-            rule = candidates[0]
-            case = next(case for case in rule.cases if _matches(case.when, node))
-            current, ports = _apply_case(current, node_id, node, case, schemas)
+            failures: list[str] = []
+            for rule in candidates:
+                case = next(case for case in rule.cases if _matches(case.when, node))
+                try:
+                    migrated, ports = _apply_case(current, node_id, node, case, schemas)
+                except ValueError as exc:
+                    failures.append(str(exc))
+                    continue
+                current = migrated
+                break
+            else:
+                raise ValueError(f"no replacement for {node.node_type!r}: {'; '.join(failures)}")
             output_moves[node_id] = ports
             replaced = current.nodes[node_id]
             assert isinstance(replaced, GraphNode)
