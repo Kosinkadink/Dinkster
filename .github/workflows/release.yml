@@ -241,11 +241,12 @@ jobs:
           "$python" -m dinkster.cli --help
           "$python" -c "from dinkster.frontend import discover_frontend_bundle; assert discover_frontend_bundle() is not None"
           "$python" scripts/verify_release_launch.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
-      - name: Verify streaming base extraction on the host filesystem
+      - name: Verify local environment paths on the host filesystem
         shell: bash
         run: |
           uv sync --locked --all-packages
           uv run --locked python -m pytest -q tests/test_environment_archives.py
+          uv run --locked python -m pytest -q tests/test_environment_generations.py -k development_inference_override
 
   release:
     needs: install

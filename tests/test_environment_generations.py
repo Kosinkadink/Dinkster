@@ -203,7 +203,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     from dinkster_supervisor.environment_state import content_digest
 
     index, source, library, pack, store = (
-        tmp_path / name for name in ("index", "engine", "inference", "pack", "store")
+        tmp_path / name for name in ("index", "engine", "inference", "pack", "wheel store")
     )
     for path in (index, source, library, pack, store):
         path.mkdir()
