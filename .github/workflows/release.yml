@@ -249,10 +249,8 @@ jobs:
       - name: Observe local development wheel paths without blocking publication
         continue-on-error: true
         shell: bash
-        env:
-          # Environment-generation cases remain nonblocking under issue 867.
-          GITHUB_ACTIONS: "false"
-        run: uv run --locked python -m pytest -q tests/test_environment_generations.py -k development_inference_override -rs
+        # Environment-generation cases remain nonblocking under issue 867.
+        run: GITHUB_ACTIONS=false uv run --locked python -m pytest -q tests/test_environment_generations.py -k development_inference_override -rs
 
   release:
     needs: install
