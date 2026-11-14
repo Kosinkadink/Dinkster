@@ -145,6 +145,7 @@ jobs:
           python scripts/develop.py run -- python -m pytest -q ${{ matrix.pytest_args }}
           --case-shard-file tests/test_environment_history.py
           --case-shard-file tests/test_environment_generations.py
+          --case-shard-file tests/test_security_notices.py
           --deselect=tests/test_sandbox.py::TestLiveJail
           --deselect=tests/test_doctor.py::TestLiveJailedProbe
           --durations=0 --durations-min=0
