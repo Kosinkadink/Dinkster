@@ -901,7 +901,9 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
                     headers=headers,
                     json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
                 )
-                assert response.status == 200
+                assert response.status == 409
+                assert (await client.post(storage + "/clear", json={})).status == 409
+                assert vault.resolve(digests[1]) is not None
                 await sibling.close()
                 async with asyncio.timeout(5):
                     while True:
@@ -915,6 +917,13 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(
             finally:
                 await sibling.close()
                 await stream.close()
+            async with asyncio.timeout(5):
+                while True:
+                    snapshot = await (await client.get(census, headers=headers)).json()
+                    if snapshot["activeStreams"] == 0:
+                        break
+            assert snapshot["connected"] and not snapshot["complete"]
+            assert (await client.post(storage + "/clear", json={})).status == 409
             for holders in holder_sets:
                 response = await client.put(
                     f"/api/library/retentions/document/holder-{holders[0]}",

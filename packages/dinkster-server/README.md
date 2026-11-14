@@ -225,10 +225,11 @@ digests, completeness and result-source claims remain in the census snapshot.
 `GET /api/library/retention-clients` with the generation header returns the
 server-enumerated snapshot. `holders` has exactly keys `"1"` through `"8"`, each
 containing the sorted full retention DTOs for that class, including empty
-revision tombstones. After completing registration for all eight classes and
-settling reads, `PUT` the same endpoint with `{revision, holders}` copied from
-that snapshot. This explicitly acknowledges every class, including empty
-classes, and succeeds only if every owner is complete and the exact snapshot
+revision tombstones. After completing registration for all eight classes,
+settling reads and closing all event/collaboration streams for that client,
+`PUT` the same endpoint with `{revision, holders}` copied from that snapshot.
+This explicitly acknowledges every class, including empty classes, and
+succeeds only if every owner is complete and the exact snapshot
 is still current. It returns per-client `complete`, not vault-wide collection
 authority. A withheld, rejected or unreconciled acknowledgment leaves the
 client incomplete. Reconcile a lost PUT response with GET before publication;
@@ -244,6 +245,13 @@ of the generation header; authentication and principal binding remain required.
 Never put it on external-origin requests. Conflicting query/header generations
 are rejected. `activeStreams` counts admitted streams; it is not proof of
 completeness, and zero streams grants no release or collection authority.
+An open stream keeps both client completeness and collection blocked, even
+when its current owner snapshot is acknowledged again: PUT refuses with 409.
+The client must suspend automatic reconnect while it obtains a quiescent
+collection window. Closing the last stream still leaves acknowledgment
+invalid; it never certifies empty owners. Reopening any stream immediately
+invalidates the census again before the handler exposes data. Other clients'
+streams block vault-wide collection independently.
 `DELETE` with an empty object explicitly disconnects without releasing roots.
 Reopen with POST and `{revision}` plus the old generation header: it rotates
 the generation and invalidates completeness before any observation, preserving

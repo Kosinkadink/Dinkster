@@ -570,7 +570,10 @@ class LibraryStore:
             "clientId": client["client_id"],
             "generation": client["generation"],
             "revision": client["revision"],
-            "complete": complete and bool(client["connected"]) and not client["pending_requests"],
+            "complete": complete
+            and bool(client["connected"])
+            and not client["pending_requests"]
+            and not client["active_streams"],
             "connected": bool(client["connected"]),
             "pendingRequests": client["pending_requests"],
             "activeStreams": client["active_streams"],
@@ -588,8 +591,10 @@ class LibraryStore:
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             current = self._retention_client_status_locked(principal_id, generation)
-            if not current["connected"] or current["pendingRequests"]:
-                raise StaleRevision("retention client has pending reads or is disconnected")
+            if not current["connected"] or current["pendingRequests"] or current["activeStreams"]:
+                raise StaleRevision(
+                    "retention client has pending reads or streams or is disconnected"
+                )
             if type(revision) is not int or revision != current["revision"]:
                 raise StaleRevision("retention client changed")
             if holders != current["holders"]:
@@ -663,7 +668,8 @@ class LibraryStore:
         if (
             self._conn.execute(
                 "SELECT 1 FROM asset_retention_clients "
-                "WHERE connected = 0 OR acknowledged = 0 OR pending_requests > 0 LIMIT 1"
+                "WHERE connected = 0 OR acknowledged = 0 OR pending_requests > 0 "
+                "OR active_streams > 0 LIMIT 1"
             ).fetchone()
             is not None
         ):

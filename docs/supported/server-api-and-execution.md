@@ -101,8 +101,10 @@
   or unknown scratch remains unavailable. Individual owner registrations do
   not enable collection. Server-admitted client generations can acknowledge
   their exact eight-class owner census separately from vault-wide eligibility.
-  Legacy admission, historical unknown owners, disconnected clients and stale
-  acknowledgments block collection. Operator Clear and size-policy enforcement
+  Legacy admission, historical unknown owners, disconnected clients, active
+  streams, pending reads and stale acknowledgments block collection. Closing
+  streams alone does not authorize collection; a quiescent client must still
+  acknowledge its exact owner snapshot. Operator Clear and size-policy enforcement
   collect only relinquished produced assets while all reference and publication
   barriers are held; retained bytes remain protected.
   Vault ownership inspection reports busy for active managed readers, writers
