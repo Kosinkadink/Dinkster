@@ -535,8 +535,30 @@ def _assert_shared(first: Path, second: Path) -> None:
             assert physical > 0 and flags & 0x2000, "expected a shared CoW extent"
             extents.append(physical)
         assert extents[0] == extents[1]
+    elif sys.platform == "darwin":
+        import ctypes
+
+        getattrlist = ctypes.CDLL(None, use_errno=True).getattrlist
+        getattrlist.argtypes = [
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_ulong,
+        ]
+        getattrlist.restype = ctypes.c_int
+        # ATTR_CMNEXT_CLONEID identifies the shared APFS data stream, not its inode.
+        attributes = ctypes.create_string_buffer(struct.pack("=HHIIIII", 5, 0, 0, 0, 0, 0, 0x100))
+        clones = []
+        for path in (first, second):
+            result = ctypes.create_string_buffer(12)
+            assert getattrlist(os.fsencode(path), attributes, result, len(result), 0x20) == 0
+            length, clone = struct.unpack("=IQ", result.raw)
+            assert length == 12 and clone > 0, "expected a shared APFS data stream"
+            clones.append(clone)
+        assert first.stat().st_dev == second.stat().st_dev and clones[0] == clones[1]
     else:
-        pytest.fail("expected shared inode or Linux CoW extents")
+        pytest.fail("expected shared inode, Linux CoW extents or APFS data stream")
 
 
 @pytest.mark.parametrize("provisioner", ["current", "cached-without-acquire", "without-acquire"])

@@ -80,6 +80,19 @@ def verify_base_inputs(base: Path, expected: dict[str, str], *, operation: str) 
 def link_file(source: str, destination: str) -> str:
     # Dereference interpreter-internal aliases so every generation is self-contained.
     original = Path(source).resolve(strict=True)
+    if sys.platform == "darwin":
+        import ctypes
+
+        # macOS can resolve hardlinked executables to another generation's prefix.
+        clonefile = ctypes.CDLL(None, use_errno=True).clonefile
+        clonefile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+        clonefile.restype = ctypes.c_int
+        if clonefile(os.fsencode(original), os.fsencode(destination), 0) == 0:
+            return destination
+        error = ctypes.get_errno()
+        if error not in {errno.EOPNOTSUPP, errno.ENOTTY, errno.EINVAL, errno.EXDEV}:
+            raise OSError(error, os.strerror(error), destination)
+        return shutil.copy2(original, destination)
     if sys.platform == "linux":
         import fcntl
 
@@ -398,7 +411,7 @@ def restore_pack_sources(
     if not lock["packs"]:
         return
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
-        scratch = Path(directory)
+        scratch = Path(directory).resolve()
         cache = scratch / "artifacts"
         cache.mkdir()
         for row in cast("list[dict[str, object]]", lock["packs"]):

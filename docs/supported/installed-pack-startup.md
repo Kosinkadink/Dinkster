@@ -933,7 +933,9 @@ framework interpreter requires the command-line developer tools for library
 relocation and ad-hoc signing. Explicit interpreters whose installation paths stay
 outside the copied runtime, including Homebrew's patched package paths, are
 refused before generation packages are installed; use the configured standalone
-interpreter instead. Use `--port PORT` when the default listener is occupied.
+interpreter instead. On macOS, installing another generation preserves each
+existing generation's interpreter and selected packages, including contributor-only
+tools. Use `--port PORT` when the default listener is occupied.
 Project and store directories must be outside selected source folders. Unmarked
 sources build from verified copies.
 `develop --contributor` includes the checkout's development tools and inference

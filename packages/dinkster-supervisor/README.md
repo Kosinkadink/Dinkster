@@ -514,8 +514,10 @@ an already verified base resolved by its full identity and effective hashed
 requirements. It runs uv offline with no indexes and binary wheels only,
 reading the store's wheels and uv cache. Linux attempts CoW interpreter clones
 and falls back to hardlinks when the filesystem cannot clone; Windows uses
-hardlinks. Package installation uses the matching uv link mode. The project
-and store must share a volume. A failed sync removes only its incomplete
+hardlinks. macOS uses native CoW clones, with independent copies on volumes that
+cannot clone, so executable identities remain local to each generation. Package
+installation uses the matching uv link mode. The project and store must share a
+volume. A failed sync removes only its incomplete
 target; it never changes `current` or the existing generation. The generation
 interpreter, packages and retained constraints are hash-inventoried on success.
 
