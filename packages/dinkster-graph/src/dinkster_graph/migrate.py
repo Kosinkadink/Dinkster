@@ -173,7 +173,7 @@ def _apply_case(
             prefix = mapping.source_family + "."
             suffixes = dict.fromkeys(
                 key[len(prefix) :].split(".", 1)[0]
-                for key in source.inputs
+                for key in dict.fromkeys((*source.inputs, *source.slot_variants))
                 if key.startswith(prefix)
             )
             input_members = []
@@ -188,16 +188,18 @@ def _apply_case(
                         target_suffix = f"{family.member_prefix}{index}"
                     else:
                         raise ValueError("replacement target family has no positional naming")
-                source_inputs = {
-                    input_id: source.inputs[path]
-                    for input_id in mapping.source_template
-                    if (
-                        path := prefix
+                source_inputs: dict[str, object] = {}
+                source_variants: dict[str, str] = {}
+                for input_id in mapping.source_template:
+                    path = (
+                        prefix
                         + suffix
                         + ("" if len(mapping.source_template) == 1 else "." + input_id)
                     )
-                    in source.inputs
-                }
+                    if path in source.inputs:
+                        source_inputs[input_id] = source.inputs[path]
+                    if path in source.slot_variants:
+                        source_variants[input_id] = source.slot_variants[path]
                 for _, value_mapping in mapping.inputs:
                     original_path = (
                         prefix
@@ -206,7 +208,11 @@ def _apply_case(
                     )
                     consume(original_path, value_mapping)
                 input_members.append(
-                    (target_suffix, mapping.inputs, replace(source, inputs=source_inputs))
+                    (
+                        target_suffix,
+                        mapping.inputs,
+                        replace(source, inputs=source_inputs, slot_variants=source_variants),
+                    )
                 )
         for suffix, mappings, member_source in input_members:
             member_path = f"{family_id}.{suffix}"

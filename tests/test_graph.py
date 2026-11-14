@@ -119,11 +119,19 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
             "kind": MappingSource.from_value("payload"),
             "payload": MappingSource.link("payload"),
         },
+        input_families={
+            "kinds": InputFamilyMapping.copy(
+                "oldKinds",
+                inputs={"value": MappingSource.from_value("value")},
+                source_template=("value",),
+            ),
+        },
     )
     schemas = {
         "current": NodeSchema(
             "current",
             inputs=(InputSpec("kind", string), InputSpec("payload", string)),
+            input_families=(InputFamilySpec("kinds", (InputSpec("value", string),)),),
             replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
         ),
         "wrong": NodeSchema("wrong"),
@@ -132,7 +140,9 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     graph = Graph(
         {
             "old": GraphNode(
-                "retired", {"payload": Link("source", "value")}, slot_variants={"payload": "image"}
+                "retired",
+                {"payload": Link("source", "value")},
+                slot_variants={"payload": "image", "oldKinds.z": "text", "oldKinds.a": "audio"},
             ),
             "source": GraphNode("source"),
         }
@@ -140,7 +150,13 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     migrated = migrate_node_replacements(graph, schemas)
     node = migrated.nodes["old"]
     assert isinstance(node, GraphNode) and node.node_type == "current"
-    assert node.inputs == {"kind": "image", "payload": Link("source", "value")}
+    assert node.inputs == {
+        "kind": "image",
+        "payload": Link("source", "value"),
+        "kinds.z": "text",
+        "kinds.a": "audio",
+    }
+    assert list(node.inputs) == ["kind", "payload", "kinds.z", "kinds.a"]
 
 
 def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reopen() -> None:
