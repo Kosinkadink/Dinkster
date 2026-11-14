@@ -1553,6 +1553,11 @@ environment.main()
         damaged = next(current.rglob("fixture_engine.py"))
         damaged.write_text("VALUE = 999\n")
         (current / "constraints.txt").unlink()
+        retained = json.loads((current / "generation.json").read_bytes())
+        release_cache = object_path(store / "engines", retained["engine"]["release"])
+        (release_cache / f"constraints-{retained['variant']}.txt").write_text(
+            "fixture-engine==99.0\n"
+        )
         code, drift = _run(root, "doctor")
         assert code == 1 and drift["status"] == "drift"
         assert "missing: constraints.txt" in drift["changes"]

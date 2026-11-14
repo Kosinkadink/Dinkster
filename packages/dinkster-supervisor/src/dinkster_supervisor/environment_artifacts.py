@@ -786,7 +786,7 @@ def acquire(
         custom=custom,
         published_base=context,
     )
-    identity = f"{variant}-{cast('str', base['id'])[7:]}" if custom else variant
+    identity = hashlib.sha256(merged.encode("utf-8")).hexdigest()
     constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
     atomic_write(release_root / "release-manifest.json", catalog.engine_bytes)

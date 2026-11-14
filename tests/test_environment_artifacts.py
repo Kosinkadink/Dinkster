@@ -375,7 +375,8 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
     path = mirror / "channels/main.json"
     path.write_bytes(_json(channel))
     initial = discover((str(mirror),), "main")
-    requirements = acquire(initial, "fixture-cpu", store).read_text()
+    initial_constraints = acquire(initial, "fixture-cpu", store)
+    requirements = initial_constraints.read_text()
     assert f"dinkster-frontend==0.1.0 --hash=sha256:{original['sha256']}" in requirements
     channel["frontend"] = updated
     path.write_bytes(_json(channel))
@@ -389,6 +390,7 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
     assert selected.engine_bytes == initial.engine_bytes
     assert selected.channel.engine_release == initial.channel.engine_release
     requirements = acquire(selected, "fixture-cpu", store).read_text()
+    assert initial_constraints.read_bytes() == before[initial_constraints]
     assert f"dinkster-frontend==0.2.0 --hash=sha256:{updated['sha256']}" in requirements
     assert "dinkster-frontend==0.1.0" not in requirements
     inputs = runtime_inputs(selected, "fixture-cpu", store)
@@ -797,7 +799,6 @@ def test_custom_acquisition_uses_published_target_and_actual_base_ownership(
         assert not list(store.glob("engines/*/constraints-fixture-cpu-*.txt"))
     else:
         constraints = acquire(catalog, "fixture-cpu", store, base=custom, base_sources=())
-        assert constraints.name == f"constraints-fixture-cpu-{custom['id'][7:]}.txt"
         assert set(constraints.read_text().splitlines()) == {
             "fixture-engine==2.0 --hash=sha256:" + hashlib.sha256(payload).hexdigest(),
             *(

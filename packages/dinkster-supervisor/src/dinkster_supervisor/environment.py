@@ -1111,7 +1111,9 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         or constraints.is_symlink()
         or content_digest(constraints) != generation.constraints
     ):
-        constraints = release / f"constraints-{generation.variant}.txt"
+        constraints = release / f"constraints-{generation.constraints[7:]}.txt"
+        if not constraints.exists():
+            constraints = release / f"constraints-{generation.variant}.txt"
     catalog = previous / "dinkster.lock" if "dinkster.lock" in expected else None
 
     def revalidate() -> None:
