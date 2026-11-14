@@ -442,16 +442,16 @@ def require_idle(root: Path) -> None:
         if not _identity_matches(inspected) or inspected["state"] != "ready":
             raise EnvironmentError("cannot verify an engine is idle")
         try:
-            queue = _request(cast("str", inspected["url"]) + "/api/queue")
+            queue = _request(cast("str", inspected["url"]) + "/api/queue/idle")
         except (HTTPError, URLError, ValueError) as exc:
             raise EnvironmentError("cannot verify an engine is idle") from exc
         if not isinstance(queue, dict):
             raise EnvironmentError("cannot verify an engine is idle")
         document = cast("dict[str, object]", queue)
-        running, queued = document.get("running"), document.get("queued")
-        if not isinstance(running, list) or not isinstance(queued, list):
+        idle = document.get("idle")
+        if type(idle) is not bool:
             raise EnvironmentError("cannot verify an engine is idle")
-        if running or queued:
+        if not idle:
             raise EnvironmentError("Finish or cancel the running job before updating.")
 
 

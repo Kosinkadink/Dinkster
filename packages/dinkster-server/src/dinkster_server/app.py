@@ -3901,6 +3901,11 @@ def _publish_queue_state(state: ServerState) -> None:
     state.hub.publish(wire, client_id=None, droppable=False)
 
 
+async def handle_queue_idle(request: web.Request) -> web.Response:
+    queue = request.app[STATE_KEY].queue
+    return web.json_response({"idle": not queue.pending() and not queue.running()})
+
+
 async def handle_queue_status(request: web.Request) -> web.Response:
     return web.json_response(_queue_wire(request.app[STATE_KEY]))
 
@@ -4726,6 +4731,7 @@ def create_app(
     app.router.add_get("/api/jobs/{client_id}/{job_id}", handle_job_status)
     app.router.add_delete("/api/jobs/{client_id}/{job_id}", handle_cancel)
     app.router.add_get("/api/values", handle_value)
+    app.router.add_get("/api/queue/idle", handle_queue_idle)
     app.router.add_get("/api/queue", handle_queue_status)
     app.router.add_post("/api/queue/pause", handle_queue_pause)
     app.router.add_post("/api/queue/resume", handle_queue_resume)

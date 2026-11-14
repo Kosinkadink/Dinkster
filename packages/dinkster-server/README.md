@@ -79,6 +79,9 @@ The main protocol routes include:
 - `GET /api/events` for additive WebSocket events; job-correlated events carry
   their per-job `seq`, while job status carries `latestSeq`
 - `GET /api/queue` and `POST /api/queue/pause`, `/resume`, or `/clear`
+- `GET /api/queue/idle` (also `HEAD`) reports only `{"idle": bool}` for management
+  probes, with the same queue authorization but no asset-client admission.
+  Full queue reads still admit clients because job values can reference assets.
 - `/api/assets`, `/api/library`, and `/api/history` when their stores are composed.
   `POST /api/assets/media?scope=&kind=&name=` is the bounded authenticated media
   ingest: it accepts only the closed image/audio/video/model3d Content-Types,
