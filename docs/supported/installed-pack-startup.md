@@ -357,6 +357,12 @@
   manifests. Engine-only changes select none; shared vision changes select all
   affected vision packs. Native dependency locking can consume that independent
   selected catalog without replacing its versions with the engine version.
+- Every regular engine version tag publishes native environment tools from the
+  same commit, then moves Stable only after the engine, selected bases, tools
+  and frontend bytes have been verified at their public locations. A tools
+  failure leaves Stable unchanged and fails publication; missing publication
+  configuration is an error, not a successful skip. Main continues to move on
+  successful engine builds and retains its independently published tools.
 - After a successful same-commit engine release, natural main publication selects
   every declared official pack and library version missing from the public index,
   even when a predecessor never published. Older or newer public versions do not
