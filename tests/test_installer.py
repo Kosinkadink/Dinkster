@@ -243,14 +243,14 @@ def test_generation_reserved_composition_requires_local_build_or_registry(
         ("relative", "absolute paths"),
         (
             "engine-below",
-            "pack example@1.2.3 declares engine >=0.0.4; engine 0.0.3 is incompatible",
+            "pack example@1.2.3 declares engine >=0.0.7; engine 0.0.6 is incompatible",
         ),
-        ("engine-above", "pack example@1.2.3 declares engine <0.0.3; engine 0.0.3 is incompatible"),
+        ("engine-above", "pack example@1.2.3 declares engine <0.0.6; engine 0.0.6 is incompatible"),
     ],
 )
 def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
     pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
-    engine = {"engine-below": ">=0.0.4", "engine-above": "<0.0.3"}.get(
+    engine = {"engine-below": ">=0.0.7", "engine-above": "<0.0.6"}.get(
         problem or "", ">=0.0.2.dev0,<0.1"
     )
     manifest = pack / "dinkster-pack.toml"
