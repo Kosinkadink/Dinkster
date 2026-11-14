@@ -1370,6 +1370,45 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt"])
+def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+    library = tmp_path / "library"
+    if inventory != "new":
+        vault = library / "vault"
+        vault.mkdir(parents=True)
+        if inventory == "corrupt":
+            (vault / ".produced-assets.sqlite").write_bytes(b"not a database")
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(port, library, "--no-default-packs"), tmp_path
+    )
+    error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/library/storage") as response:
+                    assert response.status == 200
+                    status = await response.json()
+                assert not status["collectionEnabled"]
+                assert "owner_completeness_unknown" in status["blocked"]
+                if inventory == "new":
+                    assert status["adoptedBytes"] == 0
+                    assert status["vaultOwnershipAvailable"] is True
+                    assert "adoption_state_unavailable" not in status["blocked"]
+                else:
+                    assert status["adoptedBytes"] is None
+                    assert "adoption_state_unavailable" in status["blocked"]
+
+        run_scenario(scenario())
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        stop_logged_serve(process, log, error)
+
+
 def test_degraded_default_ordering_composes_provider_before_consumer(
     tmp_path: Path,
 ) -> None:
