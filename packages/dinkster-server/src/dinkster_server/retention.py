@@ -19,14 +19,21 @@ HOLDER_HEADER = "X-Dinkster-Retention-Holder"
 CLIENT_PATH = "/api/library/retention-clients"
 
 
-def retention_owner_client(request: web.Request) -> tuple[str, str, int] | None:
+def retention_owner_client(request: web.Request) -> tuple[str, str, tuple[int, ...]] | None:
     generation = request.headers.get(CLIENT_HEADER)
     holder = request.headers.get(HOLDER_HEADER)
     if generation is None and holder is None:
         return None
-    if generation is None or holder not in {str(n) for n in range(1, 9)}:
-        raise AssetError("retained owners require a generation and holder class 1 through 8")
-    return principal_for(request).principal_id, generation, int(holder)
+    classes = [part.strip() for part in (holder or "").split(",")]
+    if (
+        generation is None
+        or len(set(classes)) != len(classes)
+        or any(part not in {str(n) for n in range(1, 9)} for part in classes)
+    ):
+        raise AssetError(
+            "retained owners require a generation and distinct holder classes 1 through 8"
+        )
+    return principal_for(request).principal_id, generation, tuple(sorted(int(n) for n in classes))
 
 
 async def handle_retention_client(request: web.Request) -> web.Response:
@@ -124,8 +131,13 @@ def add_retention_clients(app: web.Application) -> None:
             return await handler(request)
         store = request.app[LIBRARY_KEY].store
         principal = principal_for(request).principal_id
-        generation = request.headers.get(CLIENT_HEADER)
         websocket = request.headers.get("Upgrade", "").lower() == "websocket"
+        generation = request.headers.get(CLIENT_HEADER)
+        if websocket:
+            query_generation = request.query.get("retentionGeneration")
+            if generation is not None and query_generation not in (None, generation):
+                raise web.HTTPBadRequest(text="conflicting retention generations")
+            generation = generation or query_generation
         try:
             await run_owned_thread(
                 lambda: store.admit_retention_client(principal, generation, pending=not websocket)
@@ -140,7 +152,7 @@ def add_retention_clients(app: web.Application) -> None:
             if generation is not None:
                 if websocket:
                     await run_owned_thread(
-                        lambda: store.disconnect_retention_client(principal, generation)
+                        lambda: store.settle_retention_stream(principal, generation)
                     )
                 else:
                     await run_owned_thread(

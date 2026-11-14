@@ -463,7 +463,7 @@ class LibraryStore:
                 )
             self._conn.execute(
                 "UPDATE asset_retention_clients SET connected = 0, acknowledged = 0, "
-                "revision = revision + 1, pending_requests = 0"
+                "revision = revision + 1, pending_requests = 0, active_streams = 0"
             )
 
     def admit_retention_client(
@@ -478,9 +478,9 @@ class LibraryStore:
                 self._retention_client_locked(principal_id, generation)
                 self._conn.execute(
                     "UPDATE asset_retention_clients SET acknowledged = 0, "
-                    "revision = revision + 1, pending_requests = pending_requests + ? "
-                    "WHERE generation = ?",
-                    (int(pending), generation),
+                    "revision = revision + 1, pending_requests = pending_requests + ?, "
+                    "active_streams = active_streams + ? WHERE generation = ?",
+                    (int(pending), int(not pending), generation),
                 )
 
     def settle_retention_request(self, principal_id: str, generation: str) -> None:
@@ -488,6 +488,16 @@ class LibraryStore:
             self._conn.execute(
                 "UPDATE asset_retention_clients SET pending_requests = pending_requests - 1 "
                 "WHERE principal_id = ? AND generation = ? AND pending_requests > 0",
+                (principal_id, generation),
+            )
+
+    def settle_retention_stream(self, principal_id: str, generation: str) -> None:
+        """A stream ending invalidates its client, without disconnecting surviving windows."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE asset_retention_clients SET active_streams = active_streams - 1, "
+                "acknowledged = 0, revision = revision + 1 "
+                "WHERE principal_id = ? AND generation = ? AND active_streams > 0",
                 (principal_id, generation),
             )
 
@@ -521,7 +531,12 @@ class LibraryStore:
                     "WHERE principal_id = ? AND generation = ?",
                     (principal_id, generation),
                 ).fetchone()
-                if row is None or row["revision"] != revision or row["pending_requests"]:
+                if (
+                    row is None
+                    or row["revision"] != revision
+                    or row["pending_requests"]
+                    or row["active_streams"]
+                ):
                     raise StaleRevision("retention client changed or has pending reads")
                 client_id = row["client_id"]
                 next_revision = revision + 1
@@ -558,6 +573,7 @@ class LibraryStore:
             "complete": complete and bool(client["connected"]) and not client["pending_requests"],
             "connected": bool(client["connected"]),
             "pendingRequests": client["pending_requests"],
+            "activeStreams": client["active_streams"],
             "holders": holders,
         }
 
@@ -599,42 +615,44 @@ class LibraryStore:
     def _bind_retention_owner_locked(
         self,
         key: tuple[str, str, str],
-        client: tuple[str, str, int] | None,
+        client: tuple[str, str, tuple[int, ...]] | None,
         *,
         creating: bool,
     ) -> None:
-        member = self._conn.execute(
+        members = self._conn.execute(
             "SELECT * FROM asset_retention_members "
             "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
             key,
-        ).fetchone()
+        ).fetchall()
         if client is None:
-            if member is not None:
+            if members:
                 raise StaleRevision("retained owner requires its client generation")
             self._conn.execute("UPDATE asset_retention_universe SET legacy = 1")
             return
-        principal, generation, holder_class = client
-        if type(holder_class) is not int or not 1 <= holder_class <= 8:
-            raise AssetError("holder class must be an integer from 1 to 8")
+        principal, generation, holder_classes = client
+        if (
+            not holder_classes
+            or len(set(holder_classes)) != len(holder_classes)
+            or any(type(n) is not int or not 1 <= n <= 8 for n in holder_classes)
+        ):
+            raise AssetError("holder classes must be distinct integers from 1 to 8")
         row = self._retention_client_locked(principal, generation)
-        if member is None:
+        if not members:
             if not creating:
                 raise StaleRevision("an existing unbound owner cannot be reassigned")
-            self._conn.execute(
+            self._conn.executemany(
                 "INSERT INTO asset_retention_members VALUES (?, ?, ?, ?, ?)",
-                (*key, row["client_id"], holder_class),
+                [(*key, row["client_id"], n) for n in holder_classes],
             )
-        elif (member["client_id"], member["holder_class"]) != (row["client_id"], holder_class):
-            raise StaleRevision("retained owner belongs to another client or holder class")
+        elif {(m["client_id"], m["holder_class"]) for m in members} != {
+            (row["client_id"], n) for n in holder_classes
+        }:
+            raise StaleRevision("retained owner belongs to another client or holder class set")
         self._conn.execute(
             "UPDATE asset_retention_clients SET acknowledged = 0, revision = revision + 1 "
             "WHERE client_id = ?",
             (row["client_id"],),
         )
-
-    def retention_collection_blocked(self) -> list[str]:
-        with self._lock:
-            return self._retention_collection_blocked_locked()
 
     def _retention_collection_blocked_locked(self) -> list[str]:
         universe = self._conn.execute(
@@ -693,7 +711,7 @@ class LibraryStore:
         *,
         revision: int,
         complete: bool = False,
-        client: tuple[str, str, int] | None = None,
+        client: tuple[str, str, tuple[int, ...]] | None = None,
     ) -> AssetRetention:
         """Replace an owner's manifest atomically; revision zero creates a new owner.
 
@@ -962,7 +980,7 @@ class LibraryStore:
         owner_kind: str,
         owner_id: str,
         *,
-        client: tuple[str, str, int] | None = None,
+        client: tuple[str, str, tuple[int, ...]] | None = None,
     ) -> AssetRetention | None:
         """Transfer offer protection to a fresh generation in one write transaction.
 
@@ -1021,7 +1039,7 @@ class LibraryStore:
         owner_id: str,
         *,
         revision: int,
-        client: tuple[str, str, int] | None = None,
+        client: tuple[str, str, tuple[int, ...]] | None = None,
     ) -> AssetRetention | None:
         key = _retention_key(scope, owner_kind, owner_id)
         if type(revision) is not int or revision < 1:

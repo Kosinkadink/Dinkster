@@ -110,12 +110,14 @@
   that ownership through terminal recovery and durable history publication;
   media publication keeps it through reference commits despite cancellation.
 - Startup recovers explicitly offered publications from inactive job scratch
-  through verified engine-vault adoption, without rerunning jobs or deleting
-  scratch. Active, unknown or corrupt stores remain blocked; recovery of another
+  through verified engine-vault adoption, without rerunning jobs. Scratch removal
+  requires evaluated client completeness and verified durable handoffs; restart
+  invalidates known clients, and historical unknown clients remain blocked.
+  Active, unknown or corrupt stores remain blocked; recovery of another
   recognized job can continue. Existing untracked assets are not reclassified.
   Success, failure and cancellation also reconcile that job's offered bytes
   after execution settles and before reporting its terminal state. Recovery
-  preserves scratch and the original job outcome; unrelated jobs are untouched.
+  preserves the original job outcome; unrelated jobs are untouched.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a

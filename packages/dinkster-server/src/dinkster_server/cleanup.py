@@ -94,8 +94,8 @@ async def inspect_cleanup(
 
     Blocking owners are acquired and released in one owned worker; cancellation
     must not release RAM ownership before that worker settles. This inspects
-    known owners only. Collection additionally requires the frontend integration
-    gate and every reference/publication barrier to remain held through deletion.
+    known owners only. Collection additionally requires an evaluated complete
+    client census and every reference/publication barrier held through deletion.
     """
     if registry is None:
         registry = TypeRegistry()

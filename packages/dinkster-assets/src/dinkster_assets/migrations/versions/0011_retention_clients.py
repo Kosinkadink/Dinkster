@@ -28,7 +28,8 @@ def upgrade() -> None:
         sa.Column("connected", sa.Integer(), nullable=False),
         sa.Column("acknowledged", sa.Integer(), nullable=False),
         sa.Column("pending_requests", sa.Integer(), nullable=False, server_default="0"),
-        sa.CheckConstraint("pending_requests >= 0"),
+        sa.Column("active_streams", sa.Integer(), nullable=False, server_default="0"),
+        sa.CheckConstraint("pending_requests >= 0 AND active_streams >= 0"),
         sa.CheckConstraint("revision > 0"),
         sa.CheckConstraint("connected IN (0, 1) AND acknowledged IN (0, 1)"),
     )
@@ -38,7 +39,7 @@ def upgrade() -> None:
         sa.Column("owner_kind", sa.Text(), primary_key=True),
         sa.Column("owner_id", sa.Text(), primary_key=True),
         sa.Column("client_id", sa.Text(), nullable=False),
-        sa.Column("holder_class", sa.Integer(), nullable=False),
+        sa.Column("holder_class", sa.Integer(), primary_key=True),
         sa.CheckConstraint("holder_class BETWEEN 1 AND 8"),
     )
 

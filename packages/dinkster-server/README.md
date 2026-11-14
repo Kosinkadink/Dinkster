@@ -197,12 +197,13 @@ time never release roots.
 `POST /api/library/retention-clients` accepts `{revision: 0}` and creates an
 incomplete server-admitted client before its first asset-observing request.
 The response is `{clientId, generation, revision, connected, pendingRequests,
-complete, holders}`. Keep the opaque generation and send it as
+activeStreams, complete, holders}`. Keep the opaque generation and send it as
 `X-Dinkster-Retention-Generation` on subsequent requests. The authenticated
 principal is part of its authority; another principal cannot use it.
 
 When creating, replacing, source-claiming or releasing a retention owner, also
-send `X-Dinkster-Retention-Holder: N`, where N is one of these fixed classes:
+send `X-Dinkster-Retention-Holder` with the comma-separated distinct class
+numbers covered by that owner, for example `1,2`. These are the fixed classes:
 1. Workflow literals, nested values and staged mutations.
 2. Undo/redo, session continuations and frozen compile snapshots.
 3. Persisted, restored, shared and multi-window workflows.
@@ -212,9 +213,12 @@ send `X-Dinkster-Retention-Holder: N`, where N is one of these fixed classes:
 7. Live preview stills, rings and pending deliveries.
 8. Pending reads, decoded previews and render caches.
 
-An owner is bound to its client and class on creation under the same SQLite
-write barrier as its manifest. Existing unbound owners cannot be adopted by a
-new client. A replacement or release invalidates that client's acknowledgment
+An owner is bound to its client and immutable class set on creation under the
+same SQLite write barrier as its manifest. Shared coverage repeats the same
+owner DTO in each covered class; it does not create duplicate owner receipts
+or assert the other class empty. Replacements and releases must carry the
+same class set (order is immaterial). Existing unbound owners cannot be adopted
+by a new client. A replacement or release invalidates that client's acknowledgment
 atomically; it never reassigns another client's owner. All owner revisions,
 digests, completeness and result-source claims remain in the census snapshot.
 
@@ -233,10 +237,17 @@ individual owner acknowledgments and their publication guards remain required.
 Asset-observing requests invalidate acknowledgment before their handler runs;
 ordinary pending requests also prevent acknowledgment until they settle.
 WebSocket publication retains the existing result-offer/history/cache barriers;
-opening or closing the stream invalidates client completeness. `DELETE` with
-an empty object disconnects without releasing roots. Reopen with POST and
-`{revision}` plus the old generation header: it rotates the generation and
-invalidates completeness before any observation, preserving all owner bindings.
+opening or closing any stream invalidates client completeness, but closing a
+stream does not disconnect the logical client or revoke surviving windows.
+Browser WebSockets can carry `retentionGeneration` as a query parameter instead
+of the generation header; authentication and principal binding remain required.
+Never put it on external-origin requests. Conflicting query/header generations
+are rejected. `activeStreams` counts admitted streams; it is not proof of
+completeness, and zero streams grants no release or collection authority.
+`DELETE` with an empty object explicitly disconnects without releasing roots.
+Reopen with POST and `{revision}` plus the old generation header: it rotates
+the generation and invalidates completeness before any observation, preserving
+all owner bindings. Rotation is refused while reads or streams are outstanding.
 GET permits reading disconnected state so a client can obtain its current
 revision after restart. Old generations cannot mutate the reopened owners.
 

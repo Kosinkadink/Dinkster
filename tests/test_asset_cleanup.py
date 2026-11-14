@@ -747,7 +747,11 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
     run_scenario(scenario())
 
 
-def test_client_census_gates_collection_and_preserves_revision_bound_roots(tmp_path: Path) -> None:
+def test_client_census_gates_collection_and_preserves_revision_bound_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server.asset_stream import open_verified_sized
+
     async def scenario() -> None:
         vault = AssetVault(tmp_path / "vault")
         store = LibraryStore(tmp_path / "library.sqlite")
@@ -767,19 +771,33 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(tmp_p
             payloads = (b"shown and undoable", b"actually relinquished")
             digests = tuple(digest_bytes(data) for data in payloads)
             inventory = ProducedAssetInventory(vault.root)
+            holder_sets = ((1, 2), (3,), (4,), (5, 6), (7,), (8,))
             for digest, data in zip(digests, payloads, strict=True):
                 inventory.pending(digest, len(data))
                 with vault.writer(digest) as writer:
                     writer.write(data)
                     writer.commit()
                     inventory.adopted(digest, len(data))
-            for holder in range(1, 9):
+            for holders in holder_sets:
                 response = await client.put(
-                    f"/api/library/retentions/document/holder-{holder}",
-                    headers={**headers, "X-Dinkster-Retention-Holder": str(holder)},
+                    f"/api/library/retentions/document/holder-{holders[0]}",
+                    headers={**headers, "X-Dinkster-Retention-Holder": ",".join(map(str, holders))},
                     json={"revision": 0, "digests": list(digests), "complete": True},
                 )
                 assert response.status == 200, await response.text()
+            offer = store.offer_result_assets(
+                "local", "retained result", 1, "node", "image", 1, [digests[0]], complete=True
+            )
+            source_owner = "/api/library/retentions/shown-result/source-owner"
+            source_headers = {**headers, "X-Dinkster-Retention-Holder": "5,6"}
+            claimed = await client.put(
+                source_owner,
+                headers=source_headers,
+                json={"revision": 0, "sourceToken": offer.token},
+            )
+            assert claimed.status == 200
+            claim = await claimed.json()
+            assert claim["sourceToken"] == offer.token and claim["digests"] == [digests[0]]
             scratch = cast(Path, library.scratch_root)
             with closing(hold_produced_job(scratch, "census publication")):
                 with use_produced_output_job("census publication", 1):
@@ -801,6 +819,15 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(tmp_p
             assert scratch_file.read_bytes() == payloads[0]
             snapshot = await (await client.get(census, headers=headers)).json()
             assert set(snapshot["holders"]) == {str(n) for n in range(1, 9)}
+            assert snapshot["holders"]["1"] == snapshot["holders"]["2"]
+            assert snapshot["holders"]["5"] == snapshot["holders"]["6"]
+            changed_classes = await client.put(
+                "/api/library/retentions/document/holder-1",
+                headers={**headers, "X-Dinkster-Retention-Holder": "1"},
+                json={"revision": 1, "digests": [], "complete": True},
+            )
+            assert changed_classes.status == 409
+            snapshot = await (await client.get(census, headers=headers)).json()
             acknowledgment = {"revision": snapshot["revision"], "holders": snapshot["holders"]}
             rejected = await client.put(
                 census, headers=headers, json={**acknowledgment, "holders": {}}
@@ -809,6 +836,44 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(tmp_p
             acknowledged = await client.put(census, headers=headers, json=acknowledgment)
             assert acknowledged.status == 200, await acknowledged.text()
             assert (await acknowledged.json())["complete"]
+            reconciled = await (await client.get(census, headers=headers)).json()
+            assert reconciled["complete"]
+            assert claim in reconciled["holders"]["5"] and claim in reconciled["holders"]["6"]
+            entered = asyncio.Event()
+            release = asyncio.Event()
+
+            async def held_open(path: Path, digest: str):
+                entered.set()
+                await release.wait()
+                return await open_verified_sized(path, digest)
+
+            with monkeypatch.context() as patches:
+                patches.setattr("dinkster_server.library.open_verified_sized", held_open)
+                read = asyncio.create_task(client.get(f"/api/assets/{digests[0]}", headers=headers))
+                try:
+                    async with asyncio.timeout(5):
+                        await entered.wait()
+                    pending = await (await client.get(census, headers=headers)).json()
+                    assert pending["pendingRequests"] == 1 and not pending["complete"]
+                    response = await client.put(
+                        census,
+                        headers=headers,
+                        json={"revision": pending["revision"], "holders": pending["holders"]},
+                    )
+                    assert response.status == 409
+                    assert (await client.post(storage + "/clear", json={})).status == 409
+                    assert vault.resolve(digests[1]) is not None
+                finally:
+                    release.set()
+                    response = await read
+                    assert response.status == 200 and await response.read() == payloads[0]
+            snapshot = await (await client.get(census, headers=headers)).json()
+            response = await client.put(
+                census,
+                headers=headers,
+                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+            )
+            assert response.status == 200
             policy = await client.put(storage + "/policy", json={"limitBytes": None})
             assert policy.status == 200
             assert await policy.json() == {"limitBytes": None, "collectionEnabled": False}
@@ -819,16 +884,74 @@ def test_client_census_gates_collection_and_preserves_revision_bound_roots(tmp_p
             assert not scratch_file.exists()
             durable = vault.resolve(digests[0])
             assert durable is not None and durable.read_bytes() == payloads[0]
-            for holder in range(1, 9):
+            stream_url = "/api/events?retentionGeneration=" + first["generation"]
+            stream = await client.ws_connect(stream_url)
+            sibling = await client.ws_connect(stream_url)
+            try:
+                snapshot = await (await client.get(census, headers=headers)).json()
+                assert snapshot["activeStreams"] == 2
+                assert not snapshot["complete"]
+                assert (
+                    await client.post(
+                        census, headers=headers, json={"revision": snapshot["revision"]}
+                    )
+                ).status == 409
                 response = await client.put(
-                    f"/api/library/retentions/document/holder-{holder}",
-                    headers={**headers, "X-Dinkster-Retention-Holder": str(holder)},
+                    census,
+                    headers=headers,
+                    json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+                )
+                assert response.status == 200
+                await sibling.close()
+                async with asyncio.timeout(5):
+                    while True:
+                        snapshot = await (await client.get(census, headers=headers)).json()
+                        if snapshot["activeStreams"] == 1:
+                            break
+                assert snapshot["connected"] and not snapshot["complete"]
+                assert (await client.post(storage + "/clear", json={})).status == 409
+                assert (await client.get("/api/nodes", headers=headers)).status == 200
+                assert durable.read_bytes() == payloads[0]
+            finally:
+                await sibling.close()
+                await stream.close()
+            for holders in holder_sets:
+                response = await client.put(
+                    f"/api/library/retentions/document/holder-{holders[0]}",
+                    headers={**headers, "X-Dinkster-Retention-Holder": ",".join(map(str, holders))},
                     json={"revision": 1, "digests": [digests[0]], "complete": True},
                 )
                 assert response.status == 200
             assert (await client.put(census, headers=headers, json=acknowledgment)).status == 409
             assert (await client.post(storage + "/clear", json={})).status == 409
             assert vault.resolve(digests[1]) is not None
+            snapshot = await (await client.get(census, headers=headers)).json()
+            response = await client.put(
+                census,
+                headers=headers,
+                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+            )
+            assert response.status == 200
+            await client.close()
+            store = LibraryStore(tmp_path / "library.sqlite")
+            history = HistoryStore(tmp_path / "history.sqlite")
+            library = ServerLibrary(vault, store, scratch_root=tmp_path / "scratch")
+            client = TestClient(
+                TestServer(create_app(make_engine, SCHEMAS, library=library, history=history))
+            )
+            await client.start_server()
+            restored = await (await client.get(census, headers=headers)).json()
+            assert not restored["connected"] and not restored["complete"]
+            assert (await client.post(storage + "/clear", json={})).status == 409
+            assert vault.resolve(digests[1]) is not None
+            response = await client.post(
+                census, headers=headers, json={"revision": restored["revision"]}
+            )
+            assert response.status == 200
+            first = await response.json()
+            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
+            source_readback = await (await client.get(source_owner, headers=headers)).json()
+            assert source_readback == claim
             snapshot = await (await client.get(census, headers=headers)).json()
             response = await client.put(
                 census,
