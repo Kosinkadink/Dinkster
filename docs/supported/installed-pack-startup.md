@@ -976,7 +976,9 @@ live snapshot; omit all live marks to capture a restorable generation.
 
 Selected helper wheels participate in engine
 resolution before packs are built, including replacements for engine dependencies
-whose real versions still satisfy the declared constraints. The exception is an
+whose real versions still satisfy the declared constraints. Contributor packs
+share the exact selected helper wheel installed in their generation; another
+wheel with the same name and version is not an interchangeable substitute. The exception is an
 explicitly selected local `dinkster-inference`: `develop` may override the engine's
 exact inference pin, reports the pinned and local versions, and retains the local
 wheel for restore. For example, add `--library-source /absolute/dinkster-inference`

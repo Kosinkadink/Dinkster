@@ -1687,6 +1687,105 @@ environment.main()
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+def test_development_setup_shares_the_generations_selected_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_development import prepare_development_packs
+    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_environment_generations import _wheel
+    from test_installer import write_publishable_pack
+
+    source = Path(__file__).resolve().parents[1]
+    root, store = tmp_path / "project", tmp_path / "store"
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    library, _ = _wheel(tmp_path, "selected_helper", "1.0", 73)
+    pack = write_publishable_pack(tmp_path / "pack")
+    (pack / "src/demo/__init__.py").write_text(
+        "from dinkster_api.v1 import CORE_INT, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from selected_helper import VALUE\n"
+        "class Helper(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='demo.helper', display_name='Helper', "
+        "outputs=(OutputSpec('value', TypeExpr.concrete(CORE_INT)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        return cls.outputs(value=VALUE)\n"
+        "NODES = [Helper]\n"
+    )
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        manifest.read_text().replace(
+            "[pack.entry]", 'requires=["selected-helper==1.0"]\n[pack.entry]'
+        )
+    )
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    try:
+        code, result = _run(
+            root,
+            "develop",
+            "--source",
+            str(source),
+            "--contributor",
+            "--pack-source",
+            str(pack),
+            "--library-source",
+            str(library),
+            "--variant",
+            variant,
+            "--python",
+            sys.executable,
+            "--data",
+            str(store),
+            "--port",
+            str(free_port()),
+            "--yes",
+            timeout=300,
+        )
+        assert code == 0, result
+    finally:
+        if (root / "current").exists():
+            assert _run(root, "stop", "--yes")[0] == 0
+    generation = root / "generations" / (root / "current").read_text().strip()
+    selection = {
+        "variant": variant,
+        "workerProtocol": PROTOCOL_VERSION,
+        "development": json.loads((generation / "development-sources.json").read_text()),
+    }
+    release = json.loads((generation / "generation.json").read_text())["engine"]["release"]
+    for wheel_version in ("1.0", "2.0"):
+        other = tmp_path / wheel_version
+        other.mkdir()
+        different, _ = _wheel(other, "selected_helper", wheel_version, 149)
+        with pytest.raises(EnvironmentError, match="differs from the generation"):
+            prepare_development_packs(
+                generation,
+                packs=(pack,),
+                libraries=(different,),
+                store=store,
+                release=release,
+                selection=selection,
+            )
+    assert [
+        entry.pack
+        for entry in Lockfile.from_record_json((generation / "dinkster.lock").read_text()).packs
+    ] == ["demo"]
+    assert (
+        subprocess.check_output(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-c",
+                "import selected_helper; print(selected_helper.VALUE)",
+            ],
+            text=True,
+        ).strip()
+        == "73"
+    )
+
+
 @pytest.mark.parametrize("public_command", [False, True])
 @pytest.mark.parametrize("problem", [None, "missing", "engine", "pack", "library"])
 def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
