@@ -32,6 +32,10 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
     library_wheels: dict[str, Path] = {}
     library_versions: dict[str, str] = {}
     built_wheels: list[dict[str, Any]] = []
+    installed = {
+        row["filename"]: row["sha256"]
+        for row in json.loads((generation / "installed-wheels.json").read_text())["wheels"]
+    }
     for value in inputs["libraries"]:
         source = Path(value)
         wheel = artifacts / source.name
@@ -48,6 +52,8 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
         if name in library_wheels:
             raise ProvisionError(f"duplicate development library: {name}")
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        if installed.get(wheel.name) != digest or version(name) != library_versions[name]:
+            raise ProvisionError(f"selected local library differs from the generation: {name}")
         retained = object_path(store / "wheels", "sha256:" + digest) / wheel.name
         retained.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(wheel, retained)
@@ -109,7 +115,8 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             variant=inputs["variant"],
             requirements=(
                 *manifest.requires_for(inputs["accelerator"]),
-                *(f"{name} @ {path.as_uri()}" for name, path in library_wheels.items()),
+                # Verified generation libraries are shared, not private URL requirements.
+                *(f"{name}=={value}" for name, value in library_versions.items()),
             ),
             python=Path(sys.executable),
             constraints=constraints,
