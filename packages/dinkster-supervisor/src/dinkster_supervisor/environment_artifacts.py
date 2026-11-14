@@ -542,12 +542,14 @@ def validate_dependency_base(selection: object, base: dict[str, object]) -> None
         raise EnvironmentError("engine lock contains a removed base-owned distribution")
 
 
-def engine_constraints(engine: dict[str, object], variant: str) -> str:
+def engine_constraints(
+    engine: dict[str, object], variant: str, *, inference: dict[str, object] | None = None
+) -> str:
     """Use the same exact variant requirements for native pack builds and user installs."""
     selections = cast("dict[str, object]", engine["dependencies"])
     additions = [
         f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
-        for row in dependency_wheels(selections.get(variant))
+        for row in dependency_wheels(inference or selections.get(variant))
     ]
     for row in artifact_rows(engine["artifacts"], "name"):
         filename = cast("str", row["name"])
@@ -846,21 +848,7 @@ def acquire(
             for row in override_rows
             if row["name"] not in owned
         )
-        requirements = (
-            "\n".join(
-                [
-                    f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
-                    for row in override_rows
-                ]
-                + [
-                    f"{name}=={version} --hash=sha256:{row['sha256']}"
-                    for row in artifact_rows(catalog.engine["artifacts"], "name")
-                    if str(row["name"]).endswith(".whl")
-                    for name, version, _, _ in [parse_wheel_filename(cast("str", row["name"]))]
-                ]
-            )
-            + "\n"
-        )
+        requirements = engine_constraints(catalog.engine, variant, inference=inference)
         requirements = frontend_requirements(requirements, catalog.engine, catalog.document)
     if selected is not None or custom:
         validate_base_requirements(tuple(nonbase_wheels), base, published_base=context)

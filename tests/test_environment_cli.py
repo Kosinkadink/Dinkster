@@ -1920,6 +1920,7 @@ def test_inference_requests_report_oldest_containing_release(
         "--plan",
         "--json",
     ]
+    root = tmp_path / "project"
     if operation != "develop":
         mirror = tmp_path / "mirror"
         _, engine, channel = _mirror(mirror)

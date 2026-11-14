@@ -592,7 +592,9 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     assert retained.read_bytes() == data
 
 
-def test_explicit_inference_retains_selected_wheels_for_exact_recovery(tmp_path: Path):
+def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
     """An explicit selection runs the chosen code and recovers without its old pin or index."""
     from dinkster_supervisor.environment_generations import prepare_engine_interpreter
     from dinkster_supervisor.environment_restore_plan import missing_inputs
@@ -618,8 +620,9 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(tmp_path:
     try:
         index = f"http://127.0.0.1:{server.server_port}"
         catalog = discover((str(mirror),), "main")
-        base, engine = catalog.bases["fixture-cpu"], catalog.engine
-        previous_engine = mirror / catalog.document["engine"]["locations"][0]["path"]
+        base, engine = cast("dict", catalog.bases["fixture-cpu"]), cast("dict", catalog.engine)
+        channel = cast("dict", catalog.document)
+        previous_engine = mirror / channel["engine"]["locations"][0]["path"]
         engine_wheel = wheel(
             previous_engine.parent,
             "fixture_engine",
@@ -647,7 +650,6 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(tmp_path:
         }
         data = _json(engine)
         identity = "sha256:" + hashlib.sha256(data).hexdigest()
-        channel = catalog.document
         previous = mirror / channel["engine"]["locations"][0]["path"]
         release = mirror / "engine" / identity[7:]
         shutil.copytree(previous.parent, release)
@@ -658,13 +660,20 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(tmp_path:
         (mirror / "channels/main.json").write_bytes(_json(channel))
         (release / "release-manifest.json").write_bytes(data)
         catalog = discover((str(mirror),), "main")
-        inference = {"version": "0.2.0", "requested": "0.2.0.dev3", "sourceCommit": "b" * 40}
+        inference: dict[str, object] = {
+            "version": "0.2.0",
+            "requested": "0.2.0.dev3",
+            "sourceCommit": "b" * 40,
+        }
         constraints = acquire(
             catalog, "fixture-cpu", store, package_index=index, inference=inference
         )
         original = constraints.read_bytes()
         assert b"dinkster-inference==0.2.0" in original and b"0.1.1" not in original
-        assert any(row["name"] == "dinkster-inference" for row in inference["wheels"])
+        assert any(
+            row["name"] == "dinkster-inference"
+            for row in cast("list[dict[str, object]]", inference["wheels"])
+        )
         assert catalog.channel.engine_release == identity
         python = prepare_engine_interpreter(
             tmp_path / "generation", store=store, base=base["id"], constraints=constraints
@@ -701,9 +710,75 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(tmp_path:
             },
         }
         assert missing_inputs(snapshot, store) == []
-        server.shutdown()
-        recovered = acquire(catalog, "fixture-cpu", store, offline=True, inference=inference)
-        assert recovered.read_bytes() == original
+        from dinkster_registry import Lockfile
+        from dinkster_supervisor import environment, environment_inference
+        from test_environment_runtime import free_port
+
+        root = tmp_path / "managed-project"
+        source_lock, archives = tmp_path / "sources.json", tmp_path / "archives"
+        source_lock.write_text(Lockfile.of(()).record_json())
+        archives.mkdir()
+        for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+            monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+        monkeypatch.setattr(
+            environment_inference,
+            "resolve_inference",
+            lambda *args: {
+                "version": "0.2.0",
+                "requested": "0.2.0.dev3",
+                "notice": "selected 0.2.0",
+            },
+        )
+
+        def run(*arguments: str) -> dict:
+            code = environment.run(
+                environment.argument_parser().parse_args(
+                    ["--root", str(root), *arguments, "--json"]
+                )
+            )
+            result = json.loads(capsys.readouterr().out)
+            assert code == 0, result
+            return result
+
+        try:
+            for operation in ("setup", "update"):
+                flags = ["--port", str(free_port())] if operation == "setup" else []
+                run(
+                    operation,
+                    "--yes",
+                    "--mirror",
+                    str(mirror),
+                    "--channel",
+                    "main",
+                    "--variant",
+                    "fixture-cpu",
+                    "--data",
+                    str(store),
+                    "--package-index",
+                    index,
+                    "--inference",
+                    "0.2.0.dev3",
+                    "--catalog-lock",
+                    str(source_lock),
+                    "--artifacts",
+                    str(archives),
+                    *flags,
+                )
+            retained = root / "generations/1/artifact-sources.json"
+            retained_bytes = retained.read_bytes()
+            provenance = json.loads(retained_bytes)
+            assert provenance["inference"]["version"] == "0.2.0"
+            assert (root / "generations/2/constraints.txt").read_bytes() == original
+            server.shutdown()
+            recovered = acquire(catalog, "fixture-cpu", store, offline=True, inference=inference)
+            assert recovered.read_bytes() == original
+            restored = run("restore", "1", "--yes")
+            assert restored["exact"] is True
+            restored_root = root / "generations" / str(restored["current"])
+            assert (restored_root / "constraints.txt").read_bytes() == original
+            assert (restored_root / "artifact-sources.json").read_bytes() == retained_bytes
+        finally:
+            run("stop", "--yes")
     finally:
         server.shutdown()
         server.server_close()

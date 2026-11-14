@@ -483,7 +483,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         if offline:
             raise EnvironmentError("explicit inference selection requires online release metadata")
         inference = resolve_inference(args.inference, cast("str | None", package_index))
-        result["inference"] = inference
+        approval = (
+            "sha256:" + hashlib.sha256(json.dumps(inference, sort_keys=True).encode()).hexdigest()
+        )
+        if getattr(args, "inference_approval", None) not in (None, approval):
+            raise EnvironmentError("inference selection changed after planning; request a new plan")
+        result.update(inference=inference, inferenceApproval=approval)
+    elif getattr(args, "inference_approval", None):
+        raise EnvironmentError("--inference-approval requires --inference")
     local = None
     development = None
     catalog = None
@@ -627,7 +634,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
         if custom is None and selection is None:
-            inputs = runtime_inputs(catalog, variant, store)
+            inputs = runtime_inputs(catalog, variant, store, inference=inference)
             missing_bytes = sum(cast("int", row["size"]) for row in inputs if not row["cached"])
             result["runtimeInputs"] = inputs
             result["runtimeDownloadBytes"] = missing_bytes
@@ -1722,6 +1729,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         command.add_argument("--engine-release", help="require this exact published engine digest")
         command.add_argument("--base-id", help="require this exact published base digest")
     for command in (setup, update, develop):
+        command.add_argument(
+            "--inference-approval",
+            help="require the inference selection digest from a previous plan",
+        )
         command.add_argument("--mirror", action="append", default=[])
         command.add_argument(
             "--package-index", help="simple package index for exact locked third-party wheels"

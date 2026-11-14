@@ -135,7 +135,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         ),
         errors=missing if args.offline and not args.plan else None,
     )
-    runtime = artifacts.runtime_inputs(catalog, variant, store)
+    runtime = artifacts.runtime_inputs(catalog, variant, store, inference=inference)
     payloads = {
         (wheel.sha256, wheel.filename): wheel
         for lock in locks
@@ -362,7 +362,13 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
         for gpu in args.gpu:
             command.extend(("--gpu", gpu))
         if args.inference:
-            command.extend(("--inference", args.inference))
+            approval = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(approved["inference"], sort_keys=True).encode()
+                ).hexdigest()
+            )
+            command.extend(("--inference", args.inference, "--inference-approval", approval))
         if args.package_index:
             command.extend(("--package-index", args.package_index))
         if args.json:
