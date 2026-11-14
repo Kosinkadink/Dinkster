@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ._sqlite import connect_journal
 from .identity import AssetError, require_digest
-from .scratch import is_link_or_junction
+from .scratch import hold_produced_vault, is_link_or_junction
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,27 @@ class ProducedAssetInventory:
         self._path = root.absolute() / ".produced-assets.sqlite"
         if is_link_or_junction(root) or is_link_or_junction(self._path):
             raise AssetError("produced asset inventory must not be a symlink")
+
+    @classmethod
+    def initialize_vault(cls, root: Path) -> None:
+        """Initialize known-empty production state only when creating the vault.
+
+        Existing vaults may have lost their inventory; recreating it would
+        misreport unknown adoptions as empty and discard their recovery state.
+        """
+        try:
+            root.mkdir(parents=True)
+        except FileExistsError:
+            return
+        try:
+            with closing(connect_journal(cls(root)._path)) as db, db:
+                db.execute(
+                    "CREATE TABLE adoptions ("
+                    "digest TEXT PRIMARY KEY, size INTEGER NOT NULL, adopted_at_ns INTEGER)"
+                )
+            hold_produced_vault(root).close()
+        except sqlite3.Error as exc:
+            raise AssetError("produced asset inventory is unavailable") from exc
 
     def pending(self, digest: str, size: int) -> None:
         digest = require_digest(digest)
