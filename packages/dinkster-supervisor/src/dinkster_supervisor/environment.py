@@ -476,6 +476,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             raise EnvironmentError(
                 "adoption requires one explicit --pack-lock for each recorded pack"
             )
+    inference = None
+    if getattr(args, "inference", None):
+        from .environment_inference import resolve_inference
+
+        if offline:
+            raise EnvironmentError("explicit inference selection requires online release metadata")
+        inference = resolve_inference(args.inference, cast("str | None", package_index))
+        result["inference"] = inference
     local = None
     development = None
     catalog = None
@@ -494,6 +502,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         local = local_selection(
             args.source.resolve(), variant, args.variants or DEFAULT_VARIANTS, args.python
         )
+        if inference is not None:
+            local["inference"] = inference
+            local["packageIndex"] = package_index
         if developing:
             from .environment_development import development_selection
 
@@ -636,6 +647,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             plan.append("custom base download size is unknown until dependency resolution")
         elif custom is not None:
             plan.append(f"retain user-defined base {base_id}; do not resolve its definition again")
+    if inference is not None:
+        plan.append(inference["notice"])
     if project_settings is not None and settings is not None:
         plan.append(
             f"change project selection from {settings['channel']}/{settings['variant']} "
@@ -1679,6 +1692,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--contributor", action="store_true", help="run the live engine with development tools"
     )
     develop.add_argument("--library-source", action="append", default=[])
+    develop.add_argument(
+        "--inference", help="exact inference version/full commit, or public git URL with ref"
+    )
     develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
     develop.add_argument(
         "--live-pack",

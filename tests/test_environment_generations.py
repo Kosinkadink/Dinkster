@@ -366,6 +366,39 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         assert "dinkster-inference==0.1.2.dev3" in constraints.read_text()
         notice = capsys.readouterr().err
         assert "overrides dinkster-inference pin 0.1.1 with local version 0.1.2.dev3" in notice
+        if mode == "captured":
+            _wheel(index, "dinkster_inference", "0.1.3", 97)
+            explicit = {
+                **selection,
+                "inference": {"version": "0.1.3", "requested": "0.1.3", "fallback": False},
+            }
+            selected = prepare_local(engine, explicit, store)
+            selected_python = prepare_engine_interpreter(
+                tmp_path / "selected-generation",
+                store=store,
+                base=selected["base"],
+                constraints=selected["constraints"],
+            )
+            assert (
+                subprocess.check_output(
+                    [
+                        str(selected_python),
+                        "-I",
+                        "-c",
+                        "import dinkster_inference as i; print(i.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "97"
+            )
+            manifest = json.loads(
+                (
+                    object_path(store / "engines", selected["engine_release"])
+                    / "release-manifest.json"
+                ).read_text()
+            )
+            assert manifest["inference"] == explicit["inference"]
+            assert "dinkster-inference==0.1.3" in selected["constraints"].read_text()
         ordinary = {key: value for key, value in selection.items() if key != "development"}
         with pytest.raises(EnvironmentError, match="No solution found"):
             prepare_local(engine, ordinary, store, library_wheels=wheels)

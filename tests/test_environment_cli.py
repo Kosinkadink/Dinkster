@@ -1759,7 +1759,7 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
     assert not store.exists()
 
 
-@pytest.mark.parametrize("git_kind", ["engine", "pack", "library"])
+@pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference"])
 def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch
 ):
@@ -1780,7 +1780,11 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
     library.mkdir()
-    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    (library / "pyproject.toml").write_text(
+        '[project]\nname="dinkster-inference"\nversion="0.1.3.dev7"\n'
+        if git_kind == "inference"
+        else '[project]\nname="unpublished-helper"\n'
+    )
     repository = pygit2.Repository(git_server["root"] / "source.git")
     index = pygit2.Index()
     for kind, folder in (("engine", engine), ("pack", pack), ("library", library)):
@@ -1805,16 +1809,17 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     repository.free()
     monkeypatch.setenv("PATH", "")
     arguments = ["develop", "--root", str(tmp_path / "project")]
+    selected_kind = "library" if git_kind == "inference" else git_kind
     for kind, folder, option in (
         ("engine", engine, "--source"),
         ("pack", pack, "--pack-source"),
-        ("library", library, "--library-source"),
+        ("library", library, "--inference" if git_kind == "inference" else "--library-source"),
     ):
         arguments.extend(
             [
                 option,
                 f"{git_server['url']}#ref=development-{git_kind}&subdirectory={kind}"
-                if kind == git_kind
+                if kind == selected_kind
                 else str(folder),
             ]
         )
@@ -1832,7 +1837,9 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     plan = json.loads(capsys.readouterr().out)
     assert main([*arguments, "--approve", plan["sourceApproval"]]) == 0
     repeated = json.loads(capsys.readouterr().out)
-    selected = next(row for row in repeated["development"]["sources"] if row["kind"] == git_kind)
+    selected = next(
+        row for row in repeated["development"]["sources"] if row["kind"] == selected_kind
+    )
     assert selected["git"]["requestedRef"] == f"development-{git_kind}"
     assert selected["git"]["contentDigest"] == selected["contentDigest"]
     changed = [
