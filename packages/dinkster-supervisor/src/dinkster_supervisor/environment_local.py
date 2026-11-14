@@ -48,6 +48,48 @@ def run_local_command(command: list[str], *, cwd: Path, input: str | None = None
     return result.stdout.strip()
 
 
+def _relocate_framework(prefix: Path, runtime: Path, framework: str, *, cwd: Path) -> None:
+    executable = prefix / f"Resources/{framework}.app/Contents/MacOS/{framework}"
+    binaries = {executable.resolve(): runtime / "bin/python3"}
+    binaries.update(
+        (path.resolve(), runtime / path.relative_to(prefix))
+        for path in (prefix / "lib").glob("python*/lib-dynload/*.so")
+    )
+    pending = list(binaries)
+    while pending:
+        original = pending.pop()
+        target = binaries[original]
+        shutil.copy2(original, target)
+        dependencies = run_local_command(["otool", "-L", str(target)], cwd=cwd)
+        for reference in sorted(set(re.findall(r"^\s+(.+?) \(", dependencies, re.MULTILINE))):
+            if reference.startswith(("/usr/lib/", "/System/")):
+                continue
+            dependency = Path(reference.replace("@loader_path", str(original.parent))).resolve()
+            if dependency == original:
+                continue
+            if not dependency.is_file():
+                raise EnvironmentError(f"cannot locate framework dependency: {reference}")
+            if dependency not in binaries:
+                destination = runtime / "lib" / dependency.name
+                if destination in binaries.values():
+                    raise EnvironmentError(f"conflicting framework dependency: {reference}")
+                binaries[dependency] = destination
+                pending.append(dependency)
+            relative = os.path.relpath(binaries[dependency], target.parent)
+            run_local_command(
+                [
+                    "install_name_tool",
+                    "-change",
+                    reference,
+                    f"@loader_path/{relative}",
+                    str(target),
+                ],
+                cwd=cwd,
+            )
+        # Relocated signed payloads need signatures for their new load commands.
+        run_local_command(["codesign", "--force", "--sign", "-", str(target)], cwd=cwd)
+
+
 def local_selection(
     source: Path, variant: str, variants: Path, python: Path | None
 ) -> dict[str, Any]:
@@ -441,7 +483,8 @@ def prepare_local(
                         "'stdlib':sysconfig.get_path('stdlib'),"
                         "'library':sysconfig.get_config_var('LDLIBRARY'),"
                         "'libdir':sysconfig.get_config_var('LIBDIR'),"
-                        "'version':sysconfig.get_python_version()}))",
+                        "'version':sysconfig.get_python_version(),"
+                        "'framework':sysconfig.get_config_var('PYTHONFRAMEWORK')}))",
                     ],
                     cwd=source,
                 )
@@ -453,11 +496,34 @@ def prepare_local(
                 staging / "python/lib" / f"python{layout['version']}",
                 ignore=ignored,
             )
-            if layout["library"] and layout["libdir"]:
+            if layout["framework"]:
+                _relocate_framework(prefix, staging / "python", layout["framework"], cwd=source)
+            elif layout["library"] and layout["libdir"]:
                 library = Path(layout["libdir"]) / layout["library"]
                 if library.is_file():
                     for name in {library.name, library.resolve().name}:
                         shutil.copy2(library, staging / "python/lib" / name)
+            paths = json.loads(
+                run_local_command(
+                    [
+                        str(staging / "python/bin/python3"),
+                        "-I",
+                        "-c",
+                        "import json,sys,sysconfig; print(json.dumps([sys.prefix,sys.exec_prefix,"
+                        "*[sysconfig.get_path(key) for key in "
+                        "('stdlib','platstdlib','purelib','platlib','scripts')]]))",
+                    ],
+                    cwd=source,
+                )
+            )
+            if any(
+                not Path(path).resolve().is_relative_to((staging / "python").resolve())
+                for path in paths
+            ):
+                raise EnvironmentError(
+                    "explicit interpreter has installation paths outside its copied runtime; "
+                    "select a relocatable interpreter or use the configured standalone interpreter"
+                )
         else:
             shutil.copytree(prefix, staging / "python", symlinks=False, ignore=ignored)
         base["interpreter"]["files"] = {

@@ -324,6 +324,28 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         )
         if contributor:
             assert tool.returncode == 0 and tool.stdout.strip() == "59"
+            without_tools = {
+                **selection,
+                "development": {**selection["development"], "contributor": False},
+            }
+            other = prepare_local(engine, without_tools, store, library_wheels=wheels)
+            other_python = prepare_engine_interpreter(
+                tmp_path / "other-generation",
+                store=store,
+                base=inputs["base"],
+                constraints=other["constraints"],
+            )
+            subprocess.run(
+                [
+                    str(other_python),
+                    "-I",
+                    "-c",
+                    "import importlib.util; "
+                    "assert importlib.util.find_spec('fixture_tool') is None",
+                ],
+                check=True,
+            )
+            assert subprocess.check_output(tool.args, text=True).strip() == "59"
         else:
             assert tool.returncode != 0 and "No module named" in tool.stderr
         install_live_sources(generation, selection["development"])
