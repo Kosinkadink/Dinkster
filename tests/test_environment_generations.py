@@ -667,6 +667,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         "catalog-failure",
         "restore",
         "extra",
+        "acquire",
         "missing",
         "variant",
         "wheel",
@@ -779,15 +780,34 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 "wrong-variant" if problem == "variant" and name == "other" else variant
             )
             packages = ()
-            if problem in {"wheel", "extra"} and name == "other":
+            if problem in {"wheel", "extra", "acquire"} and name == "other":
                 wheel, wheel_sha = _wheel(
-                    wheels if problem == "extra" else tmp_path, "unavailable_extra", "1.0", 73
+                    wheels if problem == "extra" else tmp_path,
+                    "unavailable_extra",
+                    "1.0",
+                    73,
+                    metadata_headers="Requires-Dist: stable-fixture>=1\n"
+                    if problem == "acquire"
+                    else "",
                 )
                 packages = (
                     LockedDistribution(
                         "unavailable-extra",
                         "1.0",
                         (LockedWheel(wheel.name, wheel.stat().st_size, wheel_sha, wheel.as_uri()),),
+                    ),
+                )
+            if problem == "acquire" and name == "other":
+                shared, shared_sha = _wheel(tmp_path, "stable_fixture", "0.9", 19)
+                packages += (
+                    LockedDistribution(
+                        "stable-fixture",
+                        "0.9",
+                        (
+                            LockedWheel(
+                                shared.name, shared.stat().st_size, shared_sha, shared.as_uri()
+                            ),
+                        ),
                     ),
                 )
             PackLock(name, locked_variant, ">=3.12", (), (), packages).write(path)
@@ -831,6 +851,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         artifacts=artifacts,
         source_generation=previous,
     )
+    if problem == "acquire":
+        with pytest.raises(EnvironmentError, match="offline pack wheel missing or corrupt"):
+            invoke()
+        assert not (root / "generations/1").exists()
+        invoke = partial(invoke, acquire_pack_wheels=True)
     if problem == "catalog-failure":
         assert previous is not None
         assert prior_generation is not None
@@ -892,7 +917,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     }
     if (
         problem is not None
-        and problem not in {"update", "restore", "extra", "custom"} | repairs | moves
+        and problem not in {"update", "restore", "extra", "custom", "acquire"} | repairs | moves
     ):
         message = {
             "missing": "selected packs have no dependency lock: other",
@@ -970,6 +995,28 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 server.server_close()
         assert not (target / "packs/healthy/bin").exists()
         assert venv_python(target / "packs/other").is_file()
+        if problem == "acquire":
+            assert (
+                subprocess.check_output(
+                    [
+                        str(venv_python(target / "packs/other")),
+                        "-I",
+                        "-c",
+                        "import stable_fixture, unavailable_extra; "
+                        "print(stable_fixture.VALUE + unavailable_extra.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "113"
+            )
+            incompatible = tmp_path / "incompatible.pack-lock.json"
+            replace(PackLock.read(locks[-1]), requirements=("stable-fixture>=2",)).write(
+                incompatible
+            )
+            with pytest.raises(EnvironmentError, match="does not satisfy the requirement"):
+                invoke(number=2, pack_locks=(*locks[:-1], incompatible))
+            assert not (root / "generations/2").exists()
+            assert generation.drift(target) == ()
         if problem == "custom":
             assert json.loads((target / "base-manifest.json").read_text()) == custom
             assert json.loads((target / "dinkster.lock").read_text()) == json.loads(
@@ -989,6 +1036,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             assert tuple(package.name for package in recorded.packages) == (
                 ("stable-fixture",)
                 if problem == "custom"
+                else ("unavailable-extra", "stable-fixture")
+                if problem == "acquire" and name == "other"
                 else ("unavailable-extra",)
                 if problem == "extra" and name == "other"
                 else ()
@@ -1250,8 +1299,6 @@ environment.main()
             assert _run(again, "doctor")[1]["status"] == "clean"
             return
         if problem in repairs:
-            from dataclasses import replace
-
             from dinkster_supervisor.environment_state import write_document
             from test_environment_cli import _run
 

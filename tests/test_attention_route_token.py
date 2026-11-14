@@ -6,10 +6,14 @@ from dataclasses import replace
 
 import pytest
 from dinkster_protocol import (
+    ATTENTION_ROLES,
     AttentionCapabilityEvidence,
     AttentionPolicy,
     AttentionPolicyConfig,
     AttentionRoute,
+    attention_policy_config_from_wire,
+    attention_route_token_from_wire,
+    attention_route_token_to_wire,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
 )
@@ -55,6 +59,7 @@ def test_execution_context_rejects_cross_worker_route_token_replay() -> None:
     sm80 = replace(capability_evidence(device_kind="cuda"), device_sm=80)
     sm90 = replace(sm80, device_sm=90)
     sm80_token = derive_attention_route_token(sm80, AttentionPolicyConfig())
+    sm80_token = replace(sm80_token, routes=tuple(reversed(sm80_token.routes)))
     sm90_token = derive_attention_route_token(sm90, AttentionPolicyConfig())
 
     ExecutionContext(
@@ -82,6 +87,45 @@ def test_execution_context_rejects_cross_worker_route_token_replay() -> None:
             attention_route_token=sm90_token,
             attention_capabilities=sm80,
         )
+
+
+@pytest.mark.parametrize(
+    ("requested", "overrides", "expected"),
+    (
+        ("sdpa", [["flux", "sdpa"]], ("sdpa", None)),
+        ("sdpa", [[role, "sage"] for role in ATTENTION_ROLES], ("sage", "sdpa")),
+        ("auto", [["vae", "sdpa"]], ("sdpa", None)),
+    ),
+)
+def test_policy_wire_admits_redundant_and_complete_role_overrides(
+    requested: str, overrides: list[list[str]], expected: tuple[str, str | None]
+) -> None:
+    evidence = capability_evidence(sage=True)
+    config = attention_policy_config_from_wire(
+        {"requestedPolicy": requested, "requestedRolePolicies": overrides}
+    )
+    token = derive_attention_route_token(evidence, config)
+    if token.version == 1:
+        wire = attention_route_token_to_wire(token)
+        wire.update(version=2, requestedRolePolicies=overrides)
+        redundant_token = attention_route_token_from_wire(wire)
+        assert canonical_attention_route_token_bytes(
+            redundant_token
+        ) == canonical_attention_route_token_bytes(token)
+        token = redundant_token
+    ExecutionContext(
+        "native",
+        None,
+        attention_policy=config.requested_policy,
+        attention_route_token=token,
+        attention_capabilities=evidence,
+    )
+    routes = {route.role: (route.primary, route.fallback) for route in token.routes}
+    assert routes["vae"] == expected
+    if requested == "sdpa":
+        assert all(route == expected for route in routes.values())
+    else:
+        assert config.requested_role_policies == (("vae", "sdpa"),)
 
 
 @pytest.mark.parametrize("device_kind", ("cpu", "cuda", "xpu", "mps"))
