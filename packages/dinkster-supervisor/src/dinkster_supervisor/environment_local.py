@@ -16,7 +16,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request, url2pathname, urlopen
 
 from dinkster_store import object_path, readable_label
 from packaging.requirements import Requirement
@@ -204,7 +204,7 @@ def retain_wheels(
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
         if sha is None or size is None:
-            local = Path(unquote(urlsplit(url).path))
+            local = Path(url2pathname(urlsplit(url).path))
             if urlsplit(url).scheme != "file":
                 raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
             sha = sha or content_digest(local)[7:]
@@ -216,7 +216,7 @@ def retain_wheels(
             / filename
         )
         mirror = (
-            str(Path(unquote(urlsplit(url).path)).parent)
+            str(Path(url2pathname(urlsplit(url).path)).parent)
             if urlsplit(url).scheme == "file"
             else url.rsplit("/", 1)[0]
         )
@@ -408,7 +408,9 @@ def prepare_local(
             )
         engine_requirements = work / "engine.in"
         engine_requirements.write_text(
-            "\n".join(str(path) for path in (*sorted(built.glob("*.whl")), *library_wheels))
+            "\n".join(
+                path.resolve().as_uri() for path in (*sorted(built.glob("*.whl")), *library_wheels)
+            )
             + "\n"
             + (engine_constraints if contributor else "")
         )
