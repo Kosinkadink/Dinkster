@@ -974,15 +974,17 @@ whose real versions still satisfy the declared constraints. The exception is an
 explicitly selected local `dinkster-inference`: `develop` may override the engine's
 exact inference pin, reports the pinned and local versions, and retains the local
 wheel for restore. For example, add `--library-source /absolute/dinkster-inference`
-to both commands above. `develop --inference VERSION` also selects a published
-exact inference version or full commit. If its prerelease is unavailable, the
-command reports and selects the oldest published stable tag containing that
+to both commands above. `setup --inference VERSION`, `update --inference VERSION`
+and `develop --inference VERSION` select a published exact inference version or full commit.
+Setup and update retain the selected wheel identities separately from the engine
+release, so recovery reuses the exact selection without resolving the request again.
+If its prerelease is unavailable, the command reports and selects the oldest published stable tag containing that
 commit; unknown provenance or no containing release refuses. Use
 `--inference 'https://github.com/Kosinkadink/dinkster-inference.git#ref=REF'`
 to capture an unpublished git ref through the bundled fetcher instead. The
 selected source must be dinkster-inference; do not also select it as a library.
-Other dependencies and non-development installs keep
-their declared constraints; this does not loosen the published inference pin.
+Other dependencies keep their declared constraints. Without an explicit inference
+selection, published installs keep the engine's exact inference pin.
 Explicitly selected first-party packs may use their reserved namespaces only in this development
 capture; this does not grant registry admission. Missing sources, changed plan inputs, incompatible
 API ranges and dependency conflicts refuse rather than inventing versions or

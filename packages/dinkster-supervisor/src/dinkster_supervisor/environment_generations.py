@@ -911,6 +911,7 @@ def build_generation(
             else {},
             cast("str", (artifact_sources or {}).get("dependencyVariant", variant)),
             cast("dict[str, object] | None", (artifact_sources or {}).get("channel")),
+            cast("dict[str, object] | None", (artifact_sources or {}).get("inference")),
         )
         write_document(destination / "installed-wheels.json", receipt)
         provisioned: set[str] = set()

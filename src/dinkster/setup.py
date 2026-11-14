@@ -104,6 +104,14 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
     catalog = artifacts.discover(mirrors, channel, store=store, offline=args.offline)
     base_id = catalog.channel.base_for(variant)
     base = catalog.bases[variant]
+    inference = None
+    if args.inference:
+        if args.offline:
+            raise state.EnvironmentError(
+                "explicit inference selection requires online release metadata"
+            )
+        selection = importlib.import_module("dinkster_supervisor.environment_inference")
+        inference = selection.resolve_inference(args.inference, args.package_index)
     defaults = catalog.engine.get("defaultPacks")
     if not isinstance(defaults, dict) or not defaults:
         raise state.EnvironmentError("target engine has no default pack declaration")
@@ -257,7 +265,10 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
     ]
     if catalog.cached_channel:
         plan.append("Use the last acquired channel selection")
+    if inference is not None:
+        plan.append(inference["notice"])
     return {
+        **({"inference": inference} if inference is not None else {}),
         "root": str(root),
         "store": str(store),
         "channel": channel,
@@ -286,8 +297,8 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
     from .registries import registry_source_lock
 
     observed = _plan(args)
-    for key in ("engineRelease", "baseId", "sources", "dependencyLocks"):
-        if observed[key] != approved[key]:
+    for key in ("engineRelease", "baseId", "sources", "dependencyLocks", "inference"):
+        if observed.get(key) != approved.get(key):
             raise InstallError("setup inputs changed after planning; request a new plan")
     store = Path(cast("str", approved["store"]))
     sources = Lockfile.from_record_json(json.dumps(approved["sources"]))
@@ -350,6 +361,10 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
             command.extend(("--mirror", mirror))
         for gpu in args.gpu:
             command.extend(("--gpu", gpu))
+        if args.inference:
+            command.extend(("--inference", args.inference))
+        if args.package_index:
+            command.extend(("--package-index", args.package_index))
         if args.json:
             command.append("--json")
         if args.offline:
@@ -375,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=3639)
     parser.add_argument("--gpu", action="append", default=[])
     parser.add_argument("--channel", choices=("stable", "main"))
+    parser.add_argument("--inference", help="exact inference version or full source commit")
+    parser.add_argument(
+        "--package-index", help="simple package index for inference and dependencies"
+    )
     parser.add_argument("--mirror", action="append", default=[])
     parser.add_argument("--registry", default=os.environ.get("DINKSTER_REGISTRY", ""))
     parser.add_argument(

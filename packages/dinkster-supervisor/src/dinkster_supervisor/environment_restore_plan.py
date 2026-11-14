@@ -265,7 +265,12 @@ def missing_inputs(
         check("engine", recorded_engine["release"], row, "name", engine_roots, cached)
     if "dependencies" in engine:
         variant = cast("str", provenance.get("dependencyVariant", recorded_base["variant"]))
-        selection = cast("dict[str, object]", engine["dependencies"]).get(variant)
+        selection = provenance.get("inference") or cast(
+            "dict[str, object]", engine["dependencies"]
+        ).get(variant)
+        validate_dependency_base(
+            selection, cast("dict[str, object]", provenance.get("dependencyBase", base))
+        )
         package_index = provenance.get("packageIndex")
         if package_index is not None and not isinstance(package_index, str):
             raise EnvironmentError("snapshot package index must be a string or null")
@@ -354,7 +359,10 @@ def _pack_missing_inputs(
     if "dependencies" in engine:
         provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
         variant = cast("str", provenance.get("dependencyVariant", base["variant"]))
-        selected = dependency_wheels(cast("dict[str, object]", engine["dependencies"]).get(variant))
+        selected = dependency_wheels(
+            provenance.get("inference")
+            or cast("dict[str, object]", engine["dependencies"]).get(variant)
+        )
         for row in selected:
             if row["name"] not in cast("list[str]", base["replaces"]):
                 versions[cast("str", row["name"])] = cast("str", row["version"])

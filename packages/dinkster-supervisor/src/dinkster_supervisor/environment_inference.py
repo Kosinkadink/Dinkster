@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import tempfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -16,6 +18,69 @@ from .environment_state import EnvironmentError
 from .git_sources import fetched_git_source
 
 INFERENCE_REPOSITORY = "https://github.com/Kosinkadink/dinkster-inference.git"
+
+
+def resolve_inference_wheels(
+    inference: dict[str, Any],
+    requirements: str,
+    wheels: tuple[Path, ...],
+    original: tuple[dict[str, object], ...],
+    *,
+    python: Path,
+    store: Path,
+    package_index: str | None,
+) -> None:
+    """Resolve once; recovery uses these exact wheel identities without consulting Git."""
+    from .environment_local import resolve_wheels, retain_wheels
+
+    index = package_index or "https://pypi.org/simple"
+    with tempfile.TemporaryDirectory(prefix="dinkster-inference-selection-") as directory:
+        work = Path(directory)
+        pins = work / "constraints.txt"
+        pins.write_text(
+            "\n".join(
+                line
+                for line in requirements.replace("\\\n", "").splitlines()
+                if not re.match(r"(?i)^dinkster[-_.]inference(?:\s|[=<>!~@])", line)
+            )
+            + "\n"
+        )
+        inputs = work / "requirements.in"
+        inputs.write_text(
+            "\n".join(
+                path.resolve().as_uri()
+                for path in wheels
+                if parse_wheel_filename(path.name)[0] != "dinkster-inference"
+            )
+            + f"\ndinkster-inference=={inference['version']}\n"
+        )
+        override = work / "override.txt"
+        override.write_text(f"dinkster-inference=={inference['version']}\n")
+        resolution = resolve_wheels(
+            inputs,
+            pins,
+            work / "pylock.toml",
+            python=python,
+            index=index,
+            source=work,
+            overrides=override,
+            find_links=tuple({path.parent for path in wheels}),
+        )
+        resolved = retain_wheels(resolution, python, store, work)
+    known = {row["filename"]: row for row in original}
+    selected: list[dict[str, object]] = []
+    for row in resolved:
+        previous = known.get(row["filename"])
+        if row["url"] == "local":
+            if previous is None:
+                # Engine and frontend artifacts retain their original manifest identities.
+                continue
+            if any(row[key] != previous[key] for key in ("sha256", "size")):
+                raise EnvironmentError("resolved local wheel differs from its published identity")
+            row["url"] = previous["url"]
+        row["index"] = previous["index"] if previous is not None else index
+        selected.append(row)
+    inference["wheels"] = selected
 
 
 def resolve_inference(request: str, package_index: str | None = None) -> dict[str, Any]:

@@ -153,6 +153,7 @@ def installed_wheel_origins(
     engine: dict[str, object],
     variant: str,
     channel: dict[str, object] | None = None,
+    inference: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Bind selected bytes to manifest origins, never to their acquisition cache paths."""
     origins: dict[tuple[object, object, object], object] = {}
@@ -163,6 +164,9 @@ def installed_wheel_origins(
     for row in cast("list[dict[str, object]]", selections.get(variant, {}).get("wheels", [])):
         if parse_wheel_filename(cast("str", row["filename"]))[0] not in owned:
             origins[row["filename"], row["size"], row["sha256"]] = row.get("index")
+    if inference is not None:
+        for row in cast("list[dict[str, object]]", inference["wheels"]):
+            origins[row["filename"], row["size"], row["sha256"]] = row["index"]
     repository = engine.get("repository")
     issuer = f"https://github.com/{repository}" if repository else None
     for row in cast("list[dict[str, object]]", engine.get("artifacts", [])):

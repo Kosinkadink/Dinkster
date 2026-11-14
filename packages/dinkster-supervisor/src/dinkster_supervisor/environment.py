@@ -873,6 +873,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     if custom is not None
                     else None,
                     offline=offline,
+                    inference=inference,
                 )
 
                 if catalog_lock is None:
@@ -1062,6 +1063,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         "dependencyBase": catalog.bases[dependency_variant],
                         "packageIndex": package_index,
                         "mirrors": list(mirrors),
+                        **({"inference": inference} if inference is not None else {}),
                     }
                     if catalog is not None
                     else None,
@@ -1716,6 +1718,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
+        command.add_argument("--inference", help="exact inference version or full source commit")
         command.add_argument("--engine-release", help="require this exact published engine digest")
         command.add_argument("--base-id", help="require this exact published base digest")
     for command in (setup, update, develop):

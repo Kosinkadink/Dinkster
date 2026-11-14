@@ -1857,8 +1857,9 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     assert not (tmp_path / "project").exists()
 
 
-def test_development_inference_requests_report_oldest_containing_release(
-    tmp_path: Path, git_server, capsys, monkeypatch
+@pytest.mark.parametrize("operation", ["develop", "setup", "update"])
+def test_inference_requests_report_oldest_containing_release(
+    tmp_path: Path, git_server, capsys, monkeypatch, operation: str
 ):
     """A missing prerelease cannot silently select an unrelated or newer stable release."""
     import pygit2
@@ -1877,7 +1878,9 @@ def test_development_inference_requests_report_oldest_containing_release(
     page.write_text(
         "".join(f'<a href="dinkster_inference-{v}-py3-none-any.whl">{v}</a>' for v in versions)
     )
-    repository = pygit2.Repository(git_server["root"] / "source.git")
+    repository = pygit2.init_repository(
+        git_server["root"] / f"inference-{operation}.git", bare=True
+    )
     signature = pygit2.Signature("Fixture", "fixture@example.invalid")
     parent = []
     commits = {}
@@ -1892,8 +1895,13 @@ def test_development_inference_requests_report_oldest_containing_release(
         )
         commits[version] = str(commit)
         parent = [commit]
+    repository.set_head("refs/heads/inference-requests")
     repository.free()
-    monkeypatch.setattr(environment_inference, "INFERENCE_REPOSITORY", git_server["url"])
+    monkeypatch.setattr(
+        environment_inference,
+        "INFERENCE_REPOSITORY",
+        git_server["url"].replace("source.git", f"inference-{operation}.git"),
+    )
     monkeypatch.setenv("PATH", "")
     arguments = [
         "develop",
@@ -1912,6 +1920,57 @@ def test_development_inference_requests_report_oldest_containing_release(
         "--plan",
         "--json",
     ]
+    if operation != "develop":
+        mirror = tmp_path / "mirror"
+        _, engine, channel = _mirror(mirror)
+        if operation == "setup":
+            engine["defaultPacks"] = {"fixture-pack": "1.0"}
+            data = _json(engine)
+            identity = hashlib.sha256(data).hexdigest()
+            previous = mirror / channel["engine"]["locations"][0]["path"]
+            release = mirror / "engine" / identity
+            shutil.copytree(previous.parent, release)
+            (release / "release-manifest.json").write_bytes(data)
+            channel["engine"].update(
+                release="sha256:" + identity,
+                locations=[{"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}],
+            )
+            (mirror / "channels/main.json").write_bytes(_json(channel))
+            monkeypatch.setattr(
+                "dinkster.registries.plan_registry_sources",
+                lambda *args, **kwargs: (Lockfile.of(()), ()),
+            )
+        root = tmp_path / "project"
+        arguments = [
+            operation,
+            "--root",
+            str(root),
+            "--mirror",
+            str(mirror),
+            "--channel",
+            "main",
+            "--variant",
+            "fixture-cpu",
+            "--package-index",
+            str(index),
+            "--plan",
+            "--json",
+        ]
+        if operation == "update":
+            _generation(root, 1)
+            (root / "current").write_text("1\n")
+            (root / "project.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.project/1",
+                        "channel": "main",
+                        "variant": "fixture-cpu",
+                        "mirrors": [str(mirror)],
+                        "packageIndex": str(index),
+                        "port": 58991,
+                    }
+                )
+            )
     for request in ("0.2.0.dev3", commits["0.2.0.dev3"]):
         assert main([*arguments, "--inference", request]) == 0
         plan = json.loads(capsys.readouterr().out)
@@ -1924,8 +1983,13 @@ def test_development_inference_requests_report_oldest_containing_release(
     assert json.loads(capsys.readouterr().out)["inference"]["version"] == "0.3.0.dev4"
     page.write_text(page.read_text().replace("0.3.0.dev4", "0.9.0.dev1"))
     assert main([*arguments, "--inference", commits["0.3.0.dev4"]]) == 1
-    assert "no published tagged release contains" in json.loads(capsys.readouterr().out)["error"]
-    assert not (tmp_path / "project").exists()
+    refused = capsys.readouterr()
+    error = refused.err if operation == "setup" else json.loads(refused.out)["error"]
+    assert "no published tagged release contains" in error
+    if operation == "update":
+        assert (root / "current").read_text() == "1\n"
+    else:
+        assert not (tmp_path / "project").exists()
 
 
 @pytest.mark.parametrize("live", [False, True])
