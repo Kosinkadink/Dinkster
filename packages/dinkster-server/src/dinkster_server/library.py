@@ -458,7 +458,7 @@ def _parse_latent_path(path: Path) -> None:
         parse_latent_asset(source)
 
 
-async def _json_body(request: web.Request) -> dict[str, Any]:
+async def json_body(request: web.Request) -> dict[str, Any]:
     # Mirrors app.py's helper (importing it back would be a cycle:
     # app.py imports this module).
     try:
@@ -1528,7 +1528,7 @@ async def handle_asset_sources_add(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     store = library.provenance
     assert store is not None  # route registered only with a store
-    body = await _json_body(request)
+    body = await json_body(request)
     urls_raw = body.get("urls")
     if not isinstance(urls_raw, list) or not all(
         isinstance(url, str) for url in cast(list[Any], urls_raw)
@@ -1559,7 +1559,7 @@ def _require_scope(value: object) -> str:
 
 async def handle_library_create(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
-    body = await _json_body(request)
+    body = await json_body(request)
     scope = _require_scope(body.get("scope"))
     digest = body.get("digest")
     if not isinstance(digest, str) or not is_digest(digest):
@@ -1636,7 +1636,7 @@ async def handle_library_get(request: web.Request) -> web.Response:
 
 async def handle_library_update(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
-    body = await _json_body(request)
+    body = await json_body(request)
     scope = _require_scope(body.get("scope"))
     revision = body.get("revision")
     if not isinstance(revision, int) or isinstance(revision, bool):
@@ -1745,11 +1745,14 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
     )
     store = request.app[LIBRARY_KEY].store
     key = (scope, request.match_info["owner_kind"], request.match_info["owner_id"])
+    from .retention import retention_owner_client
+
     try:
+        client = None if request.method in {"GET", "HEAD"} else retention_owner_client(request)
         if request.method in {"GET", "HEAD"}:
             retained = await asyncio.to_thread(store.retained_assets, *key)
         elif request.method == "PUT":
-            body = await _json_body(request)
+            body = await json_body(request)
             if "sourceToken" in body:
                 if (
                     set(body) != {"revision", "sourceToken"}
@@ -1758,7 +1761,12 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
                 ):
                     return _json_error(400, "result claims require revision 0 and sourceToken only")
                 retained = await asyncio.to_thread(
-                    store.claim_result_assets, scope, body["sourceToken"], key[1], key[2]
+                    store.claim_result_assets,
+                    scope,
+                    body["sourceToken"],
+                    key[1],
+                    key[2],
+                    client=client,
                 )
                 if retained is None:
                     return web.json_response(
@@ -1790,13 +1798,16 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
                     cast(list[str], digests),
                     revision=revision,
                     complete=body.get("complete", False),
+                    client=client,
                 )
         else:
             try:
                 revision = int(request.query.get("revision", ""))
             except ValueError:
                 return _json_error(400, "release requires a positive revision")
-            retained = await asyncio.to_thread(store.release_assets, *key, revision=revision)
+            retained = await asyncio.to_thread(
+                store.release_assets, *key, revision=revision, client=client
+            )
     except StaleRevision as exc:
         return _json_error(409, str(exc))
     except AssetError as exc:
@@ -1813,7 +1824,7 @@ async def handle_cleanup_policy(request: web.Request) -> web.Response:
         raise web.HTTPForbidden(text="asset cleanup policy requires an operator")
     if request.query:
         raise web.HTTPBadRequest(text="cleanup policy accepts no filesystem targets")
-    body = await _json_body(request)
+    body = await json_body(request)
     if set(body) != {"limitBytes"}:
         raise web.HTTPBadRequest(text="cleanup policy requires only limitBytes")
     limit = body["limitBytes"]
@@ -1823,6 +1834,9 @@ async def handle_cleanup_policy(request: web.Request) -> web.Response:
         await run_owned_thread(lambda: request.app[LIBRARY_KEY].store.set_cleanup_limit(limit))
     except (AssetError, sqlite3.Error):
         raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
+    from .cleanup import POLICY_WAKE_KEY
+
+    request.app[POLICY_WAKE_KEY].set()
     return web.json_response(
         {"limitBytes": limit, "collectionEnabled": False}, headers={"Cache-Control": "no-store"}
     )
@@ -1831,59 +1845,42 @@ async def handle_cleanup_policy(request: web.Request) -> web.Response:
 async def handle_cleanup_clear(request: web.Request) -> web.Response:
     if not principal_for(request).is_operator:
         raise web.HTTPForbidden(text="asset cleanup requires an operator")
-    if request.query or await _json_body(request):
+    if request.query or await json_body(request):
         raise web.HTTPBadRequest(text="asset cleanup accepts only an empty object")
     from .app import STATE_KEY
-    from .cleanup import (
-        FRONTEND_RETENTION_COMPLETE,
-        RECOVERY_KEY,
-        inspect_cleanup,
-        recover_produced_publications,
-    )
+    from .cleanup import RECOVERY_KEY, inspect_cleanup, recover_produced_publications
 
-    if FRONTEND_RETENTION_COMPLETE:
-        library = request.app[LIBRARY_KEY]
-        state = request.app[STATE_KEY]
-        recovery: dict[str, int] = {}
-        if library.scratch_root is not None:
-            scratch = library.scratch_root
-            recovery = await run_owned_thread(
-                lambda: recover_produced_publications(library.vault, scratch)
-            )
-            request.app[RECOVERY_KEY].update(recovery)
-        result = await inspect_cleanup(
-            library.vault,
-            library.store,
-            state.history,
-            state.engine.cache,
-            registry=state.engine.registry,
-            scratch_root=library.scratch_root,
-            collect=True,
+    library = request.app[LIBRARY_KEY]
+    state = request.app[STATE_KEY]
+    recovery: dict[str, int] = {}
+    if library.scratch_root is not None:
+        scratch = library.scratch_root
+        recovery = await run_owned_thread(
+            lambda: recover_produced_publications(library.vault, scratch, store=library.store)
         )
-        for key in ("reclaimedBytes", "reclaimedFiles"):
-            result[key] = cast(int, result[key]) + recovery.get(key, 0)
-        result["scratchRecovery"] = recovery or None
-        if recovery.get("blockedInspections", 0):
-            cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
-            result["collectionEnabled"] = False
-            result["reclaimableBytes"] = None
-            result["failedItems"] = (
-                cast(int, result.get("failedItems", 0)) + recovery["blockedInspections"]
-            )
-        return web.json_response(
-            result,
-            status=200 if result["collectionEnabled"] else 409,
-            headers={"Cache-Control": "no-store"},
+        request.app[RECOVERY_KEY].update(recovery)
+    result = await inspect_cleanup(
+        library.vault,
+        library.store,
+        state.history,
+        state.engine.cache,
+        registry=state.engine.registry,
+        scratch_root=library.scratch_root,
+        collect=True,
+    )
+    for key in ("reclaimedBytes", "reclaimedFiles"):
+        result[key] = cast(int, result[key]) + recovery.get(key, 0)
+    result["scratchRecovery"] = recovery or None
+    if recovery.get("blockedInspections", 0):
+        cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
+        result["collectionEnabled"] = False
+        result["reclaimableBytes"] = None
+        result["failedItems"] = (
+            cast(int, result.get("failedItems", 0)) + recovery["blockedInspections"]
         )
-    # Registered complete rows cannot certify that no unregistered client exists.
     return web.json_response(
-        {
-            "collectionEnabled": False,
-            "blocked": ["owner_completeness_unknown"],
-            "reclaimedBytes": 0,
-            "reclaimedFiles": 0,
-        },
-        status=409,
+        result,
+        status=200 if result["collectionEnabled"] else 409,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -1908,7 +1905,10 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+    from .retention import add_retention_clients
+
     app[LIBRARY_KEY] = library
+    add_retention_clients(app)
     app[POLICY_KEY] = {}
     app[POLICY_WAKE_KEY] = asyncio.Event()
     app.cleanup_ctx.append(cleanup_policy)
@@ -1952,7 +1952,9 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         scratch_root = library.scratch_root
         if scratch_root is not None:
             app[RECOVERY_KEY] = await run_owned_thread(
-                lambda: recover_produced_publications(library.vault, scratch_root)
+                lambda: recover_produced_publications(
+                    library.vault, scratch_root, store=library.store
+                )
             )
 
     async def remove_stale_latent_uploads(app: web.Application) -> None:
