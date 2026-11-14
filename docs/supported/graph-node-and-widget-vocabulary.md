@@ -1,5 +1,13 @@
 ## Graph, node, and widget vocabulary
 
+- Saved graphs with retired node types apply declared replacement rules before
+  validation and execution. Rules preserve mapped literal values, connections,
+  helper-node links, dynamic-family order and nested region exports; optional
+  source-signature guards refuse unrelated historical shapes. Saving a migrated
+  graph records successor IDs so reopening does not apply the rule again.
+  Currently served IDs are never reinterpreted. Native input reordering and
+  defaulted additions need no replacement because values are keyed by input ID.
+
 - The optional development pack provides CPU-only examples for dynamic slots,
   count-bound outputs, conditional rows, multi-combo, Markdown, palette, list
   and button widgets, switchable widget forms, editable output descriptors,

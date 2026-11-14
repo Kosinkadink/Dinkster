@@ -54,6 +54,15 @@ and an `accumulate` control driven from inside its loop. Diagnostics use
 `loop.unmatchedStart`, `loop.unmatchedEnd`, `loop.ambiguousNesting`,
 `loop.bodyEscape`, and `loop.accumulateFromBody`.
 
+`migrate_node_replacements(graph, schemas)` applies the schemas' shared
+replacement rules to retired IDs before validation. It maps literals, links,
+helper nodes and top-level families, recursively including repetition regions.
+Signature-restricted rules compare `GraphNode.schema_signature`, encoded as the
+optional graph wire field `schemaSignature`. Foreign widget-stream versions are
+resolved during document import, not from an installed pack's version. Saving
+with `graph_to_wire` preserves successor IDs and signatures; served IDs are not
+reinterpreted.
+
 ## Learn more
 
 See the package layout in DESIGN 3, DESIGN 3.1 for document elaboration, DESIGN

@@ -46,7 +46,7 @@ from dinkster_graph import (
     elaborate_graph,
     graph_from_wire,
     has_errors,
-    migrate_pure_node_type_replacements,
+    migrate_node_replacements,
     region_interface,
     snapshot_graph,
     validate,
@@ -3109,7 +3109,7 @@ class Engine:
         runtime = (
             self.pin_execution() if execution is None else self._normalize_execution(execution)
         )
-        graph = migrate_pure_node_type_replacements(graph, runtime.schemas or self._schemas)
+        graph = migrate_node_replacements(graph, runtime.schemas or self._schemas)
         graph = snapshot_graph(graph)
         if runtime.resolve_providers is not None:
             graph = runtime.resolve_providers(graph)

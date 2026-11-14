@@ -9,16 +9,29 @@ from dinkster_graph import (
     RegionNode,
     RegionOutput,
     TypedLiteral,
+    graph_from_wire,
+    graph_to_wire,
     has_errors,
+    migrate_node_replacements,
     plan,
     validate,
 )
 from dinkster_schema import (
     ComboWidget,
+    InputFamilyMapping,
+    InputFamilySpec,
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
+    OutputFamilyMapping,
+    OutputFamilySpec,
     OutputSpec,
+    ReplacementCase,
+    ReplacementLink,
+    ReplacementNode,
+    ReplacementPredicate,
+    ReplacementRule,
     TypeExpr,
     build_schemas,
 )
@@ -29,6 +42,76 @@ SCHEMAS["test.list_input"] = NodeSchema(
     node_type="test.list_input",
     inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
 )
+
+
+def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reopen() -> None:
+    integer = TypeExpr.concrete("INT")
+    case = ReplacementCase.build(
+        "current",
+        when=ReplacementPredicate.value_equals("metadata", [1, {"revision": 2}]),
+        nodes={"relay": ReplacementNode("relay")},
+        input_families={
+            "items": InputFamilyMapping.copy(
+                "oldItems",
+                inputs={"value": MappingSource.copy("value")},
+                source_template=("value",),
+                member_ids="targetPositions",
+            )
+        },
+        output_families={"results": OutputFamilyMapping.copy("oldResults")},
+        links=(ReplacementLink("results.1", "relay:input"),),
+        outputs={"relay:value": "final"},
+    )
+    schemas = {
+        "current": NodeSchema(
+            "current",
+            outputs=(),
+            input_families=(InputFamilySpec("items", integer, member_prefix="n"),),
+            output_families=(OutputFamilySpec("results", integer),),
+            replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
+        ),
+        "wrong": NodeSchema("wrong"),
+        "relay": NodeSchema(
+            "relay", inputs=(InputSpec("input", integer),), outputs=(OutputSpec("value", integer),)
+        ),
+    }
+    body = Graph(
+        {
+            "old": GraphNode(
+                "retired",
+                {"oldItems.second": 91, "oldItems.first": 37, "metadata": [1.0, {"revision": 2.0}]},
+                output_members={"oldResults": ("1", "0")},
+            ),
+            "sink": GraphNode("relay", {"input": Link("old", "oldResults.0")}),
+        }
+    )
+    graph = Graph(
+        {
+            "region": RegionNode(
+                "map",
+                body,
+                outputs={"result": RegionOutput(Link("old", "final"))},
+            )
+        }
+    )
+    migrated = migrate_node_replacements(graph, schemas)
+    region = migrated.nodes["region"]
+    assert isinstance(region, RegionNode)
+    current = region.body.nodes["old"]
+    assert isinstance(current, GraphNode) and current.node_type == "current"
+    assert list(current.inputs.items()) == [("items.n0", 91), ("items.n1", 37)]
+    assert current.output_members == {"results": ("1", "0")}
+    assert region.body.nodes["old:relay"].inputs == {"input": Link("old", "results.1")}
+    assert region.body.nodes["sink"].inputs == {"input": Link("old", "results.0")}
+    assert region.outputs["result"].source == Link("old:relay", "value")
+    reopened = graph_from_wire(graph_to_wire(migrated))
+    assert migrate_node_replacements(reopened, schemas) == migrated
+    assert graph.nodes["region"] == RegionNode(
+        "map",
+        body,
+        outputs={"result": RegionOutput(Link("old", "final"))},
+    )
+
 
 STRING = TypeExpr.concrete("STRING")
 COMBO = TypeExpr.concrete("COMBO")
