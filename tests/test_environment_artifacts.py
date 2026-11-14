@@ -331,6 +331,79 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     assert retained.read_bytes() == _json(engine) + b"\n"
 
 
+@pytest.mark.parametrize("api", [1, 2, 4, 5])
+def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisition(
+    tmp_path: Path, api: int
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _, engine, channel = _mirror(mirror)
+
+    def frontend(version: str, minimum: int, maximum: int) -> dict:
+        manifest = {
+            "format": "dinkster.frontend/1",
+            "repository": "Kosinkadink/Dinkster-Frontend",
+            "version": version,
+            "engineApi": {"min": minimum, "max": maximum},
+        }
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr("dinkster_frontend/manifest.json", json.dumps(manifest))
+            archive.writestr("dinkster_frontend/static/index.html", version)
+        payload = output.getvalue()
+        filename = f"dinkster_frontend-{version}-py3-none-any.whl"
+        row = {
+            **manifest,
+            "url": f"https://files.pythonhosted.org/packages/{filename}",
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        cached = object_path(store / "wheels", "sha256:" + row["sha256"]) / filename
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(payload)
+        return row
+
+    original, updated = frontend("0.1.0", 1, 5), frontend("0.2.0", 2, 4)
+    old_release = mirror / "engine" / channel["engine"]["release"][7:]
+    engine.update(schemaApi=api, frontend=original)
+    data = _json(engine) + b"\n"
+    identity = hashlib.sha256(data).hexdigest()
+    release = mirror / "engine" / identity
+    shutil.copytree(old_release, release)
+    (release / "release-manifest.json").write_bytes(data)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
+    path = mirror / "channels/main.json"
+    path.write_bytes(_json(channel))
+    initial = discover((str(mirror),), "main")
+    initial_constraints = acquire(initial, "fixture-cpu", store)
+    requirements = initial_constraints.read_text()
+    assert f"dinkster-frontend==0.1.0 --hash=sha256:{original['sha256']}" in requirements
+    channel["frontend"] = updated
+    path.write_bytes(_json(channel))
+    before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
+    if api in {1, 5}:
+        with pytest.raises(EnvironmentError, match="supports engine schema API 2 through 4"):
+            discover((str(mirror),), "main")
+        assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before
+        return
+    selected = discover((str(mirror),), "main")
+    assert selected.engine_bytes == initial.engine_bytes
+    assert selected.channel.engine_release == initial.channel.engine_release
+    requirements = acquire(selected, "fixture-cpu", store).read_text()
+    assert initial_constraints.read_bytes() == before[initial_constraints]
+    assert f"dinkster-frontend==0.2.0 --hash=sha256:{updated['sha256']}" in requirements
+    assert "dinkster-frontend==0.1.0" not in requirements
+    inputs = runtime_inputs(selected, "fixture-cpu", store)
+    assert any(
+        Path(cast("str", p["path"])).name == "dinkster_frontend-0.2.0-py3-none-any.whl"
+        for p in inputs
+    )
+    assert not any(
+        Path(cast("str", p["path"])).name == "dinkster_frontend-0.1.0-py3-none-any.whl"
+        for p in inputs
+    )
+
+
 def test_discovery_reuses_verified_acquisition_metadata_without_network_or_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

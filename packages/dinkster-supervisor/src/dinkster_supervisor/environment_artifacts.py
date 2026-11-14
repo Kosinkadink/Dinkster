@@ -25,6 +25,12 @@ from packaging.version import Version
 from .environment_archives import extract_base
 from .environment_constraints import effective_constraints, validate_base_requirements
 from .environment_downloads import fetch_artifact, read_metadata
+from .environment_frontend import (
+    frontend_filename,
+    frontend_requirements,
+    select_frontend,
+    verify_frontend_wheel,
+)
 from .environment_state import (
     ArtifactLocation,
     Channel,
@@ -104,6 +110,7 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
         commit = document.get("commit")
         if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
             raise EnvironmentError("engine manifest must name its full commit")
+        select_frontend(document)
         rows = artifact_rows(document.get("artifacts"), "name")
         if not any(row["name"] == "constraints.txt" for row in rows):
             raise EnvironmentError("engine release has no constraints.txt artifact")
@@ -338,8 +345,10 @@ def discover(
         if not offline:
             raise
         errors.append(f"engine {channel.engine_release}: {exc}")
-    if engine is not None and engine["version"] != channel.engine_version:
-        raise EnvironmentError("engine manifest version disagrees with channel")
+    if engine is not None:
+        if engine["version"] != channel.engine_version:
+            raise EnvironmentError("engine manifest version disagrees with channel")
+        select_frontend(engine, document)
     bases: dict[str, dict[str, object]] = {}
     sources: dict[str, tuple[str, ...]] = {}
     for variant, locations in channel.base_locations:
@@ -632,6 +641,13 @@ def runtime_inputs(
                     / cast("str", row["filename"]),
                     row,
                 )
+    frontend = select_frontend(catalog.engine, catalog.document)
+    if frontend is not None:
+        name = frontend_filename(frontend)
+        record(
+            object_path(store / "wheels", "sha256:" + cast("str", frontend["sha256"])) / name,
+            frontend,
+        )
     return tuple(inputs.values())
 
 
@@ -746,6 +762,20 @@ def acquire(
                     )
                     fetch_artifact((source,), name, destination, sha, cast("int", row["size"]))
         requirements = engine_constraints(catalog.engine, variant)
+    frontend = select_frontend(catalog.engine, catalog.document)
+    if frontend is not None:
+        name, sha = frontend_filename(frontend), cast("str", frontend["sha256"])
+        destination = (
+            object_path(store / "wheels", "sha256:" + sha, label=readable_label(Path(name).stem))
+            / name
+        )
+        source = (
+            str(destination.parent) if offline else cast("str", frontend["url"]).rsplit("/", 1)[0]
+        )
+        fetch_artifact((source,), name, destination, sha, cast("int", frontend["size"]))
+        verify_frontend_wheel(destination, frontend)
+        nonbase_wheels.append(destination)
+    requirements = frontend_requirements(requirements, catalog.engine, catalog.document)
     context = published_base if custom else None
     if selected is not None or custom:
         validate_base_requirements(tuple(nonbase_wheels), base, published_base=context)
@@ -756,7 +786,7 @@ def acquire(
         custom=custom,
         published_base=context,
     )
-    identity = f"{variant}-{cast('str', base['id'])[7:]}" if custom else variant
+    identity = hashlib.sha256(merged.encode("utf-8")).hexdigest()
     constraints = release_root / f"constraints-{identity}.txt"
     atomic_write(constraints, merged)
     atomic_write(release_root / "release-manifest.json", catalog.engine_bytes)

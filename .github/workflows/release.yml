@@ -91,9 +91,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - name: Download the pinned frontend bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download the pinned frontend wheel
         run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
       - name: Acquire the selected published base manifests
         env:

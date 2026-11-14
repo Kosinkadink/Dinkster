@@ -868,16 +868,11 @@ do not change.
 
 ## Frontend
 
-Dinkster pins one `Dinkster-Frontend` commit in `scripts/release_sources.json`
-and the release workflow embeds that commit's bundle as data in the `dinkster`
-wheel, so the frontend version is pinned by the generation and nothing
-else. `Dinkster-Frontend` publishes its built bundle per commit as a CI
-artifact named by hash, and the release workflow downloads that bundle
-instead of running node; bumping the frontend is a one-line change to the
-pin. Desktop serves whatever bundle the active generation installed; during
-development the engine serves a sibling checkout's build (`discover_frontend_bundle`).
-Pack frontend extension modules are served by the engine from the pack's
-own files and are unaffected.
+Dinkster selects a versioned `dinkster-frontend` wheel in `scripts/release_sources.json` by its permanent PyPI URL, version, byte size and SHA-256. Dinkster-Frontend publishes the same wheel to PyPI and a GitHub release. Engine builds verify its complete bytes before embedding the application as data in the `dinkster` wheel; rebuilding does not depend on a retained CI artifact or a Node toolchain. The engine release manifest records this frontend selection and its `schemaApi` version.
+
+Managed environments install that frontend wheel into the generation. A channel may carry a `frontend` reference with the same fields to select a newer frontend without rebuilding the engine. `dinkster_supervisor.environment_channels --frontend reference.json` validates the pair when producing a channel. `scripts/publish_environment_channel.py --frontend reference.json` verifies the selected wheel before publishing a frontend-only change to the same engine channel; ordinary engine publications preserve a compatible channel override. Discovery refuses a pair outside the frontend's inclusive `engineApi.min` through `engineApi.max` range before acquisition. Generation preparation also checks the installed frontend against the actual engine's `SCHEMA_WIRE_VERSION` before activation. The API version is the existing schema wire contract, not an engine package version or worker protocol.
+
+The engine serves an independently installed frontend before its embedded fallback. Each generation retains its selected frontend in its hashed requirements and wheel inventory, so repair and restore use the selected bytes. Desktop serves whatever application the active generation installed; during development the engine can serve a sibling checkout's build (`discover_frontend_bundle`). Pack frontend extension modules are served from the pack's own files and are unaffected.
 
 ## Publishing the engine
 
@@ -1025,7 +1020,7 @@ equal `X.Y.Z`; the supervisor retains its own package version. A main commit use
 `main-<YYYY-MM-DD>-<version>-<hash8>` and wheel version
 `<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
 prereleases, never PyPI publications. The frontend bundle stays embedded even
-when its pinned frontend commit is unchanged. A temporary source tree gives
+when its pinned frontend release is unchanged. A temporary source tree gives
 the engine and API wheels that version and pins workspace dependencies to
 their selected versions without rewriting the checkout or its lock. The
 supervisor wheel and dependencies on it retain its committed package version.
