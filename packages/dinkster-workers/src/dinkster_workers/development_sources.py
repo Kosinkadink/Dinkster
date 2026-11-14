@@ -32,15 +32,18 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
     library_wheels: dict[str, Path] = {}
     library_versions: dict[str, str] = {}
     built_wheels: list[dict[str, Any]] = []
-    installed = {
-        row["filename"]: row["sha256"]
-        for row in json.loads((generation / "installed-wheels.json").read_text())["wheels"]
-    }
+    installed = (
+        {
+            row["filename"]: row["sha256"]
+            for row in json.loads((generation / "installed-wheels.json").read_text())["wheels"]
+        }
+        if inputs["libraries"]
+        else {}
+    )
     for value in inputs["libraries"]:
         source = Path(value)
         wheel = artifacts / source.name
-        shutil.copyfile(source, wheel)
-        with zipfile.ZipFile(wheel) as archive:
+        with zipfile.ZipFile(source) as archive:
             metadata = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
             if len(metadata) != 1 or any(
                 name.endswith("/dinkster-pack.toml") for name in archive.namelist()
@@ -51,9 +54,10 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             library_versions[name] = fields["Version"]
         if name in library_wheels:
             raise ProvisionError(f"duplicate development library: {name}")
-        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
         if installed.get(wheel.name) != digest or version(name) != library_versions[name]:
             raise ProvisionError(f"selected local library differs from the generation: {name}")
+        shutil.copyfile(source, wheel)
         retained = object_path(store / "wheels", "sha256:" + digest) / wheel.name
         retained.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(wheel, retained)
