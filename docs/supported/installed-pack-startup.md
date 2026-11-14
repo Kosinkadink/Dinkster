@@ -2,6 +2,12 @@
 
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
+- Equivalent requirement spelling and unordered namespace or base replacement
+  declarations do not refuse admission. Namespaces must still match their grants,
+  replacement names remain unique, and selected wheel identities stay exact.
+- Attention capability, provider and role declarations may arrive in any order.
+  Worker startup still requires every role exactly once and routes consistent
+  with the authenticated capabilities and requested policies.
 
 - Local setup resolves registry pack dependencies against that pack's recorded
   registry index for the selected variant, alongside the selected base's package

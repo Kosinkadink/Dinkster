@@ -104,9 +104,6 @@ def _validate_requested_role_policies(
         raise ValueError("unknown attention role in requested role policies")
     if len(set(override_roles)) != len(override_roles):
         raise ValueError("requested role policies must name each role at most once")
-    canonical = tuple(role for role in ATTENTION_ROLES if role in set(override_roles))
-    if override_roles != canonical:
-        raise ValueError("requested role policies must use canonical role ordering")
     default_policy = "sdpa" if requested_policy == "auto" else requested_policy
     normalized: list[tuple[str, AttentionPolicy]] = []
     for role, policy_raw in override_pairs:
@@ -125,7 +122,7 @@ def _validate_requested_role_policies(
         raise ValueError(
             "requested role policies must leave at least one role to the default policy"
         )
-    return tuple(normalized)
+    return tuple(sorted(normalized, key=lambda pair: ATTENTION_ROLES.index(pair[0])))
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,16 +163,15 @@ class AttentionCapabilityEvidence:
         if "sdpa" not in validated:
             raise ValueError("available attention policies must include sdpa")
         canonical = tuple(policy for policy in ATTENTION_POLICIES if policy in set(validated))
-        if validated != canonical:
-            raise ValueError("available attention policies must use canonical policy ordering")
+        if len(validated) != len(set(validated)):
+            raise ValueError("available attention policies must be unique")
+        object.__setattr__(self, "available_policies", canonical)
         providers = cast("object", self.provider_versions)
         if not isinstance(providers, tuple) or not all(
             isinstance(pair, tuple) and len(cast("tuple[object, ...]", pair)) == 2
             for pair in cast("tuple[object, ...]", providers)
         ):
             raise TypeError("provider versions must be immutable pairs")
-        if self.provider_versions != tuple(sorted(set(self.provider_versions))):
-            raise ValueError("provider versions must be sorted and unique")
         provider_pairs = cast("tuple[tuple[object, object], ...]", providers)
         if not all(
             isinstance(name, str) and name and isinstance(version, str) and version
@@ -185,6 +181,7 @@ class AttentionCapabilityEvidence:
         provider_names = tuple(name for name, _ in provider_pairs)
         if len(set(provider_names)) != len(provider_names):
             raise ValueError("provider version names must be unique")
+        object.__setattr__(self, "provider_versions", tuple(sorted(self.provider_versions)))
         kitchen_available = bool({"sol", "comfy_kitchen_int8"}.intersection(validated))
         kitchen_versioned = any(name == "comfy-kitchen" for name, _ in provider_pairs)
         if kitchen_available != kitchen_versioned:
@@ -228,15 +225,19 @@ class AttentionRouteToken:
             isinstance(route, AttentionRoute) for route in cast("tuple[object, ...]", routes)
         ):
             raise TypeError("attention routes must be an immutable tuple")
-        if tuple(route.role for route in self.routes) != ATTENTION_ROLES:
-            raise ValueError("attention routes must use canonical role ordering")
+        roles = tuple(route.role for route in self.routes)
+        if len(roles) != len(ATTENTION_ROLES) or set(roles) != set(ATTENTION_ROLES):
+            raise ValueError("attention routes must cover each role exactly once")
+        object.__setattr__(
+            self,
+            "routes",
+            tuple(sorted(self.routes, key=lambda route: ATTENTION_ROLES.index(route.role))),
+        )
         if not isinstance(providers, tuple) or not all(
             isinstance(pair, tuple) and len(cast("tuple[object, ...]", pair)) == 2
             for pair in cast("tuple[object, ...]", providers)
         ):
             raise TypeError("provider versions must be immutable pairs")
-        if self.provider_versions != tuple(sorted(set(self.provider_versions))):
-            raise ValueError("provider versions must be sorted and unique")
         provider_pairs = cast("tuple[tuple[object, object], ...]", providers)
         if not all(
             isinstance(name, str) and name and isinstance(version, str) and version
@@ -248,9 +249,17 @@ class AttentionRouteToken:
                 raise ValueError(f"{name} must be non-empty")
         if self.device_sm is not None and (type(self.device_sm) is not int or self.device_sm < 0):
             raise ValueError("device_sm must be a non-negative integer or None")
-        _validate_requested_role_policies(
-            self.requested_policy,
-            cast("object", self.requested_role_policies),
+        provider_names = tuple(name for name, _ in self.provider_versions)
+        if len(set(provider_names)) != len(provider_names):
+            raise ValueError("provider version names must be unique")
+        object.__setattr__(self, "provider_versions", tuple(sorted(self.provider_versions)))
+        object.__setattr__(
+            self,
+            "requested_role_policies",
+            _validate_requested_role_policies(
+                self.requested_policy,
+                cast("object", self.requested_role_policies),
+            ),
         )
         if self.version == 1 and self.requested_role_policies:
             raise ValueError("a version 1 attention route token cannot carry role policy overrides")

@@ -104,6 +104,7 @@ def test_execution_context_rejects_cross_worker_route_token_replay() -> None:
     sm80 = replace(capability_evidence(device_kind="cuda"), device_sm=80)
     sm90 = replace(sm80, device_sm=90)
     sm80_token = derive_attention_route_token(sm80, AttentionPolicyConfig())
+    sm80_token = replace(sm80_token, routes=tuple(reversed(sm80_token.routes)))
     sm90_token = derive_attention_route_token(sm90, AttentionPolicyConfig())
 
     ExecutionContext(

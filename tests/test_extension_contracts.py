@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -83,7 +84,16 @@ def _snapshot(
 
 def test_snapshot_serialization_and_hash_are_deterministic_and_order_sensitive() -> None:
     first = _snapshot(contributions=("guidance/pre-cfg", "guidance/post-cfg"))
-    same = _snapshot(contributions=("guidance/pre-cfg", "guidance/post-cfg"))
+    extension = first.extensions[0]
+    same = ExtensionSnapshot(
+        (
+            replace(
+                extension,
+                capabilities=tuple(reversed(extension.capabilities)),
+                behavior_configuration=tuple(reversed(extension.behavior_configuration)),
+            ),
+        )
+    )
     reordered = _snapshot(contributions=("guidance/post-cfg", "guidance/pre-cfg"))
     reconfigured = _snapshot(
         mode="fast",
