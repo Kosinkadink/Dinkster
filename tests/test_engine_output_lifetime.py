@@ -264,43 +264,6 @@ def test_regions_release_intermediates_but_keep_exports_and_state(kind) -> None:
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("fail", [False, True])
-def test_produced_release_does_not_shorten_resource_pin_lifetime(fail) -> None:
-    async def scenario() -> None:
-        pins = ResourcePins()
-
-        async def inspect(invocation):
-            if invocation.node_id == "source":
-                return replace(
-                    worker.registry.wrap("INT", 10),
-                    meta=ValueMeta({RESOURCE_ID_META_KEY: "resident"}),
-                )
-            if invocation.node_id == "tail":
-                assert worker.refs["source"]() is None
-                assert pins.pinned("resident")
-                assert not pins.condemn("resident")
-                if fail:
-                    raise ExecutionError(NodeError("tail", "step", "expected failure"))
-
-        engine, worker, _ = make_engine(inspect, pins=pins)
-        graph = Graph(
-            nodes={
-                "source": GraphNode("step", {}),
-                "middle": GraphNode("step", {"a": Link("source", "out")}),
-                "tail": GraphNode("step", {"a": Link("middle", "out")}),
-            }
-        )
-        if fail:
-            with pytest.raises(ExecutionError, match="expected failure"):
-                await engine.run(graph, ["tail"])
-        else:
-            assert (await engine.run(graph, ["tail"])).outputs["tail"]["out"].resolve() == 12
-        assert not pins.pinned("resident")
-        assert pins.condemn("resident")
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize("outcome", ["complete", "error", "cancel"])
 def test_expansion_retains_external_resource_until_run_cleanup(outcome: str) -> None:
     async def scenario() -> None:

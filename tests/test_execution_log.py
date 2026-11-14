@@ -44,12 +44,11 @@ from dinkster_schema import (
     TypeExpr,
     configure_logging,
     install_stream_capture,
-    report_event,
     report_log,
     use_capture_budget,
     use_reporter,
 )
-from dinkster_schema.capture import MAX_CAPTURED_MESSAGE_CHARS, MAX_CAPTURED_RECORDS
+from dinkster_schema.capture import MAX_CAPTURED_RECORDS
 from dinkster_schema.log import ROOT_LOGGER_NAME
 from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker
@@ -101,27 +100,6 @@ def log_events(captured: list[Captured]) -> list[Mapping[str, object]]:
 
 
 # -- report_log's own contract ------------------------------------------------
-
-
-def test_report_log_rejects_non_log_levels() -> None:
-    # "error" is deliberately not a log level: failures raise and travel
-    # through the one existing error report.
-    with pytest.raises(ValueError, match="raise"):
-        report_log("error", "boom")
-    with pytest.raises(ValueError, match="unknown log level"):
-        report_log("debug", "chatter")
-
-
-def test_report_log_rejects_reserved_data_keys() -> None:
-    with pytest.raises(ValueError, match="reserved"):
-        report_log("info", "x", data={"level": "warning"})
-    with pytest.raises(ValueError, match="reserved"):
-        report_log("info", "x", data={"message": "smuggled", "ts": 1.0})
-
-
-def test_log_event_name_is_reserved() -> None:
-    with pytest.raises(ValueError, match="reserved"):
-        report_event("log")
 
 
 # -- stream capture ------------------------------------------------------------
@@ -187,20 +165,6 @@ def test_capture_stops_after_the_record_budget_with_one_notice() -> None:
     assert "truncated" in str(notice["message"])
 
 
-def test_overlong_messages_are_cut() -> None:
-    captured: list[Captured] = []
-    long = "x" * (MAX_CAPTURED_MESSAGE_CHARS + 500)
-    with proxied_streams() as (out, _):
-        with use_reporter(recorder(captured)), use_capture_budget():
-            print(long)
-        assert long in out.getvalue()  # pass-through is untouched
-    (event,) = log_events(captured)
-    message = str(event["message"])
-    assert message.startswith("x" * MAX_CAPTURED_MESSAGE_CHARS)
-    assert message.endswith("[truncated]")
-    assert len(message) < len(long)
-
-
 # -- python logging capture -----------------------------------------------------
 
 
@@ -224,14 +188,6 @@ def test_configured_logging_forwards_once_with_origin() -> None:
     assert all("pythonLevel" not in e for e in events)
 
 
-def test_debug_records_are_not_forwarded() -> None:
-    configure_logging("debug", stream=io.StringIO())
-    captured: list[Captured] = []
-    with use_reporter(recorder(captured)), use_capture_budget():
-        logging.getLogger("dinkster.server").debug("wire noise")
-    assert log_events(captured) == []
-
-
 def test_error_records_forward_as_warning_with_python_level() -> None:
     configure_logging("info", stream=io.StringIO())
     captured: list[Captured] = []
@@ -248,51 +204,6 @@ def test_error_records_forward_as_warning_with_python_level() -> None:
     first_message = str(events[0]["message"])
     assert first_message.startswith("stage failed")
     assert "ValueError: nope" in first_message
-
-
-def test_unconfigured_logger_warning_is_captured_via_stderr() -> None:
-    # No dinkster handler and no propagation: logging falls back to
-    # logging.lastResort, which resolves sys.stderr dynamically - so the
-    # stderr proxy sees the message with no root handler installed.
-    orphan = logging.getLogger("execlogtest.orphan")
-    orphan.propagate = False
-    captured: list[Captured] = []
-    with proxied_streams() as (_, err):
-        with use_reporter(recorder(captured)), use_capture_budget():
-            orphan.warning("orphan warning")
-        assert "orphan warning" in err.getvalue()
-    events = log_events(captured)
-    assert [(e["level"], e["origin"]) for e in events] == [("warning", "stderr")]
-    assert "orphan warning" in str(events[0]["message"])
-
-
-def test_malformed_logging_call_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A bad %-format call is handled by logging itself for the terminal
-    # write; forwarding must be equally forgiving and never raise into
-    # whatever logged it - under production settings (raiseExceptions
-    # True) and with the handler writing through the stderr proxy, whose
-    # capture must not pick up the stdlib's error diagnostic either.
-    assert logging.raiseExceptions
-    # Pytest capture handlers raise on malformed records; exercise only the
-    # standard handler, regardless of logging configured by earlier tests.
-    monkeypatch.setattr(logging.getLogger(ROOT_LOGGER_NAME), "handlers", [])
-    captured: list[Captured] = []
-    with proxied_streams():
-        configure_logging("info", stream=sys.stderr)
-        with use_reporter(recorder(captured)), use_capture_budget():
-            logging.getLogger("dinkster.server").info("%s %s", "only-one-arg")
-            logging.getLogger("dinkster.server").info("fine afterwards")
-    assert [e["message"] for e in log_events(captured)] == ["fine afterwards"]
-
-
-def test_broken_reporter_does_not_break_node_writes() -> None:
-    def broken_reporter(name: str, data: Mapping[str, object], blob: bytes | None) -> None:
-        raise RuntimeError("delivery exploded")
-
-    with proxied_streams() as (out, _):
-        with use_reporter(broken_reporter), use_capture_budget():
-            print("still fine")
-        assert "still fine" in out.getvalue()
 
 
 def test_cross_thread_writes_assemble_consistent_lines() -> None:

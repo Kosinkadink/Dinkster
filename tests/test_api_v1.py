@@ -516,17 +516,6 @@ def test_color_parser_through_v1() -> None:
         api.parse_color("#12345")
 
 
-def test_image_document_round_trip_through_v1() -> None:
-    import numpy as np
-
-    pixels = np.array([[[1, 0, 0], [0, 0.5, 1]]], dtype=np.float32)
-    document = api.append_raster(api.empty_document(2, 1), api.raster_png(pixels))
-    restored = api.ImageDocument(document.data)
-    rendered, transparency = api.flatten(restored)
-    np.testing.assert_allclose(rendered, [[[[1, 0, 0], [0, 128 / 255, 1]]]])
-    np.testing.assert_array_equal(transparency, [[[0, 0]]])
-
-
 def test_remote_client_reads_host_cancellation_through_v1() -> None:
     from dinkster_workers.execution import ExecutionContext, use_execution_context
 

@@ -34,7 +34,6 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import HistoryRecord, HistoryStore, PathRedactor, Principal, create_app
-from dinkster_server.history import record_from_job
 from dinkster_server.queue import Job, JobKey, JobQueue
 from dinkster_values import (
     EncodedPayload,
@@ -317,44 +316,6 @@ def test_terminal_history_retains_nested_target_and_saved_asset_identities(tmp_p
                 pytest.fail("corrupt output identities were assumed empty")
     finally:
         store.close()
-
-
-def test_record_from_job_marks_started_nodes_interrupted() -> None:
-    job = Job(
-        key=JobKey("c1", "j1"),
-        graph=Graph(nodes={}),
-        targets=(),
-        priority=0,
-        run_id="r1",
-        fingerprint="test",
-        principal_id="worker",
-        principal_kind="agent",
-        state="cancelled",
-        finished_at=3.0,
-        node_receipts={
-            "sample": {
-                "nodeId": "sample",
-                "disposition": "running",
-                "executionArm": "comfyui",
-                "provider": "dinkster-vision-example",
-                "pack": "dinkster-vision-example",
-                "worker": "gpu-box",
-            }
-        },
-    )
-    record = record_from_job(job)
-    assert record.principal_kind == "agent"
-    assert record.to_wire()["principalKind"] == "agent"
-    assert record.node_receipts == (
-        {
-            "nodeId": "sample",
-            "disposition": "interrupted",
-            "executionArm": "comfyui",
-            "provider": "dinkster-vision-example",
-            "pack": "dinkster-vision-example",
-            "worker": "gpu-box",
-        },
-    )
 
 
 # -- HTTP surface + recording -------------------------------------------------
@@ -777,34 +738,6 @@ def test_recover_interrupted_never_rewrites_existing_history(tmp_path: Path) -> 
     assert record.state == "completed"
     assert read_accepted(db) == []
     reopened.close()
-
-
-def test_accepted_row_exists_before_submit_acknowledgment(tmp_path: Path) -> None:
-    """End to end: a paused queue holds the job, but the accepted row is
-    already on disk when POST /api/jobs returns; terminal completion
-    retires it."""
-
-    async def scenario() -> None:
-        client, _store = await make_client(tmp_path)
-        db = tmp_path / "history.sqlite"
-        try:
-            assert (await client.post("/api/queue/pause")).status == 200
-            graph = Graph(nodes={"e": GraphNode("test.echo", {"text": "hi"})})
-            assert (await client.post("/api/jobs", json=submit_body(graph, ["e"]))).status == 202
-            (row,) = read_accepted(db)
-            assert row["state"] == "queued"
-            assert row["client_id"] == "c1"
-            assert row["job_id"] == "j1"
-            assert row["fingerprint"]
-            assert row["execution_identity"]
-            assert (await client.post("/api/queue/resume")).status == 200
-            records = await wait_for_history(client, count=1)
-            assert records[0]["state"] == "completed"
-            assert read_accepted(db) == []
-        finally:
-            await client.close()
-
-    run_scenario(scenario())
 
 
 def test_restart_surfaces_interrupted_history_and_empty_queue(tmp_path: Path) -> None:

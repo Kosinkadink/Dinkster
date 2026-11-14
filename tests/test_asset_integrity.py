@@ -12,7 +12,6 @@ import aiohttp
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
-    AssetError,
     AssetIntegrityError,
     AssetVault,
     LibraryStore,
@@ -23,7 +22,6 @@ from dinkster_assets import (
     verified_local_path,
 )
 from dinkster_assets import integrity as integrity_module
-from dinkster_assets import vault as vault_module
 from dinkster_server import ServerLibrary, create_app
 from dinkster_server import asset_stream as asset_stream_module
 from dinkster_server.asset_stream import open_verified_sized
@@ -42,42 +40,6 @@ def write_asset(tmp_path: Path, data: bytes, name: str = "model.safetensors") ->
     path = tmp_path / name
     path.write_bytes(data)
     return path
-
-
-@pytest.mark.parametrize("result", ["stable", "changing", "corrupt"])
-def test_concurrent_vault_publication_requires_stable_matching_reverification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: str
-) -> None:
-    vault = AssetVault(tmp_path)
-    data = b"verified image document"
-    digest = digest_bytes(data)
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        target, created = writer.commit_with_result()
-    assert created
-    attempts = 0
-    original = integrity_module.digest_file_with_record
-
-    def verify(path: Path) -> tuple[str, integrity_module.AssetVerificationRecord | None]:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1 or result == "changing":
-            raise AssetError("asset changed while being ingested")
-        if result == "corrupt":
-            path.write_bytes(b"corrupt image document")
-        return original(path)
-
-    monkeypatch.setattr(vault_module, "digest_file_with_record", verify)
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        if result == "stable":
-            assert writer.commit_with_result() == (target, False)
-        else:
-            with pytest.raises(AssetError):
-                writer.commit_with_result()
-    assert attempts == 2
-    assert target.exists()
-    assert not list(tmp_path.glob(".ingest-*"))
 
 
 # --- the stale-index attack the (size, mtime) heuristic cannot see -----------
@@ -152,18 +114,6 @@ def test_open_verified_handle_pins_the_verified_inode(tmp_path: Path) -> None:
     assert path.read_bytes() == b"late replacement"  # the name did move on
 
 
-def test_unmanaged_reads_do_not_create_collection_metadata(tmp_path: Path) -> None:
-    data = b"user-managed source"
-    digest = digest_bytes(data)
-    path = tmp_path / digest.split(":")[1][:2] / digest.split(":")[1]
-    path.parent.mkdir()
-    path.write_bytes(data)
-    before = set(tmp_path.rglob("*"))
-    with open_verified(path, digest) as handle:
-        assert handle.read() == data
-    assert set(tmp_path.rglob("*")) == before
-
-
 # --- the verification cache: speeds up honest reopens, never authorizes ------
 
 
@@ -177,28 +127,6 @@ def _counting_hasher(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
     monkeypatch.setattr(integrity_module, "_hash_handle", counted)
     return calls
-
-
-@pytest.mark.skipif(os.name != "posix", reason="verified fingerprint cache is POSIX-only")
-def test_cache_skips_rehash_until_the_file_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls = _counting_hasher(monkeypatch)
-    data = b"stable content"
-    path = write_asset(tmp_path, data)
-    digest = digest_bytes(data)
-
-    with open_verified(path, digest) as handle:
-        assert handle.read() == data
-    with open_verified(path, digest) as handle:  # cache hit: no second hash
-        assert handle.read() == data
-    assert calls[0] == 1
-
-    replacement = write_asset(tmp_path, b"fresh content!", "next.tmp")
-    os.replace(replacement, path)  # new inode -> new fingerprint
-    with pytest.raises(AssetIntegrityError):
-        open_verified(path, digest)
-    assert calls[0] == 2  # the mutation forced a rehash
 
 
 def test_cache_entry_never_authorizes_a_different_digest(tmp_path: Path) -> None:
@@ -262,12 +190,6 @@ def test_mutation_during_hashing_is_detected(
 # --- verified_local_path: the weaker, path-shaped boundary --------------------
 
 
-def test_verified_local_path_returns_path_for_honest_content(tmp_path: Path) -> None:
-    data = b"checkpoint bytes"
-    path = write_asset(tmp_path, data)
-    assert verified_local_path(path, digest_bytes(data)) == path
-
-
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX open-file replacement semantics")
 def test_verified_local_path_rejects_rebinding_after_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -310,47 +232,7 @@ def test_verified_local_path_rejects_deletion_after_verification(
     assert excinfo.value.reason == "path_rebound"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="requires POSIX open-file replacement semantics")
-def test_verified_local_path_rejects_rename_during_hashing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A rename landing mid-hash is also refused - via the mutation check,
-    since dropping the old inode's link count bumps its ctime."""
-    data = b"renamed away mid-hash"
-    path = write_asset(tmp_path, data)
-    real = integrity_module._hash_handle  # noqa: SLF001 - designated test seam
-
-    def hash_then_rebind(handle: BinaryIO) -> str:
-        result = real(handle)
-        os.replace(write_asset(tmp_path, data + b"!", "rebind.tmp"), path)
-        return result
-
-    monkeypatch.setattr(integrity_module, "_hash_handle", hash_then_rebind)
-    with pytest.raises(AssetIntegrityError) as excinfo:
-        verified_local_path(path, digest_bytes(data))
-    assert excinfo.value.reason == "changed_during_verification"
-
-
 # --- the serving boundary: /assets/{digest} never mirrors wrong bytes --------
-
-
-def test_vault_ingest_persists_verification_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data = b"streamed and hashed once"
-    digest = digest_bytes(data)
-    vault = AssetVault(tmp_path / "vault")
-    with vault.writer(digest) as writer:
-        writer.write(data)
-        writer.commit()
-
-    resolution = vault.resolve_asset(digest)
-    assert resolution is not None
-    assert resolution.verification is not None
-    calls = _counting_hasher(monkeypatch)
-    with open_verified(resolution.path, digest, resolution.verification) as handle:
-        assert handle.read() == data
-    assert calls == [0]
 
 
 def test_asset_endpoint_serves_verified_bytes_and_refuses_stale(

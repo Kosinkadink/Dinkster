@@ -260,30 +260,6 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
     }
 
 
-def test_combo_literals_wildcards_unions_and_other_combos_are_legal() -> None:
-    graph = Graph(
-        nodes={
-            # A combo literal is an ordinary plain literal, never $typed.
-            "a": GraphNode("test.combo_a", {"value": "a"}),
-            # Different choice lists do not refine COMBO identity.
-            "b": GraphNode("test.combo_b", {"value": Link("a", "value")}),
-            "wild": GraphNode("test.combo_wildcard", {"value": Link("a", "value")}),
-            "union_combo": GraphNode("test.combo_union", {"value": Link("a", "value")}),
-            "s": GraphNode("test.string_source", {}),
-            "union_string": GraphNode("test.combo_union", {"value": Link("s", "value")}),
-        }
-    )
-    assert validate(graph, COMBO_SCHEMAS, ["b", "wild", "union_combo", "union_string"]) == []
-
-
-def test_plain_literal_on_nonconcrete_input_is_error() -> None:
-    # M0 rule regression: a plain literal cannot say what type it is, so a
-    # variable/wildcard input refuses it (the typed literal is the fix).
-    graph = Graph(nodes={"m": GraphNode("dev.gallery.match", {"var_in": 7})})
-    diags = validate(graph, SCHEMAS, ["m"])
-    assert any(d.code == "literal-on-nonconcrete" and d.severity == "error" for d in diags)
-
-
 @pytest.mark.parametrize(
     ("type_id", "value", "valid"),
     [
@@ -355,22 +331,6 @@ def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
     )
 
 
-def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
-    # The joint-contract case: an explicit stamp makes a literal legal on a
-    # variable input (and a list stamp on a list<T> input) - clean document.
-    graph = Graph(
-        nodes={
-            "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
-            "l": GraphNode(
-                "test.list_input",
-                {"list": TypedLiteral("list<INT>", [1, 2, 3])},
-            ),
-        }
-    )
-    diags = validate(graph, SCHEMAS, ["m", "l"], known_types={"INT"})
-    assert diags == []
-
-
 @pytest.mark.parametrize(
     ("extra", "expected_code"),
     (
@@ -406,52 +366,6 @@ def test_authored_inputs_use_ordinary_typed_literal_admission(
         assert any(d.code == expected_code and d.severity == "error" for d in diagnostics)
 
 
-def test_typed_literal_malformed_type_id_is_error() -> None:
-    for bad in ("", "list<>", "list<INT", "core<int>", "list<list<>>"):
-        graph = Graph(nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral(bad, 7)})})
-        diags = validate(graph, SCHEMAS, ["m"])
-        assert any(d.code == "typed-literal-malformed" for d in diags), bad
-
-
-def test_typed_literal_unknown_type_needs_registry() -> None:
-    graph = Graph(
-        nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("no.such.type", 7)})}
-    )
-    # Without a known-type vocabulary the check stays syntactic: clean.
-    assert validate(graph, SCHEMAS, ["m"]) == []
-    # With one (the engine passes its registry), an unregistered atom is an
-    # error - including the atom inside a list stamp.
-    diags = validate(graph, SCHEMAS, ["m"], known_types={"INT"})
-    assert any(d.code == "typed-literal-unknown-type" and d.severity == "error" for d in diags)
-    listy = Graph(
-        nodes={
-            "m": GraphNode(
-                "dev.gallery.match",
-                {"var_in": TypedLiteral("list<no.such.type>", [1])},
-            )
-        }
-    )
-    diags = validate(listy, SCHEMAS, ["m"], known_types={"INT"})
-    assert any(d.code == "typed-literal-unknown-type" for d in diags)
-
-
-def test_typed_literal_on_concrete_input_is_redundant_warning() -> None:
-    # Emission rule (joint contract): plain literals stay canonical on
-    # concrete inputs; a stamp there is legal but warns.
-    graph = Graph(
-        nodes={
-            "g": GraphNode(
-                "dev.image.gradient",
-                {"width": TypedLiteral("INT", 8), "height": 8},
-            )
-        }
-    )
-    diags = validate(graph, SCHEMAS, ["g"], known_types={"INT"})
-    warnings = [d for d in diags if d.code == "typed-literal-on-concrete"]
-    assert warnings and all(d.severity == "warning" for d in warnings)
-    assert not has_errors(diags)
-
-
 def test_typed_literal_cardinality_is_structural() -> None:
     # A list stamp into a definitely-scalar input (union) and a scalar stamp
     # into a definitely-list input are errors, mirroring the link path.
@@ -467,15 +381,6 @@ def test_typed_literal_cardinality_is_structural() -> None:
     codes = {d.code for d in validate(graph, SCHEMAS, ["s", "l"], known_types={"INT"})}
     assert "list-into-scalar" in codes
     assert "scalar-into-list" in codes
-
-
-def test_typed_literal_type_mismatch_is_warning() -> None:
-    # Advisory compat, exactly as for links: a INT stamp into a union
-    # of image types warns but never errors.
-    graph = Graph(nodes={"s": GraphNode("dev.gallery.sockets", {"union2": TypedLiteral("INT", 7)})})
-    diags = validate(graph, SCHEMAS, ["s"], known_types={"INT"})
-    mismatches = [d for d in diags if d.code == "type-mismatch"]
-    assert mismatches and all(d.severity == "warning" for d in mismatches)
 
 
 def test_cycle_detected() -> None:

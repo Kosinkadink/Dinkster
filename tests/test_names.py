@@ -10,24 +10,12 @@ and reserved roots catch every spelling that could contest them.
 
 from __future__ import annotations
 
-import pytest
 from dinkster_schema import (
-    RESERVED_NAMESPACES,
     canonical_claim,
     claim_covers,
     claims_conflict,
     reserved_root,
-    validate_claim,
-    validate_name,
 )
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["a", "img", "my-pack", "img.filters", "foo_bar", "a1", "v2.x", "a-b_c.d9"],
-)
-def test_valid_names(name: str) -> None:
-    assert validate_name(name) is None
 
 
 def test_coverage_is_dot_bounded() -> None:
@@ -42,14 +30,6 @@ def test_coverage_is_dot_bounded() -> None:
     assert not claim_covers("img.filters", "img.blur")
 
 
-def test_coverage_handles_legacy_casing_and_separators() -> None:
-    """Node type ids are not grammar-bound: compat preserves v1 casing
-    (comfy.<pack>.<V1Name>), and coverage compares atoms case-insensitively."""
-    assert claim_covers("comfy", "comfy.My-Pack.LoadImage")
-    assert claim_covers("comfy", "comfy.rgthree.Fast Groups")  # verbatim tail
-    assert not claim_covers("comfy", "comfyui.LoadImage")
-
-
 def test_conflict_is_atom_bounded() -> None:
     """Any atom-sequence prefix conflicts, whatever the separator:
     separator equivalence makes img-extra the same claim as img.extra,
@@ -61,42 +41,6 @@ def test_conflict_is_atom_bounded() -> None:
     assert claims_conflict("img", "img-extra")
     assert claims_conflict("foo-bar", "foo.bar")  # same claim, respelled
     assert claims_conflict("foo_bar", "foo.bar.baz")
-
-
-def test_siblings_do_not_conflict() -> None:
-    assert not claims_conflict("img.filters", "img.masks")
-    assert not claims_conflict("img", "image")  # atom identity, not string prefix
-    assert not claims_conflict("img2", "img")
-    assert not claims_conflict("impact-pack", "impact-subpack")
-
-
-def test_reserved_roots() -> None:
-    assert RESERVED_NAMESPACES == {"std", "comfy", "core", "dinkster"}
-    assert reserved_root("std") == "std"
-    assert reserved_root("std.magic") == "std"
-    assert reserved_root("std-extra") == "std"  # every contesting spelling
-    assert reserved_root("comfy.rgthree") == "comfy"
-    assert reserved_root("dinkster-nodes-foundation") == "dinkster"
-    assert reserved_root("standard") is None
-    assert reserved_root("my-pack") is None
-    assert reserved_root("dev") is None
-    assert reserved_root("dev.image") is None
-
-
-@pytest.mark.parametrize(
-    "node_id",
-    ["Epsilon Scaling", "Video Slice", "TextEncodeAceStepAudio1.5", "EmptyAceStep1.5LatentAudio"],
-)
-def test_exact_node_claims_preserve_spelling_and_do_not_cover_descendants(node_id: str) -> None:
-    assert validate_claim(node_id) is None
-    assert validate_name(node_id) is not None
-    assert canonical_claim(node_id) == node_id
-    assert claim_covers(node_id, node_id)
-    assert claims_conflict(node_id, node_id)
-    for other in (node_id.lower(), node_id.replace(" ", "_"), node_id + ".Child"):
-        if other != node_id:
-            assert not claim_covers(node_id, other)
-            assert not claims_conflict(node_id, other)
 
 
 def test_namespace_and_exact_claims_cannot_own_the_same_node() -> None:

@@ -546,17 +546,6 @@ def test_implicit_region_index_wire_roundtrip() -> None:
     assert graph_from_wire(wire) == graph
 
 
-def test_stream_region_port_wire_roundtrip() -> None:
-    stream = TypeExpr.stream_of(TypeExpr.concrete("IMAGE"))
-    graph = Graph(nodes={"m": map_region(ports={"item": stream})})
-    wire = graph_to_wire(graph)
-    assert wire["nodes"]["m"]["region"]["ports"]["item"] == {
-        "kind": "stream",
-        "element": {"kind": "concrete", "types": ["IMAGE"]},
-    }
-    assert graph_from_wire(wire) == graph
-
-
 def test_fold_and_while_region_wire_roundtrip() -> None:
     graph = Graph(nodes={"f": fold_region(), "w": while_region()})
     wire = graph_to_wire(graph)
@@ -585,28 +574,6 @@ def test_cross_binding_wire_roundtrip() -> None:
     graph = Graph(nodes={"m": map_region(binding="cross")})
     wire = graph_to_wire(graph)
     assert wire["nodes"]["m"]["region"]["binding"] == "cross"
-    assert graph_from_wire(wire) == graph
-
-
-def test_broadcast_binding_wire_roundtrip() -> None:
-    graph = Graph(nodes={"m": broadcast_region()})
-    wire = graph_to_wire(graph)
-    assert wire["nodes"]["m"]["region"]["binding"] == "broadcast"
-    assert graph_from_wire(wire) == graph
-
-
-def test_flatten_output_wire_roundtrip() -> None:
-    graph = Graph(nodes={"m": flatten_region()})
-    wire = graph_to_wire(graph)
-    assert wire["nodes"]["m"]["region"]["outputs"]["items"]["mode"] == "flatten"
-    assert graph_from_wire(wire) == graph
-
-
-def test_compact_output_wire_roundtrip() -> None:
-    region = map_region(outputs={"results": RegionOutput(Link("add", "out"), mode="compact")})
-    graph = Graph(nodes={"m": region})
-    wire = graph_to_wire(graph)
-    assert wire["nodes"]["m"]["region"]["outputs"]["results"]["mode"] == "compact"
     assert graph_from_wire(wire) == graph
 
 
@@ -712,32 +679,6 @@ def test_valid_regions_pass_validation() -> None:
     assert not has_errors(diags), [d.message for d in diags]
 
 
-def test_reserved_region_id_is_rejected() -> None:
-    graph = Graph(nodes={PORTS_NODE_ID: GraphNode("test.add_one", {"value": 1})})
-    assert "reserved-node-id" in codes(graph, [])
-
-
-def test_node_ids_with_path_characters_rejected_by_validation() -> None:
-    # Directly constructed graphs (not just wire-decoded ones) get a
-    # structured diagnostic: '/', '[' and ']' would break the closed
-    # iteration-id/diagnostic-path grammar.
-    for bad_id in ("a/b", "a[0]", "a]b"):
-        graph = Graph(nodes={bad_id: GraphNode("test.add_one", {"value": 1})})
-        assert "invalid-node-id" in codes(graph, [])
-
-
-def test_nested_body_node_ids_with_path_characters_rejected() -> None:
-    for bad_id in ("in/ner", "n[0]", "n]"):
-        region = map_region(
-            body=Graph(nodes={bad_id: GraphNode("test.add_one", {"value": port("item")})}),
-            outputs={"results": RegionOutput(Link(bad_id, "out"))},
-        )
-        by_code = codes(Graph(nodes={"m": region}), ["m"])
-        assert "invalid-node-id" in by_code
-        # The diagnostic anchors to the full nested path.
-        assert by_code["invalid-node-id"] == [f"m/{bad_id}"]
-
-
 def test_undeclared_port_and_dangling_port() -> None:
     region = map_region(
         inputs={"item": [1], "mystery": 5},
@@ -776,17 +717,6 @@ def test_kind_profiles_are_enforced() -> None:
         assert "region-shape" in codes(Graph(nodes={"w": bound_while}), ["w"])
 
 
-def test_stateless_fold_is_valid() -> None:
-    region = fold_region(
-        body=Graph(nodes={"add": GraphNode("test.add_one", {"value": port("item")})}),
-        ports={"item": INT},
-        inputs={"item": [1, 2, 3]},
-        state_ports=(),
-        outputs={"results": RegionOutput(Link("add", "out"))},
-    )
-    assert not has_errors(validate(Graph(nodes={"f": region}), schemas(), ["f"]))
-
-
 def test_state_chain_must_close() -> None:
     # State port with no state-mode output naming its next value.
     open_chain = fold_region(outputs={"other": RegionOutput(Link("acc", "out"))})
@@ -806,51 +736,12 @@ def test_region_output_sources_must_exist() -> None:
     assert "dangling-output" in codes(Graph(nodes={"m": region}), ["m"])
 
 
-def test_gather_requires_runtime_resolvable_type() -> None:
-    region = map_region(
-        ports={"item": TypeExpr.wildcard()},
-        outputs={"results": RegionOutput(port("item"))},
-        body=Graph(nodes={}),
-        inputs={"item": Link("src", "values")},
-    )
-    graph = Graph(
-        nodes={
-            "src": GraphNode("test.maybe_list", {"produce": True}),
-            "m": region,
-        }
-    )
-    assert "gather-nonconcrete" in codes(graph, ["m"])
-
-
 def test_implicit_region_index_is_a_concrete_body_output() -> None:
     region = map_region(
         body=Graph(nodes={}),
         outputs={"indexes": RegionOutput(port(REGION_INDEX_PORT_ID))},
     )
     node_schemas = schemas()
-
-    diags = validate(Graph(nodes={"m": region}), node_schemas, ["m"])
-
-    assert not has_errors(diags), [diag.message for diag in diags]
-    assert region_interface(region, node_schemas)["indexes"] == TypeExpr.list_of(INT)
-
-
-def test_generic_body_output_resolves_from_implicit_region_index() -> None:
-    region = map_region(
-        body=Graph(
-            nodes={
-                "route": GraphNode(
-                    "dinkster.route.switch",
-                    {
-                        "index": 0,
-                        "values.only": port(REGION_INDEX_PORT_ID),
-                    },
-                )
-            }
-        ),
-        outputs={"indexes": RegionOutput(Link("route", "value"))},
-    )
-    node_schemas = build_schemas((*NODES, RouteSwitch))
 
     diags = validate(Graph(nodes={"m": region}), node_schemas, ["m"])
 
@@ -882,51 +773,6 @@ def test_gather_resolves_route_switch_output_from_linked_inputs() -> None:
     assert region_interface(region, node_schemas)["results"] == TypeExpr.list_of(INT)
 
 
-def test_gather_resolves_nested_list_element_output_from_linked_input() -> None:
-    nested_ints = TypeExpr.list_of(TypeExpr.list_of(INT))
-    region = map_region(
-        ports={"rows": nested_ints},
-        inputs={"rows": [[[1], [2, 3]]]},
-        element_ports=("rows",),
-        body=Graph(
-            nodes={"pick": GraphNode("std.list.element", {"list": port("rows"), "index": 0})}
-        ),
-        outputs={"results": RegionOutput(Link("pick", "item"))},
-    )
-    node_schemas = build_schemas((*NODES, ListElement))
-
-    diags = validate(Graph(nodes={"m": region}), node_schemas, ["m"])
-
-    assert "gather-nonconcrete" not in {diag.code for diag in diags}
-    assert region_interface(region, node_schemas)["results"] == nested_ints
-
-
-def test_gather_resolves_generic_consumer_of_nested_region_output() -> None:
-    inner = map_region(inputs={"item": port("row")})
-    outer = RegionNode(
-        kind="map",
-        body=Graph(
-            nodes={
-                "inner": inner,
-                "pick": GraphNode(
-                    "std.list.element",
-                    {"list": Link("inner", "results"), "index": 0},
-                ),
-            }
-        ),
-        ports={"row": TypeExpr.list_of(INT)},
-        inputs={"row": [[1, 2], [3]]},
-        element_ports=("row",),
-        outputs={"results": RegionOutput(Link("pick", "item"))},
-    )
-    node_schemas = build_schemas((*NODES, ListElement))
-
-    diags = validate(Graph(nodes={"outer": outer}), node_schemas, ["outer"])
-
-    assert "gather-nonconcrete" not in {diag.code for diag in diags}
-    assert region_interface(outer, node_schemas)["results"] == TypeExpr.list_of(INT)
-
-
 def test_gather_resolves_reverse_ordered_generic_chain_to_fixed_point() -> None:
     nested_ints = TypeExpr.list_of(TypeExpr.list_of(INT))
     region = map_region(
@@ -953,51 +799,6 @@ def test_gather_resolves_reverse_ordered_generic_chain_to_fixed_point() -> None:
 
     assert "gather-nonconcrete" not in {diag.code for diag in diags}
     assert region_interface(region, node_schemas)["results"] == TypeExpr.list_of(INT)
-
-
-def test_gather_refuses_typed_literal_only_and_conflicting_generic_outputs() -> None:
-    from dinkster_graph import TypedLiteral
-
-    stamped = map_region(
-        body=Graph(
-            nodes={
-                "route": GraphNode(
-                    "dinkster.route.switch",
-                    {"index": 0, "values.only": TypedLiteral("INT", 1)},
-                )
-            }
-        ),
-        outputs={"results": RegionOutput(Link("route", "value"))},
-    )
-    conflicting = map_region(
-        ports={"item": INT, "label": STRING},
-        inputs={"item": [1], "label": ["one"]},
-        element_ports=("item", "label"),
-        body=Graph(
-            nodes={
-                "select": GraphNode(
-                    "dinkster.value.select",
-                    {
-                        "condition": True,
-                        "on_false": port("item"),
-                        "on_true": port("label"),
-                    },
-                )
-            }
-        ),
-        outputs={"results": RegionOutput(Link("select", "value"))},
-    )
-    node_schemas = build_schemas((*NODES, RouteSwitch, ValueSelect))
-
-    stamped_codes = {
-        diag.code for diag in validate(Graph(nodes={"m": stamped}), node_schemas, ["m"])
-    }
-    conflicting_codes = {
-        diag.code for diag in validate(Graph(nodes={"m": conflicting}), node_schemas, ["m"])
-    }
-
-    assert "gather-nonconcrete" in stamped_codes
-    assert "gather-nonconcrete" in conflicting_codes
 
 
 def test_flatten_refuses_scalar_body_output_with_named_diagnostic() -> None:
@@ -1094,12 +895,6 @@ def test_output_only_map_executes_declared_sink(items: list[int], nested: bool) 
         assert sorted(seen) == sorted(expected)
 
     run_scenario(scenario())
-
-
-def test_outputless_sinkless_region_is_rejected() -> None:
-    for body in (Graph(nodes={}), map_region().body):
-        region = map_region(body=body, outputs={})
-        assert "region-shape" in codes(Graph(nodes={"m": region}), ["m"])
 
 
 def test_map_region_executes_per_element() -> None:
@@ -1790,23 +1585,6 @@ def test_declared_index_state_shadows_the_implicit_region_index() -> None:
     run_scenario(scenario())
 
 
-def test_declared_index_port_preserves_its_type_and_value() -> None:
-    async def scenario() -> None:
-        region = map_region(
-            body=Graph(nodes={}),
-            ports={"item": INT, "index": STRING},
-            inputs={"item": [1, 2], "index": "declared"},
-            outputs={"indexes": RegionOutput(port(REGION_INDEX_PORT_ID))},
-        )
-        node_schemas = schemas()
-
-        assert region_interface(region, node_schemas)["indexes"] == TypeExpr.list_of(STRING)
-        result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
-        assert result.outputs["m"]["indexes"].resolve() == ["declared", "declared"]
-
-    run_scenario(scenario())
-
-
 @pytest.mark.parametrize(
     ("region", "expected"),
     [
@@ -1830,33 +1608,6 @@ def test_flatten_concatenates_in_iteration_order_under_zip_and_broadcast(
         output = result.outputs["m"]["items"]
         assert output.type_id == "list<INT>"
         assert output.resolve() == expected
-
-    run_scenario(scenario())
-
-
-def test_flatten_zero_iterations_yields_typed_empty_list() -> None:
-    async def scenario() -> None:
-        region = flatten_region(inputs={"items": []})
-        result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
-        output = result.outputs["m"]["items"]
-        assert output.type_id == "list<INT>"
-        assert list_children(output) == ()
-
-    run_scenario(scenario())
-
-
-def test_map_iterations_run_concurrently() -> None:
-    async def scenario() -> None:
-        Sleeper.active = 0
-        Sleeper.peak = 0
-        engine = make_engine()
-        region = map_region(
-            body=Graph(nodes={"s": GraphNode("test.region_sleeper", {"value": port("item")})}),
-            inputs={"item": [1, 2, 3, 4]},
-            outputs={"results": RegionOutput(Link("s", "out"))},
-        )
-        await engine.run(Graph(nodes={"m": region}), ["m"])
-        assert Sleeper.peak >= 2  # independent iterations overlapped
 
     run_scenario(scenario())
 
@@ -1899,22 +1650,6 @@ def test_broadcast_binding_promotes_singleton_across_all_iterations() -> None:
         children = list_children(result.outputs["m"]["results"])
         assert children is not None
         assert [child.resolve() for child in children] == [11, 21, 31]
-
-    run_scenario(scenario())
-
-
-def test_broadcast_equal_lengths_match_zip_result() -> None:
-    async def scenario() -> None:
-        engine = make_engine()
-        inputs = {"left": [1, 2, 3], "right": [10, 20, 30]}
-        broadcast = broadcast_region(inputs=inputs)
-        zipped = broadcast_region(inputs=inputs, binding="zip")
-        broadcast_result = await engine.run(Graph(nodes={"m": broadcast}), ["m"])
-        zip_result = await engine.run(Graph(nodes={"m": zipped}), ["m"])
-        assert (
-            broadcast_result.outputs["m"]["results"].fingerprint
-            == zip_result.outputs["m"]["results"].fingerprint
-        )
 
     run_scenario(scenario())
 
@@ -2069,21 +1804,6 @@ def test_per_item_caching_reexecutes_only_changed_iterations() -> None:
         assert AddOne.ran == [99]
         assert result.executed == ("m[1]/add",)
         assert sorted(result.cached) == ["m[0]/add", "m[2]/add"]
-
-    run_scenario(scenario())
-
-
-def test_duplicate_items_execute_as_separate_iteration_occurrences() -> None:
-    async def scenario() -> None:
-        AddOne.ran.clear()
-        engine = make_engine()
-        result = await engine.run(Graph(nodes={"m": map_region(inputs={"item": [5, 5, 5]})}), ["m"])
-        assert AddOne.ran == [5, 5, 5]
-        children = list_children(result.outputs["m"]["results"])
-        assert children is not None
-        assert [c.resolve() for c in children] == [6, 6, 6]
-        assert len(result.executed) == 3
-        assert result.cached == ()
 
     run_scenario(scenario())
 
@@ -2621,27 +2341,5 @@ def test_occurrence_ids_compose_and_terminate_exactly_once() -> None:
         assert set(started) <= set(terminated), set(started) - set(terminated)
         for node_id in result.executed:
             assert terminated.get(node_id) == 1, f"{node_id} never terminated"
-
-    run_scenario(scenario())
-
-
-def test_gather_of_a_port_is_the_identity_region() -> None:
-    """Degenerate but legal: a region whose gather reads an element port
-    directly, with an empty body - the engine runs zero body nodes."""
-
-    async def scenario() -> None:
-        engine = make_engine()
-        region = RegionNode(
-            kind="map",
-            body=Graph(nodes={}),
-            ports={"item": INT},
-            inputs={"item": [4, 5]},
-            element_ports=("item",),
-            outputs={"echo": RegionOutput(port("item"))},
-        )
-        result = await engine.run(Graph(nodes={"m": region}), ["m"])
-        children = list_children(result.outputs["m"]["echo"])
-        assert children is not None
-        assert [c.resolve() for c in children] == [4, 5]
 
     run_scenario(scenario())

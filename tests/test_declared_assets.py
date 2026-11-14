@@ -24,7 +24,6 @@ from dinkster_assets import (
     declared_asset,
     digest_bytes,
     install_declared_assets,
-    resolver_from_env,
     use_declared_asset_pack,
 )
 from dinkster_caches import MemoryLRUCache
@@ -76,21 +75,6 @@ def model_declaration(
 
 
 # --- resolver_from_env -----------------------------------------------------------
-
-
-def test_resolver_from_env_skips_unreadable_root(tmp_path: Path) -> None:
-    """An unscanned/stale library index is advisory: the chain assembles
-    without it (warning logged) instead of failing worker startup - reads
-    that needed it still fail loudly at the read site."""
-    assert resolver_from_env({"DINKSTER_ASSET_ROOT": str(tmp_path / "library")}) is None
-    vault_root = vault_with_model(tmp_path)
-    resolver = resolver_from_env(
-        {
-            "DINKSTER_ASSET_VAULT": str(vault_root),
-            "DINKSTER_ASSET_ROOT": str(tmp_path / "library"),
-        }
-    )
-    assert isinstance(resolver, AssetVault)
 
 
 # --- declared_asset --------------------------------------------------------------

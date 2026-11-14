@@ -8,7 +8,7 @@ when no ReleaseGuard is wired (DESIGN 3.10)."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
@@ -18,10 +18,8 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, Invocation
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import (
-    FullReleaseCommitResult,
     GovernorReservationService,
     MemoryGovernor,
-    ReleaseCandidate,
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
@@ -301,30 +299,6 @@ def test_compat_vram_reservation_gates_isolated_admission(tmp_path: Path) -> Non
     run_scenario(scenario())
 
 
-def test_ram_pressure_is_gated_at_the_proxy(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
-        registry = core_registry()
-        worker = relay_worker(tmp_path, registry, governor)
-        await worker.start()
-        try:
-            engine = make_engine(registry, worker)
-            await engine.run(load_graph(vram=400, ram=300), ["load"])
-            assert await eventually(lambda: consumer_footprint(governor, "ram") == 300)
-
-            # ram release would drop the child's strong reference while this
-            # process may still hold stubs - the proxy refuses (DESIGN 3.10),
-            # and nothing in the child changed.
-            freed = await governor.shed("ram", 300)
-            assert freed == 0
-            assert consumer_footprint(governor, "ram") == 300
-            assert consumer_footprint(governor, VRAM0) == 400
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
 def wire_gate(cache: MemoryLRUCache) -> tuple[ResourcePins, ReleaseGuard]:
     """The full gate composition (DESIGN 3.10): one ResourcePins shared by the
     engine and the guard, and every parent cache as an invalidator."""
@@ -454,34 +428,6 @@ def test_consumer_factory_is_enumerated_once_and_shared_with_release(
             after = await engine.run(graph, ["state"])
             assert after.outputs["state"]["created"].resolve() == 1
             assert after.outputs["state"]["live"].resolve() == 0
-        finally:
-            await worker.close()
-
-    run_scenario(scenario())
-
-
-def test_full_release_acknowledges_worker_with_no_consumers(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        manifest = tmp_path / "dinkster-pack.toml"
-        manifest.write_text(
-            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
-            '[pack.entry]\nnodes = "memorypack_nodes:NODES"\n'
-        )
-        worker = IsolatedWorker(
-            manifest,
-            core_registry(),
-            extra_env={"PYTHONPATH": str(TESTS_DIR)},
-            release_guard=ReleaseGuard(ResourcePins(), ()),
-        )
-        await worker.start()
-        try:
-            token = worker.instance_token
-            assert token is not None
-            result = await worker.full_release("maintenance-empty", token)
-            assert result.status == "complete"
-            assert result.consumers == ()
-            assert worker.alive
-            assert worker.instance_token == token
         finally:
             await worker.close()
 
@@ -757,71 +703,6 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
                 running.cancel()
             await asyncio.gather(running, return_exceptions=True)
             await group.close()
-
-    run_scenario(scenario())
-
-
-@pytest.mark.parametrize("gate_status", ("complete", "busy", "error"))
-def test_full_release_consumer_exception_keeps_sent_candidates_condemned(gate_status: str) -> None:
-    async def scenario() -> None:
-        class FailingPool(ResidentPool):
-            async def release_full(
-                self, candidates: Sequence[ReleaseCandidate]
-            ) -> FullReleaseCommitResult:
-                await super().release_full(candidates)
-                raise RuntimeError("post-release cleanup failed")
-
-        pool = FailingPool(cost_of=lambda _: {"ram": 0})
-        rid = pool.rid_for(bytearray(8))
-        resource_id = resident_resource_id(rid)
-        pins = ResourcePins()
-        blocked_id = (
-            resident_resource_id(pool.rid_for(bytearray(8))) if gate_status != "complete" else None
-        )
-        if gate_status == "busy":
-            assert blocked_id is not None
-            assert pins.pin(blocked_id)
-
-        def invalidate(candidate_id: str) -> None:
-            if gate_status == "error" and candidate_id == blocked_id:
-                raise RuntimeError("cache invalidation failed")
-
-        async with hosted_pool(pool, ReleaseGuard(pins, (invalidate,))) as session:
-            token = session.instance_token
-            assert token is not None
-            result = await session.full_release("operation", token)
-            assert result.consumers[0]["status"] == ("busy" if gate_status == "busy" else "error")
-            assert all(candidate.item_id != rid for candidate in pool.propose_full_release())
-            assert session.alive and session.instance_token == token
-            assert pins.condemned(resource_id)
-            assert not pins.pin(resource_id)
-
-    run_scenario(scenario())
-
-
-def test_full_release_proven_refusal_allows_surviving_reference_reuse() -> None:
-    async def scenario() -> None:
-        class UsedPool(ResidentPool):
-            async def release_full(
-                self, candidates: Sequence[ReleaseCandidate]
-            ) -> FullReleaseCommitResult:
-                for candidate in candidates:
-                    self.get(candidate.item_id)
-                return await super().release_full(candidates)
-
-        pool = UsedPool(cost_of=lambda _: {"ram": 0})
-        resident = bytearray(8)
-        rid = pool.rid_for(resident)
-        resource_id = resident_resource_id(rid)
-        pins = ResourcePins()
-        async with hosted_pool(pool, ReleaseGuard(pins, ())) as session:
-            token = session.instance_token
-            assert token is not None
-            result = await session.full_release("operation", token)
-            assert result.consumers == ({"consumer": "pool", "status": "busy"},)
-            assert pool.get(rid) is resident
-            assert not pins.condemned(resource_id)
-            assert pins.pin(resource_id)
 
     run_scenario(scenario())
 

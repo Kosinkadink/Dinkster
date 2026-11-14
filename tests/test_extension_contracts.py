@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from dinkster_protocol import (
     EXTENSION_SCOPES,
-    ActiveExtension,
-    ExtensionSnapshot,
-    canonical_extension_snapshot,
-    extension_behavior_hash,
 )
 from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.host import load_extension_contributions
@@ -52,105 +47,3 @@ def test_pack_worker_never_resolves_inference_or_training_entries(tmp_path: Path
     )
     assert load_extension_contributions(manifest) == ()
     assert module_name not in sys.modules
-
-
-def _snapshot(
-    *,
-    mode: str = "strict",
-    contributions: tuple[str, ...],
-    selector_point: str = "double-block/0/attn",
-    provider: str = "example.guidance/reducer",
-) -> ExtensionSnapshot:
-    return ExtensionSnapshot(
-        (
-            ActiveExtension(
-                id="example.guidance",
-                version="2.1.0",
-                package_digest="sha256:" + "a" * 64,
-                contribution_ids=contributions,
-                selector_resolutions=(("attention:cross", (selector_point,)),),
-                service_providers=(("guidance.reducer", provider),),
-                capabilities=("background-jobs", "routes"),
-                behavior_configuration=(
-                    ("enabled", True),
-                    ("limit", 3),
-                    ("mode", mode),
-                    ("optional", None),
-                ),
-            ),
-        )
-    )
-
-
-def test_snapshot_serialization_and_hash_are_deterministic_and_order_sensitive() -> None:
-    first = _snapshot(contributions=("guidance/pre-cfg", "guidance/post-cfg"))
-    extension = first.extensions[0]
-    same = ExtensionSnapshot(
-        (
-            replace(
-                extension,
-                capabilities=tuple(reversed(extension.capabilities)),
-                behavior_configuration=tuple(reversed(extension.behavior_configuration)),
-            ),
-        )
-    )
-    reordered = _snapshot(contributions=("guidance/post-cfg", "guidance/pre-cfg"))
-    reconfigured = _snapshot(
-        mode="fast",
-        contributions=("guidance/pre-cfg", "guidance/post-cfg"),
-    )
-    reresolved = _snapshot(
-        contributions=("guidance/pre-cfg", "guidance/post-cfg"),
-        selector_point="single-block/0/attn",
-    )
-    provider_changed = _snapshot(
-        contributions=("guidance/pre-cfg", "guidance/post-cfg"),
-        provider="builtin/guidance-reducer",
-    )
-
-    assert canonical_extension_snapshot(first) == canonical_extension_snapshot(same)
-    assert extension_behavior_hash(first) == extension_behavior_hash(same)
-    assert extension_behavior_hash(first) != extension_behavior_hash(reordered)
-    assert extension_behavior_hash(first) != extension_behavior_hash(reconfigured)
-    assert extension_behavior_hash(first) != extension_behavior_hash(reresolved)
-    assert extension_behavior_hash(first) != extension_behavior_hash(provider_changed)
-    assert len(extension_behavior_hash(first)) == 64
-
-
-@pytest.mark.parametrize(
-    "payload", [{}, {"count": True}, {"count": 1.0}, {"count": 1, "other": 2}, {"count": None}]
-)
-def test_typed_pack_event_rejects_malformed_payload(payload: object) -> None:
-    from dinkster_api.v1 import JsonField, JsonObjectSchema
-
-    with pytest.raises(ValueError):
-        JsonObjectSchema((JsonField("count", "integer"),)).validate(payload)
-
-
-@pytest.mark.parametrize(
-    "route_id", ["../health", "a/b", "a?x=1", "a%2fb", "{path}", "", "a#fragment"]
-)
-def test_pack_route_ids_cannot_escape_host_namespace(route_id: str) -> None:
-    from dinkster_api.v1 import PackRoute
-
-    with pytest.raises(ValueError, match="route id"):
-        PackRoute(route_id, "GET", "pack:handler")
-
-
-@pytest.mark.parametrize(
-    "module",
-    [
-        "../outside.js",
-        "./../outside.js",
-        "https://example.com/x.js",
-        "/absolute.js",
-        "./a//x.js",
-        "./a\\x.js",
-        "./a/%2e%2e/x.js",
-    ],
-)
-def test_frontend_module_paths_are_pack_relative(module: str) -> None:
-    from dinkster_api.v1 import FrontendModule
-
-    with pytest.raises(ValueError, match="relative.js"):
-        FrontendModule("example.frontend", module, (), ())

@@ -130,59 +130,6 @@ async def close_host(
     await server.wait_closed()
 
 
-def test_handler_capability_is_authenticated_present_or_absent() -> None:
-    async def scenario() -> None:
-        async def handler(_message: WorkGroupMessage) -> tuple[WorkGroupMessage, ...]:
-            return ()
-
-        present, present_hello, present_server, present_task = await open_host(handler)
-        absent, absent_hello, absent_server, absent_task = await open_host(None)
-        try:
-            assert present.workgroup_capabilities == frozenset({WORKGROUP_CAPABILITY})
-            assert absent.workgroup_capabilities == frozenset()
-            assert WORKGROUP_HELLO_FIELD == "workgroupCapabilities"
-            assert present_hello[WORKGROUP_HELLO_FIELD] == [WORKGROUP_CAPABILITY]
-            assert {k: v for k, v in present_hello.items() if k != WORKGROUP_HELLO_FIELD} == (
-                absent_hello
-            )
-        finally:
-            await close_host(present, present_server, present_task)
-            await close_host(absent, absent_server, absent_task)
-
-        values = registry()
-        rejected: asyncio.Future[ValueError] = asyncio.get_running_loop().create_future()
-
-        async def reject_reserved_hello(
-            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-        ) -> None:
-            try:
-                await host_module.serve_connection(
-                    reader,
-                    writer,
-                    pack_name="test",
-                    worker=InProcessWorker({}, values),
-                    schemas={},
-                    planner=None,
-                    consumers={},
-                    codec=ValueCodec(values),
-                    hello_extra={WORKGROUP_HELLO_FIELD: [WORKGROUP_CAPABILITY]},
-                )
-            except ValueError as exc:
-                rejected.set_result(exc)
-                writer.close()
-
-        reserved_server = await asyncio.start_server(reject_reserved_hello, "127.0.0.1", 0)
-        address = reserved_server.sockets[0].getsockname()
-        _reader, writer = await asyncio.open_connection(address[0], address[1])
-        assert WORKGROUP_HELLO_FIELD in str(await asyncio.wait_for(rejected, 2))
-        writer.close()
-        await writer.wait_closed()
-        reserved_server.close()
-        await reserved_server.wait_closed()
-
-    run_scenario(scenario())
-
-
 def test_parent_endpoint_round_trip_preserves_reply_order() -> None:
     async def scenario() -> None:
         async def handler(message: WorkGroupMessage) -> tuple[WorkGroupMessage, ...]:

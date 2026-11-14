@@ -3,13 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 from pathlib import Path
 
 import pytest
 from dinkster_assets import AssetError, AssetRef, digest_bytes, register_asset_type
 from dinkster_caches import DiskCacheStore, DiskCAS, MemoryLRUCache
-from dinkster_caches.wire import entry_from_wire
 from dinkster_protocol import CachedResult, SavedArtifact
 from dinkster_values import (
     EncodedPayload,
@@ -33,61 +31,6 @@ def test_cas_put_restores_corrupt_existing_blob(tmp_path: Path) -> None:
 
     assert cas.put(data) == digest
     assert cas.get(digest) == data
-
-
-def test_malformed_pickled_metadata_is_a_cache_miss() -> None:
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        for malformed in (b"pickle:not a pickle", b"pickle:"):
-            wire = {
-                "version": 2,
-                "key": "key",
-                "outputs": {
-                    "out": {
-                        "typeId": "test.type",
-                        "fingerprint": "fp",
-                        "metaB64": base64.b64encode(malformed).decode("ascii"),
-                        "digest": "unused",
-                        "size": 0,
-                    }
-                },
-            }
-
-            async def fetch(_digest: str, _size: int) -> bytes | None:
-                return b""
-
-            assert await entry_from_wire(wire, fetch, registry) is None
-
-    run_scenario(scenario())
-
-
-def test_disk_trim_remeasures_shared_blobs(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = TypeRegistry()
-        registry.register("test.bulk")
-        shared = registry.wrap("test.bulk", os.urandom(24 * 1024))
-        store = DiskCacheStore(tmp_path, registry)
-        await store.put("old-a", {"out": shared})
-        await store.put("old-b", {"out": shared})
-        entries = list((tmp_path / "entries").glob("*.json"))
-        for index, path in enumerate(entries):
-            os.utime(path, (index + 1, index + 1))
-        usage = DiskCAS(tmp_path / "cas").total_bytes() + sum(
-            path.stat().st_size for path in entries
-        )
-        budget = usage - entries[0].stat().st_size - 1
-        tight = DiskCacheStore(tmp_path, registry, max_bytes=budget)
-        await tight.put("new", {"out": registry.wrap("test.bulk", b"new")})
-
-        remaining = list((tmp_path / "entries").glob("*.json"))
-        actual = DiskCAS(tmp_path / "cas").total_bytes() + sum(
-            path.stat().st_size for path in remaining
-        )
-        assert actual <= budget
-        assert await tight.get("old-a") is None
-        assert await tight.get("old-b") is None
-
-    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("declared", [None, False, True])

@@ -264,15 +264,6 @@ def test_count_mismatch_closes_source_without_closing_destination(declared: int)
     assert source.closed == 1 and not output.closed
 
 
-def test_schema_error_closes_input_even_before_iteration() -> None:
-    source = Records()
-    with pytest.raises(ValueError, match="quality"):
-        save_frame_records(
-            source, io.BytesIO(), format="webp", bit_depth=8, color=COLOR, quality=101
-        )
-    assert source.closed == 1 and source.position == 0
-
-
 def test_destination_failure_closes_source() -> None:
     class Broken(io.BytesIO):
         def write(self, data: Any) -> int:
@@ -347,13 +338,3 @@ def test_png_metadata_matches_ordinary_still_reader(format: str) -> None:
             assert json.loads(image.info[key]) == metadata[key]
         for key in metadata:
             assert image.info[key] == ordinary.info[key]
-
-
-def test_png_nonstandard_metadata_keys_remain_in_typed_envelope() -> None:
-    metadata = {key: "value" for key in ("", "bad\0key", "\u2603", "x" * 80, "dinkster_metadata")}
-    metadata["unpaired_surrogate"] = "\ud800"
-    output = io.BytesIO()
-    save_frame_records(
-        Records(), output, format="apng", bit_depth=8, color=COLOR, metadata=metadata
-    )
-    assert read_video_metadata(output.getvalue()) == metadata

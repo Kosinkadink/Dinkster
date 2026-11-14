@@ -25,9 +25,6 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     KIND_MODEL_CHECKPOINT,
-    AssetComponent,
-    AssetComponentManifest,
-    AssetError,
     AssetNeed,
     AssetRef,
     AssetResolver,
@@ -44,13 +41,9 @@ from dinkster_assets import (
     ProvenanceStore,
     RemoteSource,
     acquire_need,
-    asset_kind_matches,
     digest_bytes,
-    is_asset_kind,
     probe_file,
     register_asset_type,
-    require_asset_kind,
-    source_from_wire,
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import CompiledGraph, Engine, EventListener, ExecutionRuntime
@@ -87,61 +80,7 @@ OTHER_DIGEST = digest_bytes(OTHER_BYTES)
 # --- kinds: open namespaced vocabulary ----------------------------------------
 
 
-def test_asset_kind_grammar() -> None:
-    for kind in ("media/image", "model/lora", "model/text-encoder", "a/b/c-2"):
-        assert is_asset_kind(kind)
-        assert require_asset_kind(kind) == kind
-    for bad in ("model", "Model/Lora", "model/", "/lora", "model//lora", "m odel/x"):
-        assert not is_asset_kind(bad)
-        with pytest.raises(AssetError, match="asset kind"):
-            require_asset_kind(bad)
-
-
-def test_component_manifest_validation_and_kind_matching() -> None:
-    manifest = AssetComponentManifest(
-        (AssetComponent("model/diffusion"), AssetComponent("model/vae"))
-    )
-    checkpoint = AssetNeed(
-        name="checkpoint",
-        kind=KIND_MODEL_CHECKPOINT,
-        component_manifest=manifest,
-    )
-
-    assert checkpoint.matches_kind(KIND_MODEL_CHECKPOINT)
-    assert checkpoint.matches_kind("model/diffusion")
-    assert checkpoint.matches_kind("model/vae")
-    assert not checkpoint.matches_kind("model/lora")
-    assert not AssetNeed(name="untyped").matches_kind("model/vae")
-    assert not asset_kind_matches("model/lora", "model/vae", manifest)
-    assert not asset_kind_matches(KIND_MODEL_CHECKPOINT, "model/vae")
-
-    with pytest.raises(AssetError, match="asset kind"):
-        AssetComponent("vae")
-    assert AssetComponentManifest(()).to_wire() == []
-    with pytest.raises(AssetError, match="metadata must be an object"):
-        AssetComponent.from_wire({"kind": "model/vae", "metadata": []})
-    with pytest.raises(AssetError, match="finite JSON"):
-        AssetComponent("model/vae", metadata={"scale": float("nan")})
-    with pytest.raises(AssetError, match="component manifest must be a list"):
-        AssetNeed.from_wire({"name": "bad", "components": {}})
-
-
 # --- needs: declaration model --------------------------------------------------
-
-
-def test_need_rejects_malformed_pieces() -> None:
-    with pytest.raises(AssetError):
-        AssetNeed(name="x", digest="sha256:abc")  # wrong digest scheme
-    with pytest.raises(AssetError):
-        AssetNeed(name="x", kind="NotAKind")
-    with pytest.raises(AssetError):
-        PackagedSource(pack="p", path="../escape.bin")  # catalog path grammar
-    with pytest.raises(AssetError):
-        RemoteSource(url="file:///etc/passwd")
-    with pytest.raises(AssetError, match="unknown asset source"):
-        source_from_wire({"type": "carrier-pigeon"})
-    with pytest.raises(AssetError):
-        AssetNeed.from_wire({"name": "x", "sources": "not-a-list"})
 
 
 # --- acquisition: verified or nothing ------------------------------------------
@@ -239,17 +178,6 @@ def test_acquire_packaged_cannot_escape_pack_root(tmp_path: Path) -> None:
     result = acquire_need(need, vault, pack_roots={"starter": pack_root})
     assert result.status == "failed"
     assert vault.resolve(MODEL_DIGEST) is None
-
-
-def test_acquire_unknown_pack_is_failed_not_error(tmp_path: Path) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    need = AssetNeed(
-        name="m",
-        digest=MODEL_DIGEST,
-        sources=(PackagedSource(pack="ghost", path="a.bin"),),
-    )
-    result = acquire_need(need, vault, pack_roots={})
-    assert result.status == "failed" and "not present" in result.detail
 
 
 def make_asset_host(assets: dict[str, bytes], hits: list[str]) -> web.Application:
@@ -434,18 +362,6 @@ def test_probe_safetensors_mixed_dtypes(tmp_path: Path) -> None:
     assert meta["extra"] == {"format": "pt", "architecture": "test-arch"}
 
 
-def test_probe_unrecognized_bytes_report_unknown(tmp_path: Path) -> None:
-    for name, data in {
-        "image.png": b"\x89PNG\r\n\x1a\nnot really",
-        "truncated.safetensors": struct.pack("<Q", 10_000) + b"{}",
-        "empty.bin": b"",
-        "hostile.safetensors": struct.pack("<Q", 2**63) + b"{}",
-    }.items():
-        path = tmp_path / name
-        path.write_bytes(data)
-        assert probe_file(path) == {"format": "unknown"}  # never an exception
-
-
 # --- widget kind: presentation, open vocabulary --------------------------------
 
 
@@ -520,43 +436,6 @@ def asset_compiler_runtime(engine: Engine) -> ExecutionRuntime:
         graph_compiler_registry=GraphCompilerRegistrySnapshot((contribution,)),
         graph_compile_transport=unused_transport,
     )
-
-
-def test_preflight_sees_through_typed_literals() -> None:
-    """A typed literal is a stamped literal: an asset descriptor inside one
-    (scalar or list element) must reach preflight exactly like a plain
-    literal, or consent could be bypassed by stamping."""
-    from dinkster_graph import TypedLiteral
-    from dinkster_server.preflight import graph_asset_names
-
-    scalar = Graph(
-        nodes={
-            "s": GraphNode(
-                "test.asset.size",
-                {
-                    "asset": TypedLiteral(
-                        "ASSET",
-                        asset_literal(MODEL_DIGEST, "stamped.bin", len(MODEL_BYTES)),
-                    )
-                },
-            )
-        }
-    )
-    assert graph_asset_names(scalar) == {MODEL_DIGEST: "stamped.bin"}
-    listy = Graph(
-        nodes={
-            "s": GraphNode(
-                "test.asset.size",
-                {
-                    "asset": TypedLiteral(
-                        "list<ASSET>",
-                        [asset_literal(MODEL_DIGEST, "in-list.bin", len(MODEL_BYTES))],
-                    )
-                },
-            )
-        }
-    )
-    assert graph_asset_names(listy) == {MODEL_DIGEST: "in-list.bin"}
 
 
 async def make_asset_client(

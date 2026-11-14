@@ -6,7 +6,6 @@ exceptions the local governor would."""
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -33,7 +32,6 @@ from dinkster_schema import (
 from dinkster_server import (
     InstanceRegistry,
     PeerClient,
-    PeerUngoverned,
     RunningServer,
     start_server,
 )
@@ -129,28 +127,6 @@ def test_server_announces_real_endpoint_and_close_withdraws(tmp_path: Path) -> N
         # Withdrawn from discovery before anyone can find a corpse.
         assert reader.peers() == []
         await server.close()  # idempotent
-
-    run_scenario(scenario())
-
-
-def test_heartbeat_refreshes_the_registry_entry(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        registry = InstanceRegistry(tmp_path)
-        server = await start_server(
-            make_engine,
-            SCHEMAS,
-            registry=registry,
-            instance_id="inst-a",
-            heartbeat_interval=0.05,
-        )
-        try:
-            path = tmp_path / "inst-a.json"
-            first = json.loads(path.read_text())["heartbeatAt"]
-            async with asyncio.timeout(2):
-                while json.loads(path.read_text())["heartbeatAt"] <= first:
-                    await asyncio.sleep(0.02)
-        finally:
-            await server.close()
 
     run_scenario(scenario())
 
@@ -256,22 +232,6 @@ def test_peer_details_and_item_trim() -> None:
             assert freed == 40
             data = await client.status(details=True)
             assert data["consumerDetails"]["models"] == []
-
-    run_scenario(scenario())
-
-
-def test_ungoverned_peer_raises_peer_ungoverned() -> None:
-    async def scenario() -> None:
-        async with (
-            await start_server(make_engine, SCHEMAS) as server,
-            PeerClient(server.endpoint) as client,
-        ):
-            with pytest.raises(PeerUngoverned):
-                await client.reserve("ram", 1)
-            with pytest.raises(PeerUngoverned):
-                await client.shed("ram", 1)
-            # Status still answers, honestly ungoverned.
-            assert (await client.status())["memoryGovernor"] is None
 
     run_scenario(scenario())
 

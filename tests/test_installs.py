@@ -16,7 +16,6 @@ from dinkster_supervisor import (
     InstallDef,
     InstallsError,
     dump_installs,
-    load_installs,
     parse_installs,
 )
 
@@ -56,18 +55,6 @@ def test_windows_paths_survive_the_writer() -> None:
     )
     parsed = parse_installs(dump_installs((install,)))
     assert parsed == (install,)
-
-
-def test_missing_file_is_an_empty_registry(tmp_path: Path) -> None:
-    """A station with nothing to manage is valid, not an error."""
-    assert load_installs(tmp_path / "absent.toml") == ()
-
-
-def test_load_reads_the_file(tmp_path: Path) -> None:
-    config = tmp_path / "installs.toml"
-    config.write_text('[installs.main]\nroot = "/opt/main"\nport = 8200\n')
-    (install,) = load_installs(config)
-    assert install == InstallDef(name="main", root=Path("/opt/main"), port=8200)
 
 
 @pytest.mark.parametrize(

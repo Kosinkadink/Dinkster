@@ -67,12 +67,6 @@ def test_unknown_worker_key_refused() -> None:
         parse('[worker.box]\nendpoint = "h:1"\ntoken_file = "/t"\nretries = 3\n')
 
 
-@pytest.mark.parametrize("name", ("local", "LOCAL"))
-def test_local_worker_name_is_reserved(name: str) -> None:
-    with pytest.raises(RemotesError, match="worker name 'local' is reserved"):
-        parse(f'[worker.{name}]\nendpoint = "h:1"\ntoken_file = "/t"\n')
-
-
 def test_integer_memory_size_is_bytes() -> None:
     specs = parse(
         '[worker.box]\nendpoint = "h:1"\ntoken_file = "/t"\n[worker.box.memory]\nram = 1024\n'

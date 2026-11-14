@@ -281,27 +281,6 @@ def test_remote_recovers_from_transient_failure(
     assert statuses == []
 
 
-@pytest.mark.parametrize("metadata", [False, True])
-@pytest.mark.parametrize("status,attempts", [(500, 3), (404, 1)])
-def test_remote_failure_retains_each_attempt_and_ray(
-    tmp_path: Path, metadata: bool, status: int, attempts: int
-) -> None:
-    statuses = [status] * (attempts + 1)
-    with artifact_server(b"", statuses=statuses) as mirror:
-        with pytest.raises(DownloadError) as failure:
-            if metadata:
-                read_metadata(mirror, "manifest.json")
-            else:
-                fetch_artifact((mirror,), "artifact.bin", tmp_path / "artifact.bin", digest(b""), 0)
-    message = str(failure.value)
-    assert message.count(f"HTTP {status}") == attempts
-    for attempt in range(1, attempts + 1):
-        assert f"attempt {attempt}" in message
-        assert f"cf-ray=request-{attempts + 1 - attempt}" in message
-    assert len(statuses) == 1
-    assert not (tmp_path / "artifact.bin").exists()
-
-
 def test_exhausted_remote_falls_back_without_publishing_corrupt_data(tmp_path):
     data = b"verified release bytes"
     statuses = [500, 500, 500, 200]

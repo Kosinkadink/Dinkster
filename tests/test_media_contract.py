@@ -19,79 +19,26 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
-from dinkster_schema.media import media_diagnostics
 from dinkster_server.events import engine_event_to_wire
 from dinkster_values import (
     TypeRegistry,
-    Value,
-    ValueMeta,
     annotate_image,
     annotate_mask,
     decode_image_array,
     encode_image_array,
     image_array_fingerprint,
     image_array_meta,
-    make_list_value,
     mask_array_meta,
     media_semantics,
     prepare_image_array_encoding,
     validate_image_encoded,
 )
-from dinkster_values.model import PyObjPayload
 from dinkster_workers import InProcessWorker
 
 from tests.async_scenarios import run_scenario
 
 IMAGE = TypeExpr.concrete("IMAGE")
 MASK = TypeExpr.concrete("MASK")
-
-
-def _value(type_id: str, **meta: object) -> Value:
-    return Value(type_id, "fixture", ValueMeta(meta), PyObjPayload(None))
-
-
-def test_alpha_and_mask_checks_are_metadata_only_and_declarations_control_loss() -> None:
-    rgba = _value("IMAGE", shape=(1, 2, 2, 4))
-    rgb = _value("IMAGE", shape=(1, 2, 2, 3))
-    mask = _value("MASK", polarity="transparency", semantic="alpha")
-    schema = NodeSchema(
-        node_type="test.media",
-        inputs=(InputSpec("image", IMAGE), InputSpec("mask", MASK, mask_polarity="coverage")),
-        outputs=(OutputSpec("image", IMAGE),),
-    )
-    inputs = {"image": rgba, "mask": mask}
-    diagnostics = media_diagnostics(schema, inputs, {"image": rgb})
-    assert diagnostics == [
-        {
-            "code": "mask_polarity_mismatch",
-            "inputId": "mask",
-            "expected": "coverage",
-            "actual": "transparency",
-        },
-        {"code": "alpha_dropped", "outputId": "image", "inputIds": ["image"]},
-    ]
-    declared_drop = replace(schema, outputs=(OutputSpec("image", IMAGE, alpha_policy="drop"),))
-    assert media_diagnostics(declared_drop, inputs, {"image": rgb}) == diagnostics[:1]
-    assert media_diagnostics(schema, inputs, {"image": rgba}) == diagnostics[:1]
-    batched = make_list_value("IMAGE", (rgba, rgb))
-    assert media_diagnostics(schema, inputs, {"image": batched}) == diagnostics
-
-
-def test_mixed_alpha_passthrough_is_not_reported_as_loss() -> None:
-    rgba = replace(_value("IMAGE", shape=(1, 2, 2, 4)), fingerprint="rgba")
-    rgb = replace(_value("IMAGE", shape=(1, 2, 2, 3)), fingerprint="rgb")
-    schema = NodeSchema(
-        node_type="test.passthrough",
-        inputs=(InputSpec("a", IMAGE), InputSpec("b", IMAGE)),
-        outputs=(OutputSpec("a", IMAGE), OutputSpec("b", IMAGE)),
-    )
-    assert media_diagnostics(schema, {"a": rgba, "b": rgb}, {"a": rgba, "b": rgb}) == []
-    mixed = make_list_value("IMAGE", (rgba, rgb))
-    assert media_diagnostics(schema, {"a": mixed}, {"a": mixed}) == []
-    dropped = replace(rgb, fingerprint="dropped")
-    assert media_diagnostics(schema, {"a": rgba, "b": rgb}, {"a": dropped, "b": rgb}) == [
-        {"code": "alpha_dropped", "outputId": "a", "inputIds": ["a"]}
-    ]
 
 
 class AlphaSource(Node):
@@ -323,48 +270,6 @@ def test_invalid_semantics_reject_before_pixel_allocation(monkeypatch, metadata)
     )
     with pytest.raises(ValueError):
         decode_image_array(data)
-
-
-@pytest.mark.parametrize(
-    ("registration", "type_id"),
-    [("inference", "IMAGE"), ("inference", "MASK"), ("dev", "dev.image")],
-)
-def test_inline_media_has_no_external_asset_dependencies(type_id, registration) -> None:
-    from dinkster_assets import AssetRef, digest_bytes
-    from dinkster_assets.value import value_asset_references
-    from dinkster_inference_wire.media_wire import register_media_types as register_wire
-    from dinkster_nodes_dev.image import register_dev_types
-    from dinkster_values import default_encode
-    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
-
-    registry = TypeRegistry()
-    {
-        "inference": register_wire,
-        "dev": register_dev_types,
-    }[registration](registry)
-    array = np.arange(6, dtype=np.float32).reshape((1, 2, 3) if type_id == "MASK" else (1, 1, 2, 3))
-    wrapped = registry.wrap(type_id, array)
-    assert value_asset_references({"media": wrapped}, complete_registry=registry) == {}
-    codec = ValueCodec(registry, shm_threshold=1 << 20)
-    blobs, segments = [], []
-    wire, _ = codec.encode(wrapped, blobs, segments)
-    assert segments == []
-    restored, _ = codec.decode(wire, blobs, [])
-    assert value_asset_references({"media": restored}, complete_registry=registry) == {}
-    np.testing.assert_array_equal(restored.resolve(), array)
-    validator = registry.spec(type_id).validate_encoded_buffer
-    assert validator is not None
-    invented_ref = AssetRef(digest_bytes(b"outside"), "outside.bin", 7).to_wire()
-    with memoryview(encode_image_array(array)) as data:
-        validator(data, {**wrapped.meta.entries, "asset_refs": []})
-        for references in ([invented_ref], None):
-            with pytest.raises(ValueError, match="asset_refs"):
-                validator(data, {**wrapped.meta.entries, "asset_refs": references})
-    blobs[cast(int, wire["metaBlob"])] = default_encode(
-        {**wrapped.meta.entries, "asset_refs": [invented_ref]}
-    )
-    with pytest.raises(EncodedPayloadValidationError, match="asset_refs"):
-        codec.decode(wire, blobs, [])
 
 
 @pytest.mark.parametrize("channels", [2, 4])

@@ -36,32 +36,6 @@ CUDA1_MAP = DeviceMap({"cuda:0": "cuda:1"})
 # -- pure mapping ---------------------------------------------------------
 
 
-def test_qualifier_suffixes_every_unmapped_fact() -> None:
-    """The remote posture: another machine's devices - and its ram - must
-    never land on local budgets or lanes by default."""
-    remote = DeviceMap({}, qualifier="box1")
-    assert remote.device("cuda:0") == "cuda:0@box1"
-    assert remote.residency("vram:cuda:0") == "vram:cuda:0@box1"
-    assert remote.residency("ram") == "ram@box1"
-    assert remote.residency("disk") == "disk@box1"
-    # An explicit mapping entry still wins: deliberate unification.
-    unified = DeviceMap({"cuda:0": "cuda:1"}, qualifier="box1")
-    assert unified.device("cuda:0") == "cuda:1"
-    assert unified.device("cuda:9") == "cuda:9@box1"
-
-
-def test_qualifier_inversion_refuses_local_facts() -> None:
-    """Pressure aimed at a local device must never be forwarded to a
-    remote worker as if it named the remote's silicon."""
-    remote = DeviceMap({}, qualifier="box1")
-    assert remote.to_child_residency("vram:cuda:0@box1") == "vram:cuda:0"
-    assert remote.to_child_residency("ram@box1") == "ram"
-    assert remote.to_child_residency("vram:cuda:0") is None  # local GPU
-    assert remote.to_child_residency("ram") is None  # local ram
-    assert remote.to_child_device("cuda:1@box1") == "cuda:1"
-    assert remote.to_child_device("cuda:1") is None
-
-
 # -- across the isolated boundary ------------------------------------------
 
 

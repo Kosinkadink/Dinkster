@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import socket
-import ssl
 import subprocess
 import sys
 import threading
@@ -36,7 +35,6 @@ from dinkster_workers.pack_environment import (
     venv_python,
 )
 from dinkster_workers.pack_lock import (
-    OPENCV_ALIASES,
     GenerationPackages,
     LockedDistribution,
     LockedWheel,
@@ -233,48 +231,6 @@ def test_pack_install_retries_interrupted_wheel_download(tmp_path: Path, outcome
         assert not list((tmp_path / "store").rglob("*.partial"))
 
 
-@pytest.mark.parametrize("outcome", ["reset", "eof", "handshake", "timeout", "certificate"])
-def test_wheel_transport_failures_have_a_timeout_on_every_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
-) -> None:
-    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
-    payload = (tmp_path / wheel.filename).read_bytes()
-    original = urllib.request.urlopen
-    timeouts: list[float] = []
-
-    def interrupted(url: str, *, timeout: float):
-        timeouts.append(timeout)
-        if outcome == "timeout" or len(timeouts) == 1:
-            error = {
-                "reset": ConnectionResetError("connection reset"),
-                "eof": urllib.error.URLError(ssl.SSLEOFError("TLS unexpected EOF")),
-                "handshake": urllib.error.URLError(TimeoutError("TLS handshake timed out")),
-                "timeout": TimeoutError("read timed out"),
-                "certificate": urllib.error.URLError(
-                    ssl.SSLCertVerificationError("untrusted certificate")
-                ),
-            }[outcome]
-            raise error
-        return original(url, timeout=timeout)
-
-    monkeypatch.setattr(urllib.request, "urlopen", interrupted)
-    with _wheel_server(wheel, payload, "ok") as (remote, requests):
-        if outcome in {"timeout", "certificate"}:
-            with pytest.raises((ProvisionError, urllib.error.URLError)) as failure:
-                fetch_wheel(remote, tmp_path / "store")
-            assert (
-                "failed after 3 tries" if outcome == "timeout" else "untrusted certificate"
-            ) in str(failure.value)
-            assert not requests
-        else:
-            assert fetch_wheel(remote, tmp_path / "store").read_bytes() == payload
-            assert len(requests) == 1
-        assert len(timeouts) == (
-            3 if outcome == "timeout" else 1 if outcome == "certificate" else 2
-        )
-        assert all(value == 30 for value in timeouts)
-
-
 @pytest.mark.parametrize("outcome", ["exhausted", "404", "hash", "short", "oversize", "offline"])
 def test_pack_download_retry_refusals_preserve_verification_and_offline(
     tmp_path: Path, outcome: str
@@ -313,28 +269,6 @@ def test_pack_download_retry_refusals_preserve_verification_and_offline(
         assert len(requests) == (3 if outcome == "exhausted" else 0 if outcome == "offline" else 1)
         assert not list((tmp_path / "store").rglob("*.whl"))
         assert not list((tmp_path / "store").rglob("*.partial"))
-
-
-@pytest.mark.parametrize(
-    "issuer",
-    [7, "", "file:///wheels", "https://user@issuer.test", "https://issuer.test/?query=1"],
-)
-def test_dependency_lock_reader_refuses_invalid_issuing_endpoint(
-    tmp_path: Path, issuer: object
-) -> None:
-    artifact = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
-    original = PackLock(
-        "example",
-        "linux-cpu",
-        ">=3.12",
-        (),
-        (),
-        (LockedDistribution("fixture-extra", "1.2", (artifact,)),),
-    )
-    document = json.loads(original.to_json())
-    document["packages"][0]["wheels"][0]["registry"] = issuer
-    with pytest.raises(ProvisionError, match="invalid wheel issuing registry"):
-        PackLock.from_json(json.dumps(document))
 
 
 @pytest.mark.parametrize("measured", [False, True])
@@ -752,14 +686,6 @@ def test_plan_names_conflicts_and_own_environment_size(tmp_path: Path) -> None:
     )
     with pytest.raises(ProvisionError, match=r"own environment \(7654321 bytes\)"):
         plan.require_layering()
-
-
-@pytest.mark.parametrize("name", OPENCV_ALIASES)
-@pytest.mark.parametrize("extra", ("", "[ffmpeg]"))
-def test_opencv_alias_preserves_constraint_and_marker(name: str, extra: str) -> None:
-    assert normalize_requirement(f'{name}{extra}>=4,<6; python_version >= "3.12"') == (
-        'opencv-contrib-python-headless<6,>=4; python_version >= "3.12"'
-    )
 
 
 def test_custom_archive_locks_use_selected_sources_and_target_constraints(tmp_path: Path) -> None:

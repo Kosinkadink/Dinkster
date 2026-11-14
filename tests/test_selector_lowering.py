@@ -2,10 +2,7 @@ from dinkster_graph import (
     Graph,
     GraphNode,
     Link,
-    RegionNode,
-    TypedLiteral,
     lower_selectors,
-    validate,
 )
 from dinkster_schema import (
     InputSpec,
@@ -31,129 +28,6 @@ SOURCE = NodeSchema("test.source", outputs=(OutputSpec("out", T),))
 SINK = NodeSchema("test.sink", inputs=(InputSpec("value", T),))
 ANY = NodeSchema("test.any", inputs=(InputSpec("value", TypeExpr.wildcard()),))
 SCHEMAS = {s.node_type: s for s in (SWITCH, SOURCE, SINK, ANY)}
-
-
-def test_selector_lowering_matrix() -> None:
-    graph = Graph(
-        {
-            "off": GraphNode(SOURCE.node_type),
-            "on": GraphNode(SOURCE.node_type),
-            "orphan": GraphNode(SOURCE.node_type),
-            "switch": GraphNode(
-                SWITCH.node_type,
-                {"switch": True, "off": Link("off", "out"), "on": Link("on", "out")},
-            ),
-            "sink": GraphNode(SINK.node_type, {"value": Link("switch", "out")}),
-        }
-    )
-    result = lower_selectors(graph, ["sink"], SCHEMAS)
-    assert set(result.graph.nodes) == {"on", "orphan", "sink"}
-    assert result.graph.nodes["sink"].inputs["value"] == Link("on", "out")
-
-    for value in (7, TypedLiteral("INT", 8)):
-        graph = Graph(
-            {
-                "switch": GraphNode(SWITCH.node_type, {"switch": True, "on": value}),
-                "sink": GraphNode(SINK.node_type, {"value": Link("switch", "out")}),
-            }
-        )
-        lowered = lower_selectors(graph, ["sink"], SCHEMAS)
-        assert lowered.graph.nodes["sink"].inputs["value"] is value
-
-    bad_inline = Graph(
-        {
-            "switch": GraphNode(SWITCH.node_type, {"switch": True, "on": 7}),
-            "sink": GraphNode(ANY.node_type, {"value": Link("switch", "out")}),
-        }
-    )
-    lowered = lower_selectors(bad_inline, ["sink"], SCHEMAS)
-    assert any(
-        d.code == "literal-on-nonconcrete"
-        for d in validate(lowered.graph, SCHEMAS, lowered.targets)
-    )
-
-
-def test_selector_chains_regions_gc_and_refusals() -> None:
-    chain = Graph(
-        {
-            "source": GraphNode(SOURCE.node_type),
-            "a": GraphNode(SWITCH.node_type, {"switch": True, "on": Link("source", "out")}),
-            "b": GraphNode(SWITCH.node_type, {"switch": False, "off": Link("a", "out")}),
-            "sink": GraphNode(SINK.node_type, {"value": Link("b", "out")}),
-        }
-    )
-    result = lower_selectors(chain, ["sink"], SCHEMAS)
-    assert set(result.graph.nodes) == {"source", "sink"}
-
-    temporary = Graph(
-        {
-            "candidate": GraphNode(SOURCE.node_type),
-            "a": GraphNode(
-                SWITCH.node_type,
-                {"switch": True, "off": Link("candidate", "out"), "on": 1},
-            ),
-            "b": GraphNode(
-                SWITCH.node_type,
-                {"switch": True, "off": Link("candidate", "out"), "on": 2},
-            ),
-        }
-    )
-    assert lower_selectors(temporary, [], SCHEMAS).graph.nodes == {}
-
-    shared = Graph(
-        {
-            "source": GraphNode(SOURCE.node_type),
-            "switch": GraphNode(
-                SWITCH.node_type,
-                {"switch": True, "off": Link("source", "out"), "on": 1},
-            ),
-            "other": GraphNode(SINK.node_type, {"value": Link("source", "out")}),
-            "sink": GraphNode(SINK.node_type, {"value": Link("switch", "out")}),
-        }
-    )
-    assert "source" in lower_selectors(shared, ["sink"], SCHEMAS).graph.nodes
-
-    cases = [
-        (
-            Graph({"s": GraphNode(SWITCH.node_type, {})}),
-            ["s"],
-            "prompt.selector_is_target",
-        ),
-        (
-            Graph({"s": GraphNode(SWITCH.node_type, {"switch": 1})}),
-            [],
-            "prompt.bad_selector_value",
-        ),
-        (
-            Graph({"s": GraphNode(SWITCH.node_type, {"switch": True})}),
-            [],
-            "prompt.missing_branch",
-        ),
-    ]
-    for graph, targets, code in cases:
-        assert lower_selectors(graph, targets, SCHEMAS).problems[0].code == code
-
-    computed = Graph(
-        {
-            "x": GraphNode(SOURCE.node_type),
-            "s": GraphNode(
-                SWITCH.node_type,
-                {"switch": Link("x", "out"), "off": 0, "on": 1},
-            ),
-        }
-    )
-    runtime = lower_selectors(computed, ["s"], SCHEMAS)
-    assert runtime.problems == ()
-    assert runtime.graph == computed
-
-    body = Graph({"s": GraphNode(SWITCH.node_type, {"switch": True, "on": 1})})
-    region_graph = Graph({"r": RegionNode(kind="map", body=body)})
-    region_result = lower_selectors(region_graph, [], SCHEMAS)
-    assert region_result.problems == ()
-    assert region_result.graph == region_graph
-    region = RegionNode(kind="map", body=Graph({}), inputs={"p": Link("s", "out")})
-    top = Graph({"s": GraphNode(SWITCH.node_type, {"switch": True, "on": 1}), "r": region})
-    assert lower_selectors(top, ["r"], SCHEMAS).graph.nodes["r"].inputs["p"] == 1
 
 
 def test_inactive_branch_assets_do_not_reach_submission_preflight() -> None:

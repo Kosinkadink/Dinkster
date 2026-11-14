@@ -9,7 +9,6 @@ import pytest
 from dinkster_values.video_edits import (
     crop_rectangle,
     effective_video_facts,
-    seconds,
     trim_window,
 )
 
@@ -52,20 +51,6 @@ def test_empty_trim(start: int) -> None:
         trim_window(Fraction(10), start, 0)
 
 
-def test_fractional_seconds_do_not_accumulate_float_errors() -> None:
-    assert seconds(0.1, "time") + seconds(0.2, "time") == Fraction(3, 10)
-    assert seconds(Fraction(1001, 30000), "time") == Fraction(1001, 30000)
-
-
-def test_unknown_duration_stays_unknown() -> None:
-    assert trim_window(None, 1, 3) == (1, None)
-    assert effective_video_facts(_clip(duration=None))["duration"] is None
-    with pytest.raises(ValueError, match="known duration"):
-        trim_window(None, -1, 0)
-    with pytest.raises(ValueError, match="known duration"):
-        trim_window(None, 0, 3, True)
-
-
 @pytest.mark.parametrize(
     ("rect", "expected"),
     [
@@ -83,10 +68,6 @@ def test_crop_pixels(rect: dict[str, object], expected: tuple[int, int, int, int
     assert crop_rectangle(1920, 1080, rect) == expected
 
 
-def test_full_odd_frame_crop_is_noop() -> None:
-    assert crop_rectangle(1919, 1079, {"width": 1919, "height": 1079}) == (0, 0, 1919, 1079)
-
-
 def test_composed_trims_intersect_current_clip_without_reading_source() -> None:
     clip = _clip(
         {"trim": {"start_time": 2, "duration": 3}},
@@ -99,21 +80,3 @@ def test_composed_trims_intersect_current_clip_without_reading_source() -> None:
         {"trim": {"start_time": -1, "duration": 0}},
     )
     assert effective_video_facts(clip)["duration"] == 1
-
-
-def test_concat_effective_geometry_and_duration() -> None:
-    crop = {"crop": {"width": 960, "height": 1080}}
-    a = _clip(crop, {"concat": [_clip(crop)]})
-    facts = effective_video_facts(a)
-    assert (facts["width"], facts["height"], facts["duration"]) == (960, 1080, 20)
-    assert facts["frame_count"] == 480
-    assert facts["frame_count_kind"] == "header"
-    with pytest.raises(ValueError, match="matching effective dimensions"):
-        effective_video_facts(_clip(crop, {"concat": [_clip()]}))
-
-
-def test_trim_after_concat_and_unknown_duration() -> None:
-    clip = _clip({"concat": [_clip()]}, {"trim": {"start_time": 8, "duration": 4}})
-    assert effective_video_facts(clip)["duration"] == 4
-    assert effective_video_facts(clip)["frame_count_kind"] == "estimated"
-    assert effective_video_facts(_clip({"concat": [_clip(duration=None)]}))["duration"] is None

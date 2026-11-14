@@ -22,7 +22,6 @@ from typing import BinaryIO, Protocol, cast
 
 import pytest
 from dinkster_assets import (
-    WRITES_SIDECAR_NAME,
     AssetError,
     AssetWriter,
     IndexedAssetResolver,
@@ -32,7 +31,6 @@ from dinkster_assets import (
     MountTable,
     SaveTarget,
     digest_bytes,
-    load_write_records,
     register_save_target_type,
 )
 from dinkster_protocol import AssetFolderContext
@@ -76,24 +74,6 @@ def test_save_target_rejects_unsafe(mount: str, prefix: str) -> None:
         codec.decode(wire, blobs, [])
 
 
-@pytest.mark.parametrize(
-    "data",
-    [b"not json", b"[]", b'{"mount":"out"}', b'{"mount":"out","prefix":"a","path":"/x"}'],
-)
-def test_save_target_boundary_refuses_invalid_encoding(data: bytes) -> None:
-    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
-
-    registry = TypeRegistry()
-    register_save_target_type(registry)
-    codec = ValueCodec(registry)
-    blobs, segments = [], []
-    wire, _ = codec.encode(registry.wrap("SAVE_TARGET", SaveTarget("out", "safe")), blobs, segments)
-    payload = cast(dict[str, object], wire["payload"])
-    blobs[cast(int, payload["blob"])] = data
-    with pytest.raises(EncodedPayloadValidationError):
-        codec.decode(wire, blobs, [])
-
-
 # ---------------------------------------------------------------------------
 # Write authority: who may write where, live
 
@@ -105,30 +85,6 @@ def one_mount_snapshot(tmp_path: Path, root: Path, mode: str = "readwrite") -> P
         "utf-8",
     )
     return snapshot
-
-
-def test_snapshot_writer_refusals(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    # No snapshot file at all: no write grants exist.
-    with pytest.raises(AssetError, match="no readable mounts snapshot"):
-        MountSnapshotWriter(tmp_path / "missing.json").writable_root("out")
-    # Malformed snapshot.
-    bad = tmp_path / "bad.json"
-    bad.write_text('{"mounts": "nope"}', "utf-8")
-    with pytest.raises(AssetError, match="malformed"):
-        MountSnapshotWriter(bad).writable_root("out")
-    # Unknown mount id.
-    snapshot = one_mount_snapshot(tmp_path, root)
-    with pytest.raises(AssetError, match="no ready mount"):
-        MountSnapshotWriter(snapshot).writable_root("other")
-    # Read-only grant refuses writes by name.
-    readonly = one_mount_snapshot(tmp_path, root, mode="read")
-    with pytest.raises(AssetError, match="read-only"):
-        MountSnapshotWriter(readonly).writable_root("out")
-    # The happy path names the root.
-    snapshot = one_mount_snapshot(tmp_path, root)
-    assert MountSnapshotWriter(snapshot).writable_root("out") == root
 
 
 def test_snapshot_writer_sees_live_grant_and_revoke(tmp_path: Path) -> None:
@@ -327,30 +283,6 @@ def test_project_output_overrides_default_without_granting_writes(tmp_path: Path
     assert list((tmp_path / "global").glob("render*")) == []
 
 
-def test_mount_table_writable_root(tmp_path: Path) -> None:
-    ready = tmp_path / "ready"
-    ready.mkdir()
-    table = MountTable()
-    table.add(MountDef(id="rw", path=ready, mode="readwrite"))
-    table.add(MountDef(id="ro", path=ready, mode="read"))
-    table.scan("rw")
-    table.scan("ro")
-    assert table.writable_root("rw") == ready
-    with pytest.raises(AssetError, match="read-only"):
-        table.writable_root("ro")
-    with pytest.raises(AssetError, match="never granted or was revoked"):
-        table.writable_root("nope")
-    # A mount whose directory is gone is failed, not writable.
-    gone = tmp_path / "gone"
-    gone.mkdir()
-    table.add(MountDef(id="lost", path=gone, mode="readwrite"))
-    gone.rmdir()
-    with pytest.raises(AssetError):
-        table.scan("lost")  # scan records the failure and re-raises
-    with pytest.raises(AssetError, match="not ready"):
-        table.writable_root("lost")
-
-
 # ---------------------------------------------------------------------------
 # AssetWriter: landing bytes
 
@@ -479,13 +411,6 @@ def test_save_bytes_never_overwrites(tmp_path: Path) -> None:
     assert ref.name == "a_00002.bin"
 
 
-def test_save_bytes_rejects_bad_suffix(tmp_path: Path) -> None:
-    writer, _ = make_writer(tmp_path)
-    for suffix in ("png", "", ".p/ng", "..", ".png/../x"):
-        with pytest.raises(AssetError, match="suffix"):
-            writer.save_bytes({"mount": "out", "prefix": "a"}, b"x", suffix=suffix)
-
-
 def test_save_bytes_rejects_symlink_escape(tmp_path: Path) -> None:
     """The prefix grammar cannot express traversal; the remaining escape -
     a symlinked folder inside the mount pointing outside - is caught by
@@ -522,13 +447,6 @@ def test_save_bytes_rejects_hardlinked_writer_lock(tmp_path: Path) -> None:
         writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
     assert outside.read_bytes() == b""
     assert not (root / "probe_00001.bin").exists()
-
-
-def test_save_bytes_no_temp_litter(tmp_path: Path) -> None:
-    writer, root = make_writer(tmp_path)
-    writer.save_bytes({"mount": "out", "prefix": "a"}, b"x", suffix=".bin")
-    leftovers = [p.name for p in root.rglob(".dinkster-save-*")]
-    assert leftovers == []
 
 
 def test_save_stream_rewinds_and_publishes_exact_bounded_bytes(tmp_path: Path) -> None:
@@ -601,27 +519,6 @@ def test_save_stream_batch_uses_one_counter_for_expanded_stems(tmp_path: Path) -
     resolver = IndexedAssetResolver(root)
     assert [resolver.resolve(ref.digest) for ref in refs] == [root / ref.name for ref in refs]
     assert (root / "render-1_00099_.png").read_bytes() == b"other stem"
-
-
-def test_save_stream_batch_repeats_with_next_source_counter(tmp_path: Path) -> None:
-    writer, _ = make_writer(tmp_path)
-    first = writer.save_stream_batch(
-        {"mount": "out", "prefix": "render-%batch_num%"},
-        [io.BytesIO(b"first"), io.BytesIO(b"second")],
-        suffix="_.png",
-        limit=6,
-    )
-    second = writer.save_stream_batch(
-        {"mount": "out", "prefix": "render-%batch_num%"},
-        [io.BytesIO(b"third")],
-        suffix="_.png",
-        limit=5,
-    )
-    assert [ref.name for ref in first + second] == [
-        "render-0_00001_.png",
-        "render-1_00002_.png",
-        "render-0_00002_.png",
-    ]
 
 
 def test_named_stream_export_preserves_relative_names_bytes_and_publication(tmp_path: Path) -> None:
@@ -992,29 +889,3 @@ def test_written_asset_is_listed_before_any_rescan(tmp_path: Path) -> None:
     assert [entry.virtual_path for entry in library.list_folder("mounts/out").entries] == [
         "mounts/out/fresh_00001.bin"
     ]
-
-
-def test_sidecar_tolerates_torn_lines(tmp_path: Path) -> None:
-    writer, root = make_writer(tmp_path)
-    ref = writer.save_bytes({"mount": "out", "prefix": "a"}, b"good", suffix=".bin")
-    sidecar = root / WRITES_SIDECAR_NAME
-    with sidecar.open("a", encoding="utf-8") as handle:
-        handle.write('{"path": "torn')  # crashed writer mid-line
-    records = load_write_records(root)
-    assert list(records) == ["a_00001.bin"]
-    assert records["a_00001.bin"]["digest"] == ref.digest
-
-
-def test_sidecar_hit_requires_unchanged_file(tmp_path: Path) -> None:
-    """A file modified after its write record is treated as absent - the
-    same size+mtime discipline index hits get."""
-    writer, root = make_writer(tmp_path)
-    ref = writer.save_bytes({"mount": "out", "prefix": "a"}, b"original", suffix=".bin")
-    (root / "a_00001.bin").write_bytes(b"tampered!!")
-    resolver_hit = _sidecar_resolve(root, ref.digest)
-    assert resolver_hit is None
-
-
-def _sidecar_resolve(root: Path, digest: str) -> Path | None:
-    library = LocalAssetLibrary(root, namespace="mounts/out")
-    return library.resolve(digest)

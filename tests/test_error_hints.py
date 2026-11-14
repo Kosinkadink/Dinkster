@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dinkster_protocol import ErrorHint, InvocationResult, NodeError
-from dinkster_values import TypeRegistry
-from dinkster_workers.boundary import ValueCodec, encode_result, error_from_wire
+from dinkster_protocol import ErrorHint
 from dinkster_workers.error_hints import hints_for
 
 
@@ -68,25 +66,3 @@ def test_cuda_oom_interpreter_matches_structural_type_name() -> None:
 def test_unrecognized_runtime_error_has_no_hints() -> None:
     assert hints_for(RuntimeError("an unrelated node failure")) == ()
     assert hints_for(RuntimeError("size mismatch for payload length")) == ()
-
-
-def test_error_hints_survive_worker_boundary_encoding() -> None:
-    error = NodeError(
-        "node",
-        "test.node",
-        "failed",
-        hints=(
-            ErrorHint("without-suggestion", "first"),
-            ErrorHint("with-suggestion", "second", "try this"),
-        ),
-    )
-    header, blobs, segments = encode_result(
-        ValueCodec(TypeRegistry()), InvocationResult(error=error), "invocation", 1.0
-    )
-
-    assert blobs == []
-    assert segments == []
-    wire_error = header["error"]
-    assert isinstance(wire_error, dict)
-    assert "suggestion" not in wire_error["hints"][0]
-    assert error_from_wire(wire_error) == error

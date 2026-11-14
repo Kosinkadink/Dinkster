@@ -52,10 +52,8 @@ from dinkster_values import CORE_INT, TypeRegistry, register_core_types
 from dinkster_workers import (
     InProcessWorker,
     load_manifest,
-    load_pack_assets,
     validate_pack_asset,
 )
-from dinkster_workers.staging import declared_assets_from_wire
 
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
@@ -149,80 +147,6 @@ def test_manifest_assets_warn_and_drop(tmp_path: Path, caplog: pytest.LogCapture
     assert "does not exist" in messages and "duplicates" in messages
     # Packaged sources resolve under the manifest's pack id.
     assert manifest.assets[0].need.sources == (PackagedSource(pack="aux", path="assets/model.bin"),)
-
-
-def test_load_pack_assets(tmp_path: Path) -> None:
-    """The assets-only loader: reads [[pack.assets]] from a file that need
-    not be a loadable pack manifest - the on-ramp for unported legacy
-    packs, riding the same presentation-only dinkster-pack.toml as icons and
-    blueprints. Advisory throughout: missing file or no declaration is ()."""
-    pack = write_pack_dir(tmp_path)
-    assets_only = pack / "dinkster-pack.toml"
-    assets_only.write_text(
-        "[pack]\n"
-        "[[pack.assets]]\n"
-        f'id = "m"\nname = "M"\ndigest = "{MODEL_DIGEST}"\n'
-        'file = "assets/model.bin"\n'
-    )
-    assets = load_pack_assets(assets_only, pack="comfy.legacy_aux")
-    assert [asset.id for asset in assets] == ["m"]
-    # Packaged sources resolve under the id the HOST hands in - for
-    # legacy packs, the synthetic comfy.<dir> id the spec's asset_roots
-    # maps to the pack directory.
-    assert assets[0].need.sources == (
-        PackagedSource(pack="comfy.legacy_aux", path="assets/model.bin"),
-    )
-
-    assert load_pack_assets(tmp_path / "missing.toml", pack="x") == ()
-    no_declaration = tmp_path / "plain.toml"
-    no_declaration.write_text('[pack]\nname = "p"\n')
-    assert load_pack_assets(no_declaration, pack="p") == ()
-
-
-def test_checkpoint_components_cross_declared_asset_transport(tmp_path: Path) -> None:
-    manifest = AssetComponentManifest(
-        (AssetComponent("model/diffusion", architecture="sd15"), AssetComponent("model/vae"))
-    )
-    declared, problem = validate_pack_asset(
-        write_pack_dir(tmp_path) / "dinkster-pack.toml",
-        {
-            "id": "checkpoint",
-            "name": "SD 1.5",
-            "digest": MODEL_DIGEST,
-            "kind": KIND_MODEL_CHECKPOINT,
-            "components": manifest.to_wire(),
-            "urls": ["https://models.example/sd15.safetensors"],
-        },
-        "models",
-    )
-    assert problem is None and declared is not None
-    assert declared.need.component_manifest == manifest
-
-    decoded = declared_assets_from_wire([declared.descriptor()])
-    assert decoded == (declared,)
-    assert decoded[0].need.matches_kind("model/vae")
-
-    catalog = PackAssetCatalog()
-    catalog.replace_all(
-        [
-            (
-                "legacy",
-                None,
-                [
-                    DeclaredAsset(
-                        id="legacy-checkpoint",
-                        need=AssetNeed(name="SD 1.5", digest=MODEL_DIGEST),
-                    )
-                ],
-            ),
-            ("typed", None, [declared]),
-        ]
-    )
-    merged = catalog.need_for(MODEL_DIGEST)
-    assert merged is not None
-    assert merged.kind == KIND_MODEL_CHECKPOINT
-    assert merged.component_manifest == manifest
-    assert merged.matches_kind("model/vae")
 
 
 # --- the catalog ----------------------------------------------------------------

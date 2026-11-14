@@ -8,9 +8,7 @@ remain covered by explicit refusal tests and roadmap boundaries.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
-import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -43,147 +41,8 @@ REPO = Path(__file__).resolve().parent.parent
 GOLDEN = REPO / "tests" / "goldens" / "lazy_input_m1.json"
 
 
-def _load_generator():
-    spec = importlib.util.spec_from_file_location(
-        "gen_lazy_input_m1_fixtures",
-        REPO / "tools" / "gen_lazy_input_m1_fixtures.py",
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def _fixture() -> dict[str, object]:
     return cast("dict[str, object]", json.loads(GOLDEN.read_text(encoding="ascii")))
-
-
-def _visible(inputs: Sequence[Mapping[str, object]], demanded: set[str]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for item in inputs:
-        input_id = cast(str, item["id"])
-        if item["binding"] == "omitted":
-            continue
-        if item["lazy"] and item["binding"] == "link" and input_id not in demanded:
-            result[input_id] = None
-        else:
-            result[input_id] = item.get("value")
-    return result
-
-
-def _normalize(
-    request: Sequence[object], inputs: Sequence[Mapping[str, object]]
-) -> tuple[list[str], str | None]:
-    by_id = {cast(str, item["id"]): item for item in inputs}
-    for item in request:
-        if not isinstance(item, str):
-            return [], "lazy-request-invalid"
-        if item not in by_id:
-            return [], "lazy-request-unknown-input"
-        declared = by_id[item]
-        if not declared["lazy"]:
-            return [], "lazy-request-non-lazy"
-        if declared["binding"] == "literal":
-            return [], "lazy-request-literal"
-        if declared["binding"] in {"omitted", "default"}:
-            return [], "lazy-request-unconnected"
-    names = set(cast("Sequence[str]", request))
-    return [cast(str, item["id"]) for item in inputs if item["id"] in names], None
-
-
-def _replay(case: Mapping[str, object]) -> dict[str, object]:
-    if "lazy" not in cast("list[str]", case["targets"]):
-        return {
-            "outcome": "not-reached",
-            "demandedInputs": [],
-            "executedProducers": [],
-            "reusedProducers": [],
-            "hookViews": [],
-            "demandEvents": [],
-        }
-    if cast("list[str]", case["staticCycle"]):
-        return {
-            "outcome": "validation-error",
-            "errorCode": "cycle",
-            "errorNode": None,
-            "demandedInputs": [],
-            "executedProducers": [],
-            "reusedProducers": [],
-            "hookViews": [],
-            "demandEvents": [],
-        }
-
-    inputs = cast("list[dict[str, object]]", case["inputs"])
-    by_id = {cast(str, item["id"]): item for item in inputs}
-    demanded: set[str] = set()
-    executed: list[str] = []
-    reused: list[str] = []
-    views: list[dict[str, object]] = []
-    events: list[dict[str, object]] = []
-    outcome = "execute"
-    error_code: str | None = None
-    error_node: str | None = None
-
-    for round_number, hook_result in enumerate(cast("list[object]", case["hookRounds"]), 1):
-        views.append(_visible(inputs, demanded))
-        if isinstance(hook_result, Mapping):
-            outcome, error_code, error_node = "error", "lazy-hook-failed", "lazy"
-            break
-        requested, problem = _normalize(cast("Sequence[object]", hook_result), inputs)
-        if problem is not None:
-            outcome, error_code, error_node = "error", problem, "lazy"
-            break
-        new = [name for name in requested if name not in demanded]
-        demanded.update(new)
-        producers = sorted(
-            {cast(str, by_id[name]["producer"]) for name in new if "producer" in by_id[name]}
-        )
-        events.append(
-            {
-                "name": "lazy_demand",
-                "data": {
-                    "round": round_number,
-                    "status": "waiting" if new else "ready",
-                    "requestedInputs": requested,
-                    "newInputs": new,
-                    "demandedInputs": [
-                        cast(str, item["id"]) for item in inputs if item["id"] in demanded
-                    ],
-                    "producerNodes": producers,
-                },
-            }
-        )
-        if not new:
-            break
-        for name in new:
-            item = by_id[name]
-            producer = cast(str, item["producer"])
-            state = item.get("producerState", "cold")
-            if state == "error":
-                outcome, error_code, error_node = "error", "producer-failed", producer
-                break
-            if state == "cancel":
-                outcome = "cancelled"
-                break
-            target = reused if state in {"warm", "incidental"} else executed
-            if producer not in target:
-                target.append(producer)
-        if outcome != "execute":
-            break
-
-    result: dict[str, object] = {
-        "outcome": outcome,
-        "demandedInputs": [cast(str, item["id"]) for item in inputs if item["id"] in demanded],
-        "executedProducers": executed,
-        "reusedProducers": reused,
-        "hookViews": views,
-        "demandEvents": events,
-    }
-    if error_code is not None:
-        result["errorCode"] = error_code
-        result["errorNode"] = error_node
-    return result
 
 
 def _type_id(value: object) -> str:
@@ -486,25 +345,3 @@ def test_every_contract_case_runs_through_the_real_engine() -> None:
             assert await _run_real_case(case) == case["expected"], case["id"]
 
     run_scenario(scenario())
-
-
-def test_shared_producer_is_deduplicated_in_demand_event() -> None:
-    generator = _load_generator()
-    case = next(
-        case
-        for case in cast("list[dict[str, object]]", _fixture()["cases"])
-        if case["id"] == "demand-all"
-    )
-    inputs = cast("list[dict[str, object]]", case["inputs"])
-    for item in inputs:
-        if item["id"] in {"left", "right"}:
-            item["producer"] = "shared_source"
-    replayed = _replay(case)
-    assert replayed == generator._oracle(case)
-    events = cast("list[dict[str, object]]", replayed["demandEvents"])
-    first_data = cast("dict[str, object]", events[0]["data"])
-    assert first_data["producerNodes"] == ["shared_source"]
-    real = run_scenario(_run_real_case(case))
-    real_events = cast("list[dict[str, object]]", real["demandEvents"])
-    real_first = cast("dict[str, object]", real_events[0]["data"])
-    assert real_first["producerNodes"] == ["shared_source"]

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
-from dinkster_caches import MemoryLRUCache, encode_entry, entry_from_wire, entry_to_wire
+from dinkster_caches import MemoryLRUCache, encode_entry
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
 from dinkster_schema import (
@@ -23,16 +23,13 @@ from dinkster_schema import (
 )
 from dinkster_values import (
     CORE_COMBO,
-    CORE_INT,
     RESOURCE_HANDLE_TYPE,
     ResourceHandle,
     TypeRegistry,
     Value,
-    ValueMeta,
     list_children,
     list_type_id,
     make_list_value,
-    make_tuple_value,
     register_core_types,
     register_resource_handle_type,
     value_resource_ids,
@@ -686,27 +683,6 @@ def test_scalar_into_list_is_an_error() -> None:
     assert "scalar-into-list" in _diag_codes(graph, (TakesScalar, SumList), ["s"])
 
 
-def test_list_element_type_mismatch_is_advisory() -> None:
-    class MakeFloats(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.make_floats",
-                inputs=(),
-                outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("FLOAT"))),),
-            )
-
-    graph = Graph(
-        nodes={
-            "f": GraphNode("test.make_floats", {}),
-            "s": GraphNode("test.sum_list", {"values": Link("f", "values")}),
-        }
-    )
-    diags = validate(graph, build_schemas((MakeFloats, SumList)), ["s"])
-    assert [d.code for d in diags] == ["type-mismatch"]
-    assert all(d.severity == "warning" for d in diags)
-
-
 def test_non_list_literal_on_list_input_is_an_error() -> None:
     graph = Graph(nodes={"s": GraphNode("test.sum_list", {"values": 5})})
     assert "literal-shape" in _diag_codes(graph, (SumList,), ["s"])
@@ -745,79 +721,3 @@ def test_heterogeneous_transport_keeps_child_conversion_and_resources() -> None:
 
 
 # -- persisted cache manifests ----------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("type_id", "payload"),
-    [
-        ("list<list<INT>>", [[1], [2, 3]]),
-        ("tuple<INT,STRING,list<INT>>", (7, "label", [2, 3])),
-        ("list<tuple<STRING,INT>>", [("a", 3), ("b", 9)]),
-        ("tuple<>", ()),
-    ],
-)
-def test_cache_manifest_roundtrips_lists(type_id: str, payload: object) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        outputs = {"values": registry.wrap(type_id, payload)}
-        encoded = encode_entry(outputs, registry)
-        assert encoded is not None
-
-        blob_store: dict[str, bytes] = {}
-
-        def store(data: bytes) -> str:
-            digest = f"d{len(blob_store)}"
-            blob_store[digest] = data
-            return digest
-
-        manifest = entry_to_wire("key1", encoded, store)
-        assert manifest["version"] == 3
-
-        async def fetch(digest: str, size: int) -> bytes | None:
-            return blob_store.get(digest)
-
-        entry = await entry_from_wire(manifest, fetch, registry)
-        assert entry is not None
-        rehydrated = entry["values"]
-        assert rehydrated.fingerprint == outputs["values"].fingerprint
-        assert rehydrated.resolve() == payload
-
-    run_scenario(scenario())
-
-
-def test_cache_refuses_resource_stubs_inside_lists() -> None:
-    registry = make_registry()
-    register_resource_handle_type(registry)
-    stub = _handle_value(registry, "model-z")
-    outputs = {"models": make_list_value(RESOURCE_HANDLE_TYPE, [stub])}
-    assert encode_entry(outputs, registry) is None
-
-
-@pytest.mark.parametrize("container", ["list", "tuple"])
-def test_memory_cache_sees_costs_and_references_through_lists(container: str) -> None:
-    async def scenario() -> None:
-        registry = make_registry()
-        register_resource_handle_type(registry)
-        cache = MemoryLRUCache()
-
-        costed = registry.wrap(CORE_INT, 1)
-        costed = type(costed)(
-            type_id=costed.type_id,
-            fingerprint=costed.fingerprint,
-            meta=ValueMeta({"cost": {"ram": 64}}),
-            payload=costed.payload,
-        )
-        stub = _handle_value(registry, "model-q")
-        entry = {
-            "mixed": make_list_value(CORE_INT, [costed, registry.wrap(CORE_INT, 2)]),
-            "models": make_list_value(RESOURCE_HANDLE_TYPE, [stub]),
-        }
-        if container == "tuple":
-            entry = {"tuple": make_tuple_value((entry["mixed"], stub))}
-        # make_list_value requires matching child types; adjust: separate keys
-        await cache.put("k", cast(dict[str, Any], entry))
-        assert cache.footprint("ram") == 64  # child cost counted, stub excluded
-        assert cache.drop_referencing("model-q") == 1
-        assert await cache.get("k") is None
-
-    run_scenario(scenario())

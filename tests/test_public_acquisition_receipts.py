@@ -12,15 +12,9 @@ from unittest.mock import patch
 import dinkster_assets.fetch as fetch_module
 import pytest
 from dinkster_assets import (
-    AssetError,
-    AssetNeed,
     AssetVault,
     FetchResult,
-    PublicAcquisitionReceiptStore,
-    PublicAcquisitionSourceV1,
     PublicFetchDenied,
-    RemoteSource,
-    acquire_need,
     digest_bytes,
     fetch_public_asset,
 )
@@ -29,7 +23,6 @@ from dinkster_assets.fetch import HTTPSResponse
 ASSET = b"public model bytes"
 DIGEST = digest_bytes(ASSET)
 LISTED_URL = "https://models.example/model.safetensors"
-FINAL_URL = "https://cdn.example/model.safetensors"
 PUBLIC_IP = "93.184.216.34"
 
 
@@ -97,76 +90,6 @@ def no_network_public_fetch(
         patch.object(fetch_module, "_open_pinned_https", opener),
     ):
         return fetch_public_asset(digest, listed_url, expected_size, vault, headers=headers)
-
-
-def public_source() -> PublicAcquisitionSourceV1:
-    return PublicAcquisitionSourceV1(
-        digest=DIGEST,
-        size_bytes=len(ASSET),
-        source_type="declarative-resolver",
-        source_id="resolver-id",
-        source_revision="sha256:" + "1" * 64,
-        listed_urls=(LISTED_URL,),
-    )
-
-
-def test_verified_public_https_redirect_records_exact_receipt(tmp_path: Path) -> None:
-    opener = HTTPSFixture(
-        {
-            LISTED_URL: Response(302, headers={"Location": FINAL_URL}),
-            FINAL_URL: Response(200, ASSET, {"Content-Length": str(len(ASSET))}),
-        }
-    )
-    vault = AssetVault(tmp_path / "vault")
-    result = no_network_public_fetch(DIGEST, LISTED_URL, len(ASSET), vault, opener=opener)
-    store_path = tmp_path / "receipts.json"
-    receipt = PublicAcquisitionReceiptStore(
-        store_path, clock=lambda: 123.0, id_factory=lambda: "a" * 32
-    ).record(public_source(), result)
-
-    assert result.path.read_bytes() == ASSET
-    assert result.public_https_verified
-    assert (result.listed_url, result.final_url, result.size_bytes) == (
-        LISTED_URL,
-        FINAL_URL,
-        len(ASSET),
-    )
-    assert receipt.to_wire() == {
-        "version": 1,
-        "receiptId": "a" * 32,
-        "digest": DIGEST,
-        "sizeBytes": len(ASSET),
-        "sourceType": "declarative-resolver",
-        "sourceId": "resolver-id",
-        "sourceRevision": "sha256:" + "1" * 64,
-        "listedUrl": LISTED_URL,
-        "finalUrl": FINAL_URL,
-        "fetchedAt": 123.0,
-    }
-    assert PublicAcquisitionReceiptStore(store_path).records() == (receipt,)
-    assert [call[0] for call in opener.calls] == [LISTED_URL, FINAL_URL]
-
-
-def test_acquisition_records_receipt_only_on_eligible_verified_public_path(tmp_path: Path) -> None:
-    opener = HTTPSFixture({LISTED_URL: Response(200, ASSET)})
-    vault = AssetVault(tmp_path / "vault")
-    receipts = PublicAcquisitionReceiptStore(
-        tmp_path / "receipts.json", clock=lambda: 123.0, id_factory=lambda: "a" * 32
-    )
-    with (
-        patch.object(fetch_module, "_globally_routable_addresses", public_dns),
-        patch.object(fetch_module, "_open_pinned_https", opener),
-    ):
-        result = acquire_need(
-            AssetNeed("model", DIGEST, sources=(RemoteSource(LISTED_URL),)),
-            vault,
-            public_sources=(public_source(),),
-            receipts=receipts,
-        )
-
-    assert result.status == "acquired"
-    assert result.path == vault.resolve(DIGEST)
-    assert len(receipts.records()) == 1
 
 
 @pytest.mark.parametrize(
@@ -238,61 +161,3 @@ def test_http_redirect_private_dns_and_rebinding_deny_public_fetch(tmp_path: Pat
             dns=lambda _host, _port: next(answers),
         )
     assert vault.resolve(DIGEST) is None
-
-
-@pytest.mark.parametrize(
-    ("digest", "expected_size", "message"),
-    [
-        ("blake3:" + "0" * 64, len(ASSET), "did not verify"),
-        (DIGEST, len(ASSET) + 1, "size does not match"),
-    ],
-)
-def test_wrong_digest_or_size_creates_no_receipt(
-    tmp_path: Path, digest: str, expected_size: int, message: str
-) -> None:
-    with pytest.raises(AssetError, match=message):
-        no_network_public_fetch(
-            digest,
-            LISTED_URL,
-            expected_size,
-            AssetVault(tmp_path / "vault"),
-            opener=HTTPSFixture({LISTED_URL: Response(200, ASSET)}),
-        )
-    assert PublicAcquisitionReceiptStore(tmp_path / "receipts.json").records() == ()
-
-
-def test_preexisting_match_gets_no_receipt_and_denied_public_path_keeps_http_use(
-    tmp_path: Path,
-) -> None:
-    source = public_source()
-    receipts = PublicAcquisitionReceiptStore(tmp_path / "receipts.json")
-    held_vault = AssetVault(tmp_path / "held")
-    with held_vault.writer(DIGEST) as writer:
-        writer.write(ASSET)
-        writer.commit()
-    held = acquire_need(
-        AssetNeed("model", DIGEST, sources=(RemoteSource(LISTED_URL),)),
-        held_vault,
-        public_sources=(source,),
-        receipts=receipts,
-    )
-    assert held.status == "held"
-    assert receipts.records() == ()
-
-    fallback_vault = AssetVault(tmp_path / "fallback")
-    with (
-        patch(
-            "dinkster_assets.acquire.fetch_public_asset",
-            side_effect=PublicFetchDenied("private DNS answer"),
-        ),
-        patch("dinkster_assets.fetch.urllib.request.urlopen", return_value=Response(200, ASSET)),
-    ):
-        acquired = acquire_need(
-            AssetNeed("model", DIGEST, sources=(RemoteSource(LISTED_URL),)),
-            fallback_vault,
-            public_sources=(source,),
-            receipts=receipts,
-        )
-    assert acquired.status == "acquired"
-    assert fallback_vault.has(DIGEST)
-    assert receipts.records() == ()

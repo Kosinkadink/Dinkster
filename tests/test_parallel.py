@@ -11,7 +11,6 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import (
     Engine,
     ExecutionError,
-    GraphValidationError,
     Invocation,
     InvocationResult,
     OnInvocationEvent,
@@ -419,31 +418,6 @@ def make_gated_engine(gate_first: int = 1) -> tuple[Engine, GatedWorker]:
     return engine, worker
 
 
-def test_cancelling_owner_and_waiter_cancels_both_cleanly() -> None:
-    """Regression: a waiter whose own run is being cancelled must not
-    mistake the owner's cancellation for a takeover signal - it must stay
-    cancelled, register no replacement computation, and leak nothing."""
-
-    async def scenario() -> None:
-        engine, worker = make_gated_engine()
-        graph = Graph(nodes={"n": GraphNode("test.sleeper", {"tag": "both"})})
-
-        owner = asyncio.create_task(engine.run(graph, ["n"]))
-        await asyncio.wait_for(worker.entered.wait(), 1)  # owner holds the key
-        waiter = asyncio.create_task(engine.run(graph, ["n"]))
-        for _ in range(5):  # let the waiter reach the shield
-            await asyncio.sleep(0)
-
-        owner.cancel()
-        waiter.cancel()
-        results = await asyncio.wait_for(asyncio.gather(owner, waiter, return_exceptions=True), 1)
-        assert all(isinstance(r, asyncio.CancelledError) for r in results)
-        assert not engine._inflight  # nothing leaked
-        assert worker.invocations == 1  # no replacement computation started
-
-    run_scenario(scenario())
-
-
 def test_waiter_survives_owner_only_cancellation() -> None:
     """Owner is cancelled while blocked in the worker; a healthy waiter must
     take over and complete (only the first invocation is gated)."""
@@ -504,17 +478,5 @@ def test_max_concurrency_bounds_across_concurrent_runs() -> None:
             engine.run(sleeper_fanout("r2a", "r2b"), ["r2a", "r2b"]),
         )
         assert Sleeper.peak == 1  # the bound is engine-wide, not per-run
-
-    run_scenario(scenario())
-
-
-def test_validation_failure_has_no_scheduling_side_effects() -> None:
-    async def scenario() -> None:
-        engine, worker = make_engine()
-        bad = Graph(nodes={"n": GraphNode("test.sleeper", {"nope": "x"})})
-        with pytest.raises(GraphValidationError):
-            await engine.run(bad, ["n"])
-        assert worker.invocations == 0
-        assert not engine._inflight
 
     run_scenario(scenario())

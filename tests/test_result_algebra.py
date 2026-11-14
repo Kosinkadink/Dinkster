@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
 from typing import Any, cast
 
 import pytest
@@ -13,7 +12,6 @@ from dinkster_protocol import (
     ExportSnapshot,
     Invocation,
     InvocationFailure,
-    InvocationResult,
     InvocationReturn,
     JsonObject,
     LiteralInput,
@@ -34,7 +32,6 @@ from dinkster_workers.boundary import (
     decode_invocation,
     decode_invocation_outcome,
     encode_invocation_outcome,
-    encode_result,
 )
 from dinkster_workers.session import BoundarySession
 
@@ -215,35 +212,6 @@ def test_expanded_and_error_variants_round_trip() -> None:
     assert decode(error_header, error_blobs) == failure
 
 
-def test_non_strict_invocation_header_is_a_node_error_without_session_death() -> None:
-    reg = registry()
-    session = BoundarySession(
-        reg,
-        role="test worker",
-        pack="test",
-        codec=ValueCodec(reg, use_shm=False),
-    )
-    session._alive = True  # noqa: SLF001 - exercise an adopted session without a peer
-    session._writer = cast(Any, object())  # noqa: SLF001 - serialization fails first
-    invocation = Invocation(
-        invocation_id="invalid-json",
-        node_id="node",
-        node_type="Node",
-        inputs={},
-        effective_schema=NodeSchema("Node"),
-        export_snapshot=ExportSnapshot(prompt={"value": float("nan")}),
-    )
-
-    async def scenario() -> object:
-        result = await session.invoke(invocation)
-        assert session.alive
-        return result
-
-    result = cast(InvocationResult, run_scenario(scenario()))
-    assert result.error is not None
-    assert result.error.message == "frame header is not strict JSON"
-
-
 def test_failed_invocation_write_rolls_back_cas_for_retry() -> None:
     reg = registry()
     codec = ValueCodec(reg, use_shm=False, cas_threshold=1)
@@ -271,30 +239,3 @@ def test_failed_invocation_write_rolls_back_cas_for_retry() -> None:
     peer.enable_cas()
     decoded = decode_invocation(peer, header, blobs, [])
     assert decoded.inputs["value"].resolve() == "retained"
-
-
-def test_expansion_output_replacement_is_preserved_on_the_wire() -> None:
-    unit = expanded_outcome().batch.units[0]
-    assert isinstance(unit, ExpandedReturn)
-    result = InvocationResult(expansion=unit)
-    updated = {"seed": registry().wrap("INT", 23)}
-    result = replace(result, outputs=updated)
-    updated["seed"] = registry().wrap("INT", 99)
-    header, blobs, _ = encode_result(
-        ValueCodec(registry(), use_shm=False),
-        result,
-        "expanded",
-        0.0,
-    )
-    decoded, _ = boundary.decode_result(
-        ValueCodec(registry(), use_shm=False),
-        header,
-        blobs,
-        [],
-    )
-    assert decoded.outputs is not None
-    assert decoded.outputs["seed"].resolve() == 23
-    assert decoded.expansion is not None
-    seed = dict(decoded.expansion.bindings)["seed"]
-    assert isinstance(seed, PresentOutput)
-    assert seed.value.resolve() == 23

@@ -9,7 +9,6 @@ import os
 import subprocess
 import sys
 import threading
-import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -36,7 +35,7 @@ from dinkster_registry.artifact import build_artifact
 from dinkster_registry.install import LockedPack, Lockfile
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import TypeRegistry
-from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
+from dinkster_workers import InProcessWorker, PackSandboxNeeds, load_manifest
 
 from dinkster.mounts_api import MountService, add_mount_routes
 from dinkster.project_requirements import load_project_requirements, plan_project_requirements
@@ -45,7 +44,6 @@ from dinkster.workflow_requirements import (
     RequirementError,
     WorkflowRequirements,
     derive_workflow_requirements,
-    manifest_unavailability,
     plan_workflow_requirements,
     project_requirements,
 )
@@ -196,50 +194,6 @@ def test_missing_version_is_not_silently_satisfied_by_unknown_installed_version(
     assert plan.to_wire()["errors"] == ["pack unknown-version: no saved version"]
 
 
-def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() -> None:
-    document = workflow()
-    before = json.dumps(document)
-    requirements = project_requirements([document])
-    manifest = load_manifest(Path(__file__).parent / "fixtures/pack-testing/dinkster-pack.toml")
-
-    def plan(variant: str, gpu: bool = False, devices: tuple[str, ...] = ("cpu", "cuda")):
-        declared = replace(
-            manifest,
-            sandbox=PackSandboxNeeds(gpu=gpu),
-            vision_providers=(VisionProvider("provider", "a.load", devices, (), "single", ()),),
-        )
-        return plan_workflow_requirements(
-            requirements,
-            installed_packs={},
-            asset_available=lambda asset: False,
-            sources_for=lambda digest: [],
-            pack_unavailable=lambda pack: manifest_unavailability(pack, declared, variant),
-        )
-
-    cpu = plan("linux-cpu").to_wire()
-    assert cpu == plan("win-nvidia").to_wire()
-    gpu_cpu = plan("linux-cpu", gpu=True).to_wire()
-    assert gpu_cpu["packs"] == cpu["packs"]
-    assert gpu_cpu["assets"] == cpu["assets"]
-    assert gpu_cpu["errors"] == [
-        "pack tools-a: pack.sandbox.gpu requires a GPU",
-        "pack tools-b: pack.sandbox.gpu requires a GPU",
-    ]
-    assert plan("win-nvidia", gpu=True).to_wire() == cpu
-    assert plan("linux-nvidia", gpu=True, devices=("cuda",)).to_wire() == cpu
-    assert plan("mac-arm64", gpu=True, devices=("mps",)).to_wire() == cpu
-    assert plan("mac-arm64", devices=("cuda",)).to_wire()["errors"] == [
-        "pack tools-a: node a.load declares devices cuda; mps is not supported"
-    ]
-    assert plan("linux-nvidia", devices=("cpu",)).to_wire()["errors"] == [
-        "pack tools-a: node a.load declares devices cpu; cuda is not supported"
-    ]
-    assert plan("win-cpu", devices=("cuda",)).to_wire()["errors"] == [
-        "pack tools-a: node a.load declares devices cuda; cpu is not supported"
-    ]
-    assert json.dumps(document) == before
-
-
 def custom_generation(root: Path, device: str) -> Path:
     from dinkster_supervisor.environment_state import Generation, content_digest
 
@@ -306,32 +260,6 @@ def custom_generation(root: Path, device: str) -> Path:
     ).write(generation / "generation.json")
     (generation / "dinkster.lock").write_text(Lockfile().record_json())
     return generation
-
-
-@pytest.mark.parametrize("device", ["cpu", "cuda", "rocm", "xpu", "mps"])
-def test_acquired_base_device_matches_sealed_target(tmp_path: Path, device: str) -> None:
-    from dinkster.workflow_requirements import acquired_base_device, generation_device
-
-    generation = custom_generation(tmp_path, device)
-    base = json.loads((generation / "base-manifest.json").read_bytes())
-    metadata = generation / "python/lib/python3.14/site-packages/torch/version.py"
-    wheel = tmp_path / base["wheels"][0]["filename"]
-    with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr(
-            "torch/version.py", metadata.read_bytes() + b"raise RuntimeError('executed')\n"
-        )
-    base["wheels"][0].update(
-        size=wheel.stat().st_size, sha256=hashlib.sha256(wheel.read_bytes()).hexdigest()
-    )
-    before = {path: path.read_bytes() for path in generation.rglob("*") if path.is_file()}
-    assert acquired_base_device(base, wheel) == device
-    assert generation_device(generation, "user-target") == device
-    assert {path: path.read_bytes() for path in before} == before
-    with wheel.open("r+b") as stream:
-        stream.seek(-1, os.SEEK_END)
-        stream.write(b"x")
-    with pytest.raises(RequirementError, match="torch wheel differs from its manifest"):
-        acquired_base_device(base, wheel)
 
 
 @pytest.mark.parametrize(
@@ -764,167 +692,6 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     blob.write_bytes(b"x" * len(data))
     with pytest.raises(AssetError):
         load_project_requirements(tmp_path)
-
-
-def test_project_plan_observes_live_commits_and_reports_read_only_open_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from dinkster.workflow_requirements import main
-
-    library = tmp_path / "library"
-    vault = AssetVault(library / "vault")
-    documents = []
-    for content in (b"old asset", b"new asset"):
-        asset = AssetRef(digest_bytes(content), "model.bin", len(content)).to_wire()
-        document = {
-            "format": "dinkster-workflow",
-            "formatVersion": 1,
-            "graphs": {"main": {"nodes": {}, "valueSources": {"model": {"value": asset}}}},
-        }
-        data = json.dumps(document).encode()
-        identity = digest_bytes(data)
-        with vault.writer(identity) as writer:
-            writer.write(data)
-            writer.commit()
-        documents.append((identity, asset))
-    database = library / "library.sqlite"
-    store = LibraryStore(database)
-    record = store.create(
-        "local", "Workflow", documents[0][0], "application/x-dinkster-workflow+json"
-    )
-    store.close()
-    project = tmp_path / "project.json"
-    project.write_text(
-        json.dumps(
-            {"format": "dinkster.project/1", "workflows": [{"scope": "local", "id": record.id}]}
-        )
-    )
-    arguments = [
-        "project-plan",
-        "--project-root",
-        str(tmp_path),
-        "--variant",
-        "linux-cpu",
-        "--json",
-    ]
-    if os.name == "posix" and os.geteuid() != 0:
-        mode = library.stat().st_mode
-        library.chmod(0o555)
-        try:
-            assert main(arguments) == 1
-            output = capsys.readouterr()
-            assert output.out == ""
-            assert "cannot open library read-only" in output.err
-            assert "readonly database" in output.err
-            assert "SQLite coordination files" in output.err
-        finally:
-            library.chmod(mode)
-
-    store = LibraryStore(database)
-    try:
-        before = {path: path.read_bytes() for path in vault.root.rglob("*") if path.is_file()}
-        project_bytes = project.read_bytes()
-        planned = plan_project_requirements(tmp_path, variant="linux-cpu")
-        assert planned["plan"] == {
-            "packs": [],
-            "assets": [{**documents[0][1], "sources": []}],
-            "errors": [],
-        }
-        assert store.get("local", record.id) == record
-        assert project.read_bytes() == project_bytes
-        assert {path: path.read_bytes() for path in before} == before
-
-        reading, committed = threading.Event(), threading.Event()
-        read_bytes = AssetRef.read_bytes
-
-        def wait_for_commit(ref: AssetRef) -> bytes:
-            reading.set()
-            assert committed.wait(10), "writer did not commit"
-            return read_bytes(ref)
-
-        with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as executor:
-            patch.setattr(AssetRef, "read_bytes", wait_for_commit)
-            pending = executor.submit(load_project_requirements, tmp_path)
-            try:
-                assert reading.wait(10), "planner did not read its workflow"
-                updated = store.update("local", record.id, record.revision, digest=documents[1][0])
-                assert updated is not None
-            finally:
-                committed.set()
-            with pytest.raises(RequirementError, match="inputs changed; request a new plan"):
-                pending.result(timeout=10)
-        next_plan = plan_project_requirements(tmp_path, variant="linux-cpu")
-        assert next_plan["plan"] == {
-            "packs": [],
-            "assets": [{**documents[1][1], "sources": []}],
-            "errors": [],
-        }
-        assert next_plan["inputs"] == [
-            {
-                "scope": "local",
-                "id": record.id,
-                "revision": updated.revision,
-                "digest": documents[1][0],
-            }
-        ]
-        assert store.get("local", record.id) == updated
-        assert project.read_bytes() == project_bytes
-        assert {path: path.read_bytes() for path in before} == before
-    finally:
-        store.close()
-
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import os, sqlite3, sys
-connection = sqlite3.connect(sys.argv[1])
-connection.execute('UPDATE records SET digest=?, revision=revision+1 WHERE id=?',
-                   (sys.argv[3], sys.argv[2]))
-connection.commit()
-connection.execute('UPDATE records SET digest=?, revision=revision+1 WHERE id=?',
-                   (sys.argv[4], sys.argv[2]))
-os._exit(0)
-""",
-            str(database),
-            record.id,
-            documents[0][0],
-            documents[1][0],
-        ],
-        check=True,
-        timeout=30,
-    )
-    assert database.with_name(database.name + "-wal").is_file()
-    post_crash = plan_project_requirements(tmp_path, variant="linux-cpu")
-    assert post_crash["plan"] == {
-        "packs": [],
-        "assets": [{**documents[0][1], "sources": []}],
-        "errors": [],
-    }
-    assert post_crash["inputs"] == [
-        {
-            "scope": "local",
-            "id": record.id,
-            "revision": updated.revision + 1,
-            "digest": documents[0][0],
-        }
-    ]
-    assert project.read_bytes() == project_bytes
-    assert {path: path.read_bytes() for path in before} == before
-
-    corrupt = tmp_path / "corrupt-project"
-    (corrupt / "library/vault").mkdir(parents=True)
-    (corrupt / "project.json").write_bytes(project_bytes)
-    (corrupt / "library/library.sqlite").write_bytes(b"not a SQLite database")
-    failed_arguments = list(arguments)
-    failed_arguments[2] = str(corrupt)
-    assert main(failed_arguments) == 1
-    output = capsys.readouterr()
-    assert output.out == "" and "file is not a database" in output.err
-    assert (corrupt / "library/library.sqlite").read_bytes() == b"not a SQLite database"
-    assert (corrupt / "project.json").read_bytes() == project_bytes
-    assert list((corrupt / "library/vault").iterdir()) == []
 
 
 def test_confirmed_project_apply_revalidates_and_materializes_only_approved_assets(

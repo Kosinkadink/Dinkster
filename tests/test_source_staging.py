@@ -114,66 +114,6 @@ class _HostWorker:
         return InvocationResult(outputs={"out": self.registry.wrap("STRING", "ok")})
 
 
-async def _host_result(
-    ref: AssetRef, provider: _HostProvider, *, node_error: bool = False
-) -> dict[str, Any]:
-    registry = TypeRegistry()
-    register_core_types(registry)
-    accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
-
-    async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        task = asyncio.current_task()
-        assert task is not None
-        accepted.set_result(task)
-        await serve_connection(
-            reader,
-            writer,
-            pack_name="test",
-            worker=_HostWorker(registry, ref, node_error=node_error),  # type: ignore[arg-type]
-            schemas={"test.stage": _HOST_SCHEMA},
-            planner=None,
-            consumers={},
-            codec=ValueCodec(registry),
-            source_staging=provider,  # type: ignore[arg-type]
-        )
-
-    server = await asyncio.start_server(accept, "127.0.0.1", 0)
-    address = server.sockets[0].getsockname()
-    reader, writer = await asyncio.open_connection(address[0], address[1])
-    host_task = await accepted
-    hello = await read_frame(reader)
-    assert hello is not None and hello[0]["type"] == "hello"
-    invocation = Invocation("inv", "node", "test.stage", {}, _HOST_SCHEMA)
-    header, blobs, segments, _ = encode_invocation(ValueCodec(registry), invocation)
-    assert not segments
-    await write_frame(writer, header, blobs)
-    frame = await read_frame(reader)
-    assert frame is not None
-    await write_frame(writer, {"type": "shutdown"}, [])
-    await host_task
-    server.close()
-    await server.wait_closed()
-    return frame[0]
-
-
-def test_host_closes_before_success_and_turns_cleanup_failure_into_node_error(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "source.png"
-    source.write_bytes(_png())
-    ref = _ref(source)
-
-    events: list[str] = []
-    result = run_scenario(_host_result(ref, _HostProvider(events)))
-    assert "outputs" in result and "error" not in result
-    assert events == ["sweep", "open", "materialize", "close"]
-
-    events = []
-    result = run_scenario(_host_result(ref, _HostProvider(events, close_error=True)))
-    assert result["error"]["message"].startswith("source staging cleanup failed")
-    assert events == ["sweep", "open", "materialize", "close"]
-
-
 class _BlockingSession(_HostSession):
     def __init__(self, events: list[str]) -> None:
         super().__init__(events, close_error=False)

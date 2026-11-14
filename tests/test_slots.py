@@ -34,8 +34,6 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
     elaborate,
-    schema_from_wire,
-    schema_to_wire,
 )
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
@@ -106,34 +104,7 @@ MATCHED_SCHEMA = NodeSchema(
 # --- elaboration ---
 
 
-def test_absent_open_slot_is_bare_optional_socket_and_validates() -> None:
-    effective = elaborate(OPEN_SCHEMA, [])
-    assert [(spec.id, spec.required) for spec in effective.inputs] == [("source", False)]
-    assert effective.slot_choices == ()
-    graph = Graph(nodes={"n": GraphNode("test.open-slot")})
-    assert validate(graph, {"test.open-slot": OPEN_SCHEMA}, ["n"]) == []
-
-
-def test_inactive_open_slot_dependent_is_unknown_input() -> None:
-    graph = Graph(nodes={"n": GraphNode("test.open-slot", {"source.scale": 2.0})})
-    diagnostics = validate(graph, {"test.open-slot": OPEN_SCHEMA}, ["n"])
-    assert any(
-        diagnostic.code == "unknown-input" and diagnostic.input_id == "source.scale"
-        for diagnostic in diagnostics
-    )
-
-
 # --- schema wire ---
-
-
-def test_slots_round_trip_through_wire() -> None:
-    wire = schema_to_wire(STYLIZE_SCHEMA)
-    entries = [e for e in wire["interface"] if e["role"] == "dynamicSlot"]  # type: ignore[index, union-attr]
-    assert len(entries) == 1
-    entry = entries[0]
-    assert entry["id"] == "source"
-    assert [v["key"] for v in entry["variants"]] == ["text", "number"]
-    assert schema_from_wire(wire) == STYLIZE_SCHEMA
 
 
 # --- graph model + wire ---

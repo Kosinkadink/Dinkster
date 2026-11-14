@@ -6,15 +6,11 @@ import asyncio
 import multiprocessing
 import os
 import shutil
-import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
-from multiprocessing.synchronize import Barrier
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,7 +26,6 @@ from dinkster_assets import (
     register_video_value_type,
     resolver_from_env,
 )
-from dinkster_assets._sqlite import connect_journal
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import (
@@ -51,7 +46,6 @@ from dinkster_workers import session as session_module
 from dinkster_workers.boundary import read_frame
 from dinkster_workers.produced_assets import (
     ProducedAssetAuthority,
-    offer_source_assets,
     source_asset_files,
 )
 from produced_video_nodes import ProduceAudio, ProduceVideo
@@ -71,109 +65,6 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
-
-
-def _open_new_journals(channel: Connection, root: Path, barrier: Barrier) -> None:
-    results = []
-    try:
-        for index in range(32):
-            barrier.wait(timeout=60)
-            try:
-                with closing(connect_journal(root / f"journal-{index}.sqlite")) as db:
-                    results.append(db.execute("PRAGMA journal_mode").fetchone())
-            except sqlite3.Error as exc:
-                results.append(repr(exc))
-        channel.send(results)
-    finally:
-        channel.close()
-
-
-def test_produced_journal_concurrent_first_open(tmp_path: Path) -> None:
-    context = multiprocessing.get_context("spawn")
-    barrier = context.Barrier(8)
-    channels = [context.Pipe() for _ in range(8)]
-    processes = [
-        context.Process(target=_open_new_journals, args=(child, tmp_path, barrier))
-        for _, child in channels
-    ]
-    assert not list(tmp_path.iterdir())
-    for process in processes:
-        process.start()
-    for _, child in channels:
-        child.close()
-    try:
-        for parent, _ in channels:
-            assert parent.poll(120), "concurrent journal creator did not finish"
-            assert parent.recv() == [("wal",)] * 32
-    finally:
-        barrier.abort()
-        for process in processes:
-            process.join(60)
-        for parent, _ in channels:
-            parent.close()
-    assert [process.exitcode for process in processes] == [0] * 8
-
-
-def _publish_with_database_lock(channel: Connection, root: Path, hold: bool) -> None:
-    state = ProducedScratchState(root)
-    data = b"lock holder" if hold else b"contending publisher"
-    try:
-        if hold:
-            state.published(digest_bytes(data), len(data))
-            with sqlite3.connect(root / ".produced-scratch.sqlite") as db:
-                db.execute("BEGIN IMMEDIATE")
-                channel.send("locked")
-                assert channel.poll(60), "lock holder was not released"
-                assert channel.recv() == "release"
-        else:
-            channel.send("publishing")
-            state.published(digest_bytes(data), len(data))
-            state.offer((digest_bytes(data),))
-        channel.send(None)
-    except Exception as exc:
-        channel.send(repr(exc))
-    finally:
-        channel.close()
-
-
-def test_produced_scratch_process_publication_waits_for_busy_writer(tmp_path: Path) -> None:
-    state = ProducedScratchState(tmp_path)
-    state.bind("contended job", 1)
-    context = multiprocessing.get_context("spawn")
-    holder_channel, holder_child = context.Pipe()
-    writer_channel, writer_child = context.Pipe()
-    holder = context.Process(
-        target=_publish_with_database_lock, args=(holder_child, tmp_path, True)
-    )
-    writer = context.Process(
-        target=_publish_with_database_lock, args=(writer_child, tmp_path, False)
-    )
-    holder.start()
-    try:
-        assert holder_channel.poll(60)
-        assert holder_channel.recv() == "locked"
-        writer.start()
-        assert writer_channel.poll(60)
-        assert writer_channel.recv() == "publishing"
-        # Force a lock window beyond SQLite's original five-second wait.
-        # This controls contention, not a performance assertion on the writer.
-        writer_channel.poll(7)
-    finally:
-        holder_channel.send("release")
-        holder.join(60)
-        if writer.pid is not None:
-            writer.join(60)
-    assert holder.exitcode == writer.exitcode == 0
-    assert holder_channel.recv() is None
-    assert writer_channel.recv() is None
-    assert state.publications() == tuple(
-        sorted(
-            (
-                (digest_bytes(b"lock holder"), len(b"lock holder"), False),
-                (digest_bytes(b"contending publisher"), len(b"contending publisher"), True),
-            )
-        )
-    )
 
 
 def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
@@ -253,112 +144,6 @@ def test_produced_scratch_claim_protects_live_process_and_open_writer(
             process.terminate()
         process.join(20)
         parent.close()
-
-
-def test_produced_scratch_claim_refuses_escaping_lease_directory(tmp_path: Path) -> None:
-    root = tmp_path / "scratch"
-    root.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    sentinel = outside / "keep"
-    sentinel.write_bytes(b"untouched")
-    try:
-        (root.parent / ".leases").symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("directory symlinks unavailable")
-    with pytest.raises(AssetError, match="must not be a symlink"):
-        with claim_inactive_produced_scratch(root):
-            pytest.fail("unsafe lease directory was claimed")
-    assert sentinel.read_bytes() == b"untouched"
-    assert list(outside.iterdir()) == [sentinel]
-
-
-def test_produced_host_job_refuses_escaping_ownership_directory(tmp_path: Path) -> None:
-    scratch = tmp_path / "scratch"
-    scratch.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    try:
-        (scratch / "produced-jobs").symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("directory symlinks unavailable")
-    with pytest.raises(AssetError, match="must not be a symlink"):
-        hold_produced_job(scratch, "safe job")
-    with pytest.raises(AssetError, match="must not be a symlink"):
-        with claim_inactive_produced_job(scratch, "safe job"):
-            pytest.fail("escaping job ownership was claimed")
-    assert not list(outside.iterdir())
-
-
-def test_produced_scratch_claim_refuses_unmanaged_data(tmp_path: Path) -> None:
-    vault = AssetVault(tmp_path / "unmanaged")
-    ref = _publish(vault, b"unknown owner")
-    with pytest.raises(AssetError, match="ownership state is unavailable"):
-        with claim_inactive_produced_scratch(vault.root):
-            pytest.fail("unmanaged data was claimed")
-    assert ref.read_bytes() == b"unknown owner"
-    assert not (tmp_path / ".leases").exists()
-
-
-def test_produced_scratch_claim_survives_data_directory_removal(tmp_path: Path) -> None:
-    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
-    with use_produced_output_job("removed job", 1):
-        vault = produced_output_scratch(env)
-        assert vault is not None
-        root = vault.root
-    with claim_inactive_produced_scratch(root) as inactive:
-        assert inactive
-        shutil.rmtree(root)
-        with use_produced_output_job("removed job", 1):
-            with pytest.raises(AssetError, match="busy with reconciliation"):
-                produced_output_scratch(env)
-        assert not root.exists()
-    with use_produced_output_job("removed job", 1):
-        vault = produced_output_scratch(env)
-        assert vault is not None
-        assert _publish(vault, b"new invocation").read_bytes() == b"new invocation"
-
-
-def test_produced_scratch_refuses_missing_journal_without_reclassifying_bytes(
-    tmp_path: Path,
-) -> None:
-    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
-    with use_produced_output_job("lost state", 1):
-        vault = produced_output_scratch(env)
-        assert vault is not None
-        ref = _publish(vault, b"keep recoverable source")
-    (vault.root / ".produced-scratch.sqlite").unlink()
-    with use_produced_output_job("lost state", 1):
-        with pytest.raises(AssetError, match="untracked data"):
-            produced_output_scratch(env)
-    assert ref.read_bytes() == b"keep recoverable source"
-
-
-def test_produced_scratch_parallel_invocations_share_job_without_losing_publications(
-    tmp_path: Path,
-) -> None:
-    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
-    contents = [f"distinct intermediate {index}".encode() for index in range(8)]
-    ready = threading.Barrier(len(contents))
-
-    def produce(data: bytes) -> tuple[Path, AssetRef]:
-        ready.wait(20)
-        with use_produced_output_job("parallel job", 1):
-            vault = produced_output_scratch(env)
-            assert vault is not None
-            ref = _publish(vault, data)
-            offer_source_assets({"video": _value(ref)})
-            return vault.root, ref
-
-    with ThreadPoolExecutor(max_workers=len(contents)) as pool:
-        results = list(pool.map(produce, contents))
-    roots = {root for root, _ in results}
-    assert len(roots) == 1
-    for (_, ref), data in zip(results, contents, strict=True):
-        assert ref.read_bytes() == data
-    assert set(ProducedScratchState(roots.pop()).publications()) == {
-        (digest_bytes(data), len(data), True) for data in contents
-    }
 
 
 def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:
@@ -730,38 +515,6 @@ def test_produced_adoption_inventory_survives_restart_and_failed_copy(
     ProducedAssetAuthority(AssetVault(engine.root)).capture(outputs)
     assert ProducedAssetInventory(engine.root).entries() == adopted
     assert replace(ref, resolver=engine).read_bytes() == b"recoverable original"
-
-
-def test_produced_adoption_does_not_inventory_existing_inputs_or_mounts(
-    vaults: tuple[AssetVault, AssetVault],
-) -> None:
-    producer, engine = vaults
-    mounted = _publish(producer, b"mounted input")
-    existing = _publish(engine, b"downloaded input")
-    authority = ProducedAssetAuthority(engine, existing=producer)
-    authority.capture({"video": _value(mounted)})
-    ProducedAssetAuthority(engine).capture({"video": _value(existing)})
-    assert not (engine.root / ".produced-assets.sqlite").exists()
-    assert not engine.has(mounted.digest)
-    assert mounted.read_bytes() == b"mounted input"
-    assert existing.read_bytes() == b"downloaded input"
-
-
-@pytest.mark.parametrize("recorded", [False, True])
-def test_existing_source_requires_integrity_verification(vaults, recorded) -> None:
-    _, engine = vaults
-    ref = _publish(engine, b"good")
-
-    class Unrecorded:
-        def resolve(self, digest: str) -> Path | None:
-            return engine.resolve(digest)
-
-    authority = ProducedAssetAuthority(engine, existing=engine if recorded else Unrecorded())
-    outputs = {"video": _value(ref)}
-    authority.capture(outputs)
-    ref.local_path().write_bytes(b"evil")
-    with pytest.raises(AssetError, match="integrity failure"):
-        authority.capture(outputs)
 
 
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])

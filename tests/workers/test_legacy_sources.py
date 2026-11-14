@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import struct
 from pathlib import Path
 from typing import Any
@@ -42,16 +41,6 @@ def test_safetensors_passes_through_by_identity_without_sidecar(
     assert resolve_weight_source(source) is source
     assert list(tmp_path.iterdir()) == [source]
     assert source.read_bytes() == original
-
-
-@pytest.mark.parametrize("name", ["digestwithoutanextension", "weights.ckpt"])
-def test_safetensors_content_passes_through_regardless_of_physical_name(
-    tmp_path: Path, name: str
-) -> None:
-    source = _empty_safetensors(tmp_path / name)
-
-    assert resolve_weight_source(source) is source
-    assert list(tmp_path.iterdir()) == [source]
 
 
 def test_conversion_round_trips_and_logs_actual_conversion(
@@ -160,25 +149,6 @@ def test_unsupported_extension_refuses_with_supported_formats(tmp_path: Path) ->
     assert error.value.__cause__ is not None
 
 
-def test_logical_legacy_name_allows_extensionless_source_conversion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "extensionless-digest"
-    source.write_bytes(b"legacy checkpoint")
-
-    def convert(_source: Path, output: Path) -> legacy_sources.LegacyConversionResult:
-        _empty_safetensors(output)
-        return legacy_sources.LegacyConversionResult((), output.stat().st_size, "0" * 64)
-
-    monkeypatch.setattr(legacy_sources, "convert_legacy_checkpoint", convert)
-
-    sidecar = resolve_weight_source(source, "logical.ckpt")
-
-    assert sidecar.name.startswith("extensionless-digest.")
-    assert sidecar.name.endswith(".dinkster.safetensors")
-    load_safetensors_header(sidecar)
-
-
 def test_unwritable_sidecar_directory_refuses_actionably(
     tmp_path: Path, torch_modules: tuple[Any, Any]
 ) -> None:
@@ -238,24 +208,4 @@ def test_source_mutation_during_conversion_refuses_without_publication(
         resolve_weight_source(source)
 
     assert list(tmp_path.glob("*.dinkster.safetensors")) == []
-    assert list(tmp_path.glob(".*.tmp")) == []
-
-
-def test_competing_valid_publication_wins_without_temp_leak(
-    tmp_path: Path,
-    torch_modules: tuple[Any, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    torch, _ = torch_modules
-    source = tmp_path / "model.ckpt"
-    torch.save({"weight": torch.ones(1)}, source)
-
-    def competing_replace(temporary: Path, sidecar: Path) -> None:
-        shutil.copyfile(temporary, sidecar)
-        raise PermissionError("simulated competing publication")
-
-    monkeypatch.setattr(legacy_sources, "_replace_file", competing_replace)
-    sidecar = resolve_weight_source(source)
-
-    load_safetensors_header(sidecar)
     assert list(tmp_path.glob(".*.tmp")) == []

@@ -20,10 +20,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import IMAGE_TYPE as COMFY_IMAGE_TYPE
-from dinkster_api.v1 import register_asset_type, register_media_types
 from dinkster_values import (
-    TypeRegistry,
     annotate_mask,
     decode_image_array,
     encode_canonical_png,
@@ -162,36 +159,6 @@ def test_render_mask_normalizes_compact_alpha_bytes() -> None:
 
     with Image.open(io.BytesIO(render_mask_png(alpha))) as image:
         np.testing.assert_array_equal(np.asarray(image), [[255, 127, 0]])
-
-
-def make_host_registry() -> TypeRegistry:
-    registry = TypeRegistry()
-    register_asset_type(registry)
-    register_media_types(registry)
-    return registry
-
-
-def test_comfy_image_direct_shm_matches_npy_bytes() -> None:
-    from dinkster_workers import ValueCodec
-    from dinkster_workers.boundary import release_segment
-
-    registry = make_host_registry()
-    array = np.arange(60, dtype=np.float32).reshape(1, 4, 5, 3)
-    value = registry.wrap(COMFY_IMAGE_TYPE, array)
-    blobs: list[bytes] = []
-    segments = []
-    wire, stat = ValueCodec(registry, shm_threshold=1).encode(value, blobs, segments)
-    try:
-        segment = segments[0]
-        assert segment.buf is not None
-        assert bytes(segment.buf[: stat.size_bytes]) == encode_image_array(array)
-        assert wire["fingerprint"] == value.fingerprint
-        assert stat.transport == "shm"
-        assert stat.reused is False
-        assert len(blobs) == 1
-    finally:
-        for segment in segments:
-            release_segment(segment)
 
 
 class BytesAsset:

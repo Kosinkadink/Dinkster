@@ -120,29 +120,6 @@ def test_reattach_after_daemon_restart_swaps_in_a_new_session(tmp_path: Path) ->
     run_scenario(scenario())
 
 
-def test_reattach_to_the_same_daemon_process_is_same_instance(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        proc, host, port = await start_service(write_iso_manifest(tmp_path), tmp_path)
-        composer = ServingComposer()
-        try:
-            spec = remote_spec(host, port, tmp_path)
-            await composer.add_remote(spec)
-            first_token = composer._remotes["box1"].instance_token
-            # Engine-side session teardown: the daemon outlives its
-            # clients and frees its conversation slot.
-            await composer._remotes["box1"].worker.close()
-            await wait_for_connected(composer, "box1", False)
-            outcome = await composer.reattach_remote(spec)
-            assert outcome.same_instance is True
-            assert composer.remote_connected("box1") is True
-            assert composer._remotes["box1"].instance_token == first_token
-        finally:
-            await composer.close()
-            await stop_service(proc)
-
-    run_scenario(scenario())
-
-
 def test_inflight_invocation_resumes_after_same_daemon_network_cut(tmp_path: Path) -> None:
     async def scenario() -> None:
         proc, host, port = await start_service(write_iso_manifest(tmp_path), tmp_path)

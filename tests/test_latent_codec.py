@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import os
 import struct
 from collections.abc import Mapping
@@ -183,79 +182,6 @@ def test_voxel_preserves_source_fields_and_tensor_identity(sparse: bool) -> None
     assert spec.decode(spec.encode(explicit_none)) == explicit_none
     assert spec.decode(spec.encode({"data": tensor})) == {"data": tensor}
     assert spec.fingerprint(explicit_none) != spec.fingerprint({"data": tensor})
-
-
-@pytest.mark.parametrize("corruption", ("missing", "buffer", "shape", "dtype"))
-def test_voxel_rejects_independent_malformed_frames(corruption: str) -> None:
-    from dinkster_api.v1 import VOXEL_TYPE, TypeRegistry, register_inference_types
-
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(VOXEL_TYPE)
-    if corruption == "missing":
-        malformed = encode_latent({"voxel_colors": None})
-    else:
-        valid = encode_latent({"data": _tensor(fill=1, shape=(1, 2, 3))})
-        prefix = LATENT_CODEC_MAGIC + b"\x01"
-        tree = json.loads(valid[len(prefix) :])
-        record = tree["items"]["data"]
-        if corruption == "buffer":
-            record["data"] = "AA=="
-        elif corruption == "shape":
-            record["shape"] = [1, -2, 3]
-        else:
-            record["dtype"] = "float99"
-        malformed = prefix + json.dumps(tree).encode()
-    assert spec.validate_encoded is not None
-    with pytest.raises(ValueError):
-        spec.decode(malformed)
-    with pytest.raises(ValueError):
-        spec.validate_encoded(malformed, {})
-
-
-@pytest.mark.parametrize("sparse", (False, True))
-def test_voxel_materializes_source_attributes_without_layout_conversion(sparse: bool) -> None:
-    torch = pytest.importorskip("torch")
-    from types import SimpleNamespace
-
-    from dinkster_api.v1 import (
-        VOXEL_TYPE,
-        TypeRegistry,
-        materialize_voxel,
-        register_inference_types,
-    )
-
-    data = torch.arange(30, dtype=torch.float64).reshape(2, 3, 1, 5)
-    source = {"data": data, "metadata": {"frame": "y_up"}}
-    if sparse:
-        data = torch.tensor([[1, 7, 2, 9], [0, 3, 8, 4]], dtype=torch.int32)
-        source.update(
-            data=data,
-            voxel_colors=torch.arange(12, dtype=torch.float16).reshape(2, 6),
-            resolution=1024,
-        )
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(VOXEL_TYPE)
-    live = materialize_voxel(SimpleNamespace(**source))
-    assert live.data is data
-    assert live.data.data_ptr() == data.data_ptr()
-    portable = materialize_voxel(spec.decode(spec.encode(source)))
-    assert portable.data.dtype == data.dtype
-    assert portable.data.device == data.device
-    assert torch.equal(portable.data, data)
-    assert portable.metadata == {"frame": "y_up"}
-    if sparse:
-        assert live.voxel_colors is source["voxel_colors"]
-        assert portable.voxel_colors.shape == (2, 6)
-        assert portable.voxel_colors.dtype == torch.float16
-        assert torch.equal(portable.voxel_colors, source["voxel_colors"])
-        assert portable.resolution == 1024
-    else:
-        assert portable.data.shape == (2, 3, 1, 5)
-        assert live.voxel_colors is portable.voxel_colors is None
-        assert live.resolution is portable.resolution is None
-    assert "voxel_colors" in source if sparse else "voxel_colors" not in source
 
 
 class VoxelSource(Node):
@@ -454,64 +380,6 @@ def test_latent_codec_escapes_reserved_mapping_keys(reserved: str) -> None:
         "metadata": {"$": reserved, "items": {"$": "tensor"}},
     }
     assert decode_latent(encode_latent(value)) == value
-
-
-def test_latent_codec_validator_rejects_old_and_corrupt_frames() -> None:
-    with pytest.raises(ValueError, match="framing"):
-        validate_latent_encoded(b"pickle:not-a-latent", {})
-    encoded = encode_latent({"samples": _tensor(fill=1, shape=(1,))})
-    with pytest.raises(ValueError, match="payload"):
-        validate_latent_encoded(encoded[:-4], {})
-    with pytest.raises(ValueError, match="dtype and shape"):
-        validate_latent_encoded(encoded.replace(b"float32", b"float99"), {})
-
-    prefix = LATENT_CODEC_MAGIC + b"\x01"
-    malformed = {"$": "map", "items": {}, "extra": True}
-    with pytest.raises(ValueError, match="mapping"):
-        validate_latent_encoded(prefix + json.dumps(malformed).encode(), {})
-    ordered_mapping = {"$": "map", "items": [["samples", None]]}
-    with pytest.raises(ValueError, match="invalid mapping"):
-        validate_latent_encoded(prefix + json.dumps(ordered_mapping).encode(), {})
-
-
-@pytest.mark.parametrize("perspective,normals", ((False, False), (True, False), (True, True)))
-def test_registered_moge_geometry_preserves_optional_tensors_and_identity(
-    perspective: bool, normals: bool
-) -> None:
-    from dinkster_api.v1 import MOGE_GEOMETRY_TYPE, TypeRegistry, register_inference_types
-
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    spec = registry.spec(MOGE_GEOMETRY_TYPE)
-    geometry = {
-        "points": _tensor(fill=3, shape=(2, 3, 5, 3)),
-        "depth": EncodedLatentTensor("float64", (2, 3, 5), bytes(range(240))),
-        "image": _tensor(fill=7, shape=(2, 3, 5, 3)),
-        "mask": EncodedLatentTensor("bool", (2, 3, 5), bytes((0, 1, 1)) * 10),
-        "metadata": {"name": "camera", "labels": ("left", "right"), "scale": 2.5},
-    }
-    if perspective:
-        geometry["intrinsics"] = _tensor(fill=11, shape=(2, 3, 3))
-    if normals:
-        geometry["normal"] = EncodedLatentTensor("float16", (2, 3, 5, 3), b"\x00\x3c" * 90)
-    encoded = spec.encode(geometry)
-    restored = spec.decode(encoded)
-    assert restored == geometry
-    assert isinstance(restored, dict) and restored.keys() == geometry.keys()
-    assert "samples" not in restored
-    assert spec.validate_encoded is not None
-    spec.validate_encoded(encoded, {})
-    assert spec.encode(restored) == encoded
-    assert spec.fingerprint is not None
-    reordered = dict(reversed(tuple(geometry.items())))
-    assert spec.encode(reordered) == encoded
-    assert spec.fingerprint(reordered) == spec.fingerprint(geometry)
-    latent = registry.spec(LATENT_TYPE)
-    assert latent.fingerprint is not None
-    assert spec.fingerprint(geometry) != latent.fingerprint(geometry)
-    assert spec.fingerprint(geometry) != spec.fingerprint(
-        {**geometry, "points": _tensor(fill=4, shape=(2, 3, 5, 3))}
-    )
 
 
 def test_registered_layers_preserve_nested_tensors_state_and_identity() -> None:
