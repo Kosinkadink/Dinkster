@@ -8,8 +8,10 @@ from contextlib import closing
 from typing import cast
 
 from aiohttp import web
+from aiohttp.web_urldispatcher import ResourceRoute
 from dinkster_assets import AssetError, StaleRevision
 from dinkster_assets.scratch import claim_inactive_produced_scratch, hold_produced_vault
+from dinkster_protocol.frontend_modules import FRONTEND_ASSET_PATH
 
 from .auth import principal_for
 from .library import LIBRARY_KEY, json_body, run_owned_thread
@@ -121,6 +123,15 @@ def add_retention_clients(app: web.Application) -> None:
         request: web.Request,
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
+        route = request.match_info.route
+        # These reads expose neither vault values nor job publications.
+        if (
+            request.method in {"GET", "HEAD"}
+            and isinstance(route, ResourceRoute)
+            and route.resource is not None
+            and route.resource.canonical in {FRONTEND_ASSET_PATH, "/api/queue/idle"}
+        ):
+            return await handler(request)
         if (
             request.path == CLIENT_PATH
             or request.path == "/api/health"

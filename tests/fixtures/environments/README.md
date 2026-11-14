@@ -70,9 +70,11 @@ generation 1 while retaining generation 2. Inspect production `current`,
 journals have `stage: "complete"`. Use the selected generation's interpreter to
 read `fixture_engine.VALUE` and `importlib.metadata.version("fixture-engine")`.
 
-The tiny engine serves real `/api/health`, `/api/queue`, `/api/generation`, and
-`/api/cuda` responses behind the production identity-bound supervisor. Without
-`<root>/queue.json`, its queue is idle. Write `{"running":["job"],"queued":[]}`
-there to exercise busy refusal, then clear both lists before updating. This is
-a lifecycle fixture, not a sampling engine: workflow execution, source-pack
-admission, GPU inference, and packaged Desktop launcher delivery are not tested.
+The tiny engine serves real `/api/health`, `/api/queue/idle`, `/api/generation`,
+and `/api/cuda` responses behind the production identity-bound supervisor. The
+idle endpoint returns only `{"idle": bool}`, computed from the running and queued
+lists in `<root>/queue.json`; without that file, its queue is idle. Write
+`{"running":["job"],"queued":[]}` there to exercise busy refusal, then clear both
+lists before updating. This is a lifecycle fixture, not a sampling engine:
+workflow execution, source-pack admission, GPU inference, and packaged Desktop
+launcher delivery are not tested.

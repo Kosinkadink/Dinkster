@@ -58,7 +58,7 @@ jobs:
     needs: checks
     if: ${{ needs.checks.outputs.engine == 'true' && inputs.simulate-fork != true && (github.workflow != 'ci' || github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: main contributor setup (${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -157,6 +157,9 @@ jobs:
               for distribution in distributions()
           )
           PY
+      - name: Configure and verify the Linux probe jail
+        if: needs.checks.outputs.engine == 'true'
+        run: bash scripts/setup_probe_jail.sh
       - name: Provision the wheel build backend before offline validation
         if: needs.checks.outputs.engine == 'true'
         run: uv build --package dinkster-supervisor --wheel --out-dir "$RUNNER_TEMP/fast-build-setup"

@@ -43,7 +43,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/health':
             body = {'ok': True}
-        elif self.path == '/api/queue':
+        elif self.path == '/api/queue/idle':
             with open('queue.json') as source:
                 body = json.load(source)
         elif self.path == '/api/cuda':
@@ -97,7 +97,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         (package / "__init__.py").write_text("")
         (package / "serve.py").write_text(SERVE)
         (site / "000-project.pth").write_text(str(root.resolve()) + "\n")
-    (root / "queue.json").write_text('{"running": [], "queued": []}')
+    (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
         (root / "current").write_text(f"{number}\n")
 
@@ -505,12 +505,13 @@ def test_require_idle_refuses_running_or_malformed_queue(tmp_path: Path) -> None
     port = free_port()
     start_engine(tmp_path, 1, "main", port)
     try:
-        (tmp_path / "queue.json").write_text('{"running": [{"jobId": "one"}], "queued": []}')
+        (tmp_path / "queue.json").write_text('{"idle": false}')
         with pytest.raises(EnvironmentError, match="Finish or cancel"):
             require_idle(tmp_path)
-        (tmp_path / "queue.json").write_text('{"not": "a queue"}')
-        with pytest.raises(EnvironmentError, match="cannot verify"):
-            require_idle(tmp_path)
+        for malformed in ({"not": "a queue"}, {"idle": "true"}, {"idle": 1}):
+            (tmp_path / "queue.json").write_text(json.dumps(malformed))
+            with pytest.raises(EnvironmentError, match="cannot verify"):
+                require_idle(tmp_path)
     finally:
         stop_engine(tmp_path, "main")
 

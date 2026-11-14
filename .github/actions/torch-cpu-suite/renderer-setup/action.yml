@@ -3,6 +3,12 @@ description: Restore or download the CPU renderer packages and configure softwar
 runs:
   using: composite
   steps:
+    - name: Identify renderer package environment
+      id: renderer-host
+      shell: bash
+      run: |
+        source /etc/os-release
+        echo "cache-key=$RUNNER_OS-$(dpkg --print-architecture)-$ID-$VERSION_ID-${ImageVersion:?hosted image version is required}-renderer-apt-v2" >> "$GITHUB_OUTPUT"
     - name: Restore CPU software shader renderer packages
       id: renderer-apt-cache
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -10,7 +16,7 @@ runs:
         path: |
           ${{ runner.temp }}/renderer-apt-cache/archives
           ${{ runner.temp }}/renderer-apt-cache/lists
-        key: ${{ runner.os }}-renderer-apt-v1
+        key: ${{ steps.renderer-host.outputs.cache-key }}
     - name: Configure CPU software shader renderer
       shell: bash
       env:

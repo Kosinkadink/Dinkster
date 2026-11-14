@@ -12,7 +12,10 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import cast
 
+from dinkster_supervisor.environment_artifacts import artifact_rows, discover
+from dinkster_supervisor.environment_downloads import fetch_artifact
 from verify_release_launch import available_port, stop
 
 
@@ -25,13 +28,51 @@ def export_catalog(output: Path) -> None:
             "DINKSTER_REMOTE_CATALOG_BASE": "",
             "DINKSTER_REMOTE_GATEWAY_BASE": "",
         }
+        published = discover(("https://releases.dinkster.org",), "main")
+        supervisor = next(
+            row
+            for row in artifact_rows(published.engine["artifacts"], "name")
+            if str(row["name"]).startswith("dinkster_supervisor-")
+            and str(row["name"]).endswith(".whl")
+        )
+        wheel = root / str(supervisor["name"])
+        fetch_artifact(
+            published.engine_sources,
+            wheel.name,
+            wheel,
+            cast("str", supervisor["sha256"]),
+            cast("int", supervisor["size"]),
+        )
+        # Published engines and their supervisors must agree on the management protocol.
+        management = [
+            "uv",
+            "run",
+            "--no-project",
+            "--python",
+            sys.executable,
+            "--with",
+            str(wheel),
+            "python",
+            "-m",
+            "dinkster_supervisor.environment",
+        ]
+        management_environment = {
+            key: value
+            for key, value in environment.items()
+            if key
+            not in {
+                "VIRTUAL_ENV",
+                "PYTHONPATH",
+                "PYTHONHOME",
+                "UV_PROJECT",
+                "UV_PROJECT_ENVIRONMENT",
+            }
+        }
         project = root / "project"
         port = available_port()
         setup = subprocess.run(
             [
-                sys.executable,
-                "-m",
-                "dinkster_supervisor.environment",
+                *management,
                 "--root",
                 str(project),
                 "setup",
@@ -41,6 +82,10 @@ def export_catalog(output: Path) -> None:
                 "main",
                 "--variant",
                 "linux-cpu",
+                "--engine-release",
+                published.channel.engine_release,
+                "--base-id",
+                str(published.bases["linux-cpu"]["id"]),
                 "--data",
                 str(root / "store"),
                 "--port",
@@ -48,7 +93,7 @@ def export_catalog(output: Path) -> None:
                 "--yes",
                 "--json",
             ],
-            env=environment,
+            env=management_environment,
             stdout=subprocess.PIPE,
             text=True,
             check=False,
@@ -60,16 +105,14 @@ def export_catalog(output: Path) -> None:
         if result["status"] == "applied":
             subprocess.run(
                 [
-                    sys.executable,
-                    "-m",
-                    "dinkster_supervisor.environment",
+                    *management,
                     "--root",
                     str(project),
                     "stop",
                     "--yes",
                     "--json",
                 ],
-                env=environment,
+                env=management_environment,
                 check=True,
             )
         if result["status"] != "applied" or result.get("unavailablePacks"):

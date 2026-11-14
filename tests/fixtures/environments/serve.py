@@ -20,11 +20,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/health":
             body = {"ok": True}
-        elif self.path == "/api/queue":
+        elif self.path == "/api/queue/idle":
             queue = Path("queue.json")
-            body = (
+            state = (
                 json.loads(queue.read_bytes()) if queue.exists() else {"running": [], "queued": []}
             )
+            body = {"idle": not state["running"] and not state["queued"]}
         elif self.path == "/api/cuda":
             body = {"cuda": os.environ.get("CUDA_VISIBLE_DEVICES")}
         elif self.path == "/api/generation":

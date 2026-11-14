@@ -349,6 +349,7 @@ def test_missing_capability_is_403_for_every_route_family() -> None:
         ("GET", "/api/sessions", "sessions:read"),
         ("POST", "/api/sessions", "sessions:write"),
         ("GET", "/api/queue", "queue:control"),
+        ("GET", "/api/queue/idle", "queue:control"),
         ("GET", "/memory/status", "memory:read"),
         ("GET", "/cache/entry/key", "cache:read"),
     )
@@ -1233,6 +1234,7 @@ def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
                 "paused": False,
             }
 
+            assert await (await client.get("/api/queue/idle")).json() == {"idle": True}
             assert (await client.post("/api/queue/pause")).status == 200
             dispatch_checked.clear()
             graph = Graph(nodes={"n": GraphNode("test.sleeper", {"tag": "x"})})
@@ -1242,6 +1244,7 @@ def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
             assert status["paused"] is True
             assert [j["jobId"] for j in status["queued"]] == ["j1"]
             assert status["running"] == []
+            assert await (await client.get("/api/queue/idle")).json() == {"idle": False}
 
             assert (await client.post("/api/queue/resume")).status == 200
             await Sleeper.entered.wait()
@@ -1249,6 +1252,7 @@ def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
             assert status["paused"] is False
             assert status["queued"] == []
             assert [j["jobId"] for j in status["running"]] == ["j1"]
+            assert await (await client.get("/api/queue/idle")).json() == {"idle": False}
 
             Sleeper.gate.set()
             async with asyncio.timeout(5):

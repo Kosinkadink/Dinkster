@@ -114,7 +114,10 @@ Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
 only these checks. Ready pull requests run the whole configured kept Linux
 suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
 pack-only changes. Frontend decoding reads the live catalog of an isolated
-CPU generation acquired by supervisor setup from the published main channel.
+CPU generation acquired from the published main channel. Setup and shutdown use
+the hash-verified supervisor wheel from that same engine release in an isolated
+uv environment, so management speaks the published engine's protocol. Exact
+engine and base digests prevent channel movement from mixing releases.
 Setup prepares its catalogs before sealing. After stopping its assigned backend,
 the current checkout engine serves the generation's admitted packs and runtimes;
 it does not substitute the published engine catalog or checkout defaults.

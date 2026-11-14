@@ -79,6 +79,9 @@ The main protocol routes include:
 - `GET /api/events` for additive WebSocket events; job-correlated events carry
   their per-job `seq`, while job status carries `latestSeq`
 - `GET /api/queue` and `POST /api/queue/pause`, `/resume`, or `/clear`
+- `GET /api/queue/idle` (also `HEAD`) reports only `{"idle": bool}` for management
+  probes, with the same queue authorization but no asset-client admission.
+  Full queue reads still admit clients because job values can reference assets.
 - `/api/assets`, `/api/library`, and `/api/history` when their stores are composed.
   `POST /api/assets/media?scope=&kind=&name=` is the bounded authenticated media
   ingest: it accepts only the closed image/audio/video/model3d Content-Types,
@@ -265,9 +268,14 @@ that historical clients are absent, so those installations remain blocked.
 A request without the generation header durably marks the universe unknown
 before exposing data. There is no request to erase that marker or restamp old
 owners. Health, authentication, census and operator storage-control endpoints
-do not expose asset values and are excluded from admission. A second admitted
-client blocks collection until its own census is acknowledged; restart marks
-all known clients disconnected/incomplete. Client exit and timeout grant no
+do not expose asset values and are excluded from admission. GET/HEAD on the
+registered immutable frontend-module route is also excluded: it serves only
+selected, digest-verified installed-pack JavaScript, not vault values. Native
+browser imports keep their original HTTP URLs and require no generation header
+or query parameter. Authentication and module selection/digest checks still
+apply. Executable pack routes and asset/value reads are not exempt.
+A second admitted client blocks collection until its own census is acknowledged;
+restart marks all known clients disconnected/incomplete. Client exit and timeout grant no
 release authority.
 
 Legacy clients retain the existing retention request/response contract, but
