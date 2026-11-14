@@ -147,8 +147,6 @@ class PackLock:
         if len(names) != len(set(names)):
             raise ProvisionError("duplicate package in dependency lock")
         for requirement in self.requirements:
-            if normalize_requirement(requirement) != requirement:
-                raise ProvisionError(f"unnormalized lock requirement: {requirement}")
             parsed = Requirement(requirement)
             if self.engine is not None and canonicalize_name(parsed.name) == "dinkster-api":
                 if parsed.url or parsed.extras or parsed.marker:

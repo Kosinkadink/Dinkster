@@ -2,6 +2,14 @@
 
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
+- Equivalent requirement spelling and unordered namespace or base replacement
+  declarations do not refuse admission. Namespaces must still match their grants,
+  replacement names remain unique, and selected wheel identities stay exact.
+- Attention capability, provider and role declarations may arrive in any order.
+  Policy requests accept redundant overrides and overrides covering every role.
+  Explicit SDPA remains distinct from automatic VAE routing.
+  Worker startup still requires every role exactly once and routes consistent
+  with the authenticated capabilities and requested policies.
 
 - Local setup resolves registry pack dependencies against that pack's recorded
   registry index for the selected variant, alongside the selected base's package
@@ -554,7 +562,9 @@
   source pack needs a dependency lock, including empty closures. Confirmed setup
   and updates acquire missing pack wheels from their locked URLs and verify size
   and SHA256 before offline construction, including wheels absent from release
-  assets. Download failures identify the pack, URL and verification outcome.
+  assets. Compatibility checks may acquire verified private-wheel metadata when
+  shared dependency versions differ; a cold wheel cache does not by itself refuse
+  an online setup. Download failures identify the pack, URL and verification outcome.
   Offline repair and move still require intact retained wheels. Releases without
   pack acquisition support can still build from complete cached wheels. Confirmed
   updates can select another channel or variant, retaining the old selection until candidate health

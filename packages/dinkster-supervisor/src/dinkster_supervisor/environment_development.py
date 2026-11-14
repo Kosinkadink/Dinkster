@@ -404,7 +404,7 @@ def prepare_development_packs(
             locks=locks if operation != "doctor" else (),
             source_generation=generation,
             in_process_packs=in_process,
-            offline=operation != "acquire",
+            offline=operation not in {"preflight", "acquire"},
         )
     stage_pack_sources(
         generation, catalog_lock=artifacts / "development-packs.lock", artifacts=artifacts

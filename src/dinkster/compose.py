@@ -1282,7 +1282,7 @@ def _installed_pack_spec(
                 f"default suite locks {pack_id} artifact {locked.artifact_digest}, "
                 f"but installed artifact is {digest}"
             )
-        if tuple(canonical_claim(claim) for claim in manifest_record.namespaces) != locked.claims:
+        if {canonical_claim(claim) for claim in manifest_record.namespaces} != set(locked.claims):
             raise CompositionError(
                 f"default suite locks {pack_id} claims {locked.claims!r}, "
                 f"but its manifest claims {manifest_record.namespaces!r}"
@@ -4454,7 +4454,11 @@ class ServingComposer:
             announced_events = tuple(
                 event for _, item in record.extension_contributions for event in item.events
             )
-            if announced_routes != declaration.routes or announced_events != declaration.events:
+            if sorted(announced_routes, key=lambda route: route.id) != sorted(
+                declaration.routes, key=lambda route: route.id
+            ) or sorted(announced_events, key=lambda event: event.name) != sorted(
+                declaration.events, key=lambda event: event.name
+            ):
                 raise CompositionError(
                     f"extension {name!r} route/event declarations differ from its manifest"
                 )
