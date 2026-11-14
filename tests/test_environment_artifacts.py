@@ -592,7 +592,9 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     assert retained.read_bytes() == data
 
 
-@pytest.mark.parametrize("replacement", ["engine", "base", "incompatible-base"])
+@pytest.mark.parametrize(
+    "replacement", ["engine", "incompatible-engine", "base", "incompatible-base"]
+)
 def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, replacement: str
 ):
@@ -779,16 +781,30 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
             restored_root = root / "generations" / str(restored["current"])
             assert (restored_root / "constraints.txt").read_bytes() == original
             assert (restored_root / "artifact-sources.json").read_bytes() == retained_bytes
-            if replacement == "engine":
+            if replacement in {"engine", "incompatible-engine"}:
                 alternative = json.loads(data)
                 alternative["version"] = "2.0"
+                if replacement == "incompatible-engine":
+                    changed_helper = wheel(packages, "fixture_helper", "2.0", 131)
+                    alternative["dependencies"]["fixture-cpu"]["wheels"].append(
+                        {
+                            "name": "fixture-helper",
+                            "version": "2.0",
+                            "filename": changed_helper.name,
+                            "sha256": hashlib.sha256(changed_helper.read_bytes()).hexdigest(),
+                            "size": changed_helper.stat().st_size,
+                            "index": index,
+                            "url": index + "/" + changed_helper.name,
+                        }
+                    )
                 alternative_wheel = wheel(
                     packages,
                     "fixture_engine",
                     "2.0",
                     101,
                     engine=True,
-                    requirements=("dinkster-inference==0.1.1",),
+                    requirements=("dinkster-inference==0.1.1",)
+                    + (("fixture-helper==2.0",) if replacement == "incompatible-engine" else ()),
                 )
                 alternative["artifacts"][1] = _artifact(
                     alternative_wheel.name, alternative_wheel.read_bytes()
@@ -847,7 +863,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
             (mirror / "channels/main.json").write_bytes(_json(channel))
             proposed = run("restore", "1", "--plan")
             alternatives = proposed["restorePlan"]["alternatives"]
-            if replacement == "incompatible-base":
+            if replacement in {"incompatible-base", "incompatible-engine"}:
                 assert alternatives == []
             else:
                 assert len(alternatives) == 1, proposed

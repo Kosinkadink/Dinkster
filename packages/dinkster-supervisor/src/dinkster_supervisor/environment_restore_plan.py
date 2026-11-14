@@ -716,6 +716,21 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
         ):
             continue
         try:
+            if provenance.get("inference") is not None:
+                original_engine = parse_metadata(metadata["engine-manifest.json"].encode("utf-8"))
+                closures = [
+                    {
+                        row["name"]: row
+                        for row in dependency_wheels(
+                            cast("dict[str, object]", document.get("dependencies", {})).get(variant)
+                        )
+                        if row["name"] != "dinkster-inference"
+                    }
+                    for document in (original_engine, engine)
+                ]
+                # The retained override was resolved against the original engine's closure.
+                if closures[0] != closures[1]:
+                    continue
             if "dependencies" in engine:
                 requirements = frontend_requirements(
                     engine_constraints(
