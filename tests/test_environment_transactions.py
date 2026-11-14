@@ -763,11 +763,11 @@ def test_busy_refusal_and_failed_final_revalidation_preserve_current(tmp_path: P
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
     try:
-        (tmp_path / "queue.json").write_text('{"running":[{"jobId":"active"}],"queued":[]}')
+        (tmp_path / "queue.json").write_text('{"idle": false}')
         with pytest.raises(EnvironmentError, match="Finish or cancel"):
             begin_activation(tmp_path, 2, "update")
         assert not (tmp_path / "journal").exists()
-        (tmp_path / "queue.json").write_text(json.dumps({"running": [], "queued": []}))
+        (tmp_path / "queue.json").write_text(json.dumps({"idle": True}))
         settings = '{"format":"dinkster.project/1","channel":"main"}\n'
         (tmp_path / "project.json").write_text(settings)
         path = begin_activation(
