@@ -219,6 +219,65 @@ def test_manifest_drives_installable_wheel_and_record(tmp_path: Path) -> None:
         assert (extracted / "locales/en.json").read_bytes() == b'{"hello":"world"}\n'
 
 
+@pytest.mark.parametrize("layout", ["src", "flat"])
+def test_manifest_resource_paths_survive_wheel_packaging(tmp_path: Path, layout: str) -> None:
+    root = wheel_pack(tmp_path / "source")
+    if layout == "flat":
+        (root / "src/demo_nodes").rename(root / "demo_nodes")
+        (root / "src").rmdir()
+    package_path = "src/demo_nodes" if layout == "src" else "demo_nodes"
+    resource = f"{package_path}/starter.json"
+    payload = b'{"fixture":37}\n'
+    (root / resource).write_bytes(payload)
+    manifest_path = root / "dinkster-pack.toml"
+    manifest_path.write_text(
+        manifest_path.read_text()
+        + f'[[pack.blueprints]]\nid = "starter"\nname = "Starter"\nfile = "{resource}"\n'
+        + f'[[pack.templates]]\nid = "starter"\nname = "Starter"\nfile = "{resource}"\n'
+    )
+    original_manifest = manifest_path.read_bytes()
+    output = tmp_path / "dist"
+    build_pack_archive(root, output)
+    wheel = output / "demo_nodes-1.2.3-py3-none-any.whl"
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read(f"demo_nodes/{resource}") == payload
+        assert archive.read("demo_nodes/starter.json") == payload
+        assert archive.read("demo_nodes/dinkster-pack.toml") == original_manifest
+        files = {name: archive.read(name) for name in archive.namelist()}
+    with extracted_archive(wheel.read_bytes()) as extracted:
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        assert [blueprint.id for blueprint in manifest.blueprints] == ["starter"]
+        assert [template.id for template in manifest.templates] == ["starter"]
+
+    missing = f"demo_nodes/{resource}"
+    del files[missing]
+    record_path = "demo_nodes-1.2.3.dist-info/RECORD"
+    record = io.StringIO()
+    writer = csv.writer(record, lineterminator="\n")
+    writer.writerows(
+        row for row in csv.reader(io.StringIO(files[record_path].decode())) if row[0] != missing
+    )
+    files[record_path] = record.getvalue().encode()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    with pytest.raises(PackArchiveError, match="wheel.resource-path") as refused:
+        with extracted_archive(buffer.getvalue()):
+            pytest.fail("a wheel with a missing declared resource was admitted")
+    assert resource in str(refused.value)
+    assert missing in str(refused.value)
+    assert "demo_nodes/starter.json" in str(refused.value)
+
+    (root / resource).unlink()
+    with pytest.raises(PackArchiveError, match="wheel.resource-path") as refused:
+        build_pack_archive(root, tmp_path / "refused")
+    assert resource in str(refused.value)
+    assert missing in str(refused.value)
+    assert not (tmp_path / "refused").exists()
+    assert manifest_path.read_bytes() == original_manifest
+
+
 @pytest.mark.parametrize(
     "change", ["tampered-file", "extra-package", "legacy-zip", "traversal", "platform-tag"]
 )
