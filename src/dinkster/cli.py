@@ -44,6 +44,11 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=True,
         summary="build explicit local sources with unlocked development dependencies",
     ),
+    "source": _Command(
+        "dinkster.source",
+        passes_argv=True,
+        summary="inspect explicit public git sources and advertised refs",
+    ),
     "pack": _Command(
         "dinkster.manager",
         passes_argv=False,

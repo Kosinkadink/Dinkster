@@ -317,6 +317,24 @@ not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
 
+### Public git refs and mirrors
+
+`dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists
+branches, tags and other advertised refs through bundled libgit2, without a
+system git executable or GitHub API access. It does not install or execute
+repository code or create a project.
+
+Set `DINKSTER_GIT_MIRROR=https://your-mirror.example` to rewrite explicit
+`https://github.com/Kosinkadink/REPOSITORY` acquisitions to
+`https://your-mirror.example/Kosinkadink/REPOSITORY.git`. The `.git` suffix is
+always present. Other owners and hosts are not rewritten. `source refs` and
+`develop` also accept `--git-mirror URL`, which overrides the environment
+setting. Original source URLs, requested refs and exact commits remain the
+recorded identities; a mirror changes transport, not provenance. Mirrors
+require credential-free HTTPS; loopback HTTP is allowed for local mirrors.
+There is no fallback to GitHub when a selected mirror fails. This setting
+does not change published release mirrors or enable git sources implicitly.
+
 ### Development packs from local folders
 
 The standalone local/git path is development-only. `dinkster pack --root ROOT

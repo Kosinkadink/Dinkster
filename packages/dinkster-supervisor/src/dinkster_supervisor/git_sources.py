@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import threading
@@ -99,8 +100,76 @@ def _check_tree(tree: pygit2.Tree) -> None:
                 )
 
 
+def _fetch_url(url: str, mirror: str | None) -> str:
+    mirror = os.environ.get("DINKSTER_GIT_MIRROR") if mirror is None else mirror
+    if not mirror:
+        return url
+    parsed = urlsplit(mirror)
+    try:
+        loopback = (
+            parsed.hostname == "localhost"
+            or ipaddress.ip_address(parsed.hostname or "").is_loopback
+        )
+    except ValueError:
+        loopback = False
+    if (
+        parsed.scheme != "https"
+        and not (parsed.scheme == "http" and loopback)
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or "%" in parsed.netloc
+        or any(part in {".", ".."} for part in parsed.path.split("/"))
+        or "%" in parsed.path
+        or "\\" in parsed.path
+    ):
+        raise EnvironmentError("git mirror requires credential-free HTTPS or loopback HTTP")
+    original = urlsplit(url)
+    parts = original.path.strip("/").split("/")
+    if (
+        original.hostname != "github.com"
+        or original.port not in {None, 443}
+        or len(parts) != 2
+        or parts[0].lower() != "kosinkadink"
+    ):
+        return url
+    repository = parts[1].removesuffix(".git")
+    if re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", repository) is None or repository in {
+        ".",
+        "..",
+    }:
+        raise EnvironmentError("git mirror requires a valid GitHub repository name")
+    return mirror.rstrip("/") + "/Kosinkadink/" + repository + ".git"
+
+
+def git_refs(value: str, *, mirror: str | None = None) -> dict[str, str]:
+    """List advertised refs through git, without checking out or executing source code."""
+    url, _ref, _subdirectory = parse_git_source(value)
+    with TemporaryDirectory(prefix="dinkster-git-refs-") as directory, _isolated_config() as proxy:
+        repository = pygit2.init_repository(directory, bare=True)
+        try:
+            remote = repository.remotes.create("origin", _fetch_url(url, mirror))
+            repository.config["http.followRedirects"] = "false"
+            callbacks = pygit2.RemoteCallbacks(certificate_check=lambda _cert, valid, _host: valid)
+            return {
+                row.name: str(row.oid)
+                for row in remote.list_heads(callbacks=callbacks, proxy=proxy or True)
+                if row.name is not None
+            }
+        except (pygit2.GitError, KeyError, ValueError):
+            raise EnvironmentError(
+                "cannot list public git refs (credentials are not supported)"
+            ) from None
+        finally:
+            repository.free()
+
+
 @contextmanager
-def fetched_git_source(value: str) -> Generator[tuple[Path, dict[str, object]]]:
+def fetched_git_source(
+    value: str, *, mirror: str | None = None
+) -> Generator[tuple[Path, dict[str, object]]]:
     """Yield a checked-out selected folder and its credential-free provenance."""
     url, ref, subdirectory = parse_git_source(value)
     with TemporaryDirectory(prefix="dinkster-git-") as directory:
@@ -110,7 +179,7 @@ def fetched_git_source(value: str) -> Generator[tuple[Path, dict[str, object]]]:
             repository = None
             try:
                 repository = pygit2.init_repository(checkout)
-                remote = repository.remotes.create("origin", url)
+                remote = repository.remotes.create("origin", _fetch_url(url, mirror))
                 repository.config["http.followRedirects"] = "false"
                 if proxy is not None:
                     repository.config["http.proxy"] = proxy

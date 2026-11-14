@@ -115,7 +115,9 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
             text = str(value)
             if "://" not in text and not text.startswith("git+"):
                 return Path(value)
-            folder, origin = stack.enter_context(fetched_git_source(text))
+            folder, origin = stack.enter_context(
+                fetched_git_source(text, mirror=getattr(args, "git_mirror", None))
+            )
             selected.git_origins[str(folder.resolve())] = origin
             return folder
 

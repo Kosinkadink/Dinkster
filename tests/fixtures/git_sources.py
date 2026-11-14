@@ -104,7 +104,7 @@ def git_server(tmp_path_factory: pytest.TempPathFactory):
                 **os.environ,
                 "GIT_PROJECT_ROOT": str(tmp_path),
                 "GIT_HTTP_EXPORT_ALL": "1",
-                "PATH_INFO": parsed.path,
+                "PATH_INFO": parsed.path.removeprefix("/Kosinkadink"),
                 "QUERY_STRING": parsed.query,
                 "REQUEST_METHOD": self.command,
                 "CONTENT_TYPE": self.headers.get("Content-Type", ""),

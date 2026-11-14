@@ -1628,6 +1628,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     feed_import = security_actions.add_parser("import", help="verify a signed file before import")
     feed_import.add_argument("--registry", required=True)
     feed_import.add_argument("--file", type=Path, required=True)
+    source = commands.add_parser("source", help="inspect explicit public git sources")
+    source_actions = source.add_subparsers(dest="source_action", required=True)
+    source_refs = source_actions.add_parser("refs", help="list advertised git refs and tags")
+    source_refs.add_argument("url", help="public HTTPS git repository URL")
+    source_refs.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
+    source_refs.add_argument("--json", action="store_true", help="emit exactly one result object")
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "main"))
@@ -1675,6 +1681,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     develop.add_argument("--source", required=True, help="engine folder or HTTPS git URL")
     develop.add_argument("--pack-source", action="append", default=[])
+    develop.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
     develop.add_argument(
         "--contributor", action="store_true", help="run the live engine with development tools"
     )
@@ -1855,6 +1862,14 @@ def run(args: argparse.Namespace) -> int:
             code = _security(args, result)
         elif args.operation == "packs-apply":
             result.update(apply_pack_install(args.root, args.input, args.approval))
+            code = 0
+        elif args.operation == "source":
+            from .git_sources import git_refs
+
+            refs = git_refs(args.url, mirror=args.git_mirror)
+            result.update(
+                refs=refs, plan=[f"{name} {commit}" for name, commit in sorted(refs.items())]
+            )
             code = 0
         elif args.operation == "tools":
             selected = acquire_tools(tuple(args.mirror), args.channel, args.root, download=args.yes)

@@ -877,6 +877,16 @@
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
 
+### Public git refs and mirrors
+
+`dinkster source refs URL` lists advertised refs and tags without installing
+source code, creating a project, requiring system git or using the GitHub API.
+Explicit source acquisition supports `DINKSTER_GIT_MIRROR`; `source refs` and
+`develop` also accept `--git-mirror URL`. The setting rewrites only Kosinkadink
+GitHub repositories, keeps the original source identity, appends `.git`, and
+requires HTTPS except for loopback HTTP mirrors. Failed mirror acquisitions
+do not fall back to GitHub. Published release acquisition is unchanged.
+
 ### Development generations from local folders or public git
 
 Standalone local-folder and `git+URL[@REF]` pack installs remain available as
