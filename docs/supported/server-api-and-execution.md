@@ -98,19 +98,26 @@
   reference declarations refuse inspection, including inside nested containers
   and after disk-cache restart. Recognized inactive job scratch reports its
   bytes while host-job and store ownership are exclusively held; live, unsafe
-  or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
-  cleanup remains disabled regardless of individual complete registrations.
+  or unknown scratch remains unavailable. Individual owner registrations do
+  not enable collection. Server-admitted client generations can acknowledge
+  their exact eight-class owner census separately from vault-wide eligibility.
+  Legacy admission, historical unknown owners, disconnected clients and stale
+  acknowledgments block collection. Operator Clear and size-policy enforcement
+  collect only relinquished produced assets while all reference and publication
+  barriers are held; retained bytes remain protected.
   Vault ownership inspection reports busy for active managed readers, writers
   and server jobs, or unavailable for unknown ownership state. Server jobs keep
   that ownership through terminal recovery and durable history publication;
   media publication keeps it through reference commits despite cancellation.
 - Startup recovers explicitly offered publications from inactive job scratch
-  through verified engine-vault adoption, without rerunning jobs or deleting
-  scratch. Active, unknown or corrupt stores remain blocked; recovery of another
+  through verified engine-vault adoption, without rerunning jobs. Scratch removal
+  requires evaluated client completeness and verified durable handoffs; restart
+  invalidates known clients, and historical unknown clients remain blocked.
+  Active, unknown or corrupt stores remain blocked; recovery of another
   recognized job can continue. Existing untracked assets are not reclassified.
   Success, failure and cancellation also reconcile that job's offered bytes
   after execution settles and before reporting its terminal state. Recovery
-  preserves scratch and the original job outcome; unrelated jobs are untouched.
+  preserves the original job outcome; unrelated jobs are untouched.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a

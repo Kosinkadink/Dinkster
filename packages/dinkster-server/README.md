@@ -125,7 +125,8 @@ The main protocol routes include:
   is no age expiry. They do not parse opaque workflow documents, register
   existing history automatically, or authorize cleanup on their own. Clients
   must declare complete reference sets; absent associations are not evidence
-  that older documents contain no asset values. Cleanup remains disabled.
+  that older documents contain no asset values. The client census separately
+  gates cleanup.
   `HistoryStore.hold_asset_references()` separately holds the history write
   barrier and reads source-document roots from accepted and terminal jobs in
   every scope. Terminal writes atomically retain external asset identities
@@ -187,9 +188,84 @@ availability, read permission or permission to collect. A client declares a
 complete typed identity set before exposing an asset through a document,
 shown result or live preview. `complete: true` certifies only this owner's
 set; it cannot certify the existence or completeness of other owners.
-There is no request that enables destructive cleanup by setting this flag.
-Unknown global ownership keeps cleanup disabled, independently of individual
-complete manifests. Disconnect, restart and elapsed time never release roots.
+Setting this flag alone never enables destructive cleanup. The server-owned
+client census below is an additional barrier. Disconnect, restart and elapsed
+time never release roots.
+
+### Client completeness census
+
+`POST /api/library/retention-clients` accepts `{revision: 0}` and creates an
+incomplete server-admitted client before its first asset-observing request.
+The response is `{clientId, generation, revision, connected, pendingRequests,
+activeStreams, complete, holders}`. Keep the opaque generation and send it as
+`X-Dinkster-Retention-Generation` on subsequent requests. The authenticated
+principal is part of its authority; another principal cannot use it.
+
+When creating, replacing, source-claiming or releasing a retention owner, also
+send `X-Dinkster-Retention-Holder` with the comma-separated distinct class
+numbers covered by that owner, for example `1,2`. These are the fixed classes:
+1. Workflow literals, nested values and staged mutations.
+2. Undo/redo, session continuations and frozen compile snapshots.
+3. Persisted, restored, shared and multi-window workflows.
+4. Typed editor resources and staging.
+5. Shown results and retained execution artifacts.
+6. Persisted shown results and result history.
+7. Live preview stills, rings and pending deliveries.
+8. Pending reads, decoded previews and render caches.
+
+An owner is bound to its client and immutable class set on creation under the
+same SQLite write barrier as its manifest. Shared coverage repeats the same
+owner DTO in each covered class; it does not create duplicate owner receipts
+or assert the other class empty. Replacements and releases must carry the
+same class set (order is immaterial). Existing unbound owners cannot be adopted
+by a new client. A replacement or release invalidates that client's acknowledgment
+atomically; it never reassigns another client's owner. All owner revisions,
+digests, completeness and result-source claims remain in the census snapshot.
+
+`GET /api/library/retention-clients` with the generation header returns the
+server-enumerated snapshot. `holders` has exactly keys `"1"` through `"8"`, each
+containing the sorted full retention DTOs for that class, including empty
+revision tombstones. After completing registration for all eight classes and
+settling reads, `PUT` the same endpoint with `{revision, holders}` copied from
+that snapshot. This explicitly acknowledges every class, including empty
+classes, and succeeds only if every owner is complete and the exact snapshot
+is still current. It returns per-client `complete`, not vault-wide collection
+authority. A withheld, rejected or unreconciled acknowledgment leaves the
+client incomplete. Reconcile a lost PUT response with GET before publication;
+individual owner acknowledgments and their publication guards remain required.
+
+Asset-observing requests invalidate acknowledgment before their handler runs;
+ordinary pending requests also prevent acknowledgment until they settle.
+WebSocket publication retains the existing result-offer/history/cache barriers;
+opening or closing any stream invalidates client completeness, but closing a
+stream does not disconnect the logical client or revoke surviving windows.
+Browser WebSockets can carry `retentionGeneration` as a query parameter instead
+of the generation header; authentication and principal binding remain required.
+Never put it on external-origin requests. Conflicting query/header generations
+are rejected. `activeStreams` counts admitted streams; it is not proof of
+completeness, and zero streams grants no release or collection authority.
+`DELETE` with an empty object explicitly disconnects without releasing roots.
+Reopen with POST and `{revision}` plus the old generation header: it rotates
+the generation and invalidates completeness before any observation, preserving
+all owner bindings. Rotation is refused while reads or streams are outstanding.
+GET permits reading disconnected state so a client can obtain its current
+revision after restart. Old generations cannot mutate the reopened owners.
+
+The server closes the client universe only when first initializing a pristine
+vault, scratch and library. Existing bytes or owner/catalog rows cannot prove
+that historical clients are absent, so those installations remain blocked.
+A request without the generation header durably marks the universe unknown
+before exposing data. There is no request to erase that marker or restamp old
+owners. Health, authentication, census and operator storage-control endpoints
+do not expose asset values and are excluded from admission. A second admitted
+client blocks collection until its own census is acknowledged; restart marks
+all known clients disconnected/incomplete. Client exit and timeout grant no
+release authority.
+
+Legacy clients retain the existing retention request/response contract, but
+never establish global cleanup completeness. A fully acknowledged client can
+report `complete:true` while collection remains blocked by legacy admission,
+another client, incomplete references, publication or read ownership.
 
 ### Decoded document handoff
 
@@ -361,14 +437,18 @@ returns `Cache-Control: no-store`.
 unavailable policy reports false and null instead of inventing a default.
 `PUT /api/library/storage/policy` requires an operator and `assets:write`, and
 accepts exactly `{limitBytes: number | null}` with a positive JSON-safe integer.
-It returns the acknowledged limit and `collectionEnabled:false`. Unknown keys,
-filesystem targets and query parameters are rejected. Changes survive restart
-but do not enable deletion or enforce the limit while ownership is unknown.
+It returns `{limitBytes, collectionEnabled:false}`: the policy acknowledgment
+is not collection authority, even when GET reports the vault eligible. Read
+current eligibility through GET before offering Clear. Unknown keys, filesystem
+targets and query parameters are rejected. Changes survive restart but do not
+enable deletion or enforce the limit while ownership is unknown.
 
 `POST /api/library/storage/clear` requires the same operator/write authority and
-an empty JSON object, with no query parameters. It currently returns HTTP409,
-`collectionEnabled:false`, `blocked:["owner_completeness_unknown"]` and zero
-`reclaimedBytes`/`reclaimedFiles`. Repeating Clear is nondestructive. No policy
+an empty JSON object, with no query parameters. It returns HTTP 200 only when
+the evaluated census and all reference/publication barriers permit collection;
+otherwise HTTP 409 reports the blocked reasons and actual reclaimed totals.
+Unknown universe reports `owner_completeness_unknown`; an unacknowledged or
+disconnected known client reports `client_retention_incomplete`. No policy
 request or individual complete owner manifest can bypass this global gate.
 
 Behind the gate, Clear first runs the same inactive-job publication recovery and
@@ -386,8 +466,8 @@ The collector retains memory/disk, history and library reference barriers and
 inactive scratch claims and their dependency closure through an exclusive vault
 claim and deletion. Offered scratch-journal identities remain roots until
 scratch removal retires their rows, so Clear cannot break an interrupted
-handoff's retry. Its frontend integration gate is disabled in source, not exposed
-as a request option. Behind that gate, only verified adoption rows are candidates,
+handoff's retry. The client census is evaluated under the same library write
+barrier and remains held through deletion. Only verified adoption rows are candidates,
 in original adoption order. A supplied byte target stops collection once the
 produced canonical blobs meet the target; untracked downloads do not consume the
 produced limit. Clear has no target. Untracked bytes and retained digests are
@@ -397,7 +477,7 @@ is removed only after vault deletion, so an interrupted deletion can finish on
 the next pass. Reports count deleted blobs and sidecars separately as files and
 include their actual sizes, retained candidates and failed items.
 
-Behind the same disabled gate, a server-owned worker checks the persisted size
+Using the same evaluated census, a server-owned worker checks the persisted size
 policy after job publication settlement and at least every minute. Each pass reads
 the policy anew; unlimited skips automatic
 deletion, while a finite limit uses the same owner-held oldest-eligible collector
@@ -409,7 +489,7 @@ woken task can run; other active publishers and readers still block collection.
 read, blocked reasons and actual reclaimed counts; null means no completed pass.
 Unavailable policy never means unlimited and never permits deletion. Shutdown
 cancels the worker and waits for an in-progress owned inspection to settle before
-closing stores. Production starts no policy loop while the gate remains false.
+closing stores. An incomplete census permits accounting but no policy deletion.
 
 `vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
 `adoptedBytes` sums recorded verified adoption sizes. Either is null when its
@@ -446,9 +526,9 @@ jobs/writers/readers, unreadable walks, symlinks and Windows directory junctions
 return null with `temporary_accounting_unavailable`, not a partial total. An
 explicitly configured but absent scratch tree reports zero without creating it; an unconfigured root
 remains unknown. Normal serve supplies `<library-root>/scratch`.
-`reclaimableBytes` is null, `collectionEnabled` is false, and `blocked` always
-includes `owner_completeness_unknown`. Missing, pending or unreadable state adds
-explicit reasons. An inactive claim is not adoption or deletion authority;
+When the owner universe is unknown, `reclaimableBytes` is null,
+`collectionEnabled` is false, and `blocked` includes `owner_completeness_unknown`.
+Missing, pending or unreadable state adds explicit reasons. An inactive claim is not adoption or deletion authority;
 this endpoint never deletes bytes or treats unknown as zero.
 
 ### Interrupted publication recovery
@@ -466,8 +546,8 @@ Unknown journals, active owners, unsafe paths, size conflicts and corrupt bytes
 block that store without stopping recovery of another recognized job. An
 unreadable or unsafe directory enumeration stops that enumeration rather than
 guessing what was omitted. Recovery never reruns a workflow, copies mounted
-inputs or creates library records. The disabled frontend integration gate
-preserves all scratch by default, including unoffered bytes.
+inputs or creates library records. An incomplete client census preserves all
+scratch, including unoffered bytes.
 The queue also reconciles the finishing job's offered publications after engine
 and native settlement, on success, failure and cancellation. It awaits recovery
 before publishing the terminal transition or releasing its dispatch slot; a

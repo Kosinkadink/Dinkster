@@ -408,12 +408,9 @@ def test_job_settlement_holds_dispatch_and_identity_through_repeated_cancellatio
 
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
 @pytest.mark.parametrize("corrupt", [False, True])
-@pytest.mark.parametrize("collect", [False, True])
 def test_terminal_jobs_recover_only_their_offered_publications(
-    tmp_path: Path, outcome: str, corrupt: bool, collect: bool, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, outcome: str, corrupt: bool
 ) -> None:
-    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", collect)
-
     async def scenario() -> None:
         scratch = tmp_path / "scratch"
         vault = AssetVault(tmp_path / "vault")
@@ -513,9 +510,6 @@ def test_terminal_jobs_recover_only_their_offered_publications(
                 "verifiedPublications": 0 if corrupt else 1,
                 "blockedInspections": 1 if corrupt else 0,
             }
-            if collect:
-                assert recovery["reclaimedFiles"] == (0 if corrupt else 2)
-                assert (recovery["reclaimedBytes"] > len(data)) == (not corrupt)
             with claim_inactive_produced_vault(vault.root) as inactive:
                 assert inactive
             response = await client.get(f"/api/assets/{digest}")
@@ -524,10 +518,7 @@ def test_terminal_jobs_recover_only_their_offered_publications(
                 assert sources[0].read_bytes() == b"x" * len(data)
             else:
                 assert response.status == 200 and await response.read() == data
-                if collect:
-                    assert not sources[0].exists()
-                else:
-                    assert sources[0].read_bytes() == data
+                assert sources[0].read_bytes() == data
             assert other_path.read_bytes() == unrelated
             assert vault.resolve(unrelated_digest) is None
             assert not status["collectionEnabled"]
@@ -598,12 +589,9 @@ def test_startup_recovers_publication_after_producer_process_crash(tmp_path: Pat
 
 
 @pytest.mark.parametrize("destination", ["absent", "pending", "untracked"])
-@pytest.mark.parametrize("collect", [False, True])
-def test_startup_recovers_offered_publications_with_gated_scratch_removal(
-    tmp_path: Path, destination: str, collect: bool, monkeypatch: pytest.MonkeyPatch
+def test_startup_recovers_offered_publications_without_certifying_historical_clients(
+    tmp_path: Path, destination: str
 ) -> None:
-    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", collect)
-
     async def scenario() -> None:
         scratch = tmp_path / "scratch"
         vault = AssetVault(tmp_path / "vault")
@@ -629,17 +617,16 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
             with vault.writer(digest) as writer:
                 writer.write(data)
                 writer.commit()
-        if not collect:
-            # Read-only WAL inspection creates SQLite sidecars in this writable
-            # directory. Include them in the unchanged recovery-state snapshot.
-            assert len(ProducedScratchState(source.root).publications()) == 2
+        # Read-only WAL inspection creates SQLite sidecars in this writable
+        # directory. Include them in the unchanged recovery-state snapshot.
+        assert len(ProducedScratchState(source.root).publications()) == 2
         before = {
             p.relative_to(source.root): p.read_bytes()
             for p in source.root.rglob("*")
             if p.is_file()
         }
         timestamp: int | None = None
-        for cycle in range(2):
+        for _ in range(2):
             library = ServerLibrary(vault, LibraryStore(tmp_path / "library"), scratch_root=scratch)
             client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
             await client.start_server()
@@ -647,21 +634,10 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
                 response = await client.get("/api/library/storage")
                 assert response.status == 200
                 status = await response.json()
-                expected = {
-                    "verifiedPublications": 0 if collect and cycle else 1,
+                assert status["lastPublicationRecovery"] == {
+                    "verifiedPublications": 1,
                     "blockedInspections": 0,
                 }
-                if collect:
-                    removed = [
-                        value
-                        for path, value in before.items()
-                        if path.name != ".produced-scratch.sqlite"
-                    ]
-                    expected.update(
-                        reclaimedBytes=sum(map(len, removed)) if cycle == 0 else 0,
-                        reclaimedFiles=len(removed) if cycle == 0 else 0,
-                    )
-                assert status["lastPublicationRecovery"] == expected
                 assert not status["collectionEnabled"]
                 assert (await client.get(f"/api/assets/{digest}")).status == 200
                 path = vault.resolve(digest)
@@ -672,15 +648,7 @@ def test_startup_recovers_offered_publications_with_gated_scratch_removal(
                     for p in source.root.rglob("*")
                     if p.is_file()
                 }
-                if collect:
-                    assert set(remaining) == {
-                        Path(".produced-scratch.sqlite" + suffix) for suffix in ("", "-wal", "-shm")
-                    }
-                    state = ProducedScratchState(source.root)
-                    assert state.owner() == ("interrupted job", 3)
-                    assert state.publications() == ()
-                else:
-                    assert remaining == before
+                assert remaining == before
                 assert library.store.query("local") == []
                 if destination == "untracked":
                     assert not (vault.root / ".produced-assets.sqlite").exists()
@@ -775,6 +743,263 @@ def test_startup_blocks_unsafe_recovery_without_blocking_other_jobs(
             host.close()
             if live_writer is not None:
                 live_writer.__exit__(None, None, None)
+
+    run_scenario(scenario())
+
+
+def test_client_census_gates_collection_and_preserves_revision_bound_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server.asset_stream import open_verified_sized
+
+    async def scenario() -> None:
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library.sqlite")
+        history = HistoryStore(tmp_path / "history.sqlite")
+        library = ServerLibrary(vault, store, scratch_root=tmp_path / "scratch")
+        client = TestClient(
+            TestServer(create_app(make_engine, SCHEMAS, library=library, history=history))
+        )
+        await client.start_server()
+        census = "/api/library/retention-clients"
+        storage = "/api/library/storage"
+        try:
+            opened = await client.post(census, json={"revision": 0})
+            assert opened.status == 200, await opened.text()
+            first = await opened.json()
+            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
+            payloads = (b"shown and undoable", b"actually relinquished")
+            digests = tuple(digest_bytes(data) for data in payloads)
+            inventory = ProducedAssetInventory(vault.root)
+            holder_sets = ((1, 2), (3,), (4,), (5, 6), (7,), (8,))
+            for digest, data in zip(digests, payloads, strict=True):
+                inventory.pending(digest, len(data))
+                with vault.writer(digest) as writer:
+                    writer.write(data)
+                    writer.commit()
+                    inventory.adopted(digest, len(data))
+            for holders in holder_sets:
+                response = await client.put(
+                    f"/api/library/retentions/document/holder-{holders[0]}",
+                    headers={**headers, "X-Dinkster-Retention-Holder": ",".join(map(str, holders))},
+                    json={"revision": 0, "digests": list(digests), "complete": True},
+                )
+                assert response.status == 200, await response.text()
+            offer = store.offer_result_assets(
+                "local", "retained result", 1, "node", "image", 1, [digests[0]], complete=True
+            )
+            source_owner = "/api/library/retentions/shown-result/source-owner"
+            source_headers = {**headers, "X-Dinkster-Retention-Holder": "5,6"}
+            claimed = await client.put(
+                source_owner,
+                headers=source_headers,
+                json={"revision": 0, "sourceToken": offer.token},
+            )
+            assert claimed.status == 200
+            claim = await claimed.json()
+            assert claim["sourceToken"] == offer.token and claim["digests"] == [digests[0]]
+            scratch = cast(Path, library.scratch_root)
+            with closing(hold_produced_job(scratch, "census publication")):
+                with use_produced_output_job("census publication", 1):
+                    scratch_vault = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                    )
+                    assert scratch_vault is not None
+                    with scratch_vault.writer(digests[0]) as writer:
+                        writer.write(payloads[0])
+                        scratch_file = writer.commit()
+                    ProducedScratchState(scratch_vault.root).offer([digests[0]])
+            scratch_bytes = scratch_file.stat().st_size + sum(
+                sidecar.stat().st_size
+                for sidecar in scratch_file.parent.glob(scratch_file.name + ".*")
+            )
+            before_ack = await (await client.get(storage)).json()
+            assert not before_ack["collectionEnabled"]
+            assert (await client.post(storage + "/clear", json={})).status == 409
+            assert scratch_file.read_bytes() == payloads[0]
+            snapshot = await (await client.get(census, headers=headers)).json()
+            assert set(snapshot["holders"]) == {str(n) for n in range(1, 9)}
+            assert snapshot["holders"]["1"] == snapshot["holders"]["2"]
+            assert snapshot["holders"]["5"] == snapshot["holders"]["6"]
+            changed_classes = await client.put(
+                "/api/library/retentions/document/holder-1",
+                headers={**headers, "X-Dinkster-Retention-Holder": "1"},
+                json={"revision": 1, "digests": [], "complete": True},
+            )
+            assert changed_classes.status == 409
+            snapshot = await (await client.get(census, headers=headers)).json()
+            acknowledgment = {"revision": snapshot["revision"], "holders": snapshot["holders"]}
+            rejected = await client.put(
+                census, headers=headers, json={**acknowledgment, "holders": {}}
+            )
+            assert rejected.status == 409
+            acknowledged = await client.put(census, headers=headers, json=acknowledgment)
+            assert acknowledged.status == 200, await acknowledged.text()
+            assert (await acknowledged.json())["complete"]
+            reconciled = await (await client.get(census, headers=headers)).json()
+            assert reconciled["complete"]
+            assert claim in reconciled["holders"]["5"] and claim in reconciled["holders"]["6"]
+            entered = asyncio.Event()
+            release = asyncio.Event()
+
+            async def held_open(path: Path, digest: str):
+                entered.set()
+                await release.wait()
+                return await open_verified_sized(path, digest)
+
+            with monkeypatch.context() as patches:
+                patches.setattr("dinkster_server.library.open_verified_sized", held_open)
+                read = asyncio.create_task(client.get(f"/api/assets/{digests[0]}", headers=headers))
+                try:
+                    async with asyncio.timeout(5):
+                        await entered.wait()
+                    pending = await (await client.get(census, headers=headers)).json()
+                    assert pending["pendingRequests"] == 1 and not pending["complete"]
+                    response = await client.put(
+                        census,
+                        headers=headers,
+                        json={"revision": pending["revision"], "holders": pending["holders"]},
+                    )
+                    assert response.status == 409
+                    assert (await client.post(storage + "/clear", json={})).status == 409
+                    assert vault.resolve(digests[1]) is not None
+                finally:
+                    release.set()
+                    response = await read
+                    assert response.status == 200 and await response.read() == payloads[0]
+            snapshot = await (await client.get(census, headers=headers)).json()
+            response = await client.put(
+                census,
+                headers=headers,
+                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+            )
+            assert response.status == 200
+            policy = await client.put(storage + "/policy", json={"limitBytes": None})
+            assert policy.status == 200
+            assert await policy.json() == {"limitBytes": None, "collectionEnabled": False}
+            assert (await (await client.get(storage)).json())["collectionEnabled"]
+            cleared = await client.post(storage + "/clear", json={})
+            assert cleared.status == 200, await cleared.text()
+            assert (await cleared.json())["reclaimedBytes"] == scratch_bytes
+            assert not scratch_file.exists()
+            durable = vault.resolve(digests[0])
+            assert durable is not None and durable.read_bytes() == payloads[0]
+            stream_url = "/api/events?retentionGeneration=" + first["generation"]
+            stream = await client.ws_connect(stream_url)
+            sibling = await client.ws_connect(stream_url)
+            try:
+                snapshot = await (await client.get(census, headers=headers)).json()
+                assert snapshot["activeStreams"] == 2
+                assert not snapshot["complete"]
+                assert (
+                    await client.post(
+                        census, headers=headers, json={"revision": snapshot["revision"]}
+                    )
+                ).status == 409
+                response = await client.put(
+                    census,
+                    headers=headers,
+                    json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+                )
+                assert response.status == 200
+                await sibling.close()
+                async with asyncio.timeout(5):
+                    while True:
+                        snapshot = await (await client.get(census, headers=headers)).json()
+                        if snapshot["activeStreams"] == 1:
+                            break
+                assert snapshot["connected"] and not snapshot["complete"]
+                assert (await client.post(storage + "/clear", json={})).status == 409
+                assert (await client.get("/api/nodes", headers=headers)).status == 200
+                assert durable.read_bytes() == payloads[0]
+            finally:
+                await sibling.close()
+                await stream.close()
+            for holders in holder_sets:
+                response = await client.put(
+                    f"/api/library/retentions/document/holder-{holders[0]}",
+                    headers={**headers, "X-Dinkster-Retention-Holder": ",".join(map(str, holders))},
+                    json={"revision": 1, "digests": [digests[0]], "complete": True},
+                )
+                assert response.status == 200
+            assert (await client.put(census, headers=headers, json=acknowledgment)).status == 409
+            assert (await client.post(storage + "/clear", json={})).status == 409
+            assert vault.resolve(digests[1]) is not None
+            snapshot = await (await client.get(census, headers=headers)).json()
+            response = await client.put(
+                census,
+                headers=headers,
+                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+            )
+            assert response.status == 200
+            await client.close()
+            store = LibraryStore(tmp_path / "library.sqlite")
+            history = HistoryStore(tmp_path / "history.sqlite")
+            library = ServerLibrary(vault, store, scratch_root=tmp_path / "scratch")
+            client = TestClient(
+                TestServer(create_app(make_engine, SCHEMAS, library=library, history=history))
+            )
+            await client.start_server()
+            restored = await (await client.get(census, headers=headers)).json()
+            assert not restored["connected"] and not restored["complete"]
+            assert (await client.post(storage + "/clear", json={})).status == 409
+            assert vault.resolve(digests[1]) is not None
+            response = await client.post(
+                census, headers=headers, json={"revision": restored["revision"]}
+            )
+            assert response.status == 200
+            first = await response.json()
+            headers = {"X-Dinkster-Retention-Generation": first["generation"]}
+            source_readback = await (await client.get(source_owner, headers=headers)).json()
+            assert source_readback == claim
+            snapshot = await (await client.get(census, headers=headers)).json()
+            response = await client.put(
+                census,
+                headers=headers,
+                json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
+            )
+            assert response.status == 200
+            second = await (await client.post(census, json={"revision": 0})).json()
+            assert (await client.get(census, headers=headers)).status == 200
+            assert (await (await client.get(census, headers=headers)).json())["complete"]
+            assert (await client.post(storage + "/clear", json={})).status == 409
+            second_headers = {"X-Dinkster-Retention-Generation": second["generation"]}
+            response = await client.put(
+                census,
+                headers=second_headers,
+                json={"revision": second["revision"], "holders": second["holders"]},
+            )
+            assert response.status == 200
+            candidate = vault.resolve(digests[1])
+            assert candidate is not None
+            expected_bytes = candidate.stat().st_size + sum(
+                sidecar.stat().st_size for sidecar in candidate.parent.glob(candidate.name + ".*")
+            )
+            response = await client.post(storage + "/clear", json={})
+            assert response.status == 200, await response.text()
+            result = await response.json()
+            assert result["reclaimedBytes"] == expected_bytes
+            assert vault.resolve(digests[1]) is None
+            path = vault.resolve(digests[0])
+            assert path is not None and path.read_bytes() == payloads[0]
+            assert (await client.delete(census, headers=second_headers, json={})).status == 200
+            assert (await client.post(storage + "/clear", json={})).status == 409
+            disconnected = await (await client.get(census, headers=second_headers)).json()
+            reopened = await (
+                await client.post(
+                    census, headers=second_headers, json={"revision": disconnected["revision"]}
+                )
+            ).json()
+            assert not reopened["complete"]
+            assert reopened["generation"] != second["generation"]
+            assert (await client.get("/api/nodes", headers=second_headers)).status == 409
+            assert (await client.get("/api/nodes")).status == 200
+            status = await (await client.get(storage)).json()
+            assert "owner_completeness_unknown" in status["blocked"]
+            assert path.read_bytes() == payloads[0]
+        finally:
+            await client.close()
+            history.close()
 
     run_scenario(scenario())
 
@@ -1017,12 +1242,10 @@ def test_cleanup_policy_persists_without_authorizing_collection(
                 for _ in range(2):
                     response = await client.post(url + "/clear", json={})
                     assert response.status == 409
-                    assert await response.json() == {
-                        "collectionEnabled": False,
-                        "blocked": ["owner_completeness_unknown"],
-                        "reclaimedBytes": 0,
-                        "reclaimedFiles": 0,
-                    }
+                    result = await response.json()
+                    assert result["collectionEnabled"] is False
+                    assert "owner_completeness_unknown" in result["blocked"]
+                    assert result["reclaimedBytes"] == result["reclaimedFiles"] == 0
                     path = library.vault.resolve(digest)
                     assert path is not None and path.read_bytes() == data
                 assert (await client.post(url + "/clear", json={"path": "/"})).status == 400

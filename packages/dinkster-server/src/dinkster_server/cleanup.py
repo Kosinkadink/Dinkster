@@ -34,15 +34,10 @@ from .library import run_owned_thread
 RECOVERY_KEY = web.AppKey("produced_publication_recovery", dict[str, int])
 POLICY_KEY = web.AppKey("produced_policy_collection", dict[str, object])
 POLICY_WAKE_KEY = web.AppKey("produced_policy_wakeup", asyncio.Event)
-# Individual owner manifests cannot certify unregistered frontend owners.
-FRONTEND_RETENTION_COMPLETE = False
 
 
 async def maintain_cleanup_policy(app: web.Application) -> None:
     """Apply the persisted policy through the common collector, never bypassing owners."""
-    if not FRONTEND_RETENTION_COMPLETE:
-        return
-
     from .app import STATE_KEY
     from .library import LIBRARY_KEY
 
@@ -99,14 +94,14 @@ async def inspect_cleanup(
 
     Blocking owners are acquired and released in one owned worker; cancellation
     must not release RAM ownership before that worker settles. This inspects
-    known owners only. Collection additionally requires the frontend integration
-    gate and every reference/publication barrier to remain held through deletion.
+    known owners only. Collection additionally requires an evaluated complete
+    client census and every reference/publication barrier held through deletion.
     """
     if registry is None:
         registry = TypeRegistry()
     memories: dict[int, MemoryLRUCache] = {}
     disks: dict[Path, DiskCacheStore] = {}
-    blocked = [] if FRONTEND_RETENTION_COMPLETE else ["owner_completeness_unknown"]
+    blocked: list[str] = []
 
     def visit(layer: CacheStore) -> None:
         if isinstance(layer, LayeredCache):
@@ -224,12 +219,13 @@ def _scratch_bytes(scratch: Path) -> int:
 
 
 def recover_produced_publications(
-    vault: AssetVault, scratch: Path, *, job: str | None = None
+    vault: AssetVault, scratch: Path, *, job: str | None = None, store: LibraryStore | None = None
 ) -> dict[str, int]:
     """Complete handoffs and reconcile inactive scratch behind the integration gate."""
     recovered = 0
     blocked = 0
     reclaimed = {"reclaimedBytes": 0, "reclaimedFiles": 0}
+    eligible = False
     try:
         for pack, root in _scratch_roots(scratch):
             try:
@@ -242,14 +238,18 @@ def recover_produced_publications(
                         if offered:
                             _recover_publication(vault, root, digest, size)
                             recovered += 1
-                    if FRONTEND_RETENTION_COMPLETE:
-                        _remove_scratch(vault, root, state, reclaimed)
+                    if store is not None:
+                        reasons: list[str] = []
+                        with store.hold_asset_references(collection_blocked=reasons):
+                            if not reasons:
+                                eligible = True
+                                _remove_scratch(vault, root, state, reclaimed)
             except (AssetError, OSError):
                 blocked += 1
     except (AssetError, OSError):
         blocked += 1
     result = {"verifiedPublications": recovered, "blockedInspections": blocked}
-    if FRONTEND_RETENTION_COMPLETE:
+    if eligible:
         result.update(reclaimed)
     return result
 
@@ -476,7 +476,9 @@ def _inspect(
                     )
                     # Partial scratch removal must remain retryable until journal retirement.
                     roots.update(digest for digest, _, offered in state.publications() if offered)
-            references = owners.enter_context(store.hold_asset_references(sorted(roots)))
+            references = owners.enter_context(
+                store.hold_asset_references(sorted(roots), collection_blocked=blocked)
+            )
             retained_assets = len(references)
             try:
                 vault_ownership_available = owners.enter_context(
