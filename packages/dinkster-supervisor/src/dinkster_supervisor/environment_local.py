@@ -16,7 +16,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
-from urllib.request import Request, url2pathname, urlopen
+from urllib.request import Request, urlopen
 
 from dinkster_store import object_path, readable_label
 from packaging.requirements import Requirement
@@ -203,8 +203,11 @@ def retain_wheels(
         if sha is not None and size is None and urlsplit(url).scheme == "https":
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
+        source_path = unquote(urlsplit(url).path)
+        if os.name == "nt":
+            source_path = source_path.removeprefix("/")
+        local = Path(source_path)
         if sha is None or size is None:
-            local = Path(url2pathname(urlsplit(url).path))
             if urlsplit(url).scheme != "file":
                 raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
             sha = sha or content_digest(local)[7:]
@@ -215,11 +218,7 @@ def retain_wheels(
             )
             / filename
         )
-        mirror = (
-            str(Path(url2pathname(urlsplit(url).path)).parent)
-            if urlsplit(url).scheme == "file"
-            else url.rsplit("/", 1)[0]
-        )
+        mirror = str(local.parent) if urlsplit(url).scheme == "file" else url.rsplit("/", 1)[0]
         fetch_artifact((mirror,), filename, destination, sha, size)
         rows.append(
             {
