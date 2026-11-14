@@ -20,7 +20,11 @@ apt_with_retry install --yes --no-install-recommends bubblewrap apparmor-profile
 
 if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] &&
    [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1 ]]; then
-    sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+    profile=/etc/apparmor.d/bwrap-userns-restrict
+    if [[ ! -f "$profile" ]]; then
+        profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+    fi
+    sudo apparmor_parser -r "$profile"
 fi
 
 bwrap --unshare-user --unshare-pid --unshare-net \
