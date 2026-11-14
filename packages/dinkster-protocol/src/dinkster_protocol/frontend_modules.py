@@ -134,8 +134,8 @@ def validate_frontend_modules(raw: object, *, pack: str | None = None) -> None:
     modules = cast(tuple[FrontendModule, ...], raw)
     ids = [item.id for item in modules]
     contributions = [item.id for module in modules for item in module.contributions]
-    if ids != sorted(set(ids)) or len(set(contributions)) != len(contributions):
-        raise ValueError("frontend module ids must be sorted and unique; contribution ids unique")
+    if len(ids) != len(set(ids)) or len(set(contributions)) != len(contributions):
+        raise ValueError("frontend module ids and contribution ids must be unique")
     if pack is not None and any(not id_.startswith(pack + ".") for id_ in ids + contributions):
         raise ValueError("frontend entry and contribution ids must belong to the pack")
 

@@ -109,12 +109,31 @@ class ExtensionDeclaration:
             raise TypeError("entries must be ExtensionEntryPoints")
         _require_declared_vocabulary("privileges", self.privileges, EXTENSION_SCOPES)
         _require_declared_vocabulary("capabilities", self.capabilities, EXTENSION_CAPABILITIES)
+        object.__setattr__(
+            self,
+            "privileges",
+            tuple(scope for scope in EXTENSION_SCOPES if scope in self.privileges),
+        )
+        object.__setattr__(
+            self,
+            "capabilities",
+            tuple(
+                capability
+                for capability in EXTENSION_CAPABILITIES
+                if capability in self.capabilities
+            ),
+        )
         validate_pack_surfaces(self.routes, self.events)
+        object.__setattr__(self, "routes", tuple(sorted(self.routes, key=lambda item: item.id)))
+        object.__setattr__(self, "events", tuple(sorted(self.events, key=lambda item: item.name)))
         if self.routes and ("server" not in self.privileges or "routes" not in self.capabilities):
             raise ValueError("pack routes require server privilege and routes capability")
         if self.events and "schema" not in self.privileges:
             raise ValueError("pack events require schema privilege")
         validate_frontend_modules(self.frontend_modules)
+        object.__setattr__(
+            self, "frontend_modules", tuple(sorted(self.frontend_modules, key=lambda item: item.id))
+        )
         if self.frontend_modules and "frontend" not in self.privileges:
             raise ValueError("frontend modules require frontend privilege")
         missing_privileges = tuple(
@@ -214,6 +233,8 @@ class ContributionSurfaceDescriptor:
         if not isinstance(mode, CompositionMode):
             raise TypeError("mode must be a CompositionMode")
         validate_pack_surfaces(self.routes, self.events)
+        object.__setattr__(self, "routes", tuple(sorted(self.routes, key=lambda item: item.id)))
+        object.__setattr__(self, "events", tuple(sorted(self.events, key=lambda item: item.name)))
         if self.routes and (
             self.surface_id != PACK_ROUTES_SURFACE or self.mode != CompositionMode.KEYED_REGISTRY
         ):
@@ -248,6 +269,7 @@ class KeyedContribution:
         if len(set(self.aliases)) != len(self.aliases):
             raise ValueError("aliases must be unique")
         _require_behavior_configuration("behavior_metadata", self.behavior_metadata)
+        object.__setattr__(self, "behavior_metadata", tuple(sorted(self.behavior_metadata)))
 
 
 @dataclass(frozen=True)
@@ -473,7 +495,7 @@ class ActiveExtension:
             raise ValueError("keyed_contributions must have unique surface/id pairs")
         _require_selector_resolutions(self.selector_resolutions)
         _require_string_pairs("service_providers", self.service_providers)
-        _require_canonical_string_tuple("capabilities", self.capabilities)
+        _require_unique_string_tuple("capabilities", self.capabilities)
         unknown_capabilities = tuple(
             capability
             for capability in self.capabilities
@@ -482,8 +504,28 @@ class ActiveExtension:
         if unknown_capabilities:
             raise ValueError(f"unknown capabilities: {', '.join(unknown_capabilities)}")
         _require_behavior_configuration("behavior_configuration", self.behavior_configuration)
+        object.__setattr__(
+            self,
+            "selector_resolutions",
+            tuple(
+                sorted(
+                    (selector, tuple(sorted(points)))
+                    for selector, points in self.selector_resolutions
+                )
+            ),
+        )
+        object.__setattr__(self, "service_providers", tuple(sorted(self.service_providers)))
+        object.__setattr__(self, "capabilities", tuple(sorted(self.capabilities)))
+        object.__setattr__(
+            self, "behavior_configuration", tuple(sorted(self.behavior_configuration))
+        )
         validate_pack_surfaces(self.routes, self.events)
+        object.__setattr__(self, "routes", tuple(sorted(self.routes, key=lambda item: item.id)))
+        object.__setattr__(self, "events", tuple(sorted(self.events, key=lambda item: item.name)))
         validate_frontend_modules(self.frontend_modules, pack=self.id)
+        object.__setattr__(
+            self, "frontend_modules", tuple(sorted(self.frontend_modules, key=lambda item: item.id))
+        )
         if any(not module.module_digest for module in self.frontend_modules):
             raise ValueError("active frontend modules require content digests")
 
@@ -514,8 +556,11 @@ class ExtensionSnapshot:
             raise ValueError("format_version must be 1")
         _require_nonempty("frontend_api", self.frontend_api)
         ids = [extension.id for extension in self.extensions]
-        if ids != sorted(set(ids)):
-            raise ValueError("extensions must be sorted by id with unique ids")
+        if len(ids) != len(set(ids)):
+            raise ValueError("extensions must have unique ids")
+        object.__setattr__(
+            self, "extensions", tuple(sorted(self.extensions, key=lambda item: item.id))
+        )
 
 
 def canonical_extension_snapshot(snapshot: ExtensionSnapshot) -> str:
@@ -614,11 +659,11 @@ def _require_string_tuple(name: str, values: object) -> None:
         raise TypeError(f"{name} must be a tuple of non-empty strings")
 
 
-def _require_canonical_string_tuple(name: str, values: object) -> None:
+def _require_unique_string_tuple(name: str, values: object) -> None:
     _require_string_tuple(name, values)
     normalized = cast("tuple[str, ...]", values)
-    if normalized != tuple(sorted(set(normalized))):
-        raise ValueError(f"{name} must be sorted and unique")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{name} must be unique")
 
 
 def _require_declared_vocabulary(name: str, values: object, known: tuple[str, ...]) -> None:
@@ -627,9 +672,8 @@ def _require_declared_vocabulary(name: str, values: object, known: tuple[str, ..
     unknown = tuple(value for value in normalized if value not in known)
     if unknown:
         raise ValueError(f"unknown {name}: {', '.join(unknown)}")
-    canonical = tuple(value for value in known if value in normalized)
-    if normalized != canonical:
-        raise ValueError(f"{name} must use vocabulary order without duplicates")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{name} must not contain duplicates")
 
 
 def _require_behavior_configuration(name: str, configuration: object) -> None:
@@ -649,8 +693,8 @@ def _require_behavior_configuration(name: str, configuration: object) -> None:
         if value is not None and type(value) not in (str, int, bool):
             raise TypeError(f"{name} values must be str, int, bool, or None")
         keys.append(key)
-    if keys != sorted(set(keys)):
-        raise ValueError(f"{name} keys must be sorted and unique")
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"{name} keys must be unique")
 
 
 def _require_string_pairs(name: str, values: object) -> None:
@@ -667,8 +711,8 @@ def _require_string_pairs(name: str, values: object) -> None:
         ):
             raise TypeError(f"{name} entries must be non-empty string pairs")
         pairs.append(cast("tuple[str, str]", pair_values))
-    if pairs != sorted(set(pairs)) or len({key for key, _ in pairs}) != len(pairs):
-        raise ValueError(f"{name} must be sorted by unique key")
+    if len({key for key, _ in pairs}) != len(pairs):
+        raise ValueError(f"{name} must have unique keys")
 
 
 def _require_selector_resolutions(values: object) -> None:
@@ -685,10 +729,10 @@ def _require_selector_resolutions(values: object) -> None:
         selector, points = resolution_values
         if not isinstance(selector, str) or not selector:
             raise ValueError("selector resolution names must be non-empty strings")
-        _require_canonical_string_tuple("selector resolution points", points)
+        _require_unique_string_tuple("selector resolution points", points)
         selectors.append(selector)
-    if selectors != sorted(set(selectors)):
-        raise ValueError("selector_resolutions must be sorted by unique selector")
+    if len(selectors) != len(set(selectors)):
+        raise ValueError("selector_resolutions must have unique selectors")
 
 
 __all__ = [

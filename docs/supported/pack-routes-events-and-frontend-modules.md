@@ -5,6 +5,10 @@
   namespaces; events retain pack, worker, node, and native execution identity.
   Integer payload values use JavaScript's safe integer range; finite floating
   point values remain supported in number fields.
+- Unordered extension IDs, privileges, capabilities, keyed settings, routes,
+  events, module IDs and JSON fields are accepted without changing canonical
+  snapshot identity. Required settings fields may use any order. Duplicate or
+  unauthorized declarations still refuse; contribution execution order is retained.
 - Installed packs can publish snapshot-selected immutable JavaScript modules.
   Snapshot and module reads do not start execution workers. Frontend privileges
   and controls do not grant or remove backend node execution ownership.

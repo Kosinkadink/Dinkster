@@ -188,8 +188,12 @@ class PackSettingsSchema:
         if not all(isinstance(name, str) for name in untyped_names):
             raise ValueError("pack setting property names must be strings")
         names = cast(list[str], untyped_names)
-        if list(required_items) != names:
-            raise ValueError("every pack setting must be required in property order")
+        if (
+            not all(isinstance(name, str) for name in required_items)
+            or len(required_items) != len(names)
+            or set(required_items) != set(names)
+        ):
+            raise ValueError("every pack setting must be required exactly once")
         fields: dict[str, PackSettingField] = {}
         for name, untyped in cast(Mapping[str, object], props).items():
             if not isinstance(untyped, Mapping):
@@ -286,8 +290,9 @@ class JsonObjectSchema:
         ):
             raise TypeError("fields must be a tuple of JsonField values")
         names = [item.name for item in self.fields]
-        if names != sorted(set(names)):
-            raise ValueError("JSON fields must be sorted by unique name")
+        if len(names) != len(set(names)):
+            raise ValueError("JSON fields must have unique names")
+        object.__setattr__(self, "fields", tuple(sorted(self.fields, key=lambda item: item.name)))
 
     def validate(self, value: object) -> dict[str, object]:
         if not isinstance(value, Mapping):
@@ -455,8 +460,8 @@ def validate_pack_surfaces(routes: object, events: object) -> None:
             raise TypeError(f"{label} must be a tuple of {cls.__name__} values")
     route_ids = [item.id for item in cast(tuple[PackRoute, ...], routes)]
     event_names = [item.name for item in cast(tuple[PackEvent, ...], events)]
-    if route_ids != sorted(set(route_ids)) or event_names != sorted(set(event_names)):
-        raise ValueError("routes and events must be sorted by unique id/name")
+    if len(route_ids) != len(set(route_ids)) or len(event_names) != len(set(event_names)):
+        raise ValueError("routes and events must have unique ids/names")
 
 
 def pack_surfaces_from_wire(
@@ -477,8 +482,16 @@ def pack_surfaces_to_wire(
 ) -> dict[str, object]:
     # Absence preserves the canonical identity of extensions without these surfaces.
     return {
-        **({"routes": [item.to_wire() for item in routes]} if routes else {}),
-        **({"events": [item.to_wire() for item in events]} if events else {}),
+        **(
+            {"routes": [item.to_wire() for item in sorted(routes, key=lambda item: item.id)]}
+            if routes
+            else {}
+        ),
+        **(
+            {"events": [item.to_wire() for item in sorted(events, key=lambda item: item.name)]}
+            if events
+            else {}
+        ),
     }
 
 

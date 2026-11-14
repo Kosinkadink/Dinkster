@@ -289,8 +289,8 @@ def effective_constraints(
     ):
         raise EnvironmentError("base replacement names must be normalized distribution names")
     replacement_names = cast("list[str]", names)
-    if replacement_names != sorted(set(replacement_names)):
-        raise EnvironmentError("base replacement names must be sorted and unique")
+    if len(replacement_names) != len(set(replacement_names)):
+        raise EnvironmentError("base replacement names must be unique")
     owned = set(replacement_names)
     if published_base is not None:
         published_names = published_base.get("replaces")
@@ -304,8 +304,8 @@ def effective_constraints(
         ):
             raise EnvironmentError("published base must provide normalized replacement membership")
         original_names = cast("list[str]", published_names)
-        if original_names != sorted(set(original_names)):
-            raise EnvironmentError("published base replacement names must be sorted and unique")
+        if len(original_names) != len(set(original_names)):
+            raise EnvironmentError("published base replacement names must be unique")
         owned.update(original_names)
     marker_environment = cast("dict[str, str]", default_environment())
     if custom or interfaces is not None:

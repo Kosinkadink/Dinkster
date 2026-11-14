@@ -46,7 +46,7 @@ def _manifest(root: Path, entry: LockedPack) -> PackManifest:
     manifest = load_manifest(pack_manifest_path(root))
     if canonical_name(manifest.name) != entry.pack:
         raise CompositionError(f"generation pack {entry.pack!r} manifest names {manifest.name!r}")
-    if tuple(canonical_claim(claim) for claim in manifest.namespaces) != entry.claims:
+    if {canonical_claim(claim) for claim in manifest.namespaces} != set(entry.claims):
         raise CompositionError(f"generation pack {entry.pack!r} manifest claims differ from lock")
     if (
         entry.publisher

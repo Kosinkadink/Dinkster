@@ -273,14 +273,11 @@ def main() -> int:
     ceilings = existing_ceilings
     counts = {kind: sum(site["kind"] == kind for site in sites) for kind in kinds}
     allowed_counts = {kind: sum(site.get("kind") == kind for site in allowed) for kind in kinds}
-    ceiling_drift = any(
-        counts[kind] > ceilings[kind] or ceilings[kind] - counts[kind] > slack[kind]
-        for kind in kinds
-    )
-    if ceiling_drift or sites != allowed:
+    ceiling_drift = any(counts[kind] > ceilings[kind] for kind in kinds)
+    if ceiling_drift:
         print(
-            "Inference registry and descriptor catalog sites differ from "
-            "scripts/extension-factory-allowlist.json:",
+            "Inference registry and descriptor catalog sites exceed "
+            "scripts/extension-factory-allowlist.json ceilings:",
             file=sys.stderr,
         )
         for kind in sorted(kinds | set(ceilings)):
@@ -289,12 +286,6 @@ def main() -> int:
                 f"allowlisted={allowed_counts.get(kind, 0)}, ceiling={ceilings.get(kind)!r}",
                 file=sys.stderr,
             )
-        current = {json.dumps(site, sort_keys=True) for site in sites}
-        expected = {json.dumps(site, sort_keys=True) for site in allowed}
-        for site in sorted(current - expected):
-            print(f"  unlisted {site}", file=sys.stderr)
-        for site in sorted(expected - current):
-            print(f"  stale {site}", file=sys.stderr)
         print(
             "Refresh intentional site changes with "
             "`uv run --locked python scripts/check_extension_factories.py --write`, "

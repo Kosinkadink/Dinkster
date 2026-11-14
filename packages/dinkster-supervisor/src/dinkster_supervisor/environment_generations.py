@@ -927,7 +927,8 @@ def build_generation(
                     source_generation=source_generation if operation != "doctor" else None,
                     locks=pack_locks if operation != "doctor" else (),
                     in_process_packs=in_process_packs,
-                    offline=operation != "acquire",
+                    # Online compatibility planning may fetch verified wheel metadata.
+                    offline=not acquire_pack_wheels or operation not in {"preflight", "acquire"},
                     uv=uv,
                 )
                 if operation == "preflight":
