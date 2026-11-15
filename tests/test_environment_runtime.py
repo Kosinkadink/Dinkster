@@ -22,7 +22,7 @@ from dinkster_supervisor.environment_runtime import (
     start_engine,
     stop_engine,
 )
-from dinkster_supervisor.environment_state import EnvironmentError
+from dinkster_supervisor.environment_state import EnvironmentError, interpreter
 from test_environment_generations import _workspace_tree
 
 SERVE = """
@@ -519,7 +519,17 @@ def test_doctor_sandbox_uses_selected_generation_readiness(
     from dinkster_supervisor.environment import main
 
     make_generation(tmp_path)
-    site = _workspace_tree(tmp_path / "generations/1/python")
+    site = Path(
+        subprocess.check_output(
+            [
+                str(interpreter(tmp_path / "generations/1")),
+                "-I",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+    )
     workers = site / "dinkster_workers"
     workers.mkdir()
     (workers / "__init__.py").write_text("")
@@ -529,12 +539,16 @@ def test_doctor_sandbox_uses_selected_generation_readiness(
         "detail": "selected engine prerequisite",
     }
     (workers / "doctor.py").write_text(f"import json; print(json.dumps({report!r}))\n")
-    assert main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"]) == 0
+    with pytest.raises(SystemExit) as exit:
+        main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"])
+    assert exit.value.code == 0
     result = json.loads(capsys.readouterr().out)
     assert result["sandbox"] == report
     assert engine_status(tmp_path) == ()
     (workers / "doctor.py").write_text("raise RuntimeError('unsupported probe')\n")
-    assert main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"]) == 0
+    with pytest.raises(SystemExit) as exit:
+        main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"])
+    assert exit.value.code == 0
     result = json.loads(capsys.readouterr().out)
     assert result["sandbox"]["available"] is False
     assert "Update or repair" in result["sandbox"]["detail"]
@@ -801,7 +815,13 @@ def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path
         try:
             assert engine_status(tmp_path) == (first,)
             assert engine_assignments(tmp_path, 2) == [
-                {"name": "main", "port": second_port, "gpus": ["GPU-aB12"], "running": True}
+                {
+                    "name": "main",
+                    "port": second_port,
+                    "gpus": ["GPU-aB12"],
+                    "running": True,
+                    "sandboxPacks": False,
+                }
             ]
             require_idle(tmp_path)
             (tmp_path / "current").write_text("2\n")
@@ -809,7 +829,13 @@ def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path
             stop_engine(tmp_path, "main", generation=1)
             assert engine_status(tmp_path) == (second,)
             assert engine_assignments(tmp_path, 1) == [
-                {"name": "main", "port": first_port, "gpus": [], "running": False}
+                {
+                    "name": "main",
+                    "port": first_port,
+                    "gpus": [],
+                    "running": False,
+                    "sandboxPacks": False,
+                }
             ]
         finally:
             stop_engine(tmp_path, "main", generation=2)

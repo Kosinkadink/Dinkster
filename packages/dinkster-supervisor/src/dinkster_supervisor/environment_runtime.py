@@ -122,13 +122,16 @@ def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
                 timeout=30,
                 check=True,
             )
-            report = json.loads(completed.stdout)
+            value: object = json.loads(completed.stdout)
+            if not isinstance(value, dict):
+                raise ValueError("invalid sandbox readiness report")
+            report = cast("dict[str, object]", value)
+            detail = report.get("detail")
             if (
-                not isinstance(report, dict)
-                or report.get("format") != "dinkster.sandbox-readiness/1"
+                report.get("format") != "dinkster.sandbox-readiness/1"
                 or type(report.get("available")) is not bool
-                or not isinstance(report.get("detail"), str)
-                or not report["detail"].strip()
+                or not isinstance(detail, str)
+                or not detail.strip()
             ):
                 raise ValueError("invalid sandbox readiness report")
             return report
@@ -136,7 +139,8 @@ def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
             return {
                 "format": "dinkster.sandbox-readiness/1",
                 "available": False,
-                "detail": "The selected engine could not report pack sandbox readiness. Update or repair the engine, then check again.",
+                "detail": "The selected engine could not report pack sandbox readiness. "
+                "Update or repair the engine, then check again.",
             }
 
 
@@ -780,7 +784,9 @@ def _assignment(record: dict[str, object]) -> tuple[int, int, tuple[str, ...]]:
 
 
 def _public_row(record: dict[str, object]) -> dict[str, object]:
-    return {key: record[key] for key in ("name", "generation", "state", "url")}
+    return {key: record[key] for key in ("name", "generation", "state", "url")} | (
+        {"sandboxPacks": True} if record.get("sandboxPacks") is True else {}
+    )
 
 
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> object:

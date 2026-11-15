@@ -139,7 +139,8 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.operation == "doctor" and args.sandbox:
         if current is None:
             raise EnvironmentError(
-                "project has no active generation; install an engine to check pack sandbox readiness"
+                "project has no active generation; "
+                "install an engine to check pack sandbox readiness"
             )
         result["sandbox"] = sandbox_readiness(root, current)
         return 0
