@@ -33,6 +33,8 @@
   registered resident codecs. CONDITIONING, SAMPLER and NOISE can contain
   resident payloads and require the same process when linked between packs.
   The node catalog publishes process affinity for pre-run diagnostics.
+  Host-declared unavailable nodes retain their exact refusal in the catalog
+  and are refused at submit before any job is queued.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.

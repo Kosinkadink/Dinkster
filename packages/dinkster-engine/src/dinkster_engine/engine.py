@@ -28,8 +28,9 @@ from collections.abc import Awaitable, Callable, Container, Iterable, Mapping, S
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cached_property
+from types import MappingProxyType
 from typing import Literal, cast
 
 from dinkster_graph import (
@@ -285,6 +286,7 @@ class ExecutionRuntime:
     graph_compile_transport: GraphCompileTransport | None = None
     schemas: Mapping[str, NodeSchema] | None = None
     resident_topology: ResidentTopology | None = None
+    node_unavailability: Mapping[str, str] = field(default_factory=dict[str, str])
     prepare_host_types: Callable[[set[str]], Awaitable[None]] | None = None
     known_types: Container[str] | None = None
     placement_worker: Callable[[str], str | None] | None = None
@@ -316,6 +318,9 @@ class ExecutionRuntime:
     ) = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "node_unavailability", MappingProxyType(dict(self.node_unavailability))
+        )
         if bool(self.graph_compiler_registry.contributions) != (
             self.graph_compile_transport is not None
         ):

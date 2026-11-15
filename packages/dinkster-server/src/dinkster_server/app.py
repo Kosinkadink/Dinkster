@@ -2409,6 +2409,7 @@ async def handle_nodes(request: web.Request) -> web.Response:
         for page in _valid_doc_pages(state, pack_id)
         if page.kind == "node"
     }
+    execution = state.engine.pin_execution()
     for type_id, schema in state.schemas.items():
         entry = schema_to_wire(schema, replacement_schemas=state.schemas)
         # Attribution rides the publication, never the schema: the host
@@ -2419,7 +2420,9 @@ async def handle_nodes(request: web.Request) -> web.Response:
         if (pack_id, type_id) in documented_nodes:
             entry["hasDocs"] = True
         entry["executionArms"] = list(state.execution_arms[type_id])
-        residency = state.engine.pin_execution().resident_topology
+        if reason := execution.node_unavailability.get(type_id):
+            entry["unavailableReason"] = reason
+        residency = execution.resident_topology
         if residency is not None:
             entry["residentAffinity"] = {
                 "types": sorted(residency.types),
@@ -3374,6 +3377,24 @@ async def handle_submit(request: web.Request) -> web.Response:
             targets = list(compiled_graph.targets)
         else:
             preflight_graph = execution_graph
+        pending = [("", preflight_graph)]
+        while pending:
+            prefix, level = pending.pop()
+            for node_id, node in level.nodes.items():
+                path = f"{prefix}/{node_id}" if prefix else node_id
+                if isinstance(node, RegionNode):
+                    pending.append((path, node.body))
+                elif reason := execution.node_unavailability.get(node.node_type):
+                    return web.json_response(
+                        {
+                            "error": "node-unavailable",
+                            "message": reason,
+                            "problems": [
+                                {"code": "node-unavailable", "message": reason, "nodeId": path}
+                            ],
+                        },
+                        status=400,
+                    )
         if execution.resident_topology is not None:
             assert execution.schemas is not None
             residency_problems = execution.resident_topology.validate(
