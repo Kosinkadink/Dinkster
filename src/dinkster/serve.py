@@ -163,6 +163,7 @@ from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
+from .services import resolve_services
 from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
@@ -481,7 +482,6 @@ _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
 _IDENTITY_JWKS_URL_ENV = "DINKSTER_IDENTITY_JWKS_URL"
 _IDENTITY_ISSUER_ENV = "DINKSTER_IDENTITY_ISSUER"
 _IDENTITY_AUDIENCE_ENV = "DINKSTER_IDENTITY_AUDIENCE"
-_DEFAULT_REMOTE_GATEWAY_BASE = ""
 _FEDERATED_ASSET_PATHS = {
     "catalog": "/api/catalog",
     "candidates": "/api/catalog/candidates",
@@ -507,11 +507,16 @@ def _with_remote_config(
     poll_interval: float | None = None,
     token_file: str | None = None,
 ) -> PackSpec:
-    if catalog_base is None:
-        catalog_base = os.environ.get(_REMOTE_CATALOG_BASE_ENV, _DEFAULT_REMOTE_GATEWAY_BASE)
-    if gateway_base is None:
-        gateway_base = os.environ.get(_REMOTE_GATEWAY_BASE_ENV, "")
-    gateway_base = gateway_base or catalog_base
+    services = resolve_services(
+        os.environ.get("DINKSTER_SERVICES", "production"),
+        catalog_base=(
+            os.environ.get(_REMOTE_CATALOG_BASE_ENV) if catalog_base is None else catalog_base
+        ),
+        gateway_base=(
+            os.environ.get(_REMOTE_GATEWAY_BASE_ENV) if gateway_base is None else gateway_base
+        ),
+    )
+    catalog_base, gateway_base = services.catalog_base, services.gateway_base
     if poll_interval is None:
         poll_interval = float(os.environ.get(_REMOTE_CATALOG_POLL_INTERVAL_ENV, "3600"))
     if token_file is None:
@@ -910,17 +915,20 @@ def main(argv: list[str] | None = None) -> None:
         help="OpenAI-compatible /v1 base URL (default: $DINKSTER_OPENAI_BASE_URL)",
     )
     parser.add_argument(
+        "--services",
+        default=os.environ.get("DINKSTER_SERVICES", "production"),
+        help="hosted account and remote-node services (default: production)",
+    )
+    parser.add_argument(
         "--remote-catalog-base",
-        default=os.environ.get(_REMOTE_CATALOG_BASE_ENV, _DEFAULT_REMOTE_GATEWAY_BASE),
+        default=os.environ.get(_REMOTE_CATALOG_BASE_ENV),
         metavar="URL",
-        help=(
-            "remote node catalog base URL "
-            "(default: $DINKSTER_REMOTE_CATALOG_BASE; disabled when unset)"
-        ),
+        help="override the selected service catalog; an empty value disables discovery "
+        "(default: $DINKSTER_REMOTE_CATALOG_BASE or selected services)",
     )
     parser.add_argument(
         "--remote-gateway-base",
-        default=os.environ.get(_REMOTE_GATEWAY_BASE_ENV, ""),
+        default=os.environ.get(_REMOTE_GATEWAY_BASE_ENV),
         metavar="URL",
         help="remote job gateway base URL (default: catalog base URL)",
     )
@@ -1320,6 +1328,14 @@ def main(argv: list[str] | None = None) -> None:
         "and Python thread stacks",
     )
     args = parser.parse_args(argv)
+    try:
+        services = resolve_services(
+            args.services,
+            catalog_base=args.remote_catalog_base,
+            gateway_base=args.remote_gateway_base,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.generation is not None:
         if not args.generation.is_absolute():
             parser.error("--generation requires an absolute path")
@@ -1355,6 +1371,7 @@ def main(argv: list[str] | None = None) -> None:
         _OPENAI_COMPATIBILITY_ENV,
         _OPENAI_STREAM_ENV,
         _OPENAI_TIMEOUT_ENV,
+        "DINKSTER_SERVICES",
         _REMOTE_CATALOG_BASE_ENV,
         _REMOTE_GATEWAY_BASE_ENV,
         _REMOTE_AUTH_TOKEN_FILE_ENV,
@@ -1719,8 +1736,8 @@ def main(argv: list[str] | None = None) -> None:
             if pack_id == "dinkster-nodes-remote":
                 spec = _with_remote_config(
                     spec,
-                    catalog_base=args.remote_catalog_base,
-                    gateway_base=args.remote_gateway_base,
+                    catalog_base=services.catalog_base,
+                    gateway_base=services.gateway_base,
                     poll_interval=args.remote_catalog_poll_interval,
                     token_file=args.remote_auth_token_file,
                 )
@@ -1764,8 +1781,8 @@ def main(argv: list[str] | None = None) -> None:
                 if spec.packs and "dinkster-nodes-remote" in spec.packs:
                     spec = _with_remote_config(
                         spec,
-                        catalog_base=args.remote_catalog_base,
-                        gateway_base=args.remote_gateway_base,
+                        catalog_base=services.catalog_base,
+                        gateway_base=services.gateway_base,
                         poll_interval=args.remote_catalog_poll_interval,
                         token_file=args.remote_auth_token_file,
                     )
