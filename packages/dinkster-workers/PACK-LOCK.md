@@ -96,6 +96,24 @@ and reports missing, extra and differing packages with a rebuild-from-lock offer
 `scratch_venv` supplies a terminal interpreter over the generation without opening
 the immutable generation itself to package installation.
 
+## Shared inference planning
+
+`plan_inference(locks, python=..., variant=..., indexes=..., find_links=...)`
+resolves the selected packs' requirement ranges together. Publication pins are
+not substituted for requirements: differently pinned packs can share a compatible
+resolved closure. The supplied interpreter's exact torch, dinkster-inference,
+comfy-aimdo and engine API versions remain fixed, including against transitive
+requirements. Resolver conflicts retain the requirement diagnostics.
+
+The returned `PackPlan` carries explicit dependency overrides for non-protected
+packages whose resolved versions differ from the parent. `provision_pack` installs
+those hashed wheels into a child environment and records them as local, not
+inherited, while leaving the parent untouched. Provisioning rechecks the protected
+requirements and plan against the actual parent before creating the child.
+Overrides are never permitted for in-process installation. Pass the same plan's
+`overrides` to `pack_drift` when checking the child. Ordinary `plan_pack` callers
+retain the default generation-version substitution behavior.
+
 ## Generation subprocess adapter
 
 The generation manager runs its target interpreter with

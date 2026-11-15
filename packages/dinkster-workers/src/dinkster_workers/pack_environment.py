@@ -105,6 +105,7 @@ def provision_pack(
         own_environment_size=plan.own_environment_size,
         wheel_store=wheel_store,
         offline=offline,
+        overrides=plan.overrides,
     )
     current_plan.require_layering()
     if current_plan != plan:
@@ -113,6 +114,8 @@ def provision_pack(
     if destination.exists():
         raise ProvisionError(f"pack venv already exists: {destination}; rebuild from its lock")
     if in_process:
+        if plan.overrides:
+            raise ProvisionError("dependency overrides require a child environment")
         generation = packs.parent
         if not generation_python.resolve().is_relative_to((generation / "python").resolve()):
             raise ProvisionError("in-process interpreter must belong to target generation/python")
@@ -170,6 +173,7 @@ def provision_pack(
                             package.name
                             for package in plan.lock.packages
                             if package.name in parent_packages.versions
+                            and package.name not in plan.overrides
                         }
                         | ({"dinkster-api"} if plan.lock.engine is not None else set())
                     ),
@@ -186,7 +190,13 @@ def provision_pack(
         raise
 
 
-def pack_drift(python: Path, lock: PackLock, generation: GenerationPackages) -> tuple[str, ...]:
+def pack_drift(
+    python: Path,
+    lock: PackLock,
+    generation: GenerationPackages,
+    *,
+    overrides: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     """Report extra, missing, or changed local distributions and offer a lock rebuild."""
     script = """
 import importlib.metadata as m, json, sysconfig
@@ -203,7 +213,7 @@ print(json.dumps({d.metadata['Name']: d.version for d in m.distributions(
     expected = {
         package.name: package.version
         for package in lock.packages
-        if package.name not in generation.versions
+        if package.name not in generation.versions or package.name in overrides
     }
     return tuple(
         f"{lock.pack}: {name}: expected {expected.get(name, 'absent')}, "

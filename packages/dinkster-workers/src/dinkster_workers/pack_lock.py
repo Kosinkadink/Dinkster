@@ -13,7 +13,7 @@ import tempfile
 import tomllib
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
@@ -254,6 +254,7 @@ class PackPlan:
     wheels: tuple[LockedWheel, ...]
     conflicts: tuple[str, ...]
     own_environment_size: int
+    overrides: tuple[str, ...] = ()
 
     @property
     def download_size(self) -> int:
@@ -275,8 +276,15 @@ def plan_pack(
     own_environment_size: int,
     wheel_store: Path | None = None,
     offline: bool = False,
+    overrides: tuple[str, ...] = (),
 ) -> PackPlan:
-    """Check engine and dependency requirements while keeping private wheels locked."""
+    """Check requirements, optionally shadowing selected parent packages in a child."""
+    generation = replace(
+        generation,
+        versions={
+            name: version for name, version in generation.versions.items() if name not in overrides
+        },
+    )
     conflicts: list[str] = []
     wheels: list[LockedWheel] = []
     if lock.variant != variant:
@@ -371,7 +379,88 @@ def plan_pack(
                 for dependency in dependencies
                 for context in ("", *sorted(requirement.extras))
             )
-    return PackPlan(lock, tuple(wheels), tuple(conflicts), own_environment_size)
+    return PackPlan(lock, tuple(wheels), tuple(conflicts), own_environment_size, overrides)
+
+
+def plan_inference(
+    locks: Sequence[PackLock],
+    *,
+    python: Path,
+    variant: str,
+    indexes: Sequence[str] = (),
+    find_links: Sequence[Path] = (),
+    uv: str = "uv",
+) -> PackPlan:
+    """Plan a shared closure from requirements, not incompatible publication pins."""
+    if not locks or len({lock.pack for lock in locks}) != len(locks):
+        raise ProvisionError("shared inference requires distinct, nonempty pack selections")
+    if any(lock.variant != variant for lock in locks):
+        raise ProvisionError("shared inference dependency locks must match the generation variant")
+    generation = GenerationPackages.inspect(python)
+    protected = ("torch", "dinkster-inference", "comfy-aimdo")
+    missing = set(protected) - generation.versions.keys()
+    if missing:
+        raise ProvisionError(
+            "shared inference baseline is missing protected dependencies: "
+            + ", ".join(sorted(missing))
+        )
+    api = generation.versions.get("dinkster-api")
+    requirements = tuple(
+        dict.fromkeys(
+            (
+                *(f"{name}=={generation.versions[name]}" for name in protected),
+                *((f"dinkster-api=={api}",) if api is not None else ()),
+                *(text for lock in locks for text in lock.requirements),
+                *(f"dinkster-api{lock.engine}" for lock in locks if lock.engine is not None),
+            )
+        )
+    )
+    requires_python = ",".join(dict.fromkeys(lock.requires_python for lock in locks))
+    if not SpecifierSet(requires_python).contains(generation.python_version):
+        raise ProvisionError(
+            f"shared inference Python {generation.python_version} "
+            f"does not satisfy {requires_python}"
+        )
+    constraints = [f"{name}=={generation.versions[name]}" for name in protected]
+    if api is not None:
+        constraints.append(f"dinkster-api=={api}")
+    with tempfile.TemporaryDirectory(prefix="dinkster-inference-lock-") as directory:
+        constraint_path = Path(directory) / "constraints.txt"
+        constraint_path.write_text("\n".join(constraints) + "\n", encoding="ascii")
+        lock = resolve_pack_lock(
+            pack="shared-inference",
+            variant=variant,
+            requirements=requirements,
+            python=python,
+            constraints=constraint_path,
+            indexes=tuple(
+                dict.fromkeys((*indexes, *(url for lock in locks for url in lock.indexes)))
+            ),
+            find_links=find_links,
+            requires_python=requires_python,
+            engine=f"=={api}" if api is not None else None,
+            uv=uv,
+        )
+    for package in lock.packages:
+        if package.name in protected and Version(package.version) != Version(
+            generation.versions[package.name]
+        ):
+            raise ProvisionError(
+                f"shared inference cannot change {package.name} "
+                f"from {generation.versions[package.name]} to {package.version}"
+            )
+    return plan_pack(
+        lock,
+        generation,
+        variant=variant,
+        own_environment_size=0,
+        overrides=tuple(
+            package.name
+            for package in lock.packages
+            if package.name in generation.versions
+            and Version(package.version) != Version(generation.versions[package.name])
+        ),
+    )
 
 
 def resolve_pack_lock(
@@ -387,7 +476,7 @@ def resolve_pack_lock(
     engine: str | None = None,
     uv: str = "uv",
 ) -> PackLock:
-    """Publisher/local-only resolution; published installation never calls this."""
+    """Resolve explicit requirements to hashed wheels before dependency provisioning."""
     normalized = tuple(normalize_requirement(text) for text in requirements)
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-lock-") as directory:
         root = Path(directory)

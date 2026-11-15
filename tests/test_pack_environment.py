@@ -40,6 +40,7 @@ from dinkster_workers.pack_lock import (
     LockedWheel,
     PackLock,
     normalize_requirement,
+    plan_inference,
     plan_pack,
     resolve_pack_lock,
 )
@@ -966,6 +967,131 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
             variant="linux-cpu",
         )
     assert not venv_python(tmp_path / "packs/example").exists()
+
+
+def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path: Path) -> None:
+    protected = [
+        _wheel(tmp_path, name, version, module, f"VALUE = {value}\n")
+        for name, version, module, value in (
+            ("torch", "2.14.1+cpu", "torch", 19),
+            ("dinkster-inference", "0.1.2", "dinkster_inference", 31),
+            ("comfy-aimdo", "0.6.0", "comfy_aimdo", 47),
+            ("dinkster-api", "0.0.8", "dinkster_api", 8),
+        )
+    ]
+    versions = [
+        _wheel(tmp_path, "fixture-extra", version, "fixture_extra", f"VALUE = {value}\n")
+        for version, value in (("1.0", 13), ("2.0", 29), ("3.0", 53))
+    ]
+    target = tmp_path / "generation"
+    python = _generation(target / "python", [*protected, versions[0]])
+    original = GenerationPackages.inspect(python)
+    locks = tuple(
+        PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            (requirement,),
+            (),
+            (LockedDistribution("fixture-extra", version, (wheel,)),),
+        )
+        for name, requirement, version, wheel in (
+            ("model-owner", "fixture-extra>=1,<3", "1.0", versions[0]),
+            ("model-consumer", "fixture-extra>=2,<4", "3.0", versions[2]),
+        )
+    )
+    plan = plan_inference(locks, python=python, variant="linux-cpu", find_links=(tmp_path,))
+    assert not plan.conflicts
+    assert {package.name: package.version for package in plan.lock.packages} == {
+        "comfy-aimdo": "0.6.0",
+        "dinkster-inference": "0.1.2",
+        "fixture-extra": "2.0",
+        "torch": "2.14.1+cpu",
+    }
+    assert plan.overrides == ("fixture-extra",)
+    with pytest.raises(ProvisionError, match="overrides require a child environment"):
+        provision_pack(
+            plan,
+            generation_python=python,
+            packs=target / "inference",
+            wheel_store=tmp_path / "store",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+            in_process=True,
+        )
+    child = provision_pack(
+        plan,
+        generation_python=python,
+        packs=target / "inference",
+        wheel_store=tmp_path / "store",
+        uv_cache=tmp_path / "cache",
+        variant="linux-cpu",
+    )
+    output = subprocess.check_output(
+        [
+            str(child),
+            "-c",
+            "import fixture_extra, torch, dinkster_inference, comfy_aimdo; "
+            "print(fixture_extra.VALUE, torch.VALUE, dinkster_inference.VALUE, comfy_aimdo.VALUE)",
+        ],
+        text=True,
+    )
+    assert output.strip() == "29 19 31 47"
+    assert pack_drift(child, plan.lock, original, overrides=plan.overrides) == ()
+    assert GenerationPackages.inspect(python) == original
+    receipt = json.loads((child.parent.parent / "installed-wheels.json").read_text())
+    assert [wheel["filename"] for wheel in receipt["wheels"]] == [versions[1].filename]
+    assert receipt["inherited"] == ["comfy-aimdo", "dinkster-api", "dinkster-inference", "torch"]
+    retained = PackLock.read(child.parent.parent / "pack-lock.json")
+    assert retained == plan.lock
+    transitive = _wheel(
+        tmp_path,
+        "fixture-transitive",
+        "1.0",
+        "fixture_transitive",
+        "VALUE = 71\n",
+        requires=("comfy-aimdo>=0.7",),
+    )
+    new_aimdo = _wheel(tmp_path, "comfy-aimdo", "0.7", "comfy_aimdo", "VALUE = 101\n")
+    refused = replace(
+        locks[1],
+        requirements=("fixture-transitive",),
+        packages=(LockedDistribution("fixture-transitive", "1.0", (transitive,)),),
+    )
+    with pytest.raises(ProvisionError) as failure:
+        plan_inference(
+            (locks[0], refused), python=python, variant="linux-cpu", find_links=(tmp_path,)
+        )
+    assert "comfy-aimdo" in str(failure.value)
+    assert "fixture-transitive" in str(failure.value)
+    assert "dependency conflict" in str(failure.value)
+    for name, requirement in (
+        ("torch", "torch>2.14.1"),
+        ("dinkster-inference", "dinkster-inference<0.1.2"),
+        ("comfy-aimdo", "comfy-aimdo>=0.7"),
+    ):
+        refused = replace(locks[1], requirements=(requirement,))
+        with pytest.raises(ProvisionError) as failure:
+            plan_inference(
+                (locks[0], refused), python=python, variant="linux-cpu", find_links=(tmp_path,)
+            )
+        assert name in str(failure.value)
+        assert "dependency conflict" in str(failure.value)
+    assert GenerationPackages.inspect(python) == original
+    changed = _generation(
+        tmp_path / "changed/python",
+        [*protected[:2], new_aimdo, protected[3]],
+    )
+    with pytest.raises(ProvisionError, match="comfy-aimdo.*0.7.*requirement"):
+        provision_pack(
+            plan,
+            generation_python=changed,
+            packs=tmp_path / "changed/inference",
+            wheel_store=tmp_path / "store",
+            uv_cache=tmp_path / "cache",
+            variant="linux-cpu",
+        )
+    assert not (tmp_path / "changed/inference/shared-inference").exists()
 
 
 def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:

@@ -1,3 +1,9 @@
+# Shared inference dependency planning
+
+- The worker dependency API resolves two packs pinned to different private versions to a third compatible version, installs it in a real child interpreter, and leaves parent versions unchanged.
+- Direct conflicts with torch, dinkster-inference and comfy-aimdo, plus a transitive comfy-aimdo conflict with a newer wheel available, refuse with resolver diagnostics. Provisioning refuses changed protected parent versions and disallows overrides in the parent interpreter.
+- The child retains its hashed dependency lock and records overridden dependencies as local rather than inherited. These worker API controls do not establish automatic managed-install admission, sealed shared-environment lifecycle or a real model run.
+
 # Recorded shared inference membership
 
 - Public preparation records the selected first-party members and interpreter before generation sealing. Serving replays that membership; the same resident execution, unrelated isolation, opt-out and grant-refusal controls pass through recorded and existing generation paths (12 cases).
