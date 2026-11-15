@@ -169,7 +169,11 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
             ),
             "healthy_nodes.py": HEALTHY_NODES + f"\nVALUE = {value}\n",
         }.items():
-            tree.add(pygit2.IndexEntry(name, repository.create_blob(payload.encode()), 0o100644))
+            tree.add(
+                pygit2.IndexEntry(
+                    name, repository.create_blob(payload.encode()), pygit2.enums.FileMode.BLOB
+                )
+            )
         commits.append(
             repository.create_commit(
                 "refs/heads/" + branch,
