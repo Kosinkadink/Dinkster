@@ -567,7 +567,8 @@
 - Windows contributor setup and interpreter preparation require uv 0.13.6 or
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
-  the interpreter. Setup never upgrades uv automatically.
+  the interpreter. Published native environment tools bundle a compatible uv;
+  setup never upgrades the caller's uv automatically.
 - Environment commands that ask for confirmation refuse non-terminal text-mode
   requests without `--yes`, naming `--yes` to apply and `--plan` to inspect.
   Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
