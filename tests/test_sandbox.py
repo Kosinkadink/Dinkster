@@ -565,6 +565,77 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
 
         run_scenario(scenario())
 
+    def test_gateway_bearer_rotation_is_visible_without_oauth_access(self, tmp_path: Path) -> None:
+        from dinkster.compose import PackSpec, compose_serving
+
+        home = tmp_path / "account-home"
+        token = home / "gateway-tokens" / "install" / "access-token"
+        token.parent.mkdir(parents=True)
+        token.write_text("first-bearer")
+        secret = home / "accounts" / "install" / "session.json"
+        secret.parent.mkdir(parents=True)
+        secret.write_text('{"refresh_token":"must-stay-private"}')
+        pack = tmp_path / "pack"
+        pack.mkdir()
+        manifest = pack / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname="credential-probe"\npublisher="dinkster"\n'
+            'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
+        )
+        (pack / "credential_probe.py").write_text(
+            "import json, os\nfrom pathlib import Path\n"
+            "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "class Probe(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='credentialprobe.read', idempotent=False, "
+            "outputs=(OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "    @classmethod\n"
+            "    async def execute(cls):\n"
+            "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+            f"        secret = Path({str(secret)!r})\n"
+            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists()]))\n"
+            "NODES = (Probe,)\n"
+        )
+        spec = PackSpec(
+            manifest,
+            env={"PYTHONPATH": str(pack), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
+            remote_token_directory=token.parent,
+        )
+
+        async def scenario() -> None:
+            composition = await compose_serving(
+                (spec,),
+                include_default_packs=False,
+                sandbox_policy=SandboxPolicy(
+                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home),)
+                ),
+            )
+            try:
+                engine = composition.make_engine(lambda event: None)
+                graph = Graph(nodes={"read": GraphNode("credentialprobe.read", {})})
+                first = await engine.run(graph, ["read"])
+                report = first.outputs["read"]["report"].resolve()
+                assert isinstance(report, str)
+                assert json.loads(report) == [
+                    "first-bearer",
+                    False,
+                ]
+                replacement = token.with_suffix(".new")
+                replacement.write_text("second-bearer")
+                replacement.replace(token)
+                second = await engine.run(graph, ["read"])
+                report = second.outputs["read"]["report"].resolve()
+                assert isinstance(report, str)
+                assert json.loads(report) == [
+                    "second-bearer",
+                    False,
+                ]
+            finally:
+                await composition.close()
+
+        run_scenario(scenario())
+
     def test_isolated_worker_runs_inside_bwrap(self) -> None:
         """The full worker boundary - hello, schemas, an image graph - inside
         a real jail. The policy grants only the repo checkout (editable
