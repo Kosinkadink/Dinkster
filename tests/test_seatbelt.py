@@ -79,6 +79,60 @@ native = pytest.mark.skipif(sys.platform != "darwin", reason="native macOS Seatb
 
 
 @native
+@pytest.mark.parametrize(
+    "gpu,mps,warning",
+    [
+        (True, False, True),
+        (True, True, False),
+        (False, False, False),
+        (True, "ImportError", False),
+        (True, "RuntimeError", False),
+    ],
+)
+def test_unavailable_mps_diagnostic_preserves_cpu_execution(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str], gpu: bool, mps: bool | str, warning: bool
+) -> None:
+    spec = make_spec(tmp_path, "print('CPU worker ran')")
+    if mps == "ImportError":
+        source = "raise ImportError('optional Torch is unavailable')\n"
+    else:
+        source = (
+            "from types import SimpleNamespace\n"
+            "def available():\n"
+            + (
+                "    raise RuntimeError('MPS inspection failed')\n"
+                if mps == "RuntimeError"
+                else f"    return {mps!r}\n"
+            )
+            + "backends = SimpleNamespace(mps=SimpleNamespace(is_available=available))\n"
+        )
+    (spec.pack_root / "torch.py").write_text(source)
+    spec = LaunchSpec(
+        spec.command,
+        {"PYTHONPATH": str(spec.pack_root)},
+        spec.endpoint_dir,
+        spec.pack_root,
+        spec.python,
+        False,
+    )
+
+    async def scenario() -> None:
+        process = await SeatbeltLauncher(SandboxPolicy(gpu=gpu)).launch(spec)
+        assert await asyncio.wait_for(process.wait(), 30) == 0
+
+    asyncio.run(scenario())
+    output = capfd.readouterr()
+    assert output.out.strip() == "CPU worker ran"
+    assert ("MPS is unavailable inside the sandbox" in output.err) is warning
+    assert ("could not determine sandboxed MPS availability" in output.err) is isinstance(mps, str)
+    if isinstance(mps, str):
+        assert mps in output.err
+    if warning:
+        assert "AppleParavirtDeviceUserClient" in output.err
+        assert "CPU execution remains available" in output.err
+
+
+@native
 def test_files_processes_network_and_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

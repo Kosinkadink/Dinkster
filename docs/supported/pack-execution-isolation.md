@@ -81,8 +81,11 @@
   `dinkster-serve --sandbox-packs`. Workers can access only granted folders
   and their private Unix sockets. Direct networking, including loopback,
   and inspection or signalling of outside processes are denied. GPU access
-  requires a host grant. Sandboxed packs use separate Metal compile caches;
-  when a private cache is unavailable, they compile operations at startup
+  requires a host grant and supports physical Apple Silicon GPUs. Virtual
+  GPUs requiring AppleParavirtDeviceUserClient are not granted access; a
+  GPU-authorized Torch worker reports unavailable sandboxed MPS explicitly
+  and can still run CPU operations. Sandboxed packs use separate Metal compile
+  caches; when a private cache is unavailable, they compile operations at startup
   without accessing the user's shared cache.
 - `dinkster-doctor --sandbox` provides a network-isolated import probe jail
   on Linux and macOS. It refuses instead of running a requested probe

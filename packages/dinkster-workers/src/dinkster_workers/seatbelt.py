@@ -291,6 +291,20 @@ if config.get('probe_path'):
     probe_spec.loader.exec_module(probe)
 sys.path[0:0] = [os.path.abspath(p)
                  for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]
+if config.get('gpu'):
+    try:
+        import importlib.util
+        if importlib.util.find_spec('torch') is not None:
+            import torch
+            if not torch.backends.mps.is_available():
+                print('Seatbelt: MPS is unavailable inside the sandbox. GPU access grants '
+                      'only MTLCompilerService and AGXDeviceUserClient; virtual GPUs '
+                      'requiring AppleParavirtDeviceUserClient are not supported. '
+                      'CPU execution remains available.', file=sys.stderr, flush=True)
+    except Exception as error:
+        print('Seatbelt: could not determine sandboxed MPS availability '
+              f'({type(error).__name__}). Continuing with the requested command.',
+              file=sys.stderr, flush=True)
 import runpy
 args = sys.argv[2:]
 if config.get('probe_path'):
@@ -366,6 +380,7 @@ class SeatbeltLauncher:
                         {
                             "environment": environment,
                             "cache_suffix": suffix,
+                            "gpu": self._policy.gpu,
                             "limits": _limits(self._policy),
                         }
                     ).encode()
