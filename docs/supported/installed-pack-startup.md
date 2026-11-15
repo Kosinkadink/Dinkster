@@ -17,6 +17,8 @@
   unchanged. Target engine constraints still apply. Status and history disclose
   its requested ref, exact commit and unpublished/non-reproducible state;
   rollback restores recorded source identities rather than following refs.
+  Engine updates retain that provenance and unpublished disclosure for unchanged
+  source/digest selections; replaced packs do not inherit stale Git identities.
 
 - Pack wheels preserve manifest-relative blueprint, template, icon, settings,
   documentation and frontend resource paths, including resources inside Python

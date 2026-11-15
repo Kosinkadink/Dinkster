@@ -357,7 +357,9 @@ unchanged. The generation retains its release base, engine and pinned frontend.
 Status and history disclose the pack URL, requested ref, exact commit and
 unpublished/non-reproducible status. Rollback uses the retained source archive
 or verifies an archive reacquired at the recorded commit, never a moved ref.
-The local directory `--pack` development loop is unchanged.
+Channel updates retain that disclosure and mirror identity while the selected
+pack source and archive digest remain unchanged. Replacing the pack drops its
+old source identity. The local directory `--pack` development loop is unchanged.
 
 ### Public git refs and mirrors
 

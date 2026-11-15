@@ -94,7 +94,8 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
 ) -> None:
     import pygit2
     from dinkster_registry import LockedPack, build_artifact
-    from dinkster_supervisor.environment_state import Generation
+    from dinkster_store import object_entries, pack_archive_path
+    from dinkster_supervisor.environment_state import Generation, interpreter
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from dinkster_workers.pack_lock import PackLock
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
@@ -137,7 +138,7 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
     )
     empty.write_text(Lockfile.of([retained_entry]).record_json())
     dependency = tmp_path / "retained.pack-lock.json"
-    PackLock("retained-nodes", "fixture-cpu", ">=3.12", (), (), (), engine=">=0").write(dependency)
+    PackLock("retained-nodes", "fixture-cpu", ">=3.12", (), (), ()).write(dependency)
     setup = fixture["commands"]["setup"]
     code, result = _run(
         root,
@@ -171,7 +172,9 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         }.items():
             tree.add(
                 pygit2.IndexEntry(
-                    name, repository.create_blob(payload.encode()), pygit2.enums.FileMode.BLOB
+                    "nodes/" + name,
+                    repository.create_blob(payload.encode()),
+                    pygit2.enums.FileMode.BLOB,
                 )
             )
         commits.append(
@@ -185,12 +188,38 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
             )
         )
     repository.free()
-    endpoint = "https://github.com/Kosinkadink/source"
+    endpoint = "https://github.com/Kosinkadink/source#subdirectory=nodes"
     index = tmp_path / "index"
     index.mkdir()
     monkeypatch.setenv("UV_NO_INDEX", "1")
     monkeypatch.setenv("UV_OFFLINE", "1")
+    tools = tmp_path / "no-git-tools"
+    tools.mkdir()
+    uv = shutil.which("uv")
+    assert uv is not None
+    shutil.copyfile(uv, tools / Path(uv).name)
+    (tools / Path(uv).name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools))
+    assert shutil.which("git") is None
+    request_count = len(git_server["requests"])
+    tunnel_count = len(git_server["tunnels"])
     try:
+        code, refused = _run(
+            root,
+            "source",
+            "add",
+            endpoint,
+            "--pack",
+            "wrong-pack",
+            "--ref",
+            "managed-pack",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+        )
+        assert code == 1 and "different pack" in refused["error"], refused
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        assert _run(root, "status")[1]["current"] == 1
         for branch, expected, commit in (
             ("managed-pack", 31, commits[0]),
             ("managed-pack-new", 79, commits[1]),
@@ -233,8 +262,34 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
                 .read_text()
                 .endswith(f"VALUE = {expected}\n")
             )
+            assert subprocess.check_output(
+                [
+                    str(interpreter(current)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import runpy, sys; print(runpy.run_path(sys.argv[1])['VALUE'])",
+                    str(current / "pack-sources/healthy-nodes/healthy_nodes.py"),
+                ],
+                text=True,
+            ).strip() == str(expected)
             assert {path: content_digest(path) for path in before} == before
             assert _run(root, "stop", "--yes")[0] == 0
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/managed-pack"].set_target(commits[1])
+        repository.free()
+        first_lock = Lockfile.from_record_json((root / "generations/2/dinkster.lock").read_text())
+        first_digest = next(
+            entry.artifact_digest for entry in first_lock.packs if entry.pack == "healthy-nodes"
+        )
+        archives = [
+            archive
+            for _, engine in object_entries(store / "engines")
+            if (archive := pack_archive_path(engine / "artifacts", first_digest)).is_file()
+        ]
+        assert archives
+        for path in archives:
+            path.unlink()
         code, restored = _run(root, "rollback", "--yes", timeout=180)
         assert code == 0, restored
         current = root / "generations" / str(restored["current"])
@@ -246,6 +301,49 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         assert _run(root, "status")[1]["sources"]["packs"]["healthy-nodes"]["commit"] == str(
             commits[0]
         )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, updated = _run(
+            root,
+            "update",
+            "--catalog-lock",
+            str(current / "dinkster.lock"),
+            "--artifacts",
+            str(object_path(store / "engines", original.engine_release) / "artifacts"),
+            "--pack-lock",
+            str(current / "packs/healthy-nodes/pack-lock.json"),
+            "--pack-lock",
+            str(current / "packs/retained-nodes/pack-lock.json"),
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, updated
+        status = _run(root, "status")[1]
+        assert status["sources"]["packs"]["healthy-nodes"]["commit"] == str(commits[0])
+        assert status["source"] == "source" and status["published"] is False
+        updated_record = Generation.read(
+            root / "generations" / str(updated["current"]) / "generation.json"
+        )
+        assert updated_record.source == "source"
+        code, history = _run(root, "history")
+        assert code == 0, history
+        selected_history = history["history"][-1]
+        assert selected_history["sources"]["packs"]["healthy-nodes"]["commit"] == str(commits[0])
+        assert selected_history["published"] is False
+        assert selected_history["reproducible"] is False
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, released = _run(root, "source", "release", "--yes", timeout=180)
+        assert code == 0, released
+        released_root = root / "generations" / str(released["current"])
+        released_record = Generation.read(released_root / "generation.json")
+        assert released_record.source == "published"
+        assert not (released_root / "pack-sources/healthy-nodes").exists()
+        assert "sources" not in _run(root, "status")[1]
+        assert len(git_server["requests"]) > request_count
+        assert all(
+            path.startswith("/Kosinkadink/source.git/")
+            for path in git_server["requests"][request_count:]
+        )
+        assert len(git_server["tunnels"]) == tunnel_count
     finally:
         assert _run(root, "stop", "--yes")[0] == 0
 

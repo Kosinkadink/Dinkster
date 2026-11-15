@@ -144,8 +144,14 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 manifest = json.loads(
                     cast("dict[str, str]", snapshot["metadata"])["engine-manifest.json"]
                 )
+                sources = manifest.get("sources", {})
+                provenance = json.loads(
+                    cast("dict[str, str]", snapshot["metadata"]).get("artifact-sources.json", "{}")
+                )
+                if provenance.get("packs"):
+                    sources = {**sources, "packs": provenance["packs"]}
                 entry.update(
-                    sources=manifest["sources"],
+                    sources=sources,
                     published=False,
                     reproducible=False,
                     sourceDescription="source: unpublished and non-reproducible",
@@ -1138,6 +1144,31 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     if source_inputs is not None:
                         engine_version = source_inputs["engine_version"]
                         engine_release = source_inputs["engine_release"]
+                retained_sources = {}
+                if local is None and previous_root is not None and catalog_lock is not None:
+                    provenance = previous_root / "artifact-sources.json"
+                    if provenance.is_file():
+                        previous = Generation.read(previous_root / "generation.json")
+                        if content_digest(provenance) != dict(previous.files).get(provenance.name):
+                            raise EnvironmentError(
+                                "retained source identities differ from generation"
+                            )
+                        selected_packs = {
+                            cast("str", row["pack"]): row
+                            for row in cast(
+                                "list[dict[str, object]]", read_document(catalog_lock)["packs"]
+                            )
+                        }
+                        retained_sources = {
+                            name: origin
+                            for name, origin in cast(
+                                "dict[str, dict[str, object]]",
+                                read_document(provenance).get("packs", {}),
+                            ).items()
+                            if name in selected_packs
+                            and origin["source"] == selected_packs[name]["source"]
+                            and origin["artifactDigest"] == selected_packs[name]["artifactDigest"]
+                        }
                 measured = sum(
                     path.stat().st_size
                     for path in (object_path(store / "bases", base_id) / "python").rglob("*")
@@ -1168,7 +1199,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     source_kind="local"
                     if local is not None
                     else "source"
-                    if source_inputs is not None
+                    if source_inputs is not None or retained_sources
                     else "published",
                     prepare_packs=prepare_packs,
                     acquire_pack_wheels=development is None and not offline,
@@ -1183,6 +1214,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         "packageIndex": package_index,
                         "mirrors": list(mirrors),
                         **({"inference": inference} if inference is not None else {}),
+                        **({"packs": retained_sources} if retained_sources else {}),
                     }
                     if catalog is not None
                     else None,
