@@ -236,13 +236,13 @@ def detect_bubblewrap() -> BubblewrapCapability:
     ok, error = _probe(bwrap, "--unshare-user", "--unshare-pid")
     if ok:
         try:
-            with seccomp_filter() as filter_file:
+            with seccomp_filter() as filter_fd:
                 hardened, hardening_error = _probe(
                     bwrap,
                     "--unshare-user",
                     "--unshare-pid",
                     "--disable-userns",
-                    seccomp_fd=filter_file.fileno(),
+                    seccomp_fd=filter_fd,
                 )
         except (OSError, AttributeError) as exc:
             hardened, hardening_error = False, str(exc)
@@ -831,7 +831,7 @@ class BubblewrapLauncher:
             )
             environment[EGRESS_PROXY_ENV] = str(proxy.socket_path)
         try:
-            with seccomp_filter() as filter_file, tempfile.TemporaryFile() as environment_file:
+            with seccomp_filter() as filter_fd, tempfile.TemporaryFile() as environment_file:
                 environment_file.write(json.dumps(environment).encode("utf-8"))
                 environment_file.flush()
                 environment_file.seek(0)
@@ -841,12 +841,12 @@ class BubblewrapLauncher:
                     bwrap=capability.bwrap,
                     user_namespaces=capability.user_namespaces,
                     env_fd=environment_file.fileno(),
-                    seccomp_fd=filter_file.fileno(),
+                    seccomp_fd=filter_fd,
                 )
                 process = await asyncio.create_subprocess_exec(
                     *argv,
                     env={},
-                    pass_fds=(environment_file.fileno(), filter_file.fileno()),
+                    pass_fds=(environment_file.fileno(), filter_fd),
                 )
         except BaseException as exc:
             if proxy is not None:

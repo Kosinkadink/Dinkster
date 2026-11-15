@@ -5,10 +5,10 @@ from __future__ import annotations
 import ctypes
 import errno
 import os
+import platform
 import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import BinaryIO
 
 # Flatpak-style kernel attack-surface reduction, not a syscall allowlist.
 # Ordinary files, threads, subprocesses, shared memory and GPU ioctls remain
@@ -74,8 +74,8 @@ class _ArgCompare(ctypes.Structure):
 
 
 @contextmanager
-def seccomp_filter() -> Generator[BinaryIO]:
-    """Yield rewound BPF bytes; a missing/old libseccomp fails closed.
+def seccomp_filter() -> Generator[int]:
+    """Yield a descriptor for rewound BPF; a missing/old libseccomp fails closed.
 
     libseccomp installs an architecture guard (including x32 on x86-64).
     Only the native ABI is enabled, so a compat syscall cannot bypass rules.
@@ -128,7 +128,7 @@ def seccomp_filter() -> Generator[BinaryIO]:
             deny(name, errno.ENOSYS)
         # SCMP_CMP_MASKED_EQ: preserve fork/thread creation but forbid NEWUSER.
         # s390's clone ABI puts flags in argument 1, not argument 0.
-        flags_arg = 1 if os.uname().machine in ("s390", "s390x") else 0
+        flags_arg = 1 if platform.machine() in ("s390", "s390x") else 0
         deny("clone", comparison=_ArgCompare(flags_arg, 7, 0x10000000, 0x10000000))
         # Terminal injection must not survive an inherited terminal descriptor.
         for request in (0x5412, 0x541C):  # TIOCSTI, TIOCLINUX
@@ -138,6 +138,6 @@ def seccomp_filter() -> Generator[BinaryIO]:
             if result < 0:
                 raise OSError(f"libseccomp cannot export BPF: {os.strerror(-result)}")
             exported.seek(0)
-            yield exported
+            yield exported.fileno()
     finally:
         lib.seccomp_release(context)
