@@ -9,8 +9,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from .environment_state import EnvironmentError
 from .security.signatures import canonical, parse_signed_json, sign_envelope, verify_envelope
 
-# An empty trust set refuses every signature; mirrors cannot provision keys.
-CHANNEL_KEYS: dict[str, bytes] = {}
+# Trust roots are provisioned independently of mirrors and channel contents.
+CHANNEL_KEYS: dict[str, bytes] = {
+    "sha256:4b5b2c78b32db1ebedc4702a92d6e4e252c17531f0e102ab82dd910be6dec7b9": bytes.fromhex(
+        "9baae6ed763cd3a23a7a27d48221256da2b89d89164250d4f968ddb07f046fd4"
+    ),
+}
 
 
 def _portable_json(value: object) -> None:
