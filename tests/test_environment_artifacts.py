@@ -1335,14 +1335,23 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         assert dict(nightly, channel="stable") == stable
 
 
-@pytest.mark.parametrize("previous_day", ["same", "yesterday", "missing", "readback-mismatch"])
+@pytest.mark.parametrize(
+    "previous_day", ["same", "yesterday", "missing", "readback-mismatch", "unsigned", "tampered"]
+)
 def test_nightly_publication_advances_only_once_per_utc_day(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str
 ):
     from datetime import timedelta
 
-    from scripts import publish_environment_channel as publisher
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
+    from scripts import publish_environment_channel as publisher
+    from tests.fixtures.environments.build import KEY
+
+    monkeypatch.setenv(
+        "DINKSTER_CHANNEL_SIGNING_KEY",
+        KEY.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode("ascii"),
+    )
     mirror = tmp_path / "mirror"
     base, engine, channel = _mirror(mirror)
     release = mirror / "engine" / channel["engine"]["release"][7:]
@@ -1361,9 +1370,11 @@ def test_nightly_publication_advances_only_once_per_utc_day(
             today if previous_day == "same" else today - timedelta(days=1)
         ).isoformat()
     channel_path = mirror / "channels/nightly.json"
-    channel["signature"] = None
-    channel.pop("channel", None)
-    channel_path.write_bytes(_json(channel))
+    channel_path.write_bytes(_channel_json(channel))
+    if previous_day == "unsigned":
+        channel_path.write_bytes(_json(dict(channel, signature=None)))
+    elif previous_day == "tampered":
+        channel_path.write_bytes(channel_path.read_bytes().replace(b'"0.2.0"', b'"0.2.1"'))
     before = channel_path.read_bytes()
     for name, value in {
         "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
@@ -1404,13 +1415,19 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
     monkeypatch.setattr(publisher, "urlopen", response)
     monkeypatch.setattr(publisher, "upload", upload)
+    if previous_day in {"unsigned", "tampered"}:
+        with pytest.raises(EnvironmentError):
+            publisher.publish(release, [base_path], "nightly", "0.2.0")
+        assert channel_path.read_bytes() == before
+        assert old_channel.read_bytes() == before
+        return
     if previous_day == "readback-mismatch":
         with pytest.raises(ValueError, match="public channel differs after publication"):
             publisher.publish(release, [base_path], "nightly", "0.2.0")
         assert old_channel.read_bytes() == before
         return
     publisher.publish(release, [base_path], "nightly", "0.2.0")
-    after = json.loads(channel_path.read_bytes())
+    after = read_channel(channel_path)
     if previous_day == "same":
         assert channel_path.read_bytes() == before
     else:

@@ -95,8 +95,10 @@ def initialize_nightly(client, stable_path: Path, public: str) -> None:
         "channels/nightly.json",
         extra={"ContentType": "application/json", "CacheControl": "no-cache"},
     )
-    if read_metadata(public, "channels/nightly.json") != path.read_bytes():
+    published = read_metadata(public, "channels/nightly.json")
+    if published != path.read_bytes():
         raise ValueError("public Nightly differs after authenticated initialization")
+    Channel.parse(verify_channel(published, "nightly"))
     client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
     print("Initialized Nightly from authenticated Stable; no unsigned selections retained")
 
@@ -455,6 +457,10 @@ def publish(
         client = object_store()
         mirror_engine(client, release, work)
         path = work / "channels" / f"{channel}.json"
+        document = parse_metadata(path.read_bytes())
+        document.pop("signature", None)
+        document["channel"] = channel
+        write_document(path, document)
         if channel == "stable":
             if tools_release is None:
                 raise ValueError("Stable publication requires tools from the same engine source")
@@ -498,7 +504,7 @@ def publish(
                 if not isinstance(cause, HTTPError) or cause.code != 404:
                     raise
             else:
-                published_document = parse_metadata(published_bytes)
+                published_document = verify_channel(published_bytes, channel)
                 published = Channel.parse(published_document)
                 if frontend is None and "frontend" in published_document:
                     document = parse_metadata(path.read_bytes())
@@ -542,7 +548,7 @@ def publish(
                     else:
                         document.pop("nightlyDate", None)
                     write_document(path, document)
-                    if published_bytes == path.read_bytes():
+                    if published_document == document:
                         client.delete_object(
                             Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
                         )
@@ -587,8 +593,7 @@ def publish(
                 cast("int", selected_frontend["size"]),
             )
             verify_frontend_wheel(wheel_path, selected_frontend)
-        if channel == "stable":
-            sign_channel_file(path, channel)
+        sign_channel_file(path, channel)
         upload(
             client,
             path,
