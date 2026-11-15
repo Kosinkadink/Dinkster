@@ -1445,7 +1445,16 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
 @pytest.mark.parametrize(
     "state",
-    ["legacy", "missing", "signed", "unknown-key", "tampered", "unsigned-stable", "readback"],
+    [
+        "legacy",
+        "missing",
+        "signed",
+        "delete-failure",
+        "unknown-key",
+        "tampered",
+        "unsigned-stable",
+        "readback",
+    ],
 )
 def test_stable_initializes_nightly_without_trusting_unsigned_selections(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
@@ -1503,7 +1512,12 @@ def test_stable_initializes_nightly_without_trusting_unsigned_selections(
             (mirror / key).write_bytes(source.read_bytes())
 
     class Store:
+        fail = state == "delete-failure"
+
         def delete_object(self, *, Bucket, Key):
+            if self.fail:
+                self.fail = False
+                raise OSError("alias deletion interrupted")
             (mirror / Key).unlink(missing_ok=True)
 
     monkeypatch.setattr(publisher, "read_metadata", read_metadata)
@@ -1514,10 +1528,20 @@ def test_stable_initializes_nightly_without_trusting_unsigned_selections(
         assert nightly.read_bytes() == before
         assert old.read_bytes() == b"legacy alias"
         return
-    publisher.initialize_nightly(Store(), stable, str(mirror))
+    client = Store()
+    if state == "delete-failure":
+        with pytest.raises(OSError, match="alias deletion interrupted"):
+            publisher.initialize_nightly(client, stable, str(mirror))
+        signed_before_retry = nightly.read_bytes()
+        assert old.exists()
+        publisher.initialize_nightly(client, stable, str(mirror))
+        assert nightly.read_bytes() == signed_before_retry
+        assert not old.exists()
+        return
+    publisher.initialize_nightly(client, stable, str(mirror))
     if state == "signed":
         assert nightly.read_bytes() == before
-        assert old.exists()
+        assert not old.exists()
     else:
         result = verify_channel(nightly.read_bytes(), "nightly")
         assert result == dict(stable_payload, channel="nightly")

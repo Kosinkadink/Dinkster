@@ -75,6 +75,7 @@ def initialize_nightly(client, stable_path: Path, public: str) -> None:
         document = parse_metadata(previous)
         if "signed" in document or "signatures" in document:
             Channel.parse(verify_channel(previous, "nightly"))
+            client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
             print("Signed Nightly already exists; initialization is unnecessary")
             return
         if (
