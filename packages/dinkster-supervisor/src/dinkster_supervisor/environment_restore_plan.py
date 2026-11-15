@@ -699,8 +699,8 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
         return []
     publications: list[tuple[dict[str, object], tuple[str, ...], bytes]] = []
     for mirror in mirrors:
-        trusted_metadata(mirror)
         try:
+            trusted_metadata(mirror)
             index: object = json.loads(read_metadata(mirror, "engine/index.json"))
             if not isinstance(index, list):
                 raise EnvironmentError("engine index must be an array")
@@ -827,8 +827,8 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
     )
     publications: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
     for mirror in _sources(provenance, "mirrors"):
-        trusted_metadata(mirror)
         try:
+            trusted_metadata(mirror)
             index: object = json.loads(read_metadata(mirror, f"base/{variant}/index.json"))
             if not isinstance(index, list):
                 raise EnvironmentError("base index must be an array")
