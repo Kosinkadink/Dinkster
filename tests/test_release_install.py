@@ -238,7 +238,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     if tag:
         assert version == "0.0.8"
     else:
-        assert version.startswith("0.0.8.dev")
+        assert version.startswith("0.0.9.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
@@ -270,7 +270,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         metadata = archive.read(name).decode()
         supervisor_version = "0.0.6" if tag else development_version(ROOT, "dinkster-supervisor")
         if not tag:
-            assert supervisor_version.startswith("0.0.6.dev")
+            assert supervisor_version.startswith("0.0.7.dev")
         assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
