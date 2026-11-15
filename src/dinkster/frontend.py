@@ -70,13 +70,13 @@ async def _proxy_websocket(
         for value in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
         if value.strip()
     )
-    browser = web.WebSocketResponse(protocols=protocols)
-    await browser.prepare(request)
     async with session.ws_connect(
         target,
         protocols=protocols,
         headers=_forward_headers(request.headers),
     ) as vite:
+        browser = web.WebSocketResponse(protocols=(vite.protocol,) if vite.protocol else ())
+        await browser.prepare(request)
 
         async def browser_to_vite() -> None:
             async for message in browser:
@@ -96,7 +96,17 @@ async def _proxy_websocket(
                 elif message.type == WSMsgType.CLOSE:
                     await browser.close()
 
-        await asyncio.gather(browser_to_vite(), vite_to_browser())
+        pumps = (
+            asyncio.create_task(browser_to_vite()),
+            asyncio.create_task(vite_to_browser()),
+        )
+        try:
+            await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for pump in pumps:
+                pump.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
+    await browser.close()
     return browser
 
 
@@ -125,7 +135,21 @@ def install_frontend(
         session_key = web.AppKey("frontend_proxy_session", aiohttp.ClientSession)
 
         async def proxy_context(_: web.Application) -> AsyncIterator[None]:
-            session = aiohttp.ClientSession()
+            async def check_redirect(
+                _session: aiohttp.ClientSession,
+                _context: object,
+                parameters: aiohttp.TraceRequestRedirectParams,
+            ) -> None:
+                location = parameters.response.headers.get(
+                    "Location"
+                ) or parameters.response.headers.get("URI")
+                destination = urlparse(urljoin(str(parameters.response.url), location or ""))
+                if (destination.scheme, destination.netloc) != (parsed.scheme, parsed.netloc):
+                    raise web.HTTPBadGateway(text="frontend redirect leaves the approved origin")
+
+            trace = aiohttp.TraceConfig()
+            trace.on_request_redirect.append(check_redirect)
+            session = aiohttp.ClientSession(trace_configs=[trace])
             app[session_key] = session
             try:
                 yield
@@ -133,7 +157,7 @@ def install_frontend(
                 await session.close()
 
         async def proxy(request: web.Request) -> web.StreamResponse:
-            target = urljoin(base, request.path_qs.lstrip("/"))
+            target = base + request.path_qs.lstrip("/")
             if request.headers.get("Upgrade", "").lower() == "websocket":
                 return await _proxy_websocket(request, app[session_key], target)
             body = await request.read()

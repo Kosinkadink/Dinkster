@@ -975,7 +975,8 @@ Contributor generations accept either `--frontend-root` for a built bundle or
 `--frontend-dev` for a running HTTP(S) dev server, retained across restarts.
 The dev server defaults to loopback; another address requires explicit
 `--allow-frontend-dev-remote`. Both the origin and permission are bound to the
-reviewed source approval and disclosed in development status/history.
+reviewed source approval and disclosed in development status/history. Dev-server
+websockets retain their subprotocol for live reload and close when the client disconnects.
 Local live packs support flat and `src` Python layouts without selecting an
 installed copy instead of the chosen working folder.
 
