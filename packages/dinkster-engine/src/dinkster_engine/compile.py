@@ -18,7 +18,7 @@ from dinkster_graph import (
     elaborate_graph,
     graph_from_wire,
     graph_to_wire,
-    migrate_pure_node_type_replacements,
+    migrate_node_replacements,
     snapshot_graph,
     validate,
 )
@@ -834,7 +834,7 @@ async def compile_graph(
     targets_tuple = tuple(targets)
     if registry.contributions and _graph_exceeds_depth(graph):
         _refuse(GRAPH_COMPILE_ERROR_DEPTH_LIMIT, "compiled graph exceeds depth limit")
-    graph = migrate_pure_node_type_replacements(graph, schemas)
+    graph = migrate_node_replacements(graph, schemas)
     graph = snapshot_graph(graph)
     if not registry.contributions:
         return CompiledGraph(graph, targets_tuple, generation_key, {})

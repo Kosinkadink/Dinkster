@@ -251,7 +251,7 @@ from dinkster_graph import (
     RegionNode,
     graph_from_wire,
     lower_selectors,
-    migrate_pure_node_type_replacements,
+    migrate_node_replacements,
     top_level_node_id,
 )
 from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE, InvalidDocument, decode_document
@@ -3276,7 +3276,10 @@ async def handle_submit(request: web.Request) -> web.Response:
             return web.json_response(wire, status=202)
         execution = state.engine.pin_execution()
         assert execution.schemas is not None
-        graph = migrate_pure_node_type_replacements(graph, execution.schemas)
+        try:
+            graph = migrate_node_replacements(graph, execution.schemas)
+        except ValueError as exc:
+            return web.json_response({"error": "node-replacement", "message": str(exc)}, status=400)
         lowered = lower_selectors(graph, targets, execution.schemas)
         if lowered.problems:
             return web.json_response(

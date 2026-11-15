@@ -224,6 +224,8 @@ def graph_to_wire(graph: Graph) -> JsonObject:
             }
         if node.slot_variants:
             entry["slotVariants"] = dict(node.slot_variants)
+        if node.schema_signature:
+            entry["schemaSignature"] = node.schema_signature
         nodes[node_id] = entry
     return {"nodes": nodes}
 
@@ -324,6 +326,9 @@ def graph_from_wire(wire: Any) -> Graph:
             continue
         if not isinstance(entry.get("nodeType"), str):
             raise GraphWireError(f"node {node_id}: entry must be an object with 'nodeType'")
+        signature = entry.get("schemaSignature", "")
+        if not isinstance(signature, str) or ("schemaSignature" in entry and not signature):
+            raise GraphWireError(f"node {node_id}: 'schemaSignature' must be a non-empty string")
         inputs_wire = _as_object(entry.get("inputs", {}), f"node {node_id}: 'inputs'")
         members_wire = _as_object(
             entry.get("outputMembers", {}), f"node {node_id}: 'outputMembers'"
@@ -352,5 +357,6 @@ def graph_from_wire(wire: Any) -> Graph:
             },
             output_members=output_members,
             slot_variants=slot_variants,
+            schema_signature=signature,
         )
     return Graph(nodes=nodes)

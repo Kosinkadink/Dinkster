@@ -1,8 +1,8 @@
 """Declarative node-replacement rules: pack-declared migration data.
 
 Field-for-field mirror of Dinkster-Frontend's ``replace/model.ts`` (the
-frontend's replacement engine is the executor of these rules, so its model is
-the reference shape - we mirror, never dialect). A rule is DATA: a closed
+frontend document loader and backend graph admission execute these rules,
+so both use the same shape - we mirror, never dialect). A rule is DATA: a closed
 predicate and transform vocabulary, never code, so rules ship inside schemas,
 are testable against golden corpora, and are safe on a wire.
 
@@ -650,8 +650,16 @@ class ReplacementRule:
     cases: tuple[ReplacementCase, ...] = ()
     note: str = ""  # human note surfaced in diagnostics/review
     migration: ReplacementMigration | None = None
+    from_signature: str = ""
+    from_version: str = ""
 
     def __post_init__(self) -> None:
+        for field_name, value in (
+            ("from_signature", self.from_signature),
+            ("from_version", self.from_version),
+        ):
+            if not isinstance(value, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+                raise ValueError(f"replacement rule {field_name} must be a string")
         if not self.from_type:
             raise ValueError("replacement rule requires a source node type")
         if not self.cases:
@@ -787,6 +795,10 @@ def rule_to_wire(rule: ReplacementRule) -> dict[str, object]:
     wire: dict[str, object] = {"from": rule.from_type}
     if rule.note:
         wire["note"] = rule.note
+    if rule.from_signature:
+        wire["fromSignature"] = rule.from_signature
+    if rule.from_version:
+        wire["fromVersion"] = rule.from_version
     if rule.migration is not None:
         wire["migration"] = {"historicalInputs": list(rule.migration.historical_inputs)}
     wire["cases"] = [case_to_wire(case) for case in rule.cases]
@@ -1010,6 +1022,9 @@ def case_from_wire(wire: Any) -> ReplacementCase:
 
 
 def rule_from_wire(wire: Any) -> ReplacementRule:
+    for name in ("fromSignature", "fromVersion"):
+        if name in wire and (not isinstance(wire[name], str) or not wire[name]):
+            raise ValueError(f"replacement rule {name} must be a non-empty string")
     migration = None
     if "migration" in wire:
         migration_wire = wire["migration"]
@@ -1029,6 +1044,8 @@ def rule_from_wire(wire: Any) -> ReplacementRule:
         note=str(wire.get("note", "")),
         cases=tuple(case_from_wire(case) for case in wire["cases"]),
         migration=migration,
+        from_signature=wire.get("fromSignature", ""),
+        from_version=wire.get("fromVersion", ""),
     )
 
 

@@ -20,4 +20,4 @@ for (const type of declared) {
   assert(decoded.schemas.has(type), `${type}: published schema was lost`)
 }
 assert.equal(decoded.schemas.size, declared.length, 'decoded schema count differs from published catalog')
-console.log(`Decoded ${decoded.schemas.size} schemas`)
+console.log(`Decoded ${decoded.schemas.size} schemas; ${diagnostics.filter((item) => item.severity === 'warning').length} warnings`)
