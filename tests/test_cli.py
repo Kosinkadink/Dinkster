@@ -12,11 +12,19 @@ own argparse.
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
 
+from dinkster import __version__
 from dinkster.cli import main
+
+
+def test_runtime_version_matches_checkout_project_for_registry_preparation() -> None:
+    project = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    assert __version__ == tomllib.loads(project.read_text(encoding="utf-8"))["project"]["version"]
+
 
 HEALTHY_MANIFEST = """\
 [pack]

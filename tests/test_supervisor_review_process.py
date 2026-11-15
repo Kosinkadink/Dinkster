@@ -5,6 +5,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 from dinkster_supervisor import EngineLink, EngineProcess
 
 from tests.async_scenarios import run_scenario
@@ -24,6 +25,7 @@ def _write_engine(path: Path, *, answer_health: bool) -> None:
             parser = argparse.ArgumentParser()
             parser.add_argument('--host')
             parser.add_argument('--port', type=int)
+            parser.add_argument('--bound-endpoint')
             args = parser.parse_args()
             sock = socket.socket()
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -38,13 +40,18 @@ def _write_engine(path: Path, *, answer_health: bool) -> None:
     )
 
 
-def test_startup_timeout_reaps_stalled_health_process(tmp_path: Path) -> None:
+@pytest.mark.parametrize("bound_endpoint", [False, True])
+def test_startup_timeout_reaps_stalled_health_process(tmp_path: Path, bound_endpoint: bool) -> None:
     async def scenario() -> None:
         script = tmp_path / "stalled.py"
         _write_engine(script, answer_health=False)
         link = EngineLink()
         engine = EngineProcess(
-            [sys.executable, str(script)], link, probe_interval=0.01, startup_timeout=0.05
+            [sys.executable, str(script)],
+            link,
+            probe_interval=0.01,
+            startup_timeout=0.05,
+            bound_endpoint=bound_endpoint,
         )
         await engine.start()
         process = engine._process

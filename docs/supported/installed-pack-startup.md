@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed engines declaring `bound-endpoint/1` acquire their own internal port
+  before the supervisor can probe it. Engines without that declaration retain
+  the fixed-port launch path for installed-generation compatibility; another
+  process can take that port before the engine binds. Launch diagnostics warn
+  when this legacy path is selected.
+
 - An installed release project can explicitly select a public Git engine with
   `source add`, change or refresh its ref with `source update`, and restore its
   last published generation with `source release`. Source generations keep the
@@ -762,6 +768,9 @@
   after releasing transaction locks. Managed supervisors attempt startup,
   hourly collection, retrying busy locks sooner. Acknowledged stops attempt
   collection after durably recording the stopped engine assignment.
+  Confirmed start and stop wait for generation-only maintenance before taking
+  the project writer lock; a competing explicit environment writer still refuses
+  the operation. Planning and status remain read-only.
   Cleanup failures remain warnings rather than invalidating a successful
   update. Legacy trees without provable coverage still defer; Desktop controls
   are separate.
