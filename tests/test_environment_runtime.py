@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import os
@@ -28,11 +29,13 @@ SERVE = """
 import argparse
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as BaseServer
+from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', required=True)
 parser.add_argument('--port', type=int, required=True)
+parser.add_argument('--bound-endpoint', type=Path)
 parser.add_argument('--generation', required=True)
 parser.add_argument('--library-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
@@ -63,6 +66,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+class ThreadingHTTPServer(BaseServer):
+    def server_activate(self):
+        super().server_activate()
+        if args.bound_endpoint is not None:
+            pending = args.bound_endpoint.with_suffix('.tmp')
+            pending.write_text(json.dumps({
+                'format': 'dinkster.bound-endpoint/1', 'port': self.server_address[1],
+            }))
+            pending.replace(args.bound_endpoint)
+
 ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 """
 
@@ -76,17 +89,41 @@ def free_port() -> int:
 def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
     generation = root / "generations" / str(number)
     site = _workspace_tree(generation / "python")
+    manifest = json.dumps(
+        {
+            "format": "dinkster.engine/1",
+            "version": "test",
+            "workerProtocol": 1,
+            "commit": "d" * 40,
+            "capabilities": ["bound-endpoint/1"],
+            "artifacts": [
+                {
+                    "name": "constraints.txt",
+                    "size": 5,
+                    "sha256": hashlib.sha256(b"test\n").hexdigest(),
+                }
+            ],
+        }
+    )
+    (generation / "engine-manifest.json").write_text(manifest)
     (generation / "generation.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
                 "generation": number,
                 "base": "sha256:" + "a" * 64,
-                "engine": {"version": "test", "release": "sha256:" + "b" * 64},
+                "engine": {
+                    "version": "test",
+                    "release": "sha256:" + hashlib.sha256(manifest.encode()).hexdigest(),
+                },
                 "constraints": "sha256:" + "c" * 64,
                 "variant": "linux-cpu",
                 "workerProtocol": 1,
-                "files": {"constraints.txt": "sha256:" + "c" * 64},
+                "files": {
+                    "constraints.txt": "sha256:" + "c" * 64,
+                    "engine-manifest.json": "sha256:"
+                    + hashlib.sha256(manifest.encode()).hexdigest(),
+                },
             }
         )
     )

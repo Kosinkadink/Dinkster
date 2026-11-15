@@ -9,6 +9,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", required=True)
 parser.add_argument("--port", type=int, required=True)
+parser.add_argument("--bound-endpoint", type=Path)
 parser.add_argument("--generation", required=True)
 parser.add_argument("--library-root")
 parser.add_argument("--prepare-stale-catalogs", action="store_true")
@@ -44,4 +45,16 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+with ThreadingHTTPServer((args.host, args.port), Handler) as server:
+    if args.bound_endpoint is not None:
+        pending = args.bound_endpoint.with_suffix(".tmp")
+        pending.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.bound-endpoint/1",
+                    "port": server.server_address[1],
+                }
+            )
+        )
+        pending.replace(args.bound_endpoint)
+    server.serve_forever()

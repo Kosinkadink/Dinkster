@@ -479,19 +479,33 @@ def test_shutdown_closes_connected_event_clients() -> None:
 STUB_ENGINE = textwrap.dedent(
     """
     import argparse
+    import json
+    import socket
+    from pathlib import Path
     from aiohttp import web
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--bound-endpoint", type=Path)
     args = parser.parse_args()
+    listener = None
+    if args.bound_endpoint is not None:
+        assert args.port == 0
+        listener = socket.create_server((args.host, args.port))
+        pending = args.bound_endpoint.with_suffix('.tmp')
+        pending.write_text(json.dumps({
+            'format': 'dinkster.bound-endpoint/1', 'port': listener.getsockname()[1],
+        }))
+        pending.replace(args.bound_endpoint)
 
     async def health(request):
         return web.json_response({"ok": True})
 
     app = web.Application()
     app.router.add_get("/api/health", health)
-    web.run_app(app, host=args.host, port=args.port, print=None)
+    web.run_app(app, host=args.host if listener is None else None,
+                port=args.port if listener is None else None, sock=listener, print=None)
     """
 )
 
@@ -503,19 +517,34 @@ async def wait_for(predicate, timeout: float = 30.0) -> None:  # type: ignore[no
         await asyncio.sleep(0.05)
 
 
-def test_engine_process_lifecycle(tmp_path: Path) -> None:
-    """EngineProcess speaks protocol v1 against a real subprocess: injected
-    --host/--port, health-probe readiness, terminate-on-close."""
+@pytest.mark.parametrize("bound_endpoint", [False, True])
+def test_engine_process_lifecycle(tmp_path: Path, bound_endpoint: bool) -> None:
+    """Health-probe readiness and termination use the engine's admitted endpoint."""
     script = tmp_path / "stub_engine.py"
     script.write_text(STUB_ENGINE)
 
     async def scenario() -> None:
         link = EngineLink()
-        engine = EngineProcess([sys.executable, str(script)], link, probe_interval=0.05)
-        await engine.start()
-        assert link.pid is not None and link.base_url.startswith("http://127.0.0.1:")
-        await wait_for(lambda: link.state == "ready")
-        await engine.close()
+        engine = EngineProcess(
+            [sys.executable, str(script)],
+            link,
+            probe_interval=0.05,
+            bound_endpoint=bound_endpoint,
+        )
+        try:
+            await engine.start()
+            assert link.pid is not None
+            if bound_endpoint:
+                assert link.base_url == ""
+            await wait_for(lambda: link.state == "ready")
+            assert link.base_url.startswith("http://127.0.0.1:")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(link.base_url + "/api/health") as response:
+                    assert await response.json() == {"ok": True}
+            await engine.restart()
+            await wait_for(lambda: link.state == "ready")
+        finally:
+            await engine.close()
         assert link.state == "stopped" and link.pid is None
 
     run_scenario(scenario())

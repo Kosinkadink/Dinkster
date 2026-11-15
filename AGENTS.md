@@ -101,7 +101,7 @@ pass at the offered head. Registry default pack admission gates only changes
 to its scanner or harness. The full suite runs in hosted full validation on
 main after landing; a local counted suite or its shards is not a landing gate.
 
-- For a ready pull request affecting official pack inputs, read the `Published pack versions` check green at the exact head before adding `ready-to-land`. Keep drafts light; raise affected pack or library versions when built archives or install locks differ from the published version.
+- For changes to `src/dinkster/default-packs.toml`, record in the pull request body a public registry or index response showing that each default version named in the table is already published and admitted. This readback is required in addition to fresh LOW whole-PR verification and green exact-head hosted checks before adding `ready-to-land`. Official pack sources and publication live in `dinkster-nodes`; the engine does not produce a `Published pack versions` check.
 
 ```
 python scripts/develop.py run -- ruff check .

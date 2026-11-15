@@ -5,6 +5,20 @@ engine host on an internal port, and proxies HTTP and WebSocket traffic only
 after `GET /api/health` succeeds. Its station process applies the same
 version-independent machinery to multiple configured Dinkster installations.
 
+## Engine endpoint admission
+
+An engine manifest can declare `capabilities = ["bound-endpoint/1"]`. Managed
+launches then pass `--engine-bound-endpoint` to the supervisor. Direct launches
+can supply the same flag only when their engine supports the capability.
+The supervisor passes `--port 0 --bound-endpoint PATH`; the engine holds its
+listener and atomically writes `{"format":"dinkster.bound-endpoint/1","port":N}`
+to that private path. Health probes use only the announced port and the requested
+internal host. The normal startup deadline includes waiting for this announcement.
+
+Engines without the declaration retain fixed `--host/--port` launch support.
+Its bind-close-reuse allocation can lose the port to another process; the
+supervisor logs that limitation. It does not retry allocation or engine startup.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.

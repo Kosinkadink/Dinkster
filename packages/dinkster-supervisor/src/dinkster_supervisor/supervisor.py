@@ -19,8 +19,11 @@ deliberate exception to the shared-logger rule, because the supervisor
 must not depend on any dinkster package.
 
 Engine protocol v1 (versioned; grows additively):
-- the supervisor appends ``--host <internal-host> --port <internal-port>``
-  to the engine command; the engine must bind exactly there;
+- engines declaring bound-endpoint/1 receive ``--host <internal-host>
+  --port 0 --bound-endpoint PATH``; they announce their held listener's port
+  atomically before the supervisor probes it;
+- legacy engines receive ``--host <internal-host> --port <internal-port>``
+  and can lose the allocated port before binding;
 - readiness is ``GET /api/health`` on that address answering 200;
 - process exit before readiness is startup failure (state "failed");
 - the health body MAY carry in-flight composition narration:
@@ -77,11 +80,13 @@ import asyncio
 import contextlib
 import errno
 import ipaddress
+import json
 import logging
 import os
 import signal
 import socket
 import sys
+import tempfile
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -326,9 +331,10 @@ def _progress_from_health(body: object) -> dict[str, object] | None:
 
 
 def _free_port(host: str) -> int:
-    """Ask the OS for an ephemeral port. The classic bind-close-reuse race
-    is acceptable here: the engine binds moments later on a loopback host,
-    and a lost race fails loudly at engine bind time."""
+    """Legacy admission for engines without bound-endpoint/1.
+
+    The engine can lose this port between closing this socket and binding.
+    """
     with socket.socket() as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
@@ -337,9 +343,10 @@ def _free_port(host: str) -> int:
 class EngineProcess:
     """Spawns and watches one engine host process (protocol v1).
 
-    start() injects ``--host/--port`` and probes ``/api/health`` until the
-    engine answers 200 (link -> "ready") or the process exits (link ->
-    "failed"). close() terminates the child and marks the link "stopped".
+    Engines declaring bound-endpoint/1 bind port 0 and announce their held
+    endpoint before health probes start. Legacy engines receive a selected
+    fixed port. Health 200 marks the link ready; exit marks it failed.
+    close() terminates the child and marks the link stopped.
     """
 
     def __init__(
@@ -351,6 +358,7 @@ class EngineProcess:
         probe_interval: float = 0.25,
         startup_timeout: float = 600.0,
         process_family: ProcessFamily | None = None,
+        bound_endpoint: bool = False,
     ) -> None:
         self.command = list(command)
         self.link = link
@@ -362,19 +370,37 @@ class EngineProcess:
         self._closing = False
         self._lifecycle_lock = asyncio.Lock()
         self._process_family = process_family
+        self.bound_endpoint = bound_endpoint
+        self._endpoint_directory: tempfile.TemporaryDirectory[str] | None = None
+        self._endpoint_file: Path | None = None
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
             await self._start()
 
     async def _start(self) -> None:
-        port = _free_port(self.host)
         self.link.state = "starting"
         self.link.detail = ""
         self.link.exit_code = None
         self.link.progress = None
-        self.link.base_url = f"http://{self.host}:{port}"
-        command = [*self.command, "--host", self.host, "--port", str(port)]
+        if self.bound_endpoint:
+            self._endpoint_directory = tempfile.TemporaryDirectory(prefix="dinkster-endpoint-")
+            self._endpoint_file = Path(self._endpoint_directory.name) / "endpoint.json"
+            self.link.base_url = ""
+            command = [
+                *self.command,
+                "--host",
+                self.host,
+                "--port",
+                "0",
+                "--bound-endpoint",
+                str(self._endpoint_file),
+            ]
+        else:
+            log.warning("legacy fixed-port engine admission can lose its port before engine bind")
+            port = _free_port(self.host)
+            self.link.base_url = f"http://{self.host}:{port}"
+            command = [*self.command, "--host", self.host, "--port", str(port)]
         log.info("starting engine: %s", " ".join(command))
         self._process = await asyncio.create_subprocess_exec(*command)
         self.link.pid = self._process.pid
@@ -391,7 +417,6 @@ class EngineProcess:
         as its packs take to import - the port is already honest about it.
         """
         deadline = time.monotonic() + self.startup_timeout
-        probe_url = self.link.base_url + HEALTH_PATH
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
@@ -416,6 +441,24 @@ class EngineProcess:
                         f"engine did not become healthy within {self.startup_timeout}s",
                     )
                     return
+                if not self.link.base_url:
+                    assert self._endpoint_file is not None
+                    try:
+                        endpoint = json.loads(self._endpoint_file.read_bytes())
+                        port = endpoint["port"]
+                        if endpoint.get("format") != "dinkster.bound-endpoint/1" or (
+                            type(port) is not int or not 1 <= port <= 65535
+                        ):
+                            raise ValueError("invalid bound endpoint")
+                    except FileNotFoundError:
+                        await asyncio.sleep(self.probe_interval)
+                        continue
+                    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                        process.kill()
+                        self._mark_dead(await process.wait(), "invalid engine bound endpoint")
+                        return
+                    self.link.base_url = f"http://{self.host}:{port}"
+                probe_url = self.link.base_url + HEALTH_PATH
                 healthy = False
                 progress: dict[str, object] | None = None
                 probe_timeout = (
@@ -483,6 +526,10 @@ class EngineProcess:
         if self._process_family is not None:
             await asyncio.to_thread(self._process_family.stop_children)
         self._process = None
+        if self._endpoint_directory is not None:
+            self._endpoint_directory.cleanup()
+            self._endpoint_directory = None
+            self._endpoint_file = None
         self.link.state = "stopped"
         self.link.pid = None
         self.link.progress = None
@@ -699,6 +746,11 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)
+    parser.add_argument(
+        "--engine-bound-endpoint",
+        action="store_true",
+        help="engine declares bound-endpoint/1; bind port 0 and announce its held endpoint",
+    )
     parser.add_argument("--activation-journal", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--activation-name", help=argparse.SUPPRESS)
     parser.add_argument(
@@ -781,6 +833,7 @@ def main() -> None:
         host=args.engine_host,
         startup_timeout=args.startup_timeout,
         process_family=family,
+        bound_endpoint=args.engine_bound_endpoint,
     )
 
     async def serve() -> None:
