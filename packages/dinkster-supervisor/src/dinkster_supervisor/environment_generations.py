@@ -934,7 +934,7 @@ def build_generation(
             write_document(destination / "artifact-sources.json", artifact_sources)
         provisioned: set[str] = set()
         if (
-            source_generation is not None
+            (source_generation is not None and (source_generation / "packs").is_dir())
             or pack_locks
             or (in_process_packs and prepare_packs is None)
         ):
