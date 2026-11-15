@@ -1,5 +1,14 @@
 ## Installed pack startup
 
+- An installed release project can explicitly select a public Git engine with
+  `source add`, change or refresh its ref with `source update`, and restore its
+  last published generation with `source release`. Source generations keep the
+  release base and pinned frontend, reuse matching locked wheels, and disclose
+  their URL, requested ref, exact commit and unpublished/non-reproducible status.
+  Rollback reacquires missing checkouts at the recorded commit rather than
+  following a moved branch. Recovery reports unavailable locally built wheels
+  instead of silently rebuilding different bytes.
+
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
   refuse before activation; compatible frontend-only updates retain the engine.

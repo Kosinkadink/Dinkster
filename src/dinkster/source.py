@@ -1,4 +1,4 @@
-"""Inspect explicit public git sources through the bundled git implementation."""
+"""Select explicit Git engines and inspect refs through the bundled Git implementation."""
 
 from __future__ import annotations
 

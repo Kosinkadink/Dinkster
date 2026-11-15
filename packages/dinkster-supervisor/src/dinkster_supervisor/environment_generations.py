@@ -895,7 +895,7 @@ def build_generation(
                 + hashlib.sha256(
                     json.dumps(read_document(retained), sort_keys=True).encode()
                 ).hexdigest()
-                if source_kind == "local"
+                if source_kind in {"local", "source"}
                 else content_digest(retained)
             )
             if manifest_identity != engine_release:
@@ -1006,6 +1006,10 @@ def build_generation(
             install_live_sources(
                 destination, read_document(destination / "development-sources.json")
             )
+        if source_kind == "source":
+            from .environment_sources import install_source_editables
+
+            install_source_editables(destination, store, engine_release)
         if artifact_sources is not None:
             write_document(destination / "artifact-sources.json", artifact_sources)
         files = tuple(

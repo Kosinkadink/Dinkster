@@ -317,6 +317,27 @@ not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
 
+### Managed engine sources
+
+On an installed release project, `dinkster source --root ROOT add
+https://github.com/Kosinkadink/Dinkster --ref BRANCH --yes` selects an explicit
+Git engine without enabling develop mode. Omit `--yes` to inspect the plan.
+The generation keeps the installed release base and pinned frontend package,
+reuses matching locked wheel bytes, and resolves missing checkout dependencies
+from PyPI or `--package-index URL`. Workspace packages run editable from the
+captured checkout. An incompatible worker protocol or base dependency refuses
+before activation.
+
+`dinkster source --root ROOT update --ref OTHER --yes` selects another ref;
+omit `--ref` to fetch the previously selected ref again. Status and history
+label source generations unpublished and non-reproducible and record the
+original URL, requested ref and exact commit. Rollback uses the recorded commit,
+not the current branch tip. Recovery requires retained locally built wheel
+bytes; unavailable inputs are reported rather than replaced by a new build.
+`dinkster source --root ROOT release --yes` restores the most recent recorded
+published generation. Ordinary release setup remains unchanged and does not
+fetch Git sources implicitly.
+
 ### Public git refs and mirrors
 
 `dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists

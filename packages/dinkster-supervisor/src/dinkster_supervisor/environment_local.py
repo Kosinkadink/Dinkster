@@ -137,7 +137,7 @@ def local_selection(
     }
 
 
-def _resolve(
+def resolve_wheels(
     requirements: Path,
     constraints: Path,
     output: Path,
@@ -184,6 +184,7 @@ def retain_wheels(
             [
                 str(python),
                 "-I",
+                "-B",
                 "-c",
                 "import sys,json; print(json.dumps(list(sys.version_info[:2])))",
             ],
@@ -368,7 +369,7 @@ def prepare_local(
             "\n".join(f"{name}=={packages[name][0]['version']}" for name in selection["packages"])
             + "\n"
         )
-        resolved = _resolve(
+        resolved = resolve_wheels(
             base_requirements,
             pins,
             work / "pylock.base.toml",
@@ -455,7 +456,7 @@ def prepare_local(
             + "\n"
             + (engine_constraints if contributor else "")
         )
-        engine = _resolve(
+        engine = resolve_wheels(
             engine_requirements,
             effective,
             work / "pylock.engine.toml",

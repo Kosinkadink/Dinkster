@@ -89,6 +89,194 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     return result.returncode, document
 
 
+def test_source_engine_ref_update_and_exact_commit_rollback(
+    tmp_path: Path, monkeypatch, git_server
+):
+    from zipfile import ZipFile
+
+    import pygit2
+    from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+
+    from tests.fixtures.environments.build import build
+
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user"))
+    fixture = build(tmp_path / "fixture", "linux-cpu", free_port())
+    root = Path(fixture["root"])
+    code, result = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--data",
+        fixture["store"],
+        "--variant",
+        "linux-cpu",
+        "--channel",
+        "main",
+        "--port",
+        str(fixture["port"]),
+        "--yes",
+    )
+    assert code == 0, result
+    try:
+        assert _run(root, "stop", "--yes")[0] == 0
+        source = tmp_path / "source"
+        source.mkdir()
+        engine_wheel = next(Path(fixture["mirror"]).glob("engine/*/*.whl"))
+        with ZipFile(engine_wheel) as archive:
+            for name in archive.namelist():
+                if name.startswith("dinkster/"):
+                    path = source / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.read(name))
+        manager = source / "dinkster/manager.py"
+        manager.write_text(
+            manager.read_text().replace('version("fixture-engine")', 'version("dinkster")')
+        )
+        (source / "dinkster/__init__.py").write_text("VALUE = 911\n")
+        (source / "pyproject.toml").write_text(
+            '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
+            'dependencies=["fixture-base==1.0"]\n[dependency-groups]\n'
+            'engine-base=["fixture-base==1.0"]\n[build-system]\n'
+            'requires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        )
+        boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+        boundary.parent.mkdir(parents=True)
+        boundary.write_text("PROTOCOL_VERSION = 11\n")
+        index = tmp_path / "index"
+        index.mkdir()
+        base = read_document(Path(fixture["baseManifest"]))
+        assert isinstance(base["id"], str)
+        base_wheel = next(
+            (object_path(Path(fixture["store"]) / "bases", base["id"]) / "wheels").glob("*.whl")
+        )
+        wheel = index / base_wheel.name
+        shutil.copyfile(base_wheel, wheel)
+        monkeypatch.setenv("UV_NO_INDEX", "1")
+        monkeypatch.setenv("UV_FIND_LINKS", str(index))
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        locked = subprocess.run(
+            ["uv", "lock", "--offline", "--python", sys.executable],
+            cwd=source,
+            capture_output=True,
+            text=True,
+        )
+        assert locked.returncode == 0, locked.stderr
+        lock = source / "uv.lock"
+        lock.write_text(
+            lock.read_text().replace(
+                f'path = "{wheel.as_posix()}"',
+                f'path = "{wheel.as_posix()}", hash = "{content_digest(wheel)}"',
+            )
+        )
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        git_index = pygit2.Index()
+        for path in source.rglob("*"):
+            if path.is_file():
+                git_index.add(
+                    pygit2.IndexEntry(
+                        path.relative_to(source).as_posix(),
+                        repository.create_blob(path.read_bytes()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+        commit = repository.create_commit(
+            "refs/heads/engine",
+            signature,
+            signature,
+            "engine",
+            git_index.write_tree(repository),
+            [],
+        )
+        git_index.add(
+            pygit2.IndexEntry(
+                "dinkster/__init__.py",
+                repository.create_blob(b"VALUE = 1229\n"),
+                pygit2.enums.FileMode.BLOB,
+            )
+        )
+        changed = repository.create_commit(
+            "refs/heads/engine-changed",
+            signature,
+            signature,
+            "changed",
+            git_index.write_tree(repository),
+            [commit],
+        )
+        repository.free()
+        tools = tmp_path / "no-git-tools"
+        tools.mkdir()
+        uv = shutil.which("uv")
+        assert uv is not None
+        shutil.copyfile(uv, tools / Path(uv).name)
+        (tools / Path(uv).name).chmod(0o755)
+        monkeypatch.setenv("PATH", str(tools))
+        assert shutil.which("git") is None
+        code, result = _run(
+            root,
+            "source",
+            "add",
+            "https://github.com/Kosinkadink/source",
+            "--git-mirror",
+            git_server["proxy"],
+            "--ref",
+            "engine",
+            "--yes",
+        )
+        assert code == 0, result
+        status = _run(root, "status")[1]
+        assert status["source"] == "source"
+        assert status["published"] is False and status["reproducible"] is False
+        assert status["sources"]["engine"]["commit"] == str(commit)
+        assert status["sources"]["engine"]["requestedRef"] == "engine"
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "source", "update", "--ref", "engine-changed", "--yes")
+        assert code == 0, result
+        status = _run(root, "status")[1]
+        assert status["sources"]["engine"]["commit"] == str(changed)
+        assert status["sources"]["engine"]["requestedRef"] == "engine-changed"
+        assert _run(root, "stop", "--yes")[0] == 0
+        original_release = Generation.read(root / "generations/2/generation.json").engine_release
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/engine"].set_target(changed)
+        repository.free()
+        shutil.rmtree(
+            object_path(Path(fixture["store"]) / "engines", original_release) / "checkout"
+        )
+        code, result = _run(root, "rollback", "--yes")
+        assert code == 0, result
+        assert _run(root, "status")[1]["sources"]["engine"]["commit"] == str(commit)
+        current = result["current"]
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(root / "generations" / str(current))),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster; print(dinkster.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "911"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "source", "release", "--yes")
+        assert code == 0, result
+        assert (
+            _run(root, "status")[1]["engine"]["release"]
+            == json.loads(Path(fixture["initialChannel"]).read_text())["engine"]["release"]
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "rollback", "--yes")
+        assert code == 0, result
+        assert _run(root, "status")[1]["source"] == "source"
+    finally:
+        _run(root, "stop", "--yes")
+
+
 def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_path: Path):
     mirror = tmp_path / "mirror"
     base, _, channel = _mirror(mirror)

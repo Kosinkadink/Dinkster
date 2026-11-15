@@ -16,7 +16,7 @@ from functools import partial
 from pathlib import Path
 from platform import machine
 from time import monotonic
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from dinkster_store import object_path, pack_archive_path
@@ -140,6 +140,16 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
         entries = history(root)
         for entry in entries:
             snapshot = cast("dict[str, object]", entry["snapshot"])
+            if snapshot.get("source") == "source":
+                manifest = json.loads(
+                    cast("dict[str, str]", snapshot["metadata"])["engine-manifest.json"]
+                )
+                entry.update(
+                    sources=manifest["sources"],
+                    published=False,
+                    reproducible=False,
+                    sourceDescription="source: unpublished and non-reproducible",
+                )
             if "development-sources.json" in cast("dict[str, str]", snapshot["metadata"]):
                 entry["sourceDescription"] = development_description(
                     json.loads(
@@ -182,7 +192,30 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
                 result["base"] = base_details(base)
         manifest = generation_root / "engine-manifest.json"
-        if generation.source != "local" and manifest.is_file():
+        if generation.source == "source" and manifest.is_file():
+            from .environment_development import source_identity
+
+            engine = read_document(manifest)
+            if source_identity(engine) != generation.engine_release or dict(generation.files).get(
+                "engine-manifest.json"
+            ) != content_digest(manifest):
+                raise EnvironmentError("retained source manifest does not match active generation")
+            result.update(
+                source="source",
+                kind="source",
+                published=False,
+                reproducible=False,
+                sources=engine["sources"],
+                sourceDescription=(
+                    "source: unpublished and non-reproducible; selected Git checkout code"
+                ),
+                engine={
+                    "release": generation.engine_release,
+                    "version": generation.engine_version,
+                    "label": engine.get("label"),
+                },
+            )
+        elif generation.source != "local" and manifest.is_file():
             engine = validate_manifest(manifest.read_bytes(), generation.engine_release, None)
             if engine["version"] != generation.engine_version:
                 raise EnvironmentError("retained engine version does not match active generation")
@@ -346,6 +379,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     if offline and (args.from_scratch or args.catalog_lock is None or not args.pack_lock):
         raise EnvironmentError("offline setup requires published source and dependency locks")
     developing = args.operation == "develop"
+    source_engine = getattr(args, "engine_checkout", None)
+    if source_engine is not None and (
+        getattr(args, "from_scratch", False) or getattr(args, "offline", False)
+    ):
+        raise EnvironmentError("explicit Git source mode cannot use --from-scratch or --offline")
     adopting = getattr(args, "adopt_from", None)
     if adopting is not None and (root.exists() or args.root.is_symlink()):
         raise EnvironmentError("adoption requires a new, nonexistent --root")
@@ -564,7 +602,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         else:
             plan.append("resolve registry default packs against the local engine and base")
     else:
-        catalog = discover(mirrors, channel, store=store, offline=offline)
+        if source_engine is not None:
+            from .environment_sources import installed_release_catalog
+
+            if previous_root is None:
+                raise EnvironmentError("Git engine selection requires an installed release base")
+            if settings is None or variant != settings["variant"] or args.variants is not None:
+                raise EnvironmentError(
+                    "Git source selection preserves the installed release variant"
+                )
+            catalog = installed_release_catalog(previous_root, channel)
+            result["sources"] = {"engine": args.engine_origin}
+        else:
+            catalog = discover(mirrors, channel, store=store, offline=offline)
         if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -636,6 +686,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             plan.append("custom base download size is unknown until dependency resolution")
         elif custom is not None:
             plan.append(f"retain user-defined base {base_id}; do not resolve its definition again")
+    source_files_digest = None
+    if source_engine is not None:
+        from .environment_development import source_files, source_identity
+
+        source_files_digest = source_identity(source_files(source_engine))
+        plan.extend(
+            [
+                "source: unpublished and non-reproducible; explicitly selected Git engine",
+                f"repository {args.engine_origin['url']}; "
+                f"ref {args.engine_origin['requestedRef']}; "
+                f"commit {args.engine_origin['commit']}",
+                "keep the installed release base and pinned frontend; reuse verified locked wheels",
+            ]
+        )
     if project_settings is not None and settings is not None:
         plan.append(
             f"change project selection from {settings['channel']}/{settings['variant']} "
@@ -759,6 +823,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             from .environment_development import verify_development_sources
 
             verify_development_sources(development)
+        if source_engine is not None:
+            from .environment_development import source_files, source_identity
+
+            if source_identity(source_files(source_engine)) != source_files_digest:
+                raise EnvironmentError("Git source changed after planning; request a new plan")
         if adoption is not None and (
             changed_inputs or standalone_inputs(cast("Path", adopting), root, store) != adoption
         ):
@@ -810,6 +879,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             _recover_pending(root, locked_store=store)
             revalidate()
             published_constraints = None
+            source_inputs = None
             catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
             pack_locks = tuple(args.pack_lock)
             if adoption is not None:
@@ -861,6 +931,24 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     else None,
                     offline=offline,
                 )
+                if source_engine is not None:
+                    from .environment_sources import prepare_source_engine
+
+                    source_inputs = prepare_source_engine(
+                        source_engine,
+                        store=store,
+                        base_id=base_id,
+                        published_release=catalog.channel.engine_release,
+                        published_constraints=published_constraints,
+                        variant=variant,
+                        sources={
+                            "engine": {"kind": "engine", **args.engine_origin},
+                            "channel": catalog.document,
+                            "gitMirror": args.git_mirror,
+                        },
+                        package_index=cast("str", package_index or "https://pypi.org/simple"),
+                    )
+                    published_constraints = source_inputs["constraints"]
 
                 if catalog_lock is None:
                     catalog_lock, source_artifacts, pack_locks, unavailable = (
@@ -870,7 +958,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                                 base=base_id,
                                 constraints=published_constraints,
                                 variant=variant,
-                                engine_version=cast("str", catalog.engine["version"]),
+                                engine_version=source_inputs["engine_version"]
+                                if source_inputs is not None
+                                else cast("str", catalog.engine["version"]),
                                 installed_lock=previous_root / "dinkster.lock"
                                 if previous_root is not None
                                 else None,
@@ -1009,6 +1099,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
                     worker_protocol = cast("int", base["workerProtocol"])
+                    if source_inputs is not None:
+                        engine_version = source_inputs["engine_version"]
+                        engine_release = source_inputs["engine_release"]
                 measured = sum(
                     path.stat().st_size
                     for path in (object_path(store / "bases", base_id) / "python").rglob("*")
@@ -1036,7 +1129,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     own_environment_size=measured,
                     catalog_lock=catalog_lock,
                     artifacts=source_artifacts,
-                    source_kind="local" if local is not None else "published",
+                    source_kind="local"
+                    if local is not None
+                    else "source"
+                    if source_inputs is not None
+                    else "published",
                     prepare_packs=prepare_packs,
                     acquire_pack_wheels=development is None and not offline,
                     artifact_sources={
@@ -1587,6 +1684,84 @@ def _security(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> int:
+    from urllib.parse import urlencode
+
+    from .environment_sources import acquired_source_engine
+    from .git_sources import git_refs, parse_git_source
+
+    if args.source_action == "refs":
+        refs = git_refs(args.url, mirror=args.git_mirror)
+        result.update(refs=refs, plan=[f"{name} {commit}" for name, commit in sorted(refs.items())])
+        return 0
+    current = read_current(args.root)
+    if current is None:
+        raise EnvironmentError("source operations require an installed release project")
+    if args.source_action == "release":
+        entries = [
+            entry
+            for entry in activation_entries(args.root)
+            if cast("dict[str, object]", entry["snapshot"])["source"] == "published"
+        ]
+        if not entries:
+            raise EnvironmentError("project has no recorded release generation")
+        return _restore(args, result, cast("int", entries[-1]["id"]))
+    git_mirror = args.git_mirror
+    if args.source_action == "add":
+        value = args.url
+    else:
+        generation = args.root / "generations" / str(current)
+        record = Generation.read(generation / "generation.json")
+        manifest = read_document(generation / "engine-manifest.json")
+        if record.source != "source" or content_digest(generation / "engine-manifest.json") != dict(
+            record.files
+        ).get("engine-manifest.json"):
+            raise EnvironmentError("source update requires an intact selected Git engine")
+        source_selection = cast("dict[str, Any]", manifest["sources"])
+        origin = source_selection["engine"]
+        git_mirror = git_mirror or source_selection.get("gitMirror")
+        value = (
+            origin["url"]
+            + "#"
+            + urlencode(
+                {
+                    **(
+                        {"ref": origin["requestedRef"]}
+                        if origin["requestedRef"] is not None
+                        else {}
+                    ),
+                    "subdirectory": origin["subdirectory"],
+                }
+            )
+        )
+    url, ref, subdirectory = parse_git_source(value)
+    value = (
+        url
+        + "#"
+        + urlencode(
+            {
+                **({"ref": args.ref or ref} if args.ref or ref else {}),
+                "subdirectory": subdirectory,
+            }
+        )
+    )
+    selected = argument_parser().parse_args(
+        [
+            "--root",
+            str(args.root),
+            "update",
+            "--engine-source",
+            value,
+            *(["--git-mirror", git_mirror] if git_mirror is not None else []),
+            *(["--package-index", args.package_index] if args.package_index is not None else []),
+            *(["--yes"] if args.yes else ["--plan"]),
+            "--json",
+        ]
+    )
+    with acquired_source_engine(selected) as acquired:
+        return _install(acquired, result)
+
+
 def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1634,6 +1809,19 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     source_refs.add_argument("url", help="public HTTPS git repository URL")
     source_refs.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
     source_refs.add_argument("--json", action="store_true", help="emit exactly one result object")
+    for action in ("add", "update", "release"):
+        command = source_actions.add_parser(action, help=f"{action} the project's source engine")
+        if action == "add":
+            command.add_argument("url", help="explicit public HTTPS engine repository URL")
+        command.set_defaults(approve=None)
+        if action != "release":
+            command.add_argument("--ref", help="branch, tag, PR ref or exact commit")
+            command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
+            command.add_argument("--package-index", help="index for missing locked wheels")
+        confirmation = command.add_mutually_exclusive_group()
+        confirmation.add_argument("--yes", action="store_true")
+        confirmation.add_argument("--plan", action="store_true")
+        command.add_argument("--json", action="store_true", help="emit exactly one result object")
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
     catalog.add_argument("--channel", choices=("stable", "main"))
@@ -1707,6 +1895,8 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
+        command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
+        command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
         command.add_argument("--engine-release", help="require this exact published engine digest")
         command.add_argument("--base-id", help="require this exact published base digest")
     for command in (setup, update, develop):
@@ -1864,13 +2054,7 @@ def run(args: argparse.Namespace) -> int:
             result.update(apply_pack_install(args.root, args.input, args.approval))
             code = 0
         elif args.operation == "source":
-            from .git_sources import git_refs
-
-            refs = git_refs(args.url, mirror=args.git_mirror)
-            result.update(
-                refs=refs, plan=[f"{name} {commit}" for name, commit in sorted(refs.items())]
-            )
-            code = 0
+            code = _source_operation(args, result)
         elif args.operation == "tools":
             selected = acquire_tools(tuple(args.mirror), args.channel, args.root, download=args.yes)
             result.update(
@@ -1887,7 +2071,10 @@ def run(args: argparse.Namespace) -> int:
             with acquired_development_sources(args) as selected:
                 code = _install(selected, result)
         elif args.operation in {"setup", "update"}:
-            code = _install(args, result)
+            from .environment_sources import acquired_source_engine
+
+            with acquired_source_engine(args) as selected:
+                code = _install(selected, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
         elif args.operation == "restore":

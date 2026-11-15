@@ -162,6 +162,14 @@ def missing_inputs(
     snapshot: dict[str, object], store: Path, *, offline: bool = False
 ) -> list[dict[str, object]]:
     """Prefer verified retained payloads; remote probes never populate the store."""
+    if snapshot.get("source") == "source":
+        from .environment_sources import source_missing_inputs
+
+        return [
+            *source_missing_inputs(snapshot, store, offline=offline),
+            *_pack_missing_inputs(snapshot, store, offline=offline),
+            *(_pack_source_missing(snapshot, store, None) if offline else []),
+        ]
     if snapshot.get("source") == "local":
         return [
             *_local_missing_inputs(snapshot, store, offline=offline),
@@ -912,7 +920,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         candidates.extend(_base_alternatives(snapshot))
     viable: dict[str, dict[str, object]] = {}
     for candidate in candidates:
-        if candidate.get("source") not in {"published", "local"}:
+        if candidate.get("source") not in {"published", "local", "source"}:
             continue
         try:
             development = _metadata(candidate).get("development-sources.json")
