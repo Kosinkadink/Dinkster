@@ -937,6 +937,8 @@ def _run_probe(
             fix="select an executable Python >=3.12 for the pack import probe",
         )
     argv = [python, "-m", "dinkster_workers._doctor_probe", str(manifest.path)]
+    from .seatbelt import SeatbeltProbeJail
+
     try:
         if probe_jail is None:
             proc = subprocess.run(
@@ -946,6 +948,10 @@ def _run_probe(
                 errors="replace",
                 timeout=_PROBE_TIMEOUT_S,
                 env=None if environment is None else {**os.environ, **environment},
+            )
+        elif isinstance(probe_jail, SeatbeltProbeJail):
+            proc = probe_jail.run(
+                argv, manifest.root, probe_environment(environment), timeout=_PROBE_TIMEOUT_S
             )
         else:
             with tempfile.TemporaryFile() as environment_file:

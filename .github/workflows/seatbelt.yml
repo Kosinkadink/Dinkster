@@ -1,0 +1,29 @@
+name: Native macOS sandbox
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/seatbelt.yml
+      - packages/dinkster-workers/src/dinkster_workers/seatbelt.py
+      - packages/dinkster-workers/src/dinkster_workers/sandbox.py
+      - packages/dinkster-workers/src/dinkster_workers/doctor.py
+      - tests/test_seatbelt.py
+
+permissions:
+  contents: read
+
+jobs:
+  seatbelt:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          uv run --no-project python scripts/develop.py setup --variant mac-arm64 --yes
+          uv run --no-project python scripts/develop.py stop --yes
+          uv run --no-project python scripts/develop.py run -- python -m pytest tests/test_seatbelt.py -n 0 -q

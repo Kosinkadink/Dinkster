@@ -725,6 +725,13 @@ def detect_probe_jail() -> ProbeJail:
     """Detect bubblewrap and return a ProbeJail, or raise SandboxUnavailable
     with the distro-specific remediation. Never degrades: a caller that
     wants a jailed probe either gets one or a loud refusal."""
+    if sys.platform == "darwin":
+        from .seatbelt import SeatbeltProbeJail, detect_seatbelt
+
+        capability = detect_seatbelt()
+        if not capability.available or capability.sandbox_exec is None:
+            raise SandboxUnavailable(f"Seatbelt sandbox unavailable: {capability.detail}")
+        return SeatbeltProbeJail(capability.sandbox_exec, False)
     if sys.platform != "linux":
         raise SandboxUnavailable(
             "probe sandboxing requires Linux bubblewrap; this platform has no jail rung"
