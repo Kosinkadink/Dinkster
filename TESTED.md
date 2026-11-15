@@ -3,7 +3,9 @@
 - Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.
 - Service resolution, CLI and serving integration: 73 tests pass on the managed linux-cpu contributor generation.
 - Extension-kind generation, extension factories, builtin type spelling, Ruff lint/format and Linux/Windows-target Pyright pass.
-- Account sign-in and authenticated catalog integration are not established by these checks.
+- Account/service/CLI/serving integration: 80 passed in 43.14 seconds on the managed linux-cpu contributor generation. Local identity HTTP fixtures cover PKCE/state/issuer checks, consent denial, paginated projects, selected-project mint, OAuth rotation, revocation, redirect refusal, private credentials outside projects and endpoint/install isolation.
+- Full Ruff lint/format and Linux/Windows-target Pyright pass with account source included.
+- These checks do not establish live identity bridge availability, automatic engine token refresh or authenticated catalog integration.
 
 # Managed Git sources
 

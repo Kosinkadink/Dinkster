@@ -15,3 +15,13 @@
   `DINKSTER_REMOTE_*_BASE` variables) remain custom overrides; an explicitly empty
   catalog base disables discovery. Without a separate gateway override, a custom
   catalog also supplies the job endpoint.
+- `dinkster account login` opens native PKCE consent in the system browser;
+  `account projects` lists accessible projects, and `account select-project UUID`
+  requests gateway authority for exactly that project. `account refresh` refreshes
+  OAuth if needed and requests a fresh gateway token; `account logout` removes
+  this install's local credentials. The identity service must support the
+  `projects:gateway` consent scope and project discovery/mint routes.
+- Account commands accept `--root` for the install and explicit custom service
+  bases. Credentials are kept outside projects, isolated by install path and
+  identity/catalog/gateway/audience. OAuth secrets are separate from the
+  gateway-only token file. Remote workers never receive OAuth refresh secrets.
