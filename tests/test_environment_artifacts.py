@@ -1260,7 +1260,7 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         ).read_bytes()
 
 
-@pytest.mark.parametrize("previous_day", ["same", "yesterday", "missing"])
+@pytest.mark.parametrize("previous_day", ["same", "yesterday", "missing", "readback-mismatch"])
 def test_nightly_publication_advances_only_once_per_utc_day(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str
 ):
@@ -1301,7 +1301,14 @@ def test_nightly_publication_advances_only_once_per_utc_day(
         "R2_PUBLIC_BASE_URL": str(mirror),
     }.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.setattr(publisher, "object_store", lambda: None)
+    old_channel = mirror / "channels/main.json"
+    old_channel.write_bytes(before)
+
+    class Store:
+        def delete_object(self, *, Bucket, Key):
+            (mirror / Key).unlink(missing_ok=True)
+
+    monkeypatch.setattr(publisher, "object_store", Store)
     monkeypatch.setattr(publisher, "mirror_engine", lambda *args: None)
 
     def response(request, **kwargs):
@@ -1314,10 +1321,17 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
     def upload(client, source, key, **kwargs):
         assert key == "channels/nightly.json"
-        (mirror / key).write_bytes(source.read_bytes())
+        (mirror / key).write_bytes(
+            before if previous_day == "readback-mismatch" else source.read_bytes()
+        )
 
     monkeypatch.setattr(publisher, "urlopen", response)
     monkeypatch.setattr(publisher, "upload", upload)
+    if previous_day == "readback-mismatch":
+        with pytest.raises(ValueError, match="public channel differs after publication"):
+            publisher.publish(release, [base_path], "nightly", "0.2.0")
+        assert old_channel.read_bytes() == before
+        return
     publisher.publish(release, [base_path], "nightly", "0.2.0")
     after = json.loads(channel_path.read_bytes())
     if previous_day == "same":
