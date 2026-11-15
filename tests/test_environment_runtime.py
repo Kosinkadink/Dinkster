@@ -196,8 +196,15 @@ def test_managed_generation_persists_folder_grant_across_restart(
     granted.mkdir()
     port = free_port()
     url = f"http://127.0.0.1:{port}/api/mounts"
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "index.html").write_text("<title>Explicit frontend</title>")
     try:
-        start_engine(root, 1, "main", port)
+        start_engine(root, 1, "main", port, frontend_root=str(frontend))
+        with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+            assert b"<title>Explicit frontend</title>" in response.read()
+        with pytest.raises(EnvironmentError, match="stop the engine first"):
+            start_engine(root, 1, "main", port, frontend_dev="http://127.0.0.1:5173")
         with urlopen(url, timeout=5) as response:  # noqa: S310
             initial = json.load(response)
         assert initial["mountChangesAllowed"] is True
@@ -226,8 +233,9 @@ def test_managed_generation_persists_folder_grant_across_restart(
 
 
 @pytest.mark.parametrize("frontend_kind", ["frontendRoot", "frontendDev"])
+@pytest.mark.parametrize("explicit_override", [False, True])
 def test_managed_development_frontend_survives_restart_and_serves_edits(
-    tmp_path: Path, frontend_kind: str
+    tmp_path: Path, frontend_kind: str, explicit_override: bool
 ) -> None:
     import asyncio
     import threading
@@ -308,10 +316,17 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
     dev_port = free_port()
     runner = asyncio.run_coroutine_threadsafe(serve(), loop).result(timeout=10)
     selection = str(frontend) if frontend_kind == "frontendRoot" else f"http://127.0.0.1:{dev_port}"
-    (generation / "development-sources.json").write_text(
-        json.dumps(
-            {"format": "dinkster.development-sources/1", "sources": [], frontend_kind: selection}
+    saved_selection = (
+        (
+            {"frontendDev": "http://192.0.2.1:5173"}
+            if frontend_kind == "frontendRoot"
+            else {"frontendRoot": str(tmp_path / "unselected-frontend")}
         )
+        if explicit_override
+        else {frontend_kind: selection}
+    )
+    (generation / "development-sources.json").write_text(
+        json.dumps({"format": "dinkster.development-sources/1", "sources": [], **saved_selection})
     )
     port = free_port()
 
@@ -334,7 +349,20 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
     try:
         for text in ("first selection", "edited frontend after restart"):
             page.write_text(f"<html>{text}</html>")
-            start_engine(root, 1, "main", port)
+            start_engine(
+                root,
+                1,
+                "main",
+                port,
+                frontend_root=selection
+                if explicit_override and frontend_kind == "frontendRoot"
+                else None,
+                frontend_dev=selection
+                if explicit_override and frontend_kind == "frontendDev"
+                else None,
+            )
+            with pytest.raises(EnvironmentError, match="stop the engine first"):
+                start_engine(root, 1, "main", port, frontend_root=str(tmp_path / "changed"))
             with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
                 assert response.read().decode() == f"<html>{text}</html>"
             if frontend_kind == "frontendDev":

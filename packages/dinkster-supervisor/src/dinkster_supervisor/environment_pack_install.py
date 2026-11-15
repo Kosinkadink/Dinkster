@@ -73,7 +73,7 @@ def _project_inputs(root: Path) -> dict[str, str | None]:
     return inputs
 
 
-def _current(
+def current_software(
     root: Path, *, allow_metadata_drift: bool = False, allow_runtime_drift: bool = False
 ) -> tuple[Path, Generation, Path]:
     number = read_current(root)
@@ -154,7 +154,7 @@ def inspect_pack_install(
     root = root.resolve()
     if security_pack is not None and security_all:
         raise EnvironmentError("security repair selects one pack or all packs, not both")
-    source, generation, store = _current(
+    source, generation, store = current_software(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
     )
     drift = generation.drift(source)
@@ -480,7 +480,7 @@ def plan_pack_install(
         and (not selections or len(selections) > 64)
     ):
         raise EnvironmentError("pack installation requires 1 to 64 exact selections")
-    source, generation, store = _current(
+    source, generation, store = current_software(
         root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
     )
     if output.is_relative_to(root) or output.is_relative_to(store):
@@ -498,7 +498,7 @@ def plan_pack_install(
         return review
     metadata = cast("dict[str, object]", review["metadata"])
     with writer_lock(store), writer_lock(root):
-        source, generation, actual_store = _current(
+        source, generation, actual_store = current_software(
             root, allow_metadata_drift=True, allow_runtime_drift=diagnostic_python is not None
         )
         if actual_store != store:
@@ -728,7 +728,7 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
         raise EnvironmentError("pack installation approval does not match the reviewed plan")
     if record.get("root") != str(root):
         raise EnvironmentError("pack installation plan belongs to another project")
-    source, generation, store = _current(root)
+    source, generation, store = current_software(root)
 
     def revalidate() -> None:
         if (

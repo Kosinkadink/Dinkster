@@ -70,6 +70,7 @@ def test_lifecycle_help_lists_project_and_operation_options(command: list[str], 
     if command in ([], ["serve"]):
         assert "--port" in help_text and "--gpu" in help_text
         assert "--no-browser" in help_text
+        assert "--frontend-root" in help_text and "--frontend-dev" in help_text
     elif command == ["update"]:
         assert "--channel" in help_text and "--variant" in help_text
     elif command == ["rollback"]:

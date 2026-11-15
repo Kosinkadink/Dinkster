@@ -1928,3 +1928,131 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert (
         subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"
     )
+
+
+def test_source_engine_reuses_release_base_and_locked_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_artifacts import acquire, discover
+    from dinkster_supervisor.environment_sources import prepare_source_engine
+    from dinkster_supervisor.environment_state import content_digest
+
+    from tests.fixtures.environments.build import build, wheel
+
+    variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
+    fixture = build(tmp_path / "fixture", variant, 31977)
+    store = tmp_path / "store"
+    catalog = discover((fixture["mirror"],), "main", store=store)
+    constraints = acquire(catalog, variant, store)
+    base = catalog.bases[variant]
+    assert isinstance(base["id"], str)
+    index = tmp_path / "index"
+    index.mkdir()
+    paths = [
+        wheel(index, name, "1.0", value)
+        for name, value in (("fixture_cached", 41), ("fixture_new", 79))
+    ]
+    base_wheel = next((object_path(store / "bases", base["id"]) / "wheels").glob("*.whl"))
+    shutil.copyfile(base_wheel, index / base_wheel.name)
+    paths.append(index / base_wheel.name)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "dinkster").mkdir()
+    (source / "dinkster/__init__.py").write_text("VALUE = 853\n")
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
+        'dependencies=["fixture-base==1.0","fixture-cached==1.0","fixture-new==1.0"]\n'
+        '[dependency-groups]\nengine-base=["fixture-base==1.0"]\n'
+        '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+    )
+    boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+    boundary.parent.mkdir(parents=True)
+    boundary.write_text("PROTOCOL_VERSION = 11\n")
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    monkeypatch.setenv("UV_FIND_LINKS", str(index))
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    subprocess.run(
+        ["uv", "lock", "--offline", "--python", sys.executable],
+        cwd=source,
+        check=True,
+        capture_output=True,
+    )
+    lock = source / "uv.lock"
+    text = lock.read_text()
+    for path in paths:
+        text = text.replace(
+            f'path = "{path.as_posix()}"',
+            f'path = "{path.as_posix()}", hash = "{content_digest(path)}"',
+        )
+    lock.write_text(text)
+    cached = paths[0]
+    target = object_path(store / "wheels", content_digest(cached)) / cached.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(cached.read_bytes())
+    cached.unlink()
+    paths[2].unlink()
+    before = {
+        path.relative_to(store): content_digest(path)
+        for parent in ("bases", "wheels")
+        for path in (store / parent).rglob("*")
+        if path.is_file() and path.name != ".objects.json"
+    }
+    inputs = prepare_source_engine(
+        source,
+        store=store,
+        base_id=base["id"],
+        published_release=catalog.channel.engine_release,
+        published_constraints=constraints,
+        variant=variant,
+        sources={"sources": []},
+    )
+    assert inputs["base"] == base["id"]
+    assert {path: content_digest(store / path) for path in before} == before
+    assert "fixture-new==1.0" in inputs["constraints"].read_text()
+    root = tmp_path / "project"
+    generation = build_generation(
+        root=root,
+        number=1,
+        store=store,
+        base=base["id"],
+        engine_version=inputs["engine_version"],
+        engine_release=inputs["engine_release"],
+        constraints=inputs["constraints"],
+        variant=variant,
+        worker_protocol=11,
+        source_kind="source",
+    )
+    generation_root = root / "generations/1"
+    assert generation.source == "source"
+    assert generation.drift(generation_root) == ()
+    python = interpreter(generation_root)
+    output = subprocess.check_output(
+        [
+            str(python),
+            "-I",
+            "-B",
+            "-c",
+            "import dinkster,fixture_base,fixture_cached,fixture_new; "
+            "print(dinkster.VALUE,fixture_base.VALUE,fixture_cached.VALUE,fixture_new.VALUE)",
+        ],
+        text=True,
+    )
+    assert output.strip() == "853 37 41 79"
+    loaded = subprocess.check_output(
+        [str(python), "-I", "-B", "-c", "import dinkster; print(dinkster.__file__)"], text=True
+    ).strip()
+    assert Path(loaded).is_relative_to(
+        object_path(store / "engines", inputs["engine_release"]) / "checkout"
+    )
+    assert {path: content_digest(store / path) for path in before} == before
+    boundary.write_text("PROTOCOL_VERSION = 12\n")
+    with pytest.raises(EnvironmentError, match="protocol does not match"):
+        prepare_source_engine(
+            source,
+            store=store,
+            base_id=base["id"],
+            published_release=catalog.channel.engine_release,
+            published_constraints=constraints,
+            variant=variant,
+            sources={"sources": []},
+        )

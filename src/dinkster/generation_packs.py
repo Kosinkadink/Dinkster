@@ -183,6 +183,18 @@ def generation_pack_specs(
             for row in capture["sources"]
             if row["kind"] == "pack" and row.get("live")
         }
+    provenance = generation / "artifact-sources.json"
+    if provenance.is_file():
+        selected_sources.update(
+            row["source"]
+            for name, row in json.loads(provenance.read_text()).get("packs", {}).items()
+            if any(
+                entry.pack == name
+                and entry.source == row["source"]
+                and entry.artifact_digest == row["artifactDigest"]
+                for entry in lock.packs
+            )
+        )
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:

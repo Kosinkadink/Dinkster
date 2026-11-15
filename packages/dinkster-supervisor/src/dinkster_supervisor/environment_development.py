@@ -87,7 +87,7 @@ def _ignored(name: str) -> bool:
     return name in _EXCLUDED or name.endswith((".egg-info", ".pyc", ".pyo"))
 
 
-def _files(root: Path) -> dict[str, str]:
+def source_files(root: Path) -> dict[str, str]:
     if root.is_symlink():
         raise EnvironmentError(f"development source must not be a symlink: {root}")
     if root.is_file():
@@ -111,7 +111,7 @@ def _files(root: Path) -> dict[str, str]:
     return files
 
 
-def _identity(document: object) -> str:
+def source_identity(document: object) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
 
@@ -153,7 +153,9 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
             text = str(value)
             if "://" not in text and not text.startswith("git+"):
                 return Path(value)
-            folder, origin = stack.enter_context(fetched_git_source(text))
+            folder, origin = stack.enter_context(
+                fetched_git_source(text, mirror=getattr(args, "git_mirror", None))
+            )
             selected.git_origins[str(folder.resolve())] = origin
             return folder
 
@@ -221,7 +223,7 @@ def development_selection(
             root = path.resolve()
             if git_origins and str(root) in git_origins and root in live_paths[kind]:
                 raise EnvironmentError(f"live {kind} requires a local folder, not a git source")
-            files = _files(root)
+            files = source_files(root)
             required = "dinkster-pack.toml" if kind == "pack" else "pyproject.toml"
             if not root.is_file() and required not in files:
                 raise EnvironmentError(f"development {kind} requires {root / required}")
@@ -252,13 +254,16 @@ def development_selection(
                     )
                     if kind == "engine"
                     else ["."],
-                    "contentDigest": _identity(files),
+                    "contentDigest": source_identity(files),
                     "files": files,
                     **(
                         {
                             "commit": git_origins[str(root)]["commit"],
                             "dirty": False,
-                            "git": {**git_origins[str(root)], "contentDigest": _identity(files)},
+                            "git": {
+                                **git_origins[str(root)],
+                                "contentDigest": source_identity(files),
+                            },
                         }
                         if git_origins and str(root) in git_origins
                         else _git_state(root)
@@ -275,7 +280,7 @@ def development_selection(
 def verify_development_sources(selection: dict[str, Any]) -> None:
     """Refuse changed author inputs before any generation is built."""
     for row in selection["sources"]:
-        if _identity(_files(Path(row["path"]))) != row["contentDigest"]:
+        if source_identity(source_files(Path(row["path"]))) != row["contentDigest"]:
             raise EnvironmentError(
                 f"development source changed after planning: {row['path']}; request a new plan"
             )
@@ -304,7 +309,7 @@ def captured_development_sources(
                     symlinks=True,
                     ignore=lambda _directory, names: [name for name in names if _ignored(name)],
                 )
-            if _identity(_files(target)) != row["contentDigest"]:
+            if source_identity(source_files(target)) != row["contentDigest"]:
                 raise EnvironmentError(f"development source changed during capture: {source}")
             roots[row["kind"]].append(target)
         from .environment_local import run_local_command
