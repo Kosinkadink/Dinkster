@@ -768,6 +768,9 @@
   after releasing transaction locks. Managed supervisors attempt startup,
   hourly collection, retrying busy locks sooner. Acknowledged stops attempt
   collection after durably recording the stopped engine assignment.
+  Confirmed start and stop wait for generation-only maintenance before taking
+  the project writer lock; a competing explicit environment writer still refuses
+  the operation. Planning and status remain read-only.
   Cleanup failures remain warnings rather than invalidating a successful
   update. Legacy trees without provable coverage still defer; Desktop controls
   are separate.
