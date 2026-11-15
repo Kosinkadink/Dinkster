@@ -9,6 +9,12 @@
 - Both default pack helper commands retain disabled discovery when endpoints are omitted or explicitly empty, and honor explicit custom endpoints: six public CLI cases pass against a real fixture pack. The omitted-endpoint cases fail on the previous helper implementation.
 - These checks do not establish live identity bridge availability or authenticated catalog integration with the remote pack.
 
+# Published remote catalog defaults
+
+- Registry default resolution requires remote pack 0.0.7 or newer. The public static registry resolved and delivered 0.0.7 with verified wheel bytes and all six published native install locks.
+- Installer, archive-admission and composition CPU suites: 273 passed, 2 existing skips. Full fast checks passed, including Ruff and Linux/Windows Pyright.
+- Authenticated catalog/policy/cache behavior is covered by the remote pack's local and selected-wheel admission suites. This default selection does not claim deployed identity sign-in or provider/billing acceptance.
+
 # Signed release channels
 
 - CPU contributor setup passed. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
