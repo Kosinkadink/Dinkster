@@ -16,6 +16,7 @@ from dinkster_graph import (
     plan,
     validate,
 )
+from dinkster_graph.residency import ResidentRoute, ResidentTopology
 from dinkster_schema import (
     ComboWidget,
     InputFamilyMapping,
@@ -43,6 +44,37 @@ SCHEMAS["test.list_input"] = NodeSchema(
     node_type="test.list_input",
     inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
 )
+
+
+@pytest.mark.parametrize("shared", [True, False])
+def test_resident_chain_requires_one_common_process(shared: bool) -> None:
+    model = TypeExpr.concrete("custom.RESIDENT")
+    schemas = {
+        name: NodeSchema(
+            name, inputs=(InputSpec("value", model),), outputs=(OutputSpec("out", model),)
+        )
+        for name in ("source", "middle", "sink")
+    }
+    topology = ResidentTopology(
+        frozenset({"custom.RESIDENT"}),
+        {
+            "source": (ResidentRoute("left", "producer"),),
+            "middle": (ResidentRoute("left", "middle"), ResidentRoute("right", "middle")),
+            "sink": (ResidentRoute("left" if shared else "right", "consumer"),),
+        },
+    )
+    graph = Graph(
+        {
+            "a": GraphNode("source"),
+            "b": GraphNode("middle", {"value": Link("a", "out")}),
+            "c": GraphNode("sink", {"value": Link("b", "out")}),
+        }
+    )
+    problems = topology.validate(graph, schemas)
+    assert bool(problems) is not shared
+    if not shared:
+        assert problems[0].node_id == "c"
+        assert problems[0].input_id == "value"
 
 
 @pytest.mark.parametrize("lost", ["incoming", "outgoing", "region-input"])

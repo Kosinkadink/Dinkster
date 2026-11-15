@@ -32,6 +32,8 @@
   Resident type declarations include MODEL, CLIP, VAE, ControlNet and custom
   registered resident codecs. CONDITIONING, SAMPLER and NOISE can contain
   resident payloads and require the same process when linked between packs.
+  Links through region inputs, exports and state feedback follow the original
+  producers. A connected resident chain must have one common process.
   The node catalog publishes process affinity for pre-run diagnostics.
   Host-declared unavailable nodes retain their exact refusal in the catalog
   and are refused at submit before any job is queued.

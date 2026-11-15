@@ -14,7 +14,7 @@ from dinkster_engine import (
     ExecutionError,
     ProviderResolutionError,
 )
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_protocol import (
     AttentionCapabilityEvidence,
     Invocation,
@@ -22,6 +22,7 @@ from dinkster_protocol import (
 from dinkster_schema import (
     ComboOption,
     ComboWidget,
+    TypeExpr,
     schema_signature,
 )
 from dinkster_server import PackInfo
@@ -646,7 +647,10 @@ def _graph(node_type: str, value: str = "x") -> Graph:
 
 
 @pytest.mark.parametrize("shared_group", [True, False])
-def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_group: bool) -> None:
+@pytest.mark.parametrize("boundary", ["direct", "ports", "exports", "state"])
+def test_crosspack_resident_models_survive_group_reload(
+    tmp_path: Path, shared_group: bool, boundary: str
+) -> None:
     async def scenario() -> None:
         manifests = []
         for name, entry in (("source", "SOURCE_NODES"), ("merge", "MERGE_NODES")):
@@ -686,6 +690,80 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
                     "mixed_weight": GraphNode("source.weight", {"model": Link("mixed", "model")}),
                 }
             )
+            if boundary in ("ports", "state"):
+                body = Graph(
+                    {
+                        "merge": GraphNode(
+                            "merge.simple",
+                            {
+                                "a": Link("$region", "a"),
+                                "b": Link("$region", "b"),
+                                "ratio": 0.25,
+                            },
+                        ),
+                    }
+                )
+                graph = Graph(
+                    {
+                        **graph.nodes,
+                        "m": RegionNode(
+                            kind="fold" if boundary == "state" else "map",
+                            body=body,
+                            ports={
+                                "a": TypeExpr.concrete("MODEL"),
+                                "b": TypeExpr.concrete("MODEL"),
+                                "step": TypeExpr.concrete("FLOAT"),
+                            },
+                            inputs={
+                                "a": Link("a", "model"),
+                                "b": Link("b", "model"),
+                                "step": [0.0],
+                            },
+                            element_ports=("step",),
+                            state_ports=("a",) if boundary == "state" else (),
+                            outputs={
+                                "model": RegionOutput(Link("merge", "model"), "last"),
+                                **(
+                                    {"a": RegionOutput(Link("merge", "model"), "state")}
+                                    if boundary == "state"
+                                    else {}
+                                ),
+                            },
+                        ),
+                    }
+                )
+            elif boundary == "exports":
+                graph = Graph(
+                    {
+                        **{key: node for key, node in graph.nodes.items() if key not in ("a", "b")},
+                        "sources": RegionNode(
+                            kind="map",
+                            body=Graph({key: graph.nodes[key] for key in ("a", "b")}),
+                            ports={"step": TypeExpr.concrete("FLOAT")},
+                            inputs={"step": [0.0]},
+                            element_ports=("step",),
+                            outputs={
+                                key: RegionOutput(Link(key, "model"), "last") for key in ("a", "b")
+                            },
+                        ),
+                    }
+                )
+                graph = Graph(
+                    {
+                        key: replace(
+                            node,
+                            inputs={
+                                name: Link("sources", value.node_id)
+                                if isinstance(value, Link) and value.node_id in ("a", "b")
+                                else value
+                                for name, value in node.inputs.items()
+                            },
+                        )
+                        if isinstance(node, GraphNode)
+                        else node
+                        for key, node in graph.nodes.items()
+                    }
+                )
             from aiohttp.test_utils import TestClient, TestServer
             from dinkster_graph import graph_to_wire
             from dinkster_server import STATE_KEY, create_app
@@ -712,7 +790,10 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
                         "in another process; admit the pack to the shared inference process "
                         "or use the owner's node through an engine-run node on a reference."
                     )
-                    assert submitted["problems"][0]["nodeId"] == "m"
+                    assert any(
+                        problem["nodeId"] == ("m/merge" if boundary in ("ports", "state") else "m")
+                        for problem in submitted["problems"]
+                    )
                     assert job is None
                     return
                 assert response.status == 202, submitted

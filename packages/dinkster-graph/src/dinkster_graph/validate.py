@@ -417,12 +417,14 @@ def _resolve_linked_output_types(
 
 
 def graph_output_types(
-    graph: Graph, schemas: Mapping[str, NodeSchema]
+    graph: Graph,
+    schemas: Mapping[str, NodeSchema],
+    ports: Mapping[str, TypeExpr] | None = None,
 ) -> dict[str, dict[str, TypeExpr]]:
-    """Resolve output declarations, including linked template bindings."""
+    """Resolve output declarations, including linked template bindings and region ports."""
     effective, regions, _ = _interface_pass(graph, schemas, "", include_elab=False)
     resolved = _resolve_linked_output_types(
-        graph, {}, effective, regions, include_typed_literals=True
+        graph, {} if ports is None else ports, effective, regions, include_typed_literals=True
     )
     return {
         node_id: {
