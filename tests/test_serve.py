@@ -2019,7 +2019,9 @@ def test_serve_strict_packs_failure_exits_nonzero(tmp_path: Path) -> None:
             process.stderr.close()
 
 
-def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
+def test_serve_runtime_mounts_end_to_end(
+    tmp_path: Path, shared_model_folders: dict[str, Path]
+) -> None:
     """Real dinkster-serve with a library root and --allow-mount-changes:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
@@ -2071,7 +2073,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.get(base + "/api/mounts") as resp:
                 listing = await resp.json()
                 rows = {row["id"]: row for row in listing["mounts"]}
-                assert set(rows) == {"imports", "output"}
+                assert set(rows) == {"imports", "output", *shared_model_folders}
+                for mount_id, path in shared_model_folders.items():
+                    assert rows[mount_id]["path"] == str(path)
+                    assert rows[mount_id]["mode"] == "readwrite"
+                    assert rows[mount_id]["source"] == "shared-models"
                 assert listing["outputMount"] == "output"
                 output = rows["output"]
                 assert output["path"] == str(library_root / "output")
@@ -2082,7 +2088,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 assert imports["mode"] == "readwrite"
             async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
                 listing = await resp.json()
-                assert {row["id"] for row in listing["mounts"]} == {"imports", "output"}
+                assert {row["id"] for row in listing["mounts"]} == {
+                    "imports",
+                    "output",
+                    *shared_model_folders,
+                }
                 assert listing["outputMount"] is None
             assert (library_root / "imports").is_dir()
             assert (library_root / "output").is_dir()
@@ -2152,7 +2162,7 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
                         rows = {row["id"]: row for row in (await resp.json())["mounts"]}
-                        assert set(rows) == {"imports", "output", "shots"}
+                        assert set(rows) == {"imports", "output", "shots", *shared_model_folders}
                         row = rows["shots"]
                     if row["state"] == "ready":
                         break
@@ -2168,7 +2178,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:
-                assert {row["id"] for row in (await resp.json())["mounts"]} == {"imports", "output"}
+                assert {row["id"] for row in (await resp.json())["mounts"]} == {
+                    "imports",
+                    "output",
+                    *shared_model_folders,
+                }
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
             async with session.get(
@@ -2213,7 +2227,168 @@ async def _peek_value(
     return data["descriptor"]["value"]
 
 
-def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
+@pytest.mark.parametrize("external", [True, False])
+def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credentials(
+    tmp_path: Path,
+    external: bool,
+) -> None:
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_workers import detect_bubblewrap
+    from dinkster_workers.doctor import prepare_catalog
+
+    capability = detect_bubblewrap()
+    if not capability.available:
+        pytest.skip("bubblewrap jail cannot be built here: " + capability.detail)
+    from dinkster.account import AccountSession
+    from dinkster.services import resolve_services
+
+    credentials = tmp_path / "credentials"
+    credentials.mkdir()
+    install = tmp_path / "install"
+    endpoint = "http://127.0.0.1:8123"
+    account = AccountSession(
+        resolve_services(identity_base=endpoint, catalog_base=endpoint),
+        home=credentials,
+        install_root=install,
+    )
+    token = credentials / "bearer" if external else account.token_path
+    neighbor = credentials / "private-oauth.json" if external else account.state_path
+    token.parent.mkdir(parents=True, exist_ok=True)
+    neighbor.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text("first-external-bearer")
+    neighbor.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.account/1",
+                "project_id": "89790f18-fdad-4f48-bf67-823fdddb89da",
+                "gateway_expires_at": time.time() + 3600,
+                "refresh_token": "must-stay-private",
+            }
+        )
+    )
+    if external:
+        account.token_path.parent.mkdir(parents=True)
+        account.token_path.write_text("account-bearer-must-not-win")
+        account.state_path.parent.mkdir(parents=True)
+        account.state_path.write_text(neighbor.read_text())
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="credential-probe"\npublisher="dinkster"\n'
+        'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
+    )
+    (pack / "credential_probe.py").write_text(
+        "import json, os\nfrom pathlib import Path\n"
+        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "class Probe(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='credentialprobe.read', idempotent=False, "
+        "outputs=(OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+        "    @classmethod\n"
+        "    async def execute(cls):\n"
+        "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+        "        bearer = token.read_text() if token.exists() else '<missing>'\n"
+        f"        private = any(Path(p).exists() for p in "
+        f"{[str(neighbor), str(account.state_path)]!r})\n"
+        "        return cls.outputs(report=json.dumps([bearer, private, os.getpid()]))\n"
+        "NODES = (Probe,)\n"
+    )
+    environment = {
+        "PYTHONPATH": os.pathsep.join(
+            [str(pack), *(entry for entry in sys.path if Path(entry).name == "src")]
+        )
+    }
+    assert prepare_catalog(manifest, environment=environment).ok
+    bootstrap = (
+        "from pathlib import Path\nfrom dinkster import serve\n"
+        "from dinkster.compose import PackSpec\n"
+        "serve.default_pack_ids = lambda: ('dinkster-nodes-remote',)\n"
+        f"serve.default_pack_spec = lambda _: PackSpec(Path({str(manifest)!r}), "
+        f"env={environment!r})\nserve.main()\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        [
+            sys.executable,
+            "-c",
+            bootstrap,
+            *serve_command(port)[3:],
+            "--sandbox-packs",
+            *(["--remote-auth-token-file", str(token)] if external else []),
+            "--account-root",
+            str(install),
+            "--account-identity-base",
+            endpoint,
+            "--remote-catalog-base",
+            endpoint,
+        ],
+        tmp_path,
+        env={**os.environ, "DINKSTER_HOME": str(credentials)},
+    )
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession() as session:
+            serial = 0
+
+            async def read() -> list[object]:
+                nonlocal serial
+                serial += 1
+                job = f"bearer-{serial}"
+                graph = Graph(nodes={"save": GraphNode("credentialprobe.read", {})})
+                async with session.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(graph),
+                        "targets": ["save"],
+                    },
+                ) as response:
+                    assert response.status == 202, await response.text()
+                status = await _job_finish(session, base, job)
+                assert status["state"] == "completed", status
+                value = await _peek_value(session, base, job, "report")
+                assert isinstance(value, str)
+                return json.loads(value)
+
+            first = await read()
+            assert first[:2] == ["first-external-bearer", False]
+            replacement = token.with_suffix(".new")
+            replacement.write_text("second-external-bearer")
+            replacement.replace(token)
+            async with asyncio.timeout(10):
+                while (rotated := await read())[0] != "second-external-bearer":
+                    await asyncio.sleep(0.1)
+            assert rotated == ["second-external-bearer", False, first[2]]
+            if external:
+                token.unlink()
+            else:
+                account.logout()
+            async with asyncio.timeout(10):
+                while (revoked := await read())[0] != "<missing>":
+                    await asyncio.sleep(0.1)
+            assert revoked == ["<missing>", False, first[2]]
+
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        packs = report["packs"]
+        assert isinstance(packs, dict)
+        assert packs["credential-probe"]["state"] == "announced", report
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+def test_serve_mounted_save_end_to_end(
+    tmp_path: Path, shared_model_folders: dict[str, Path]
+) -> None:
     """The write path, real process to real bytes: grant a readwrite mount
     over the API while dinkster-serve runs, execute the PGM saver in
     that same process, verify the file landed inside the mount with the
@@ -2332,7 +2507,7 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
                         rows = {row["id"]: row for row in (await resp.json())["mounts"]}
-                        assert set(rows) == {"imports", "output", "renders"}
+                        assert set(rows) == {"imports", "output", "renders", *shared_model_folders}
                         row = rows["renders"]
                     if row["state"] == "ready":
                         break
