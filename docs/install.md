@@ -403,6 +403,34 @@ than rebuilding from a moving ref. Recovery requires retained local builds;
 missing inputs are reported, not silently rebuilt. `source release --yes`
 restores the most recent published generation.
 
+### Managed Git frontend assets
+
+```bash
+dinkster source --root ROOT add https://github.com/Kosinkadink/Dinkster-Frontend --frontend --ref BRANCH --plan
+dinkster source --root ROOT add https://github.com/Kosinkadink/Dinkster-Frontend --frontend --ref BRANCH --yes
+dinkster source --root ROOT update --frontend --ref OTHER --yes
+```
+
+An official frontend commit uses its unexpired bundle from a successful frontend
+CI run. Discovery uses the public GitHub API; the public nightly.link transport
+needs no GitHub login. The GitHub artifact digest, inner bundle hash/size,
+package version and exact commit are verified before packaging browser assets.
+A corrupt or mismatched artifact refuses rather than falling back to a build.
+If no eligible bundle exists, or the source is a fork, local building requires
+both Node and pnpm on PATH. Missing tools are named explicitly. Local builds run
+`pnpm install --frozen-lockfile` and `pnpm --filter @dinkster/app build` in the
+captured checkout, so source selection executes that repository's build scripts.
+The selected checkout's frontend API range must include the installed engine API.
+
+The release base, engine, other libraries and pack selections remain unchanged.
+Status/history record frontend URL/ref/commit, captured source digest, CI or local
+build origin and exact wheel bytes; the generation is unpublished and
+non-reproducible. Ordinary updates retain those bytes, not a moving frontend ref.
+An explicit `--frontend-version` replaces the Git frontend with that published
+selection. Recovery requires retained built bytes and never silently rebuilds;
+`source release` returns to the most recent published generation. Unselected
+release installs do not discover CI artifacts or require Node, pnpm or Git.
+
 ### Public git refs and mirrors
 
 `dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists

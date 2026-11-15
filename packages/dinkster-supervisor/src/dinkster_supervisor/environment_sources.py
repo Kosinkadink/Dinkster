@@ -278,6 +278,7 @@ def select_source_library(
     mirror: str | None,
     package_index: str | None,
     apply: bool,
+    frontend: bool = False,
 ) -> dict[str, Any]:
     """Replace one shared library while retaining the installed base and all other pins."""
     from urllib.parse import urlencode
@@ -301,9 +302,14 @@ def select_source_library(
     sources = copy.deepcopy(cast("dict[str, Any]", manifest.get("sources", {})))
     libraries = sources.setdefault("libraries", {})
     if value is None:
-        if not library or library not in libraries:
-            raise EnvironmentError("source library update requires a recorded Git library name")
-        origin = libraries[library]
+        if frontend:
+            if "frontend" not in sources:
+                raise EnvironmentError("source frontend update requires a recorded Git frontend")
+            origin = sources["frontend"]
+        else:
+            if not library or library not in libraries:
+                raise EnvironmentError("source library update requires a recorded Git library name")
+            origin = libraries[library]
         value = (
             origin["url"]
             + "#"
@@ -344,8 +350,27 @@ def select_source_library(
     with fetched_git_source(specification, mirror=mirror) as (checkout, origin):
         if (checkout / "dinkster-pack.toml").exists():
             raise EnvironmentError("Git node packs require --pack, not --library")
-        project = tomllib.loads((checkout / "pyproject.toml").read_text(encoding="utf-8"))
-        name = canonicalize_name(project["project"]["name"])
+        artifact = None
+        if frontend:
+            from .environment_frontend_sources import frontend_ci_artifact
+
+            name = "dinkster-frontend"
+            api = json.loads((checkout / "frontend-release.json").read_text())["engineApi"]
+            schema = manifest.get("schemaApi")
+            if (
+                not isinstance(api, dict)
+                or type(cast("dict[str, Any]", api).get("min")) is not int
+                or type(cast("dict[str, Any]", api).get("max")) is not int
+                or type(schema) is not int
+                or not 1 <= api["min"] <= schema <= api["max"]
+            ):
+                raise EnvironmentError(
+                    "Git frontend does not support the installed engine schema API"
+                )
+            artifact = frontend_ci_artifact(origin)
+        else:
+            project = tomllib.loads((checkout / "pyproject.toml").read_text(encoding="utf-8"))
+            name = canonicalize_name(project["project"]["name"])
         if library and canonicalize_name(library) != name:
             raise EnvironmentError("selected Git checkout names a different library")
         protected = set(cast("list[str]", catalog.bases[generation.variant]["replaces"]))
@@ -362,18 +387,21 @@ def select_source_library(
                         (engine_checkout / package / "pyproject.toml").read_text(encoding="utf-8")
                     )
                     protected.add(canonicalize_name(metadata["project"]["name"]))
-        if name in protected:
+        if name in protected and not frontend:
             raise EnvironmentError(
                 "Git libraries must not replace release-base, engine or frontend packages"
             )
         files = source_files(checkout)
         selected = {
             **origin,
-            "kind": "library",
+            "kind": "frontend" if frontend else "library",
             "gitMirror": mirror,
             "contentDigest": source_identity(files),
         }
-        libraries[name] = selected
+        if frontend:
+            sources["frontend"] = selected
+        else:
+            libraries[name] = selected
         result = {
             "current": generation.number,
             "sources": sources,
@@ -382,13 +410,17 @@ def select_source_library(
             "reproducible": False,
             "status": "planned",
             "plan": [
-                f"source: unpublished and non-reproducible; Git library {name}",
+                f"source: unpublished and non-reproducible; Git {selected['kind']} {name}",
                 f"repository {origin['url']}; ref {origin['requestedRef']}; "
                 f"commit {origin['commit']}",
-                "keep the installed release base, engine, frontend "
-                "and unselected libraries and packs",
-                "build the selected library and resolve missing dependencies "
-                "against retained exact pins",
+                "keep the installed release base, engine and unselected libraries and packs",
+                (
+                    f"use verified CI bundle {artifact['id']} from run {artifact['run']}"
+                    if artifact is not None
+                    else "build frontend locally with Node and pnpm (no CI bundle for this commit)"
+                )
+                if frontend
+                else "build the selected library against retained exact pins; keep frontend",
             ],
         }
         if not apply:
@@ -400,19 +432,35 @@ def select_source_library(
                 work = Path(directory)
                 captured = work / "checkout"
                 _retain_checkout(checkout, captured, files)
-                run_local_command(
-                    [
-                        "uv",
-                        "build",
-                        "--wheel",
-                        "--no-sources",
-                        "--out-dir",
-                        str(work / "built"),
-                        str(captured),
-                    ],
-                    cwd=captured,
-                )
-                built = tuple((work / "built").glob("*.whl"))
+                if frontend:
+                    from zipfile import BadZipFile
+
+                    from .environment_frontend_sources import prepare_frontend_wheel
+
+                    try:
+                        built_frontend, build = prepare_frontend_wheel(
+                            captured, origin, work / "built", artifact
+                        )
+                    except (BadZipFile, KeyError, TypeError) as exc:
+                        raise EnvironmentError(
+                            f"invalid Git frontend build metadata: {exc}"
+                        ) from exc
+                    selected["build"] = build
+                    built = (built_frontend,)
+                else:
+                    run_local_command(
+                        [
+                            "uv",
+                            "build",
+                            "--wheel",
+                            "--no-sources",
+                            "--out-dir",
+                            str(work / "built"),
+                            str(captured),
+                        ],
+                        cwd=captured,
+                    )
+                    built = tuple((work / "built").glob("*.whl"))
                 if len(built) != 1 or parse_wheel_filename(built[0].name)[0] != name:
                     raise EnvironmentError(
                         "selected Git library must build exactly its named wheel"
@@ -464,6 +512,8 @@ def select_source_library(
                 }
                 # The producer lock is retained in publishedManifest; this selection owns wheels.
                 release.pop("dependencies", None)
+                if frontend:
+                    release.pop("frontend", None)
                 release_id = source_identity(release)
                 engine_root = object_path(store / "engines", release_id)
                 engine_root.mkdir(parents=True, exist_ok=True)
@@ -607,7 +657,11 @@ def resolve_library_wheels(
 
 
 def retained_source_libraries(
-    generation: Path, store: Path, *, replace_inference: bool = False
+    generation: Path,
+    store: Path,
+    *,
+    replace_inference: bool = False,
+    replace_frontend: bool = False,
 ) -> dict[str, Any]:
     """Read selected Git library identities without consulting moving refs or rebuilding."""
     record = Generation.read(generation / "generation.json")
@@ -619,6 +673,8 @@ def retained_source_libraries(
     manifest = read_document(path)
     sources = cast("dict[str, Any]", manifest.get("sources", {}))
     libraries = copy.deepcopy(cast("dict[str, Any]", sources.get("libraries", {})))
+    if not replace_frontend and "frontend" in sources:
+        libraries["dinkster-frontend"] = copy.deepcopy(sources["frontend"])
     if replace_inference:
         libraries.pop("dinkster-inference", None)
     for origin in libraries.values():
@@ -683,9 +739,21 @@ def prepare_retained_libraries(
         publishedConstraints=manifest.get(
             "publishedConstraints", constraints.read_text(encoding="utf-8")
         ),
-        sources={**manifest.get("sources", {}), "libraries": libraries},
+        sources={
+            **manifest.get("sources", {}),
+            "libraries": {
+                name: origin for name, origin in libraries.items() if name != "dinkster-frontend"
+            },
+            **(
+                {"frontend": libraries["dinkster-frontend"]}
+                if "dinkster-frontend" in libraries
+                else {}
+            ),
+        },
         wheels=wheels,
     )
+    if "dinkster-frontend" in libraries:
+        manifest.pop("frontend", None)
     manifest.pop("dependencies", None)
     identity = source_identity(manifest)
     target = object_path(store / "engines", identity)
@@ -833,6 +901,7 @@ def prepare_source_engine(
                     Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line)).name
                 )
                 == "dinkster-frontend"
+                and "dinkster-frontend" not in overrides
             ):
                 frontend.append(line)
         locked += "\n".join(frontend) + "\n"

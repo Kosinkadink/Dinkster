@@ -939,6 +939,20 @@ Rollback uses the recorded built bytes even after its branch moves. Missing reta
 local builds refuse updates and recovery instead of resolving or rebuilding.
 `source release` returns to the most recent published generation.
 
+### Managed Git frontend assets
+
+`source add URL --frontend --ref REF` and `source update --frontend` select
+browser assets without replacing the release base or engine. Official frontend
+commits use an unexpired, successful CI bundle verified against GitHub's artifact
+digest and the bundle's commit/hash/size metadata. Public nightly.link transport
+requires no login. Missing CI bundles and forks use a local frozen-lockfile pnpm
+build only when Node and pnpm are installed; missing tools are named, and invalid
+CI bytes refuse without a build fallback. The source API range must include the
+installed engine API. Exact build origin, source identity and retained wheel bytes
+are disclosed as unpublished/non-reproducible and survive updates and rollback.
+Explicit published frontend version selection supersedes the Git frontend;
+missing retained builds refuse recovery instead of rebuilding moving sources.
+
 ### Public git refs and mirrors
 
 `dinkster source refs URL` lists advertised refs and tags without installing

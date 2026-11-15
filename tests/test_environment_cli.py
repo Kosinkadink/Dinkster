@@ -813,6 +813,149 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
+    tmp_path, monkeypatch, git_server, capsys
+):
+    import pygit2
+    from dinkster_supervisor import environment, environment_frontend_sources
+    from dinkster_supervisor.environment_state import Generation, interpreter
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_environment_frontend_sources import _artifact
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        if document.get("format") == "dinkster.engine/1":
+            document["schemaApi"] = 1
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user"))
+    fixture = publisher.build(tmp_path / "fixture", "linux-cpu", free_port())
+    root = Path(fixture["root"])
+    catalog, artifacts = tmp_path / "empty.lock", tmp_path / "artifacts"
+    catalog.write_text(Lockfile.of([]).record_json())
+    artifacts.mkdir()
+    code, result = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--data",
+        fixture["store"],
+        "--variant",
+        "linux-cpu",
+        "--channel",
+        "main",
+        "--port",
+        str(fixture["port"]),
+        "--catalog-lock",
+        str(catalog),
+        "--artifacts",
+        str(artifacts),
+        "--yes",
+    )
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+    tree = pygit2.Index()
+    for name, payload in {
+        "package.json": b'{"version":"0.2.0"}',
+        "frontend-release.json": b'{"engineApi":{"min":1,"max":2}}',
+    }.items():
+        tree.add(
+            pygit2.IndexEntry(name, repository.create_blob(payload), pygit2.enums.FileMode.BLOB)
+        )
+    commit = repository.create_commit(
+        "refs/heads/frontend-ci", signature, signature, "frontend", tree.write_tree(repository), []
+    )
+    repository.free()
+    artifact = _artifact(tmp_path, str(commit))
+    monkeypatch.setattr(
+        environment_frontend_sources, "frontend_ci_artifact", lambda origin: artifact
+    )
+
+    def fetch(roots, name, destination, sha, size):
+        assert sha == artifact["digest"][7:]
+        destination.write_bytes(artifact["path"].read_bytes())
+
+    monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+    args = [
+        "--root",
+        str(root),
+        "source",
+        "add",
+        "https://github.com/Kosinkadink/source",
+        "--frontend",
+        "--ref",
+        "frontend-ci",
+        "--git-mirror",
+        git_server["proxy"],
+        "--json",
+    ]
+    try:
+        assert environment.run(environment.argument_parser().parse_args([*args, "--plan"])) == 0
+        preview = json.loads(capsys.readouterr().out)
+        assert any("CI bundle" in line for line in preview["plan"])
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 0
+        applied = json.loads(capsys.readouterr().out)
+        selected = _run(root, "status")[1]["sources"]["frontend"]
+        assert selected["commit"] == str(commit) and selected["build"]["kind"] == "ci"
+        current = root / "generations" / str(applied["current"])
+        assert Generation.read(current / "generation.json").source == "source"
+
+        def html(generation):
+            return subprocess.check_output(
+                [
+                    str(interpreter(generation)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; "
+                    "print(files('dinkster_frontend').joinpath('static/index.html').read_text())",
+                ],
+                text=True,
+            ).strip()
+
+        assert html(current) == "<main>selected frontend</main>"
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, updated = _run(
+            root,
+            "update",
+            "--catalog-lock",
+            str(catalog),
+            "--artifacts",
+            str(artifacts),
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, updated
+        assert _run(root, "status")[1]["sources"]["frontend"] == selected
+        assert (
+            html(root / "generations" / str(updated["current"])) == "<main>selected frontend</main>"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        assert (
+            html(root / "generations" / str(restored["current"]))
+            == "<main>selected frontend</main>"
+        )
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
 def test_source_engine_ref_update_and_exact_commit_rollback(
     tmp_path: Path, monkeypatch, git_server
 ):

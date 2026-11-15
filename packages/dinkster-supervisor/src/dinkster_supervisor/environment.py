@@ -560,7 +560,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         from .environment_sources import retained_source_libraries
 
         retained_libraries = retained_source_libraries(
-            previous_root, store, replace_inference=inference is not None
+            previous_root,
+            store,
+            replace_inference=inference is not None,
+            replace_frontend=frontend_version is not None,
         )
     local = None
     development = None
@@ -1846,18 +1849,19 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
         if not entries:
             raise EnvironmentError("project has no recorded release generation")
         return _restore(args, result, cast("int", entries[-1]["id"]))
-    if args.library is not None:
+    if args.library is not None or args.frontend:
         from .environment_sources import select_source_library
 
         result.update(
             select_source_library(
                 args.root,
                 value=args.url if args.source_action == "add" else None,
-                library=args.library,
+                library=args.library or "",
                 ref=args.ref,
                 mirror=args.git_mirror,
                 package_index=args.package_index,
                 apply=args.yes,
+                frontend=args.frontend,
             )
         )
         return 0
@@ -1998,6 +2002,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
                 nargs="?",
                 const="",
                 help="select a Git inference/helper library; update requires its distribution name",
+            )
+            target.add_argument(
+                "--frontend", action="store_true", help="select Git frontend assets"
             )
             command.add_argument("--ref", help="branch, tag, PR ref or exact commit")
             command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
