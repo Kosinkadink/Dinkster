@@ -7,7 +7,9 @@
   their URL, requested ref, exact commit and unpublished/non-reproducible status.
   Rollback reacquires missing checkouts at the recorded commit rather than
   following a moved branch. Recovery reports unavailable locally built wheels
-  instead of silently rebuilding different bytes.
+  instead of silently rebuilding different bytes. Published pack plans evaluate
+  the selected source generation's API and inference distribution versions,
+  not the planning tool's installed packages.
 
 - Pack wheels preserve manifest-relative blueprint, template, icon, settings,
   documentation and frontend resource paths, including resources inside Python

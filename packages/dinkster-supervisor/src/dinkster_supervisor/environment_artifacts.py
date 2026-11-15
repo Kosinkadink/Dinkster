@@ -94,7 +94,9 @@ def artifact_rows(value: object, key: str) -> tuple[dict[str, object], ...]:
     return tuple(rows)
 
 
-def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[str, object]:
+def validate_manifest(
+    data: bytes, expected: str, variant: str | None, *, allow_source: bool = False
+) -> dict[str, object]:
     digest(expected)
     document = parse_metadata(data)
     protocol = document.get("workerProtocol")
@@ -103,6 +105,22 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
     if variant is None:
         if document.get("format") != "dinkster.engine/1":
             raise EnvironmentError("unsupported engine manifest format")
+        if allow_source and document.get("source") == "git":
+            from .environment_development import source_identity
+
+            if source_identity(document) != expected:
+                raise EnvironmentError("source engine manifest identity mismatch")
+            if (
+                document.get("kind") != "source"
+                or document.get("published") is not False
+                or document.get("reproducible") is not False
+                or not isinstance(document.get("version"), str)
+                or not document["version"]
+            ):
+                raise EnvironmentError("source engine requires explicit unpublished identity")
+            artifact_rows(document.get("wheels"), "filename")
+            select_frontend(document)
+            return document
         if "sha256:" + hashlib.sha256(data).hexdigest() != expected:
             raise EnvironmentError("engine manifest digest mismatch")
         if not isinstance(document.get("version"), str) or not document["version"]:
@@ -555,8 +573,9 @@ def engine_package_versions(
                 for row in dependency_wheels(selections.get(variant))
             }
         )
-    for row in artifact_rows(engine["artifacts"], "name"):
-        filename = cast("str", row["name"])
+    key = "filename" if engine.get("source") == "git" else "name"
+    for row in artifact_rows(engine["wheels"] if key == "filename" else engine["artifacts"], key):
+        filename = cast("str", row[key])
         if filename.endswith(".whl"):
             name, version, _, _ = parse_wheel_filename(filename)
             versions[name] = str(version)
