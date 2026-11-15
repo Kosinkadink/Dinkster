@@ -1,3 +1,9 @@
+# Checkout engine version
+
+- The checkout version guard failed on main (runtime 0.0.7 versus project 0.0.8) and passed after alignment; all eight CLI tests passed on Linux CPU.
+- The same from-scratch Linux CPU setup refused inconsistent registry inputs before alignment and applied successfully afterward, passing health and activating generation 1. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Published Stable 0.0.8 and Nightly 0.0.9.dev1080 wheels have matching runtime and distribution versions.
+
 # Published remote catalog defaults
 
 - Registry default resolution requires remote pack 0.0.7 or newer. The public static registry resolved and delivered 0.0.7 with verified wheel bytes and all six published native install locks.
