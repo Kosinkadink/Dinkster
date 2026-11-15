@@ -17,25 +17,40 @@ from pathlib import Path
 
 
 def child(model: Path, output: Path) -> None:
+    import mmap
+
+    # Match the isolation audit: separate storage reads from the subsequent
+    # safetensors-to-GPU load, which always reads already-touched pages.
+    started = time.perf_counter()
+    with (
+        model.open("rb") as source,
+        mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as mapped,
+    ):
+        total = sum(mapped[offset] for offset in range(0, len(mapped), 4096))
+    touching = time.perf_counter() - started
+
     import torch
-    from safetensors import safe_open
+    from safetensors.torch import load_file
 
     started = time.perf_counter()
     torch.cuda.init()
-    torch.cuda.synchronize()
+    torch.zeros(1, device="cuda")
     initialization = time.perf_counter() - started
     started = time.perf_counter()
-    with safe_open(model, framework="pt", device="cpu") as source:
-        tensors = {key: source.get_tensor(key).to("cuda") for key in source.keys()}
+    tensors = load_file(model, device="cuda")
     torch.cuda.synchronize()
     loading = time.perf_counter() - started
+    count = len(tensors)
+    allocated = torch.cuda.memory_allocated()
+    del tensors
+    torch.cuda.empty_cache()
     left = torch.randn((8192, 8192), device="cuda", dtype=torch.float16)
     right = torch.randn_like(left)
-    for _ in range(20):
+    for _ in range(5):
         torch.mm(left, right)
     torch.cuda.synchronize()
     started = time.perf_counter()
-    for _ in range(300):
+    for _ in range(200):
         torch.mm(left, right)
     torch.cuda.synchronize()
     computing = time.perf_counter() - started
@@ -44,11 +59,13 @@ def child(model: Path, output: Path) -> None:
             {
                 "torch": torch.__version__,
                 "device": torch.cuda.get_device_name(),
+                "mmap_touch_s": touching,
+                "page_checksum": total,
                 "cuda_init_s": initialization,
                 "load_to_gpu_s": loading,
-                "tensors": len(tensors),
-                "matmul_per_s": 300 / computing,
-                "vram_bytes": torch.cuda.memory_allocated(),
+                "tensors": count,
+                "matmul_per_s": 200 / computing,
+                "vram_bytes": allocated,
             }
         )
     )
