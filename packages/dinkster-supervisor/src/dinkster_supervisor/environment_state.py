@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import re
 import tempfile
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,7 +27,7 @@ class EnvironmentError(ValueError):
 
 
 @contextmanager
-def writer_lock(root: Path) -> Generator[None]:
+def writer_lock(root: Path, *, wait: bool = False) -> Generator[None]:
     """Hold a persistent inode's OS lock; never unlink another writer's lock."""
     with (root / ".lock").open("a+b") as handle:
         if os.name == "nt":
@@ -35,10 +37,15 @@ def writer_lock(root: Path) -> Generator[None]:
                 handle.write(b"\0")
                 handle.flush()
             handle.seek(0)
-            try:
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            except OSError as exc:
-                raise EnvironmentError(f"another environment writer holds {root}") from exc
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if wait and exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        time.sleep(0.05)
+                        continue
+                    raise EnvironmentError(f"another environment writer holds {root}") from exc
             try:
                 yield
             finally:
@@ -48,7 +55,7 @@ def writer_lock(root: Path) -> Generator[None]:
             import fcntl
 
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
             except BlockingIOError as exc:
                 raise EnvironmentError(f"another environment writer holds {root}") from exc
             try:
