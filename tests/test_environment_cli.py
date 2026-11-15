@@ -643,20 +643,23 @@ def _select_git_libraries(project, git_server):
     return result["current"], json.loads((first_root / "engine-manifest.json").read_text())
 
 
-@pytest.mark.parametrize("replacement", [False, True], ids=["git-ref", "published-wheel"])
+@pytest.mark.parametrize(
+    "replacement", ["git-ref", "published-wheel", "incompatible-wheel", "missing-wheel"]
+)
 def test_managed_git_libraries_retain_release_base_and_exact_rollback(
     managed_git_source_project, git_server, replacement, request, tmp_path, monkeypatch, capsys
 ):
     import pygit2
     from dinkster_supervisor.environment_state import Generation, interpreter, read_document
 
-    if replacement:
+    if replacement != "git-ref":
         _assert_git_library_replacement(
             request.getfixturevalue("managed_git_selected_sources"),
             tmp_path,
             monkeypatch,
             git_server,
             capsys,
+            replacement,
         )
         return
     project = managed_git_source_project
@@ -1097,7 +1100,7 @@ def test_managed_git_engine_selection_retains_sources(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
-def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server, capsys):
+def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server, capsys, contract):
     import pygit2
     from dinkster_supervisor import environment, environment_inference
     from dinkster_supervisor.environment_state import Generation, interpreter
@@ -1130,6 +1133,21 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
         str(updated_root / "packs/healthy-nodes/pack-lock.json"),
     )
     try:
+        if contract == "missing-wheel":
+            wheel = first_manifest["sources"]["libraries"]["fixture-helper"]["wheel"]
+            cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
+            payload = cached.read_bytes()
+            cached.unlink()
+            try:
+                code, refused = _run(root, *update, "--yes", timeout=180)
+                assert code == 1 and "retained Git library wheel" in refused["error"], refused
+                assert _run(root, "status")[1]["current"] == updated["current"]
+            finally:
+                cached.write_bytes(payload)
+            code, released = _run(root, "source", "release", "--yes", timeout=180)
+            assert code == 0, released
+            assert "sources" not in _run(root, "status")[1]
+            return
         published = original_wheel(tmp_path, "dinkster_inference", "9.0", 167)
         incompatible = original_wheel(tmp_path, "dinkster_inference", "9.1", 229)
         page = "".join(
@@ -1166,12 +1184,16 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
                 "--yes",
                 "--json",
             ]
-            refused_args = ["9.1" if value == "9.0" else value for value in replacement_args]
-            assert environment.run(environment.argument_parser().parse_args(refused_args)) == 1
-            refused = json.loads(capsys.readouterr().out)
-            assert refused["status"] == "error"
-            assert "dinkster-inference" in refused["error"] and "9.0" in refused["error"], refused
-            assert _run(root, "status")[1]["current"] == updated["current"]
+            if contract == "incompatible-wheel":
+                refused_args = ["9.1" if value == "9.0" else value for value in replacement_args]
+                assert environment.run(environment.argument_parser().parse_args(refused_args)) == 1
+                refused = json.loads(capsys.readouterr().out)
+                assert refused["status"] == "error"
+                assert "dinkster-inference" in refused["error"] and "9.0" in refused["error"], (
+                    refused
+                )
+                assert _run(root, "status")[1]["current"] == updated["current"]
+                return
             code = environment.run(environment.argument_parser().parse_args(replacement_args))
             replacement = json.loads(capsys.readouterr().out)
             assert code == 0, replacement
@@ -1218,39 +1240,10 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
                 ).strip()
                 == "31 31"
             )
-            updated = restored
-            update = (
-                "update",
-                "--catalog-lock",
-                str(restored_root / "dinkster.lock"),
-                "--artifacts",
-                str(
-                    object_path(
-                        store / "engines",
-                        Generation.read(restored_root / "generation.json").engine_release,
-                    )
-                    / "artifacts"
-                ),
-                "--pack-lock",
-                str(restored_root / "packs/healthy-nodes/pack-lock.json"),
-            )
             assert _run(root, "stop", "--yes")[0] == 0
         finally:
             index_server.shutdown()
             index_server.server_close()
-        wheel = first_manifest["sources"]["libraries"]["fixture-helper"]["wheel"]
-        cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
-        payload = cached.read_bytes()
-        cached.unlink()
-        try:
-            code, refused = _run(root, *update, "--yes", timeout=180)
-            assert code == 1 and "retained Git library wheel" in refused["error"], refused
-            assert _run(root, "status")[1]["current"] == updated["current"]
-        finally:
-            cached.write_bytes(payload)
-        code, released = _run(root, "source", "release", "--yes", timeout=180)
-        assert code == 0, released
-        assert "sources" not in _run(root, "status")[1]
     finally:
         assert _run(root, "stop", "--yes")[0] == 0
 
