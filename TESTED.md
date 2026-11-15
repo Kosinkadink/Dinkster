@@ -1,3 +1,26 @@
+# Public Hugging Face model downloads
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public SD 1.5 consent, cancel, verified named download and full native quickstart | X570 Linux CPU, Python 3.14.10, torch 2.14.1+cpu | [Real browser and native receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901157634): HTTP 409/409/202, no download before consent or after Cancel, all seven nodes executed with no cached/skipped nodes, real 512x512 RGB PNG. Provider SHA-256, declared BLAKE3 and persisted source/license verified. |
+| Stock ComfyUI loads the same downloaded file from the same folder | X570 Linux CPU, inherited ComfyUI af89add63f71, Python 3.12.13, torch 2.15.0+cpu | [Same-file receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901213963): actual Run completed decode/save and a real 512x512 RGB PNG without copying or renaming the checkpoint. Not a numerical or performance-parity claim. |
+
+- Whole Ruff check/format and pyright passed; 196 targeted acquisition/writer/model/mount/receipt tests passed.
+- Managed folder-grant restart, runtime grant/browse/revoke and mounted save tests use isolated shared model settings and assert the complete configured model mount set. All four cases reproduce the obsolete two-mount expectation, then pass while retaining path/mode/source, restart, real saved bytes, digest-streaming and revocation checks.
+- Gated credentials, Civitai, folder visibility management, byte-progress jobs and export/output model hashes are not accepted by these public-download receipts.
+
+# Production service addresses
+
+- Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
+- Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.
+- Service resolution, CLI and serving integration: 73 tests pass on the managed linux-cpu contributor generation.
+- Extension-kind generation, extension factories, builtin type spelling, Ruff lint/format and Linux/Windows-target Pyright pass.
+- Account/service/CLI/serving integration: 80 passed in 43.14 seconds on the managed linux-cpu contributor generation. Local identity HTTP fixtures cover PKCE/state/issuer checks, consent denial, paginated projects, selected-project mint, OAuth rotation, revocation, redirect refusal, private credentials outside projects and endpoint/install isolation.
+- Full Ruff lint/format and Linux/Windows-target Pyright pass with account source included.
+- Account/service/CLI/serving/composition/sandbox integration: 167 passed in 69.15 seconds. The real engine refreshes its selected install bearer at startup and periodically. A real bubblewrap worker observes atomic bearer replacement while OAuth state stays hidden. Lost OAuth-refresh replies invalidate local state and are never replayed automatically.
+- Both default pack helper commands retain disabled discovery when endpoints are omitted or explicitly empty, and honor explicit custom endpoints: six public CLI cases pass against a real fixture pack. The omitted-endpoint cases fail on the previous helper implementation.
+- These checks do not establish live identity bridge availability or authenticated catalog integration with the remote pack.
+
 # Checkout engine version
 
 - The checkout version guard failed on main (runtime 0.0.7 versus project 0.0.8) and passed after alignment; all eight CLI tests passed on Linux CPU.

@@ -201,7 +201,10 @@ def test_start_failure_preserves_exit_code_and_current_output(
 
 @pytest.mark.parametrize("host_contamination", [False, True])
 def test_managed_generation_persists_folder_grant_across_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_contamination: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host_contamination: bool,
+    shared_model_folders: dict[str, Path],
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
@@ -248,7 +251,12 @@ def test_managed_generation_persists_folder_grant_across_restart(
         with urlopen(url, timeout=5) as response:  # noqa: S310
             initial = json.load(response)
         assert initial["mountChangesAllowed"] is True
-        assert {row["id"] for row in initial["mounts"]} == {"imports", "output"}
+        rows = {row["id"]: row for row in initial["mounts"]}
+        assert set(rows) == {"imports", "output", *shared_model_folders}
+        for mount_id, path in shared_model_folders.items():
+            assert rows[mount_id]["path"] == str(path)
+            assert rows[mount_id]["mode"] == "readwrite"
+            assert rows[mount_id]["source"] == "shared-models"
         assert initial["outputMount"] == "output"
         request = Request(
             url,
@@ -264,6 +272,12 @@ def test_managed_generation_persists_folder_grant_across_restart(
         with urlopen(url, timeout=5) as response:  # noqa: S310
             listing = json.load(response)
         assert listing["mountChangesAllowed"] is True
+        assert {row["id"] for row in listing["mounts"]} == {
+            "imports",
+            "output",
+            "chosen",
+            *shared_model_folders,
+        }
         selected = next(row for row in listing["mounts"] if row["id"] == "chosen")
         assert selected["path"] == str(granted)
         assert selected["mode"] == "read"
