@@ -33,7 +33,11 @@ from test_environment_generations import _assert_shared, _workspace_tree
 from test_environment_runtime import free_port, make_generation
 from test_environment_state import _generation
 
+from tests.fixtures.environments.build import channel_json as _channel_json
 from tests.fixtures.environments.build import executable_release as _executable_release
+from tests.fixtures.environments.build import read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
 
 
 def _run(root: Path, *arguments: str, timeout: float = 120) -> tuple[int, dict]:
@@ -107,7 +111,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
     (release / "release-manifest.json").write_bytes(data)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
         archive.writestr(
@@ -1730,7 +1734,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert code == 0, result
         assert (
             _run(root, "status")[1]["engine"]["release"]
-            == json.loads(Path(fixture["initialChannel"]).read_text())["engine"]["release"]
+            == read_channel(Path(fixture["initialChannel"]), "nightly")["engine"]["release"]
         )
         assert _run(root, "stop", "--yes")[0] == 0
         code, result = _run(root, "rollback", "--yes")
@@ -1752,7 +1756,7 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["plan"] == []
     assert result["status"] == "clean"
     assert result["channel"] == "nightly"
-    assert result["channelManifest"] == channel
+    assert result["channelManifest"] == dict(channel, channel="nightly")
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
     assert not root.exists()
@@ -2185,7 +2189,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
     ]
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     if operation == "update":
         _generation(root, 1)
         (root / "current").write_bytes(b"1\n")
@@ -2671,7 +2675,7 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
     fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
     command = fixture["commands"]["setup"]
-    setup = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    setup = run_with_diagnostics(command, timeout=60)
     assert setup.returncode == 0, setup.stdout + setup.stderr
     try:
         assert _run(root, "stop", "--yes")[0] == 0
@@ -3086,7 +3090,7 @@ environment.build_generation = interrupt
 sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
 environment.main()
 """
-        interrupted = subprocess.run([sys.executable, "-c", script, str(root)], timeout=30)
+        interrupted = run_with_diagnostics([sys.executable, "-c", script, str(root)], timeout=30)
         assert interrupted.returncode == 73
         journals = sorted((root / "journal").glob("*.json"))
         assert Journal.read(journals[-1]).stage == "building"
@@ -3190,9 +3194,7 @@ environment.main()
         assert not list(store.glob(".workflow-*"))
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
-        engine = json.loads((mirror / "channels/nightly.json").read_bytes())["engine"]["release"][
-            7:
-        ]
+        engine = read_channel(mirror / "channels/nightly.json")["engine"]["release"][7:]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
         before_settings = (root / "project.json").read_bytes()
@@ -3806,7 +3808,7 @@ def test_inference_requests_report_oldest_containing_release(
                 release="sha256:" + identity,
                 locations=[{"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}],
             )
-            (mirror / "channels/nightly.json").write_bytes(_json(channel))
+            (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
             monkeypatch.setattr(
                 "dinkster.registries.plan_registry_sources",
                 lambda *args, **kwargs: (

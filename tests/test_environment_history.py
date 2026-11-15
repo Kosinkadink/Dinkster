@@ -34,11 +34,21 @@ from dinkster_supervisor.environment_state import (
     interpreter,
     set_current,
 )
+from supervisor_subprocess import run as run_with_diagnostics
 from test_environment_cli import _run
 from test_environment_runtime import free_port
 from test_environment_state import _generation
 
-from tests.fixtures.environments.build import build_base, canonical_json, executable_release, wheel
+from tests.fixtures.environments.build import (
+    build_base,
+    canonical_json,
+    channel_json,
+    executable_release,
+    read_channel,
+    wheel,
+)
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
 
 
 @pytest.mark.timeout(600)
@@ -110,7 +120,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
     root = Path(fixture["root"])
-    initial = json.loads(Path(fixture["initialChannel"]).read_bytes())
+    initial = read_channel(Path(fixture["initialChannel"]), "nightly")
     empty = tmp_path / "empty.lock"
     empty.write_text(Lockfile.of([]).record_json())
     artifacts = tmp_path / "artifacts"
@@ -625,12 +635,10 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     } == before
                     diagnostic = missing_lock.stdout + missing_lock.stderr
                     assert "healthy@" + entry.version + " dependency lock" in diagnostic, diagnostic
-                    if number == 2:
-                        assert "target exact source restore refused:" in diagnostic, diagnostic
-                    else:
-                        assert "select healthy@1.0.0 from registry:" in diagnostic, diagnostic
-                        assert entries[0].artifact_digest in diagnostic, diagnostic
-                        assert "target exact source restore refused:" not in diagnostic, diagnostic
+                    assert "target exact source restore refused:" in diagnostic, diagnostic
+                    assert entry.artifact_digest in diagnostic, diagnostic
+                    if number == 3:
+                        assert "select healthy@1.0.0 from registry:" not in diagnostic, diagnostic
                     assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                     for path in engine_wheels:
                         name = parse_wheel_filename(path.name)[0]
@@ -1413,8 +1421,8 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
     root, mirror = Path(fixture["root"]), Path(fixture["mirror"])
-    initial = json.loads(Path(fixture["initialChannel"]).read_bytes())
-    updated = json.loads(Path(fixture["updatedChannel"]).read_bytes())
+    initial = read_channel(Path(fixture["initialChannel"]), "nightly")
+    updated = read_channel(Path(fixture["updatedChannel"]), "nightly")
     empty_catalog = tmp_path / "empty.lock"
     empty_catalog.write_text(Lockfile.of([]).record_json())
     artifacts = tmp_path / "artifacts"
@@ -1935,7 +1943,7 @@ def test_missing_base_offers_minimal_compatible_replacements(
             (published.parent / "index.json").write_text(json.dumps(index))
             executable_release(mirror, base, "3.0", 73)
             channel_path = mirror / "channels/nightly.json"
-            channel = json.loads(channel_path.read_bytes())
+            channel = read_channel(channel_path)
             expected_engine = {key: channel["engine"][key] for key in ("version", "release")}
             channel["base"][base_record["variant"]] = {
                 "id": replacement_id,
@@ -1946,7 +1954,7 @@ def test_missing_base_offers_minimal_compatible_replacements(
                     }
                 ],
             }
-            channel_path.write_bytes(canonical_json(channel))
+            channel_path.write_bytes(channel_json(channel))
             # Neither replacement works with its historical counterpart.
             for item in index[1:-1]:
                 shutil.rmtree(mirror / item["path"])
@@ -2305,9 +2313,7 @@ environment_transactions.publish_entry = interrupt
 sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
 environment.main()
 """
-            completed = subprocess.run(
-                [sys.executable, "-c", script, str(root)], capture_output=True, timeout=120
-            )
+            completed = run_with_diagnostics([sys.executable, "-c", script, str(root)], timeout=120)
             assert completed.returncode == 74, completed.stderr
             assert (root / "current").read_text() == "2\n"
             assert len(history(root)) == 1

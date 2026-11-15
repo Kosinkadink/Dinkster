@@ -31,6 +31,10 @@ from dinkster_supervisor.environment_state import (
 from test_environment_cli import _run
 from test_environment_state import _generation
 
+from tests.fixtures.environments.build import read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
+
 
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
 @pytest.mark.parametrize("command", ["gc", "cleanup"])
@@ -1206,7 +1210,7 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         entries = history(root)
         preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         executable_release(mirror, base, "5.0", 113)
-        channel = json.loads((mirror / "channels/nightly.json").read_bytes())
+        channel = read_channel(mirror / "channels/nightly.json")
         release = mirror / "engine" / channel["engine"]["release"][7:]
         next(release.glob("*.whl")).write_bytes(b"corrupt next release")
         code, failed = _run(root, "update", "--yes")
