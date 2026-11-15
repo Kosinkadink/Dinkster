@@ -871,22 +871,6 @@ def managed_git_selected_sources(
     project = managed_git_source_project
     root, endpoint, commits = project.root, project.endpoint, project.commits
     _, first_manifest = _select_git_libraries(project, git_server)
-    code, packed = _run(
-        root,
-        "source",
-        "add",
-        endpoint + "nodes",
-        "--pack",
-        "healthy-nodes",
-        "--ref",
-        str(commits[0]),
-        "--git-mirror",
-        git_server["proxy"],
-        "--yes",
-        timeout=180,
-    )
-    assert code == 0, packed
-    assert _run(root, "stop", "--yes")[0] == 0
     artifact = frontend_artifact(tmp_path, str(commits[0]))
     monkeypatch.setattr(environment_frontend_sources, "frontend_ci_artifact", lambda _: artifact)
 
@@ -911,7 +895,27 @@ def managed_git_selected_sources(
     ]
     assert environment.run(environment.argument_parser().parse_args(frontend_args)) == 0
     capsys.readouterr()
+    assert _run(root, "stop", "--yes")[0] == 0
+    code, packed = _run(
+        root,
+        "source",
+        "add",
+        endpoint + "nodes",
+        "--pack",
+        "healthy-nodes",
+        "--ref",
+        str(commits[0]),
+        "--git-mirror",
+        git_server["proxy"],
+        "--yes",
+        timeout=180,
+    )
+    assert code == 0, packed
     all_sources = _run(root, "status")[1]["sources"]
+    assert all_sources["libraries"]["fixture-helper"]
+    assert all_sources["libraries"]["dinkster-inference"]
+    assert all_sources["packs"]["healthy-nodes"]
+    assert all_sources["frontend"]
     assert _run(root, "stop", "--yes")[0] == 0
     return SimpleNamespace(project=project, first_manifest=first_manifest, all_sources=all_sources)
 
@@ -1165,6 +1169,11 @@ def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server,
         )
         try:
             repository = pygit2.Repository(git_server["root"] / "source.git")
+            # Independent cases reuse the module-scoped server, not its tag selection.
+            for tag in ("v9.0", "v9.1"):
+                reference = f"refs/tags/{tag}"
+                if reference in repository.references:
+                    repository.references.delete(reference)
             repository.create_tag(
                 "v9.0", commits[0], pygit2.enums.ObjectType.COMMIT, signature, "9.0"
             )
