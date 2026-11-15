@@ -1665,7 +1665,11 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     with ExitStack() as locks:
         # Maintenance holds the project lock too; finish it before recovery or lifecycle writes.
-        locks.enter_context(writer_lock(generation_maintenance_directory(root), wait=True))
+        try:
+            locks.enter_context(writer_lock(generation_maintenance_directory(root), wait=True))
+        except (OSError, ValueError):
+            # Unusable maintenance remains a cleanup warning; the project lock still guards writes.
+            pass
         _recover_pending(root)
         locks.enter_context(writer_lock(root))
         if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
