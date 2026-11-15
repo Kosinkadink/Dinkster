@@ -401,6 +401,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError("offline setup requires published source and dependency locks")
     developing = args.operation == "develop"
     source_engine = getattr(args, "engine_checkout", None)
+    frontend_version = getattr(args, "frontend_version", None)
+    if getattr(args, "frontend_approval", None) and not frontend_version:
+        raise EnvironmentError("--frontend-approval requires --frontend-version")
+    if frontend_version and (offline or getattr(args, "from_scratch", False)):
+        raise EnvironmentError("--frontend-version requires online managed release selection")
     if source_engine is not None and (
         getattr(args, "from_scratch", False) or getattr(args, "offline", False)
     ):
@@ -654,6 +659,22 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             result["sources"] = {"engine": args.engine_origin}
         else:
             catalog = discover(mirrors, channel, store=store, offline=offline)
+        if frontend_version:
+            from .environment_frontend import resolve_frontend, select_frontend
+
+            selected_frontend = resolve_frontend(frontend_version)
+            approval = (
+                "sha256:"
+                + hashlib.sha256(json.dumps(selected_frontend, sort_keys=True).encode()).hexdigest()
+            )
+            if getattr(args, "frontend_approval", None) not in (None, approval):
+                raise EnvironmentError(
+                    "frontend selection changed after planning; request a new plan"
+                )
+            document = {**catalog.document, "frontend": selected_frontend}
+            select_frontend(catalog.engine, document)
+            catalog = replace(catalog, document=document)
+            result["frontend"] = document["frontend"]
         if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id
@@ -741,6 +762,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         )
     if inference is not None:
         plan.append(inference["notice"])
+    if frontend_version:
+        frontend = cast("dict[str, object]", result["frontend"])
+        plan.append(
+            f"explicit published frontend {frontend['version']}; sha256:{frontend['sha256']}; "
+            f"engine API {frontend['engineApi']}"
+        )
     if project_settings is not None and settings is not None:
         plan.append(
             f"change project selection from {settings['channel']}/{settings['variant']} "
@@ -1573,7 +1600,17 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
         if args.operation == "start":
-            row = start_engine(root, current, args.engine, port, gpus)
+            row = start_engine(
+                root,
+                current,
+                args.engine,
+                port,
+                gpus,
+                frontend_root=str(args.frontend_root.expanduser().resolve())
+                if args.frontend_root is not None
+                else None,
+                frontend_dev=args.frontend_dev,
+            )
             result["url"] = row["url"]
         else:
             stop_engine(root, args.engine)
@@ -1988,6 +2025,8 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
         command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
         command.add_argument("--inference", help="exact inference version or full source commit")
+        command.add_argument("--frontend-version", help="exact published dinkster-frontend version")
+        command.add_argument("--frontend-approval", help="require the planned frontend identity")
         command.add_argument("--engine-release", help="require this exact published engine digest")
         command.add_argument("--base-id", help="require this exact published base digest")
     for command in (setup, update, develop):
@@ -2013,6 +2052,11 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start = commands.add_parser("start", help="start the current generation's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
+    frontend = start.add_mutually_exclusive_group()
+    frontend.add_argument("--frontend-root", type=Path, help="serve a built frontend bundle folder")
+    frontend.add_argument(
+        "--frontend-dev", help="proxy a frontend development server with live-reload websockets"
+    )
     start.add_argument("--open-browser", action="store_true", help="open the healthy engine URL")
     execute = commands.add_parser("run", help="run a command in the active generation")
     execute.add_argument("command", nargs=argparse.REMAINDER)

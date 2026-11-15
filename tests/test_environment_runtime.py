@@ -196,8 +196,15 @@ def test_managed_generation_persists_folder_grant_across_restart(
     granted.mkdir()
     port = free_port()
     url = f"http://127.0.0.1:{port}/api/mounts"
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "index.html").write_text("<title>Explicit frontend</title>")
     try:
-        start_engine(root, 1, "main", port)
+        start_engine(root, 1, "main", port, frontend_root=str(frontend))
+        with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+            assert b"<title>Explicit frontend</title>" in response.read()
+        with pytest.raises(EnvironmentError, match="stop the engine first"):
+            start_engine(root, 1, "main", port, frontend_dev="http://127.0.0.1:5173")
         with urlopen(url, timeout=5) as response:  # noqa: S310
             initial = json.load(response)
         assert initial["mountChangesAllowed"] is True

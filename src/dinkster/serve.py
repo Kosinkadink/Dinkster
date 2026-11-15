@@ -843,8 +843,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)
-    parser.add_argument("--frontend-root", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--frontend-dev", default="", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--frontend-root", default="", metavar="PATH", help="serve a built frontend bundle folder"
+    )
+    parser.add_argument(
+        "--frontend-dev",
+        default="",
+        metavar="URL",
+        help="proxy a frontend development server, including live-reload websockets",
+    )
     parser.add_argument("--prepare-stale-catalogs", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--allow-host",

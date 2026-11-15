@@ -110,11 +110,15 @@ def start_engine(
     gpus: tuple[str, ...] = (),
     *,
     activation_journal: Path | None = None,
+    frontend_root: str | None = None,
+    frontend_dev: str | None = None,
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
     with generation_runtime_lock(root):
-        return _start_engine(root, generation, name, port, gpus, activation_journal)
+        return _start_engine(
+            root, generation, name, port, gpus, activation_journal, frontend_root, frontend_dev
+        )
 
 
 def _start_engine(
@@ -124,6 +128,8 @@ def _start_engine(
     port: int,
     gpus: tuple[str, ...],
     activation_journal: Path | None,
+    frontend_root: str | None,
+    frontend_dev: str | None,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
@@ -137,6 +143,10 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if (
+                    frontend_root is not None and frontend_root != previous.get("frontendRoot")
+                ) or (frontend_dev is not None and frontend_dev != previous.get("frontendDev")):
+                    raise EnvironmentError("frontend selection changed; stop the engine first")
                 if existing["pid"] != previous["pid"]:
                     _write_record(root, name, existing)
                 return _public_row(existing)
@@ -160,6 +170,8 @@ def _start_engine(
         "url": url,
         "state": "starting",
         "_processState": lifecycle,
+        **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
+        **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
     _write_record(root, name, record)
     environment = dict(os.environ)
@@ -197,10 +209,12 @@ def _start_engine(
         "--allow-mount-changes",
     ]
     development = target / "development-sources.json"
-    if development.is_file():
-        frontend = read_document(development).get("frontendRoot")
-        if frontend is not None:
-            command.extend(["--frontend-root", str(frontend)])
+    if frontend_root is None and frontend_dev is None and development.is_file():
+        frontend_root = cast("str | None", read_document(development).get("frontendRoot"))
+    if frontend_root is not None:
+        command.extend(["--frontend-root", frontend_root])
+    if frontend_dev is not None:
+        command.extend(["--frontend-dev", frontend_dev])
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
         log_offset = log.tell()

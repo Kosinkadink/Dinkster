@@ -317,6 +317,22 @@ not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
 
+### Frontend selection
+
+Managed `dinkster setup` and `dinkster update` accept `--frontend-version VERSION`
+to select an exact published `dinkster-frontend` release instead of the channel
+pin. This explicit online operation reads the permanent PyPI wheel, verifies
+its size and SHA-256, and checks its declared engine API range before acquiring
+or activating a generation. Plans disclose the selected version, hash and API
+range. The generation retains the selection for exact rollback and export.
+Without this option, the engine/channel frontend pin remains authoritative.
+Release installation does not contact PyPI implicitly.
+
+`dinkster-serve --frontend-root PATH` serves an already-built frontend bundle.
+`dinkster-serve --frontend-dev URL` proxies a running frontend development
+server, including websocket live reload. Neither flag builds a frontend or
+changes the managed generation's package selection.
+
 ### Managed engine sources
 
 On an installed release project, `dinkster source --root ROOT add

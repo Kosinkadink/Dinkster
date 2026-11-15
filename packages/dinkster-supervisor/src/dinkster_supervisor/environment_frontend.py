@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import cast
@@ -49,6 +50,54 @@ def frontend_reference(value: object) -> dict[str, object]:
     minimum, maximum = api.get("min"), api.get("max")
     if type(minimum) is not int or type(maximum) is not int or not 1 <= minimum <= maximum:
         raise EnvironmentError("frontend engine API range must be inclusive positive integers")
+    return row
+
+
+def resolve_frontend(version: str) -> dict[str, object]:
+    """Select a published wheel and read its API declaration from verified bytes."""
+    from .environment_downloads import fetch_artifact, read_metadata
+
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+        raise EnvironmentError("frontend version must be an exact published release version")
+    document = json.loads(
+        read_metadata("https://pypi.org/pypi/dinkster-frontend", version + "/json")
+    )
+    filename = f"dinkster_frontend-{version}-py3-none-any.whl"
+    candidates = [
+        row for row in document["urls"] if row["filename"] == filename and not row.get("yanked")
+    ]
+    if len(candidates) != 1:
+        raise EnvironmentError(f"frontend {version} has no unique non-yanked published wheel")
+    candidate = candidates[0]
+    row: dict[str, object] = {
+        "version": version,
+        "url": candidate["url"],
+        "sha256": candidate["digests"]["sha256"],
+        "size": candidate["size"],
+    }
+    url = urlsplit(cast("str", row["url"]))
+    if (
+        url.scheme != "https"
+        or url.netloc != "files.pythonhosted.org"
+        or url.query
+        or url.fragment
+        or url.path.rsplit("/", 1)[-1] != filename
+    ):
+        raise EnvironmentError("frontend selection requires its permanent PyPI wheel URL")
+    with tempfile.TemporaryDirectory(prefix="dinkster-frontend-release-") as directory:
+        wheel = Path(directory) / filename
+        fetch_artifact(
+            (cast("str", row["url"]).rsplit("/", 1)[0],),
+            filename,
+            wheel,
+            cast("str", row["sha256"]),
+            cast("int", row["size"]),
+        )
+        with zipfile.ZipFile(wheel) as archive:
+            manifest = json.loads(archive.read("dinkster_frontend/manifest.json"))
+        row["engineApi"] = manifest.get("engineApi")
+        frontend_reference(row)
+        verify_frontend_wheel(wheel, row)
     return row
 
 

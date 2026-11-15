@@ -26,8 +26,14 @@
   catalog preparation. Source manifests are not rewritten.
 
 - Managed environments select the engine's versioned frontend or a channel-selected
-  frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
-  refuse before activation; compatible frontend-only updates retain the engine.
+  frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
+  on setup/update selects a published PyPI frontend wheel and its declared API
+  range instead. Incompatible engine schema API ranges refuse before activation;
+  compatible frontend-only updates retain the engine. Without an explicit version,
+  release installation retains its offline published-artifact path.
+- `dinkster-serve --frontend-root PATH` serves a built frontend folder;
+  `--frontend-dev URL` proxies a running development server with websocket reload.
+  Both options are visible in command help and neither builds frontend assets.
 
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import urlopen
@@ -87,6 +88,109 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     assert document["format"] == "dinkster.environment-result/1"
     assert document["root"] == str(root)
     return result.returncode, document
+
+
+@pytest.mark.parametrize("api", [1, 2, 4, 5])
+def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], api: int
+) -> None:
+    from dinkster_supervisor import environment, environment_downloads
+
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _, engine, channel = _mirror(mirror)
+    engine["schemaApi"] = api
+    data = _json(engine) + b"\n"
+    identity = hashlib.sha256(data).hexdigest()
+    old = mirror / "engine" / channel["engine"]["release"][7:]
+    release = mirror / "engine" / identity
+    shutil.copytree(old, release)
+    (release / "release-manifest.json").write_bytes(data)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
+    (mirror / "channels/main.json").write_bytes(_json(channel))
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr(
+            "dinkster_frontend/manifest.json",
+            json.dumps(
+                {
+                    "format": "dinkster.frontend/1",
+                    "repository": "Kosinkadink/Dinkster-Frontend",
+                    "version": "0.2.0",
+                    "engineApi": {"min": 2, "max": 4},
+                }
+            ),
+        )
+        archive.writestr("dinkster_frontend/static/index.html", "selected frontend")
+    filename = "dinkster_frontend-0.2.0-py3-none-any.whl"
+    wheel = tmp_path / filename
+    wheel.write_bytes(payload.getvalue())
+    digest = hashlib.sha256(payload.getvalue()).hexdigest()
+    selected = {
+        "filename": filename,
+        "url": "https://files.pythonhosted.org/packages/" + filename,
+        "digests": {"sha256": digest},
+        "size": wheel.stat().st_size,
+    }
+    read, fetch = environment_downloads.read_metadata, environment_downloads.fetch_artifact
+
+    def metadata(location: str, path: str) -> bytes:
+        if location == "https://pypi.org/pypi/dinkster-frontend":
+            assert path == "0.2.0/json"
+            return json.dumps({"urls": [selected]}).encode()
+        return read(location, path)
+
+    def transfer(locations, name, destination, sha, size):
+        assert locations == ("https://files.pythonhosted.org/packages",)
+        return fetch((str(tmp_path),), name, destination, sha, size)
+
+    monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
+    monkeypatch.setattr(environment_downloads, "fetch_artifact", transfer)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    arguments = [
+        "--root",
+        str(root),
+        "setup",
+        "--channel",
+        "main",
+        "--mirror",
+        str(mirror),
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--plan",
+        "--json",
+    ]
+
+    def plan(*extra: str) -> tuple[int, dict]:
+        with pytest.raises(SystemExit) as exited:
+            environment.main([*arguments, *extra])
+        assert isinstance(exited.value.code, int)
+        return exited.value.code, json.loads(capsys.readouterr().out)
+
+    code, result = plan("--frontend-version", "0.2.0")
+    if api in {1, 5}:
+        assert code == 1
+        assert "supports engine schema API 2 through 4" in result["error"]
+    else:
+        assert code == 0
+        assert result["frontend"]["sha256"] == digest
+        assert result["frontend"]["engineApi"] == {"min": 2, "max": 4}
+        assert any(filename in row["path"] for row in result["runtimeInputs"])
+        assert any(identity in row["path"] for row in result["runtimeInputs"])
+        assert any("explicit published frontend 0.2.0" in line for line in result["plan"])
+    wheel.write_bytes(wheel.read_bytes() + b"changed")
+    code, result = plan("--frontend-version", "0.2.0")
+    assert code == 1
+    assert "size" in result["error"] or "digest" in result["error"]
+    code, result = plan()
+    assert code == 0
+    assert "frontend" not in result
+    assert not any(filename in row["path"] for row in result["runtimeInputs"])
+    assert not root.exists() and not store.exists()
+    assert not (tmp_path / "user-data").exists()
 
 
 def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(

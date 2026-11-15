@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from platform import machine
 from typing import cast
@@ -102,7 +103,17 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
     store = stores.select_store(root, args.data)
     channel = args.channel or "stable"
     mirrors = tuple(args.mirror or ("https://releases.dinkster.org",))
+    if args.frontend_version and args.offline:
+        raise state.EnvironmentError("--frontend-version requires online release metadata")
     catalog = artifacts.discover(mirrors, channel, store=store, offline=args.offline)
+    if args.frontend_version:
+        frontend = importlib.import_module("dinkster_supervisor.environment_frontend")
+        document = {
+            **catalog.document,
+            "frontend": frontend.resolve_frontend(args.frontend_version),
+        }
+        frontend.select_frontend(catalog.engine, document)
+        catalog = replace(catalog, document=document)
     base_id = catalog.channel.base_for(variant)
     base = catalog.bases[variant]
     inference = None
@@ -294,6 +305,7 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         plan.append(inference["notice"])
     return {
         **({"inference": inference} if inference is not None else {}),
+        **({"frontend": catalog.document["frontend"]} if args.frontend_version else {}),
         "root": str(root),
         "store": str(store),
         "channel": channel,
@@ -323,7 +335,7 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
     from .registries import registry_source_lock
 
     observed = _plan(args)
-    for key in ("engineRelease", "baseId", "sources", "dependencyLocks", "inference"):
+    for key in ("engineRelease", "baseId", "sources", "dependencyLocks", "inference", "frontend"):
         if observed.get(key) != approved.get(key):
             raise InstallError("setup inputs changed after planning; request a new plan")
     store = Path(cast("str", approved["store"]))
@@ -395,6 +407,16 @@ def _apply(args: argparse.Namespace, approved: dict[str, object]) -> int:
                 ).hexdigest()
             )
             command.extend(("--inference", args.inference, "--inference-approval", approval))
+        if args.frontend_version:
+            approval = (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(approved["frontend"], sort_keys=True).encode()
+                ).hexdigest()
+            )
+            command.extend(
+                ("--frontend-version", args.frontend_version, "--frontend-approval", approval)
+            )
         if args.package_index:
             command.extend(("--package-index", args.package_index))
         if args.json:
@@ -423,6 +445,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gpu", action="append", default=[])
     parser.add_argument("--channel", choices=("stable", "main"))
     parser.add_argument("--inference", help="exact inference version or full source commit")
+    parser.add_argument("--frontend-version", help="exact published dinkster-frontend version")
     parser.add_argument(
         "--package-index", help="simple package index for inference and dependencies"
     )
