@@ -17,7 +17,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
+from urllib.request import urlopen
 
 from scripts.download_frontend import verify_and_extract
 
@@ -116,8 +117,9 @@ def release_version(root: Path, tag: str) -> str:
     return version
 
 
-def development_version(root: Path) -> str:
-    _, version = project_metadata(root / "pyproject.toml")
+def development_version(root: Path, project: str | None = None) -> str:
+    path = root / "pyproject.toml" if project is None else workspace_projects(root)[project]
+    _, version = project_metadata(path)
     major, minor, patch = (int(part) for part in version.split("."))
     # Main only advances by descendants; tags must not reset its version counter.
     count = subprocess.check_output(
@@ -129,6 +131,8 @@ def development_version(root: Path) -> str:
 @contextmanager
 def versioned_sources(root: Path, version: str) -> Iterator[Path]:
     """Build exact workspace dependencies without changing the checkout or lock."""
+    from packaging.version import Version
+
     with tempfile.TemporaryDirectory(prefix="dinkster-wheel-source-") as directory:
         staged = Path(directory)
         archive = subprocess.check_output(
@@ -142,6 +146,8 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
             name: version if uses_engine_version(path) else project_metadata(path)[1]
             for name, path in projects.items()
         }
+        if Version(version).is_devrelease:
+            versions["dinkster-supervisor"] = development_version(root, "dinkster-supervisor")
         for name, path in projects.items():
             text = path.read_text(encoding="utf-8")
             text += (
@@ -615,6 +621,51 @@ def write_manifest(output: Path, manifest: dict[str, object], artifacts: list[Pa
     )
 
 
+def bind_pypi_wheels(output: Path) -> dict:
+    """Finalize immutable manifest identity only after PyPI serves the exact wheel bytes."""
+    check_release(output, 100_000_000)
+    manifest_path = output / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    for row in manifest["artifacts"]:
+        if row["name"] not in manifest["workspaceWheels"]:
+            continue
+        wheel = output / row["name"]
+        if sha256(wheel) != row["sha256"] or wheel.stat().st_size != row["size"]:
+            raise ValueError(f"release wheel differs from manifest: {row['name']}")
+        name, version = wheel_metadata(wheel)
+        with urlopen(
+            f"https://pypi.org/pypi/{quote(name, safe='')}/{quote(version, safe='')}/json",
+            timeout=120,
+        ) as response:
+            publication = json.load(response)
+        matches = [file for file in publication["urls"] if file["filename"] == row["name"]]
+        if len(matches) != 1:
+            raise ValueError(f"PyPI has no unique published wheel: {row['name']}")
+        file = matches[0]
+        url = urlsplit(file["url"])
+        if (
+            file["digests"]["sha256"] != row["sha256"]
+            or file["size"] != row["size"]
+            or file.get("yanked")
+            or url.scheme != "https"
+            or url.netloc != "files.pythonhosted.org"
+            or unquote(url.path.rsplit("/", 1)[-1]) != row["name"]
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError(f"PyPI wheel differs from release input: {row['name']}")
+        row["url"] = file["url"]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (output / "SHA256SUMS").write_text(
+        "".join(
+            f"{sha256(output / name)}  {name}\n"
+            for name in [*[row["name"] for row in manifest["artifacts"]], manifest_path.name]
+        ),
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def extend_release(output: Path, candidates: list[Path]) -> dict[str, object]:
     """Finalize an existing release only after checking every original asset."""
     manifest_path = output / "release-manifest.json"
@@ -677,6 +728,7 @@ if __name__ == "__main__":
     parser.add_argument("--tag", help="vX.Y.Z; omit for a commit-identified development build")
     parser.add_argument("--frontend-artifact", type=Path)
     parser.add_argument("--check", action="store_true", help="Check finalized contents and size")
+    parser.add_argument("--bind-pypi", action="store_true", help="Verify and bind published wheels")
     parser.add_argument("--max-bytes", type=int, default=100_000_000)
     parser.add_argument(
         "--extend", action="store_true", help="Verify and extend an existing release"
@@ -688,6 +740,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.check:
         check_release(args.output.resolve(), args.max_bytes)
+    elif args.bind_pypi:
+        bind_pypi_wheels(args.output.resolve())
     elif args.extend:
         extend_release(args.output.resolve(), args.artifact)
     elif args.frontend_artifact is None:

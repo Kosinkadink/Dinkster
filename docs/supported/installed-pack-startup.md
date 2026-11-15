@@ -176,6 +176,9 @@
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
+- Engine manifests can acquire workspace wheels directly from their exact PyPI
+  file URLs, verify the published size and SHA-256, and reuse verified cached
+  bytes offline. Release mirrors remain optional wheel fallback sources.
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.

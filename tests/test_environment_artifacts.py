@@ -1085,6 +1085,56 @@ def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
     )
 
 
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_engine_pypi_wheels_are_acquired_by_manifest_hash_without_a_release_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _, engine, channel = _mirror(mirror)
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    [wheel] = release.glob("*.whl")
+    published = tmp_path / "pypi"
+    published.mkdir()
+    (published / wheel.name).write_bytes(
+        b"X" * wheel.stat().st_size if corrupt else wheel.read_bytes()
+    )
+    wheel.unlink()
+    [row] = [row for row in engine["artifacts"] if row["name"].endswith(".whl")]
+    row["url"] = f"https://files.pythonhosted.org/packages/fixture/{wheel.name}"
+    data = _json(engine)
+    identity = hashlib.sha256(data).hexdigest()
+    (release / "release-manifest.json").write_bytes(data)
+    release.rename(release.with_name(identity))
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"] = [
+        {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+    ]
+    (mirror / "channels/main.json").write_bytes(_json(channel))
+    catalog = discover((str(mirror),), "main")
+    fetch = environment_artifacts.fetch_artifact
+
+    def local_transport(sources, *args, **kwargs):
+        sources = tuple(
+            str(published) if source.startswith("https://files.pythonhosted.org/") else source
+            for source in sources
+        )
+        return fetch(sources, *args, **kwargs)
+
+    monkeypatch.setattr(environment_artifacts, "fetch_artifact", local_transport)
+    if corrupt:
+        with pytest.raises(DownloadError):
+            acquire(catalog, "fixture-cpu", store)
+        assert not list(store.glob("wheels/*/fixture_engine*.whl"))
+    else:
+        constraints = acquire(catalog, "fixture-cpu", store)
+        assert "fixture-engine==2.0 --hash=sha256:" + row["sha256"] in constraints.read_text()
+        assert (
+            next(store.glob("wheels/*/fixture_engine*.whl")).read_bytes() == b"engine wheel bytes"
+        )
+        (published / wheel.name).unlink()
+        assert acquire(catalog, "fixture-cpu", store, offline=True) == constraints
+
+
 def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path: Path):
     first, second = tmp_path / "first", tmp_path / "second"
     _, engine, channel = _mirror(first)

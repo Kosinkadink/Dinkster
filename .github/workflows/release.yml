@@ -253,9 +253,34 @@ jobs:
         # Environment-generation cases remain nonblocking under issue 867.
         run: GITHUB_ACTIONS=false uv run --locked python -m pytest -q tests/test_environment_generations.py -k development_inference_override -rs
 
+  published:
+    needs: [publish, publish-api, publish-engine, publish-supervisor]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish-api.result == 'success' && needs.publish-engine.result == 'success' && needs.publish-supervisor.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-release
+          path: dist
+      - name: Bind the exact PyPI wheel identities before release identity is frozen
+        run: |
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release --bind-pypi
+          (cd dist && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: published-engine-release
+          path: dist/
+          if-no-files-found: error
+
   release:
-    needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
+    needs: published
+    if: ${{ !cancelled() && needs.published.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
       engine-id: ${{ steps.identity.outputs.engine-id }}
@@ -268,7 +293,7 @@ jobs:
           persist-credentials: true
       - uses: actions/download-artifact@v4
         with:
-          name: engine-release
+          name: published-engine-release
           path: dist
       - uses: astral-sh/setup-uv@v5
         with:
@@ -370,7 +395,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: engine-release
+          name: published-engine-release
           path: dist
       - uses: actions/download-artifact@v4
         with:
@@ -437,8 +462,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -461,8 +486,8 @@ jobs:
           skip-existing: true
 
   publish-api:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-api
@@ -485,8 +510,8 @@ jobs:
           skip-existing: true
 
   publish-engine:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-engine
@@ -509,8 +534,8 @@ jobs:
           skip-existing: true
 
   publish-supervisor:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-supervisor

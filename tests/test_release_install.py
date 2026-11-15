@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import json
 import shutil
 import subprocess
 import sys
@@ -15,7 +17,9 @@ import pytest
 from packaging.version import Version
 from test_frontend_artifact import artifact
 
+from scripts import build_release
 from scripts.build_release import (
+    bind_pypi_wheels,
     build_source_archive,
     development_version,
     validate_engine_wheels,
@@ -226,6 +230,7 @@ def test_development_versions_increase_without_resetting_at_release_tags(tmp_pat
 
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     version = development_version(ROOT)
     assert version.startswith("0.0.7.dev")
@@ -258,9 +263,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
-        supervisor_version = tomllib.loads(
-            (ROOT / "packages/dinkster-supervisor/pyproject.toml").read_text()
-        )["project"]["version"]
+        supervisor_version = development_version(ROOT, "dinkster-supervisor")
+        assert supervisor_version.startswith("0.0.5.dev")
+        assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
             name
@@ -283,6 +288,46 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
     [supervisor_wheel] = output.glob("dinkster_supervisor-*.whl")
     assert supervisor_wheel.name == f"dinkster_supervisor-{supervisor_version}-py3-none-any.whl"
+    wheels = sorted(output.glob("*.whl"))
+    (output / ".gitignore").unlink(missing_ok=True)
+    constraints = output / "constraints.txt"
+    constraints.write_text("fixture constraints")
+    build_release.write_manifest(
+        output,
+        {"version": version, "workspaceWheels": [path.name for path in wheels]},
+        [*wheels, constraints],
+    )
+    original_manifest = (output / "release-manifest.json").read_bytes()
+    publications = {
+        build_release.wheel_metadata(path): {
+            "filename": path.name,
+            "size": path.stat().st_size,
+            "digests": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+            "url": f"https://files.pythonhosted.org/packages/fixture/{path.name}",
+            "yanked": False,
+        }
+        for path in wheels
+    }
+
+    def publication(url: str, *, timeout: int) -> io.BytesIO:
+        parts = url.split("/")
+        return io.BytesIO(json.dumps({"urls": [publications[(parts[-3], parts[-2])]]}).encode())
+
+    monkeypatch.setattr(build_release, "urlopen", publication)
+    first = next(iter(publications.values()))
+    expected_hash = first["digests"]["sha256"]
+    first["digests"]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="PyPI wheel differs"):
+        bind_pypi_wheels(output)
+    assert (output / "release-manifest.json").read_bytes() == original_manifest
+    first["digests"]["sha256"] = expected_hash
+    bound = bind_pypi_wheels(output)
+    assert {row["url"] for row in bound["artifacts"] if "url" in row} == {
+        file["url"] for file in publications.values()
+    }
+    for line in (output / "SHA256SUMS").read_text().splitlines():
+        expected, name = line.split("  ")
+        assert hashlib.sha256((output / name).read_bytes()).hexdigest() == expected
     [api_wheel] = output.glob("dinkster_api-*.whl")
     with zipfile.ZipFile(api_wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
