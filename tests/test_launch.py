@@ -16,6 +16,10 @@ from dinkster.frontend import install_frontend
 from dinkster.mounts_api import MountService
 from dinkster.project_folders import ProjectFolders
 from tests.async_scenarios import run_scenario
+from tests.fixtures.environments.build import channel_json, read_channel
+from tests.supervisor_subprocess import run as run_with_diagnostics
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
 
 
 def test_library_initialization_creates_default_mounts(tmp_path: Path) -> None:
@@ -97,7 +101,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{release}/release-manifest.json"}
     ]
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(channel_json(channel))
     files: dict[str, bytes] = {}
     releases = []
     for name in defaults:
@@ -469,7 +473,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     mirror, root, store = (Path(fixture[key]) for key in ("mirror", "root", "store"))
     monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
     channel_path = mirror / "channels/nightly.json"
-    channel = json.loads(channel_path.read_bytes())
+    channel = read_channel(channel_path)
     release = mirror / "engine" / channel["engine"]["release"][7:]
     engine = json.loads((release / "release-manifest.json").read_bytes())
     engine["defaultPacks"] = {"demo-nodes": "1.2.3"}
@@ -479,7 +483,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     release.rename(release.parent / identity)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    channel_path.write_bytes(canonical_json(channel))
+    channel_path.write_bytes(channel_json(channel))
     source = wheel_pack(tmp_path / "pack")
     (source / "locales/en.json").write_text("{}\n")
     manifest = source / "dinkster-pack.toml"
@@ -946,7 +950,7 @@ def test_public_update_and_rollback_rebuild_the_selected_project(
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     try:
-        subprocess.run(fixture["commands"]["setup"], check=True, capture_output=True, timeout=60)
+        run_with_diagnostics(fixture["commands"]["setup"], timeout=60).check_returncode()
         assert cli_main(["stop", "--root", str(root), "--json"]) == 0
         capfd.readouterr()
         subprocess.run(fixture["commands"]["advance"], check=True, capture_output=True, timeout=30)

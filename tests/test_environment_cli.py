@@ -33,7 +33,11 @@ from test_environment_generations import _assert_shared, _workspace_tree
 from test_environment_runtime import free_port, make_generation
 from test_environment_state import _generation
 
+from tests.fixtures.environments.build import channel_json as _channel_json
 from tests.fixtures.environments.build import executable_release as _executable_release
+from tests.fixtures.environments.build import read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
 
 
 def _run(root: Path, *arguments: str, timeout: float = 120) -> tuple[int, dict]:
@@ -107,7 +111,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
     (release / "release-manifest.json").write_bytes(data)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
         archive.writestr(
@@ -1730,7 +1734,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert code == 0, result
         assert (
             _run(root, "status")[1]["engine"]["release"]
-            == json.loads(Path(fixture["initialChannel"]).read_text())["engine"]["release"]
+            == read_channel(Path(fixture["initialChannel"]), "nightly")["engine"]["release"]
         )
         assert _run(root, "stop", "--yes")[0] == 0
         code, result = _run(root, "rollback", "--yes")
@@ -1752,7 +1756,7 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["plan"] == []
     assert result["status"] == "clean"
     assert result["channel"] == "nightly"
-    assert result["channelManifest"] == channel
+    assert result["channelManifest"] == dict(channel, channel="nightly")
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
     assert not root.exists()
@@ -2185,7 +2189,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
     ]
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     if operation == "update":
         _generation(root, 1)
         (root / "current").write_bytes(b"1\n")
@@ -2671,7 +2675,7 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
     fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
     command = fixture["commands"]["setup"]
-    setup = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    setup = run_with_diagnostics(command, timeout=60)
     assert setup.returncode == 0, setup.stdout + setup.stderr
     try:
         assert _run(root, "stop", "--yes")[0] == 0
@@ -3086,7 +3090,7 @@ environment.build_generation = interrupt
 sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
 environment.main()
 """
-        interrupted = subprocess.run([sys.executable, "-c", script, str(root)], timeout=30)
+        interrupted = run_with_diagnostics([sys.executable, "-c", script, str(root)], timeout=30)
         assert interrupted.returncode == 73
         journals = sorted((root / "journal").glob("*.json"))
         assert Journal.read(journals[-1]).stage == "building"
@@ -3190,9 +3194,7 @@ environment.main()
         assert not list(store.glob(".workflow-*"))
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
-        engine = json.loads((mirror / "channels/nightly.json").read_bytes())["engine"]["release"][
-            7:
-        ]
+        engine = read_channel(mirror / "channels/nightly.json")["engine"]["release"][7:]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
         before_settings = (root / "project.json").read_bytes()
@@ -3342,14 +3344,20 @@ environment.main()
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+@pytest.mark.parametrize("frontend_build", ["ci", "local"])
 def test_development_setup_shares_the_generations_selected_library(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_server, frontend_build: str, capsys
 ) -> None:
+    import pygit2
+    from dinkster_supervisor import environment_frontend_sources
     from dinkster_supervisor.environment_development import prepare_development_packs
     from dinkster_supervisor.environment_state import EnvironmentError, interpreter
     from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_environment_frontend_sources import _artifact
     from test_environment_generations import _wheel
     from test_installer import write_publishable_pack
+
+    from dinkster.cli import main
 
     source = Path(__file__).resolve().parents[1]
     root, store = tmp_path / "project", tmp_path / "store"
@@ -3376,30 +3384,115 @@ def test_development_setup_shares_the_generations_selected_library(
             "[pack.entry]", 'requires=["selected-helper==1.0"]\n[pack.entry]'
         )
     )
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    index = pygit2.Index()
+    for name, data in {
+        "package.json": '{"version":"0.2.0"}',
+        "frontend-release.json": '{"engineApi":{"min":1,"max":9999}}',
+    }.items():
+        index.add(pygit2.IndexEntry(name, repository.create_blob(data), pygit2.enums.FileMode.BLOB))
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+    commit = repository.create_commit(
+        f"refs/heads/development-build-{frontend_build}",
+        signature,
+        signature,
+        "frontend",
+        index.write_tree(repository),
+        [],
+    )
+    repository.free()
+    artifact = _artifact(tmp_path, str(commit))
+    monkeypatch.setattr(
+        environment_frontend_sources,
+        "frontend_ci_artifact",
+        lambda _: artifact if frontend_build == "ci" else None,
+    )
+
+    def fetch(roots, name, destination, sha, size):
+        destination.write_bytes(artifact["path"].read_bytes())
+
+    monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+    commands = []
+
+    def build(command, *, cwd):
+        commands.append(command)
+        if command[-1] == "build":
+            dist = cwd / "packages/app/dist"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("<main>local frontend</main>")
+
+    monkeypatch.setattr(environment_frontend_sources, "run_local_command", build)
+    which = shutil.which
+    monkeypatch.setattr(
+        environment_frontend_sources.shutil,
+        "which",
+        lambda name: None if name in {"node", "pnpm"} else which(name),
+    )
     variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
-    try:
-        code, result = _run(
-            root,
-            "develop",
-            "--source",
-            str(source),
-            "--contributor",
-            "--pack-source",
-            str(pack),
-            "--library-source",
-            str(library),
-            "--variant",
-            variant,
-            "--python",
-            sys.executable,
-            "--data",
-            str(store),
-            "--port",
-            str(free_port()),
-            "--yes",
-            timeout=300,
+    frontend_source = f"{git_server['url']}#ref=development-build-{frontend_build}"
+    arguments = [
+        "develop",
+        "--source",
+        str(source),
+        "--contributor",
+        "--pack-source",
+        str(pack),
+        "--library-source",
+        str(library),
+        "--frontend-source",
+        frontend_source,
+        "--variant",
+        {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu"),
+        "--python",
+        sys.executable,
+        "--data",
+        str(store),
+        "--port",
+        str(free_port()),
+    ]
+
+    def run(*extra):
+        code = main([*arguments, "--root", str(root), *extra, "--json"])
+        return code, json.loads(capsys.readouterr().out)
+
+    code, preview = run("--plan")
+    assert code == 0, preview
+    if frontend_build == "local":
+        assert any("requires Node and pnpm" in line for line in preview["plan"])
+        code, refused = run("--approve", preview["sourceApproval"], "--yes")
+        assert code == 1 and "local build requires node and pnpm" in refused["error"], refused
+        assert not (root / "current").exists() and not commands
+        monkeypatch.setattr(
+            environment_frontend_sources.shutil,
+            "which",
+            lambda name: "/tools/" + name if name in {"node", "pnpm"} else which(name),
         )
+    else:
+        original = artifact["path"].read_bytes()
+        artifact["path"].write_bytes(b"not a zip archive")
+        code, refused = run("--approve", preview["sourceApproval"], "--yes")
+        assert code == 1 and "invalid Git frontend build metadata" in refused["error"], refused
+        assert not (root / "current").exists() and not commands
+        artifact["path"].write_bytes(original)
+    try:
+        code, result = run("--approve", preview["sourceApproval"], "--yes")
         assert code == 0, result
+        generation = root / "generations" / str(result["current"])
+        html = subprocess.check_output(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-c",
+                "import importlib.resources as r; "
+                "print(r.files('dinkster_frontend').joinpath('static/index.html').read_text())",
+            ],
+            text=True,
+        ).strip()
+        assert html == (
+            "<main>selected frontend</main>"
+            if frontend_build == "ci"
+            else "<main>local frontend</main>"
+        )
     finally:
         if (root / "current").exists():
             assert _run(root, "stop", "--yes")[0] == 0
@@ -3580,7 +3673,7 @@ def test_development_frontend_plan_reviews_origin_and_remote_opt_in(
     assert not store.exists()
 
 
-@pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference"])
+@pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference", "frontend"])
 def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch
 ):
@@ -3606,9 +3699,21 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
         if git_kind == "inference"
         else '[project]\nname="unpublished-helper"\n'
     )
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text('{"version":"0.2.0"}')
+    (frontend / "frontend-release.json").write_text('{"engineApi":{"min":1,"max":2}}')
+    schema = engine / "packages/dinkster-schema/src/dinkster_schema/wire.py"
+    schema.parent.mkdir(parents=True)
+    schema.write_text("SCHEMA_WIRE_VERSION = 1\n")
     repository = pygit2.Repository(git_server["root"] / "source.git")
     index = pygit2.Index()
-    for kind, folder in (("engine", engine), ("pack", pack), ("library", library)):
+    for kind, folder in (
+        ("engine", engine),
+        ("pack", pack),
+        ("library", library),
+        ("frontend", frontend),
+    ):
         for path in folder.rglob("*"):
             if path.is_file():
                 index.add(
@@ -3644,6 +3749,13 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
                 else str(folder),
             ]
         )
+    if git_kind == "frontend":
+        arguments.extend(
+            [
+                "--frontend-source",
+                f"{git_server['url']}#ref=development-frontend&subdirectory=frontend",
+            ]
+        )
     arguments.extend(
         [
             "--variant",
@@ -3668,9 +3780,32 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     ]
     assert main([*changed, "--approve", plan["sourceApproval"]]) == 1
     assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+    if git_kind == "frontend":
+        assert selected["live"] is False
+        assert selected["frontendArtifact"] is None
+        artifact = {
+            "id": 17,
+            "run": 23,
+            "name": "dinkster-frontend-" + "a" * 64,
+            "digest": "sha256:" + "b" * 64,
+            "size_in_bytes": 103,
+        }
+        monkeypatch.setattr(
+            "dinkster_supervisor.environment_frontend_sources.frontend_ci_artifact",
+            lambda origin: artifact,
+        )
+        assert main([*arguments, "--approve", plan["sourceApproval"]]) == 1
+        assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+        assert main(arguments) == 0
+        ci_plan = json.loads(capsys.readouterr().out)
+        artifact["id"] = 19
+        assert main([*arguments, "--approve", ci_plan["sourceApproval"]]) == 1
+        assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+        schema.write_text("SCHEMA_WIRE_VERSION = 3\n")
+        assert main(arguments) == 1
+        assert "schema API" in json.loads(capsys.readouterr().out)["error"]
+        schema.write_text("SCHEMA_WIRE_VERSION = 1\n")
     if git_kind == "engine":
-        frontend = tmp_path / "frontend"
-        frontend.mkdir()
         (frontend / "index.html").write_text("<title>Selected frontend</title>")
         previous_approval = plan["sourceApproval"]
         for extra, field, expected in (
@@ -3806,7 +3941,7 @@ def test_inference_requests_report_oldest_containing_release(
                 release="sha256:" + identity,
                 locations=[{"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}],
             )
-            (mirror / "channels/nightly.json").write_bytes(_json(channel))
+            (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
             monkeypatch.setattr(
                 "dinkster.registries.plan_registry_sources",
                 lambda *args, **kwargs: (

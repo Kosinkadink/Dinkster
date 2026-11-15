@@ -25,6 +25,12 @@
   source packages. Missing declared resources refuse build or admission before
   catalog preparation. Source manifests are not rewritten.
 
+- Published Stable and Nightly selections require an independently trusted channel
+  signature before metadata is used, including local copies and offline channel
+  caches. Signed selections can come from third-party HTTPS mirrors. Referenced
+  artifact hashes and sizes are still checked. Cached producer bytes remain separate
+  from local selection overrides and sealed historical provenance.
+
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
   on setup/update selects a published PyPI frontend wheel and its declared API
@@ -567,7 +573,8 @@
 - Windows contributor setup and interpreter preparation require uv 0.13.6 or
   newer for pinned CPython 3.14.10. An older uv is refused before those scripts
   download inputs or create environments; the error names both versions and
-  the interpreter. Setup never upgrades uv automatically.
+  the interpreter. Published native environment tools bundle a compatible uv;
+  setup never upgrades the caller's uv automatically.
 - Environment commands that ask for confirmation refuse non-terminal text-mode
   requests without `--yes`, naming `--yes` to apply and `--plan` to inspect.
   Terminal requests print the plan and ask `Apply this plan? [y/N]`; declining
@@ -1068,9 +1075,16 @@ for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
 `run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
 generation. The CPU variant is the default; pass `--variant NAME` to setup for
 another host-compatible variant.
-All development generations accept either `--frontend-root` for a built bundle
-or `--frontend-dev` for a running HTTP(S) dev server, retained across restarts.
-Neither frontend option requires `--contributor` or makes a captured engine live.
+All development generations accept one of `--frontend-root` for a built bundle,
+`--frontend-dev` for a running HTTP(S) dev server, or `--frontend-source` for an
+explicit public HTTPS Git frontend URL and ref, retained across restarts.
+Git frontends are captured, not live. The selected engine schema API must fit the
+frontend's declared range. An exact-commit verified CI bundle is used when
+available; otherwise the capture is built locally with Node and pnpm. The Git
+identity and selected CI artifact (or local-build choice) are bound to source
+approval; a changed selection requires a new review. Built frontend wheels are
+retained with the generation for restoration without refetching or rebuilding.
+No frontend option requires `--contributor` or makes a captured engine live.
 Pack selections are optional for captured engines as well as contributor engines;
 an engine-only selection uses no development packs. Git engine inputs stay
 captured, including when a local frontend is selected, and cannot use
