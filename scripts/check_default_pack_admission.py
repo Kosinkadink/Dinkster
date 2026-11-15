@@ -9,6 +9,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import zipfile
@@ -33,7 +34,7 @@ from dinkster_registry.archive_admission import (
 )
 from dinkster_store import pack_archive_path
 from dinkster_workers import load_manifest
-from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+from dinkster_workers.pack_lock import GenerationPackages, LockedDistribution, LockedWheel, PackLock
 from dinkster_workers.pack_wheel import pack_manifest_path
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
@@ -288,6 +289,7 @@ def check_defaults(
             raise ValueError("locked admission requires an exact sha256 base identity")
         if not generation_python.is_file() or not constraints.is_file():
             raise ValueError("locked admission interpreter or constraints are missing")
+    generation = GenerationPackages.inspect(generation_python or Path(sys.executable))
     minimums = default_pack_minimums()
     with tempfile.TemporaryDirectory(prefix="default-pack-admission-") as directory:
         work = Path(directory)
@@ -318,6 +320,7 @@ def check_defaults(
             catalog = selected
         else:
             with admission_timing("defaults", "registry-resolution-download"):
+                skipped: list[str] = []
                 catalog, _ = prepare_registry_sources(
                     registry,
                     {
@@ -327,7 +330,14 @@ def check_defaults(
                     },
                     artifacts,
                     engine_version=engine_version,
+                    engine_packages=generation.versions,
+                    markers=generation.markers,
+                    skipped=skipped,
+                    variant=variant if base_id is not None else None,
+                    base_id=base_id,
                 )
+                for reason in skipped:
+                    print(reason, flush=True)
             catalog = Lockfile.of((*catalog.packs, *selected.packs))
             catalog = prepare_library_sources(registry, catalog, artifacts)
         if not catalog.packs:
@@ -443,7 +453,7 @@ def check_defaults(
                         pack.pack,
                         pack.version,
                         publisher="dinkster",
-                        engine_version=engine_version,
+                        engine_version=generation.versions.get("dinkster-api", engine_version),
                     ),
                     identity,
                 )

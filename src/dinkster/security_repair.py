@@ -283,6 +283,8 @@ def plan_security_repair(
                     installed,
                     selections=selection,
                     engine_version=record.engine_version,
+                    engine_packages=parent.versions,
+                    markers=parent.markers,
                     variant=record.variant,
                     base_id=record.base,
                     index=index,
