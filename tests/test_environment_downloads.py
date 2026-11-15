@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -91,6 +92,38 @@ def artifact_server(
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def test_development_retains_digest_locked_wheels_without_size_probe(tmp_path: Path) -> None:
+    from dinkster_supervisor.environment_local import retain_wheels
+
+    payload = b"digest-locked contributor wheel"
+    sha = digest(payload)
+    store = tmp_path / "store"
+    with artifact_server(payload) as mirror:
+        resolution = {
+            "packages": [
+                {
+                    "name": "fixture",
+                    "version": "1.0",
+                    "wheels": [
+                        {"url": mirror + "/fixture-1.0-py3-none-any.whl", "hashes": {"sha256": sha}}
+                    ],
+                }
+            ],
+        }
+        rows = retain_wheels(resolution, Path(sys.executable), store, tmp_path)
+        assert rows[0]["size"] == len(payload)
+        assert rows[0]["sha256"] == sha
+    cached = next((store / "wheels").rglob("*.whl"))
+    assert cached.read_bytes() == payload
+    assert retain_wheels(resolution, Path(sys.executable), store, tmp_path) == rows
+    cached.write_bytes(b"x" * len(payload))
+    with artifact_server(b"wrong payload") as mirror:
+        resolution["packages"][0]["wheels"][0]["url"] = mirror + "/fixture-1.0-py3-none-any.whl"
+        with pytest.raises(DownloadError):
+            retain_wheels(resolution, Path(sys.executable), store, tmp_path)
+    assert not cached.exists()
 
 
 def test_availability_preserves_locked_source_query_without_writing(tmp_path: Path) -> None:

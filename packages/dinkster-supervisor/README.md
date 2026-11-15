@@ -26,6 +26,12 @@ Dinkster deliberately stays out of the ComfyUI port neighborhood
 (8188/8189/8199) so a Dinkster install never collides with a running
 ComfyUI or comfy-runner allocation.
 
+Contributor wheel acquisition uses the resolver's SHA-256 to verify each selected
+wheel. When resolver metadata omits the size, the downloader measures the verified
+file rather than issuing a separate HEAD request. An already verified retained
+wheel needs no network request. Explicit sizes still enforce byte counts, and
+unknown-size interrupted HTTP downloads restart without guessing a resume range.
+
 ## Signed security feed refresh
 
 The supervisor-owned `dinkster_supervisor.security.host.SecurityHost` reads independently provisioned
