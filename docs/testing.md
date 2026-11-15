@@ -114,7 +114,8 @@ Pyright checks with `bash scripts/ci-fast.sh checks`. Draft pull requests run
 only these checks. Ready pull requests run the whole configured kept Linux
 suite with CPU torch through `bash scripts/ci-fast.sh tests`, including
 pack-only changes. Frontend decoding reads the live catalog of an isolated
-CPU generation acquired from the published main channel. Setup and shutdown use
+CPU generation acquired from the published Stable channel, so schema decoding
+does not require a development channel publication. Setup and shutdown use
 the hash-verified supervisor wheel from that same engine release in an isolated
 uv environment, so management speaks the published engine's protocol. Exact
 engine and base digests prevent channel movement from mixing releases.

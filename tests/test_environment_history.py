@@ -625,7 +625,12 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     } == before
                     diagnostic = missing_lock.stdout + missing_lock.stderr
                     assert "healthy@" + entry.version + " dependency lock" in diagnostic, diagnostic
-                    assert "target exact source restore refused:" in diagnostic, diagnostic
+                    if number == 2:
+                        assert "target exact source restore refused:" in diagnostic, diagnostic
+                    else:
+                        assert "select healthy@1.0.0 from registry:" in diagnostic, diagnostic
+                        assert entries[0].artifact_digest in diagnostic, diagnostic
+                        assert "target exact source restore refused:" not in diagnostic, diagnostic
                     assert f"retained base {base_id} is missing or linked" in diagnostic, diagnostic
                     for path in engine_wheels:
                         name = parse_wheel_filename(path.name)[0]
