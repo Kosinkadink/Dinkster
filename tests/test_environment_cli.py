@@ -333,16 +333,35 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
                 if expected == 31
                 else ["update", "--pack", "healthy-nodes"]
             )
-            code, result = _run(
+            selection = ("source", *arguments, "--ref", branch, "--package-index", index.as_uri())
+            code, preview = _run(root, *selection, "--plan")
+            assert code == 0, preview
+            approval = preview["sourceApproval"]
+            code, same = _run(root, *selection, "--source-approval", approval, "--plan")
+            assert code == 0 and same["sourceApproval"] == approval, same
+            code, refused = _run(
                 root,
-                "source",
-                *arguments,
-                "--ref",
-                branch,
+                *selection,
                 "--package-index",
-                index.as_uri(),
+                index.as_uri() + "/changed",
+                "--source-approval",
+                approval,
                 "--yes",
-                timeout=180,
+            )
+            assert code == 1 and "source inputs changed" in refused["error"], refused
+            code, refused = _run(
+                root,
+                *selection,
+                "--ref",
+                "managed-pack-new" if expected == 31 else "managed-pack",
+                "--source-approval",
+                approval,
+                "--yes",
+            )
+            assert code == 1 and "source inputs changed" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == preview["current"]
+            code, result = _run(
+                root, *selection, "--source-approval", approval, "--yes", timeout=180
             )
             assert code == 0, result
             current = root / "generations" / str(result["current"])
@@ -628,17 +647,20 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         first = result["current"]
         first_root = root / "generations" / str(first)
         first_manifest = json.loads((first_root / "engine-manifest.json").read_text())
-        code, result = _run(
-            root,
-            "source",
-            "update",
-            "--library",
-            "dinkster-inference",
-            "--ref",
-            "library-new",
-            "--yes",
-            timeout=180,
-        )
+        selection = ("source", "update", "--library", "dinkster-inference", "--ref", "library-new")
+        code, preview = _run(root, *selection, "--plan")
+        assert code == 0, preview
+        approval = preview["sourceApproval"]
+        settings_path = root / "project.json"
+        settings = settings_path.read_bytes()
+        changed_settings = json.loads(settings)
+        changed_settings["port"] += 1
+        settings_path.write_text(json.dumps(changed_settings))
+        code, refused = _run(root, *selection, "--source-approval", approval, "--yes")
+        assert code == 1 and "source inputs changed" in refused["error"], refused
+        assert _run(root, "status")[1]["current"] == first
+        settings_path.write_bytes(settings)
+        code, result = _run(root, *selection, "--source-approval", approval, "--yes", timeout=180)
         assert code == 0, result
         current = root / "generations" / str(result["current"])
         record = Generation.read(current / "generation.json")
@@ -750,7 +772,26 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             "--yes",
             "--json",
         ]
-        assert environment.run(environment.argument_parser().parse_args(frontend_args)) == 0
+        frontend_plan = ["--plan" if value == "--yes" else value for value in frontend_args]
+        assert environment.run(environment.argument_parser().parse_args(frontend_plan)) == 0
+        preview = json.loads(capsys.readouterr().out)
+        approval = preview["sourceApproval"]
+        approved = [*frontend_args, "--source-approval", approval]
+        artifact["run"] += 1
+        assert environment.run(environment.argument_parser().parse_args(approved)) == 1
+        refused = json.loads(capsys.readouterr().out)
+        assert "source inputs changed" in refused["error"], refused
+        assert _run(root, "status")[1]["current"] == preview["current"]
+        artifact["run"] -= 1
+        with monkeypatch.context() as missing_bundle:
+            missing_bundle.setattr(
+                environment_frontend_sources, "frontend_ci_artifact", lambda _: None
+            )
+            assert environment.run(environment.argument_parser().parse_args(approved)) == 1
+            refused = json.loads(capsys.readouterr().out)
+            assert "source inputs changed" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == preview["current"]
+        assert environment.run(environment.argument_parser().parse_args(approved)) == 0
         json.loads(capsys.readouterr().out)
         all_sources = _run(root, "status")[1]["sources"]
         assert all_sources["packs"]["healthy-nodes"]["commit"] == str(commits[0])
@@ -1606,8 +1647,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         (tools / Path(uv).name).chmod(0o755)
         monkeypatch.setenv("PATH", str(tools))
         assert shutil.which("git") is None
-        code, result = _run(
-            root,
+        selection = (
             "source",
             "add",
             "https://github.com/Kosinkadink/source",
@@ -1617,8 +1657,21 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
             "engine",
             "--package-index",
             package_index,
-            "--yes",
         )
+        code, preview = _run(root, *selection, "--plan")
+        assert code == 0, preview
+        approval = preview["sourceApproval"]
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/engine"].set_target(changed)
+        repository.free()
+        code, refused = _run(root, *selection, "--source-approval", approval, "--yes")
+        assert code == 1 and "source inputs changed" in refused["error"], refused
+        assert _run(root, "status")[1]["current"] == preview["current"]
+        assert not requests
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/engine"].set_target(commit)
+        repository.free()
+        code, result = _run(root, *selection, "--source-approval", approval, "--yes")
         assert code == 0, json.dumps(result)
         assert requests and {path for path, _ in requests} == {
             "/simple/fixture-new/",

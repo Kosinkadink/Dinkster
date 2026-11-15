@@ -941,6 +941,14 @@ Rollback uses the recorded built bytes even after its branch moves. Missing reta
 local builds refuse updates and recovery instead of resolving or rebuilding.
 `source release` returns to the most recent published generation.
 
+Managed Git engine, pack, inference/helper and frontend plans return a
+`sourceApproval` digest. Repeat the same add/update selection with
+`--source-approval DIGEST --yes` to require the reviewed project, Git commit,
+content and acquisition settings. A changed ref, project selection or frontend
+CI bundle refuses before building or activating a generation. The digest does
+not contain temporary checkout paths. Direct `--yes` remains available without
+a prior plan; return-to-release uses the existing history restore contract.
+
 ### Managed Git frontend assets
 
 `source add URL --frontend --ref REF` and `source update --frontend` select

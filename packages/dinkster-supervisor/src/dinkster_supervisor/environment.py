@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import ExitStack
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
@@ -401,6 +402,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError("offline setup requires published source and dependency locks")
     developing = args.operation == "develop"
     source_engine = getattr(args, "engine_checkout", None)
+    if getattr(args, "source_approval", None) and source_engine is None:
+        raise EnvironmentError("--source-approval requires --engine-source")
     frontend_version = getattr(args, "frontend_version", None)
     if getattr(args, "frontend_approval", None) and not frontend_version:
         raise EnvironmentError("--frontend-approval requires --frontend-version")
@@ -780,8 +783,19 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     source_files_digest = None
     if source_engine is not None:
         from .environment_development import source_files, source_identity
+        from .environment_sources import source_approval
 
         source_files_digest = source_identity(source_files(source_engine))
+        source_selection = {
+            "engine": args.engine_origin,
+            "contentDigest": source_files_digest,
+            "gitMirror": args.git_mirror,
+            "packageIndex": package_index or "https://pypi.org/simple",
+            "frontend": result.get("frontend"),
+            "inference": deepcopy(inference),
+            "inputs": {str(path): identity for path, identity in supplied_inputs.items()},
+        }
+        result["sourceApproval"] = source_approval(root, source_selection, args.source_approval)
         plan.extend(
             [
                 "source: unpublished and non-reproducible; explicitly selected Git engine",
@@ -927,6 +941,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
 
             if source_identity(source_files(source_engine)) != source_files_digest:
                 raise EnvironmentError("Git source changed after planning; request a new plan")
+            from .environment_sources import source_approval
+
+            source_approval(root, source_selection, cast("str", result["sourceApproval"]))
         if adoption is not None and (
             changed_inputs or standalone_inputs(cast("Path", adopting), root, store) != adoption
         ):
@@ -1875,6 +1892,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
                 package_index=args.package_index,
                 apply=args.yes,
                 frontend=args.frontend,
+                approval=args.source_approval,
             )
         )
         return 0
@@ -1890,6 +1908,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
                 mirror=args.git_mirror,
                 package_index=args.package_index,
                 apply=args.yes,
+                approval=args.source_approval,
             )
         )
         return 0
@@ -1945,6 +1964,7 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
             value,
             *(["--git-mirror", git_mirror] if git_mirror is not None else []),
             *(["--package-index", args.package_index] if args.package_index is not None else []),
+            *(["--source-approval", args.source_approval] if args.source_approval else []),
             *(["--yes"] if args.yes else ["--plan"]),
             "--json",
         ]
@@ -2022,6 +2042,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
             command.add_argument("--ref", help="branch, tag, PR ref or exact commit")
             command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
             command.add_argument("--package-index", help="index for missing locked wheels")
+            command.add_argument("--source-approval", help="require the managed source plan digest")
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true")
         confirmation.add_argument("--plan", action="store_true")
@@ -2110,6 +2131,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
         command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
+        command.add_argument("--source-approval", help="require the managed source plan digest")
         command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
         command.add_argument("--inference", help="exact inference version or full source commit")
         command.add_argument("--frontend-version", help="exact published dinkster-frontend version")

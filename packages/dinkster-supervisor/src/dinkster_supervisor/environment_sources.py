@@ -50,6 +50,28 @@ from .environment_state import (
 )
 
 
+def source_approval(root: Path, selection: object, expected: str | None = None) -> str:
+    """Bind confirmation to selected inputs and the project being changed."""
+    from .environment_state import read_current
+
+    root = root.resolve()
+    current = read_current(root)
+    paths = [root / "project.json", root / "store"]
+    if current is not None:
+        paths.append(root / "generations" / str(current) / "generation.json")
+    approval = source_identity(
+        {
+            "root": str(root),
+            "current": current,
+            "project": [content_digest(path) if path.exists() else None for path in paths],
+            "selection": selection,
+        }
+    )
+    if expected is not None and expected != approval:
+        raise EnvironmentError("source inputs changed from the approved plan; request a new plan")
+    return approval
+
+
 @contextmanager
 def acquired_source_engine(args: Any) -> Generator[Any]:
     """Fetch only an explicitly selected managed engine, without enabling develop mode."""
@@ -76,6 +98,7 @@ def select_source_pack(
     mirror: str | None,
     package_index: str | None,
     apply: bool,
+    approval: str | None = None,
 ) -> dict[str, Any]:
     """Replace only a selected Git pack through ordinary generation provisioning."""
     from urllib.parse import urlencode
@@ -163,6 +186,16 @@ def select_source_pack(
         result = {
             "current": generation.number,
             "sources": {"packs": {**previous, name: selected}},
+            "sourceApproval": source_approval(
+                root,
+                {
+                    "pack": selected,
+                    "packageIndex": package_index
+                    or json.loads(settings).get("packageIndex")
+                    or "https://pypi.org/simple",
+                },
+                approval,
+            ),
             "kind": "source",
             "published": False,
             "reproducible": False,
@@ -279,6 +312,7 @@ def select_source_library(
     package_index: str | None,
     apply: bool,
     frontend: bool = False,
+    approval: str | None = None,
 ) -> dict[str, Any]:
     """Replace one shared library while retaining the installed base and all other pins."""
     from urllib.parse import urlencode
@@ -405,6 +439,22 @@ def select_source_library(
         result = {
             "current": generation.number,
             "sources": sources,
+            "sourceApproval": source_approval(
+                root,
+                {
+                    "selected": selected,
+                    "frontendArtifact": {
+                        key: artifact[key]
+                        for key in ("id", "run", "name", "digest", "size_in_bytes")
+                    }
+                    if artifact is not None
+                    else None,
+                    "packageIndex": package_index
+                    or json.loads(settings).get("packageIndex")
+                    or "https://pypi.org/simple",
+                },
+                approval,
+            ),
             "kind": "source",
             "published": False,
             "reproducible": False,

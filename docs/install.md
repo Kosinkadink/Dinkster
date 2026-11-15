@@ -354,6 +354,15 @@ bytes; unavailable inputs are reported rather than replaced by a new build.
 published generation. Ordinary release setup remains unchanged and does not
 fetch Git sources implicitly.
 
+For engine, pack, library and frontend add/update commands, `--plan --json`
+returns `sourceApproval`. Repeat the same selection with
+`--source-approval sha256:DIGEST_FROM_PLAN --yes` to bind confirmation to the
+reviewed project state, exact Git content, mirror/package-index settings and
+frontend CI bundle (or local-build fallback). Changed inputs require a new plan;
+temporary checkout paths do not invalidate an unchanged selection. The same flag
+is accepted by `update --engine-source URL`. Direct `--yes` remains an explicit
+opt-in without a prior plan; `source release` retains history restore semantics.
+
 ### Managed pack sources
 
 Select a single pack without replacing the installed engine or other packs:
