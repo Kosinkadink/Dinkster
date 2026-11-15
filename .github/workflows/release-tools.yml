@@ -225,6 +225,32 @@ jobs:
           name: supervisor-tools-release
           path: .release/tools/
           if-no-files-found: error
+      - name: Wait for the first Nightly channel before entering publication serialization
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        timeout-minutes: 31
+        env:
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: |
+          uv run --no-project --python .venv python - <<'PY'
+          import os
+          import time
+          from urllib.error import HTTPError
+          from dinkster_supervisor.environment_artifacts import parse_metadata
+          from dinkster_supervisor.environment_downloads import DownloadError, read_metadata
+          from dinkster_supervisor.environment_state import Channel
+
+          deadline = time.monotonic() + 1800
+          while True:
+              try:
+                  Channel.parse(parse_metadata(read_metadata(os.environ['R2_PUBLIC_BASE_URL'], 'channels/nightly.json')))
+                  break
+              except DownloadError as error:
+                  cause = error.__cause__
+                  if not isinstance(cause, HTTPError) or cause.code != 404 or time.monotonic() >= deadline:
+                      raise
+                  print('Waiting for the first engine Nightly publication', flush=True)
+                  time.sleep(10)
+          PY
 
   publish:
     needs: finalize
