@@ -948,7 +948,10 @@ def resolve_compatible_release(
                 index=index,
                 engine_packages=engine_packages,
                 markers=markers,
-                errors=reasons,
+                # Availability failures must retain this exact source for the
+                # subsequent lock plan and source-restoration diagnostics.
+                errors=[],
+                incompatible=reasons,
             )
         if reasons:
             rejected[candidate] = "; ".join(reasons)
@@ -1161,6 +1164,7 @@ def read_registry_pack_locks(
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
     index: StaticPackIndex | None = None,
     errors: list[str] | None = None,
+    incompatible: list[str] | None = None,
     engine_packages: Mapping[str, str] | None = None,
     markers: Mapping[str, str] | None = None,
 ) -> tuple[PackLock, ...]:
@@ -1189,13 +1193,20 @@ def read_registry_pack_locks(
                 if isinstance(bindings, dict)
                 else None
             )
-            if wheel_digest != entry.artifact_digest or not isinstance(binding, dict):
+            if wheel_digest != entry.artifact_digest or not isinstance(bindings, dict):
+                raise InstallError("selected release or published binding differs")
+            if variant not in bindings and incompatible is not None:
+                incompatible.append(f"{subject}: variant is not published")
+                continue
+            if not isinstance(binding, dict):
                 raise InstallError("selected release or published binding differs")
             facts = cast("dict[str, object]", binding)
             digest, size = facts.get("digest"), facts.get("size")
             lock_path = "locks/" + str(digest).replace(":", "/") + ".json"
+            published_base = facts.get("baseId")
             if (
-                facts.get("baseId") != base_id
+                not isinstance(published_base, str)
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", published_base) is None
                 or facts.get("artifactDigest") != entry.artifact_digest
                 or facts.get("url") != lock_path
                 or not isinstance(digest, str)
@@ -1203,6 +1214,11 @@ def read_registry_pack_locks(
                 or type(size) is not int
                 or not 1 <= cast("int", size) <= MEBIBYTE
             ):
+                raise InstallError("invalid archive/base/lock binding")
+            if published_base != base_id:
+                if incompatible is not None:
+                    incompatible.append(f"{subject}: requires base {published_base}")
+                    continue
                 raise InstallError("invalid archive/base/lock binding")
             payload = index.lock_bytes(
                 registry, "/static/" + lock_path, digest, cast("int", size), timeout=timeout
@@ -1237,6 +1253,9 @@ def read_registry_pack_locks(
                             f"engine provides {api_version or 'absent'}"
                         )
                 if conflicts:
+                    if incompatible is not None:
+                        incompatible.append(f"{subject}: {'; '.join(conflicts)}")
+                        continue
                     raise InstallError("; ".join(conflicts))
             locks.append(
                 replace(
