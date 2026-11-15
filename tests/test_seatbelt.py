@@ -205,6 +205,7 @@ asyncio.run(main())
 
 @native
 def test_private_metal_cache_is_per_pack(tmp_path: Path) -> None:
+    assert sys.platform == "darwin"
     base = os.confstr(65538)
     assert base
 
@@ -330,6 +331,7 @@ def test_egress_and_unrelated_unix_socket_denial(
             await writer.wait_closed()
 
         server = await asyncio.start_server(echo, "127.0.0.1", 0)
+        assert sys.platform == "darwin"
         other_server = await asyncio.start_unix_server(echo, path=other)
         port = server.sockets[0].getsockname()[1]
 

@@ -239,6 +239,8 @@ def detect_seatbelt() -> SeatbeltCapability:
 
 
 def _private_cache(pack_root: Path) -> tuple[Path | None, str]:
+    if sys.platform != "darwin":
+        return None, ""
     suffix = "dinkster-" + hashlib.sha256(os.fsencode(pack_root.resolve())).hexdigest()
     try:
         base = os.confstr(65538)  # _CS_DARWIN_USER_CACHE_DIR
