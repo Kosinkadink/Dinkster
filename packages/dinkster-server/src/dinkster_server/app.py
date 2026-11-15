@@ -2427,7 +2427,13 @@ async def handle_nodes(request: web.Request) -> web.Response:
             entry["residentAffinity"] = {
                 "types": sorted(residency.types),
                 "routes": [
-                    {"process": route.process, "pack": route.pack, "worker": route.worker}
+                    {
+                        "process": route.process,
+                        "pack": route.pack,
+                        "worker": route.worker,
+                        "unplaced": route.unplaced,
+                        **({"provider": route.provider} if route.provider is not None else {}),
+                    }
                     for route in residency.routes.get(type_id, ())
                 ],
             }

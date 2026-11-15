@@ -8,7 +8,7 @@ from types import MappingProxyType
 
 from dinkster_schema import NodeSchema, TypeExpr
 
-from .model import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode
+from .model import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, TypedLiteral
 from .validate import Diagnostic, graph_output_types
 
 
@@ -17,6 +17,8 @@ class ResidentRoute:
     process: str
     pack: str
     worker: str = "local"
+    unplaced: bool = True
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,46 +99,59 @@ class ResidentTopology:
                 }
             return {source[0]} if source[0] in nodes else set()
 
+        edges = [
+            (producer, consumer, input_id)
+            for consumer, input_id, source in inputs
+            if (expr := outputs.get(source)) is not None and self._resident(expr)
+            for producer in sorted(producers(source))
+        ]
+        consumers = {consumer for _, consumer, _ in edges}
         candidates: dict[str, tuple[ResidentRoute, ...]] = {}
         for path, node in nodes.items():
             routes = self.routes.get(node.node_type, ())
             preferred = None if placement is None else placement(path)
-            candidates[path] = tuple(
-                route for route in routes if preferred is None or route.worker == preferred
+            routes = tuple(
+                route
+                for route in routes
+                if (route.unplaced if preferred is None else route.worker == preferred)
             )
+            provider = node.inputs.get("provider")
+            if isinstance(provider, TypedLiteral):
+                provider = provider.value
+            if isinstance(provider, str) and any(route.provider is not None for route in routes):
+                routes = tuple(route for route in routes if route.provider == provider)
+            elif provider is None and any(route.provider == "builtin" for route in routes):
+                routes = tuple(route for route in routes if route.provider == "builtin")
+            candidates[path] = routes if path in consumers else routes[:1]
         components = {path: {path} for path in nodes}
         problems: list[Diagnostic] = []
-        for consumer, input_id, source in inputs:
-            expr = outputs.get(source)
-            if expr is None or not self._resident(expr):
+        for producer, consumer, input_id in edges:
+            left = components[producer]
+            right = components[consumer]
+            if left is right or not candidates[producer] or not candidates[consumer]:
                 continue
-            for producer in sorted(producers(source)):
-                left = components[producer]
-                right = components[consumer]
-                if left is right or not candidates[producer] or not candidates[consumer]:
-                    continue
-                members = left | right
-                processes: set[str] | None = None
-                for member in sorted(members):
-                    choices = {route.process for route in candidates[member]}
-                    processes = choices if processes is None else processes & choices
-                if not processes:
-                    problems.append(
-                        Diagnostic(
-                            "error",
-                            "resident-process-boundary",
-                            f"Pack '{candidates[consumer][0].pack}' "
-                            "cannot receive a resident value "
-                            f"from pack '{candidates[producer][0].pack}' "
-                            "in another process; admit the pack to the shared inference process "
-                            "or use the owner's node through an engine-run node on a reference.",
-                            consumer,
-                            input_id,
-                        )
+            members = left | right
+            processes: set[str] | None = None
+            for member in sorted(members):
+                choices = {route.process for route in candidates[member]}
+                processes = choices if processes is None else processes & choices
+            if not processes:
+                problems.append(
+                    Diagnostic(
+                        "error",
+                        "resident-process-boundary",
+                        f"Pack '{candidates[consumer][0].pack}' "
+                        "cannot receive a resident value "
+                        f"from pack '{candidates[producer][0].pack}' "
+                        "in another process; admit the pack to the shared inference process "
+                        "or use the owner's node through an engine-run node on a reference.",
+                        consumer,
+                        input_id,
                     )
-                else:
-                    for member in members:
-                        components[member] = members
+                )
+            else:
+                for member in members:
+                    components[member] = members
         return problems
 
     def _resident(self, expr: TypeExpr) -> bool:

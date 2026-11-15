@@ -77,6 +77,45 @@ def test_resident_chain_requires_one_common_process(shared: bool) -> None:
         assert problems[0].input_id == "value"
 
 
+@pytest.mark.parametrize(
+    ("provider", "worker", "refused"),
+    [(None, None, True), ("alternate", None, False), (None, "remote", False)],
+)
+def test_resident_routes_follow_default_provider_and_worker_placement(
+    provider: str | None, worker: str | None, refused: bool
+) -> None:
+    model = TypeExpr.concrete("custom.RESIDENT")
+    schemas = {
+        "source": NodeSchema("source", outputs=(OutputSpec("out", model),)),
+        "sink": NodeSchema("sink", inputs=(InputSpec("value", model),)),
+    }
+    topology = ResidentTopology(
+        frozenset({"custom.RESIDENT"}),
+        {
+            "source": (
+                ResidentRoute("isolated", "source", provider="builtin"),
+                ResidentRoute("shared", "source", provider="alternate"),
+                ResidentRoute("shared", "source", "remote", False, "builtin"),
+            ),
+            "sink": (ResidentRoute("shared", "sink"),),
+        },
+    )
+    graph = Graph(
+        {
+            "a": GraphNode(
+                "source", {} if provider is None else {"provider": TypedLiteral("STRING", provider)}
+            ),
+            "b": GraphNode("sink", {"value": Link("a", "out")}),
+        }
+    )
+    problems = topology.validate(graph, schemas, lambda path: worker if path == "a" else None)
+    assert bool(problems) is refused
+    if refused:
+        assert problems[0].node_id == "b"
+        assert "pack 'source'" in problems[0].message
+        assert "Pack 'sink'" in problems[0].message
+
+
 @pytest.mark.parametrize("lost", ["incoming", "outgoing", "region-input"])
 def test_retired_node_refuses_to_silently_drop_live_connections(lost: str) -> None:
     integer = TypeExpr.concrete("INT")

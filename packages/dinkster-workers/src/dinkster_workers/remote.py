@@ -192,6 +192,10 @@ class RemoteWorker:
         return self._session.schemas
 
     @property
+    def resident_types(self) -> tuple[str, ...]:
+        return self._session.resident_types
+
+    @property
     def combo_choices(self) -> Mapping[str, tuple[str, ...]]:
         """The remote pack's combo choice lists (choice-list id -> values),
         as announced by the service's hello; empty when the pack declares

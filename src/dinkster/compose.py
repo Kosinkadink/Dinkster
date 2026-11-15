@@ -3908,14 +3908,20 @@ class ServingComposer:
             with contextlib.closing(hold_produced_job(self._pack_scratch_root, run_id)):
                 yield
 
-        resident_types = frozenset(
-            tid
-            for tid in self.composition._registry.type_ids()
-            if self.composition._registry.spec(tid).may_hold_resident
-        ) | frozenset(
-            tid
-            for record in self._records.values()
-            for tid in getattr(record.worker, "resident_types", ())
+        resident_types = (
+            frozenset(
+                tid
+                for tid in self.composition._registry.type_ids()
+                if self.composition._registry.spec(tid).may_hold_resident
+            )
+            | frozenset(
+                tid
+                for record in self._records.values()
+                for tid in getattr(record.worker, "resident_types", ())
+            )
+            | frozenset(
+                tid for remote in self._remotes.values() for tid in remote.worker.resident_types
+            )
         )
         resident_routes = {
             node_type: tuple(
@@ -3927,6 +3933,8 @@ class ServingComposer:
                     ),
                     pack=arm.implementation_pack or arm.name,
                     worker=arm.remote or "local",
+                    unplaced=arm.remote is None or arm.name == arm.remote,
+                    provider=arm.generation_provider or arm.vision_provider,
                 )
                 for arm in arms
             )

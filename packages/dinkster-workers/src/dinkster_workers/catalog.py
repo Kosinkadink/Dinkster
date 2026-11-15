@@ -154,6 +154,8 @@ def worker_declarations_match_catalog(worker: Any, catalog: PackCatalog) -> bool
             set(actual["registeredTypes"])
             | {type_id for type_id in expected["registeredTypes"] if type_id in registry}
         )
+        declared = set(expected["registeredTypes"]) | set(expected["residentTypes"])
+        actual["residentTypes"] = sorted(set(actual["residentTypes"]) & declared)
     actual_renditions = cast("list[dict[str, object]]", actual.pop("renditions"))
     expected_renditions = cast("list[dict[str, object]]", expected.pop("renditions"))
     return actual == expected and all(item in actual_renditions for item in expected_renditions)
