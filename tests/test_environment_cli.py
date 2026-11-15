@@ -817,7 +817,12 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
     tmp_path, monkeypatch, git_server, capsys
 ):
     import pygit2
-    from dinkster_supervisor import environment, environment_frontend_sources
+    from dinkster_supervisor import (
+        environment,
+        environment_artifacts,
+        environment_downloads,
+        environment_frontend_sources,
+    )
     from dinkster_supervisor.environment_state import Generation, interpreter
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from test_environment_frontend_sources import _artifact
@@ -879,6 +884,41 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
     commit = repository.create_commit(
         "refs/heads/frontend-ci", signature, signature, "frontend", tree.write_tree(repository), []
     )
+    tree.add(
+        pygit2.IndexEntry(
+            "selected-ref.txt", repository.create_blob(b"second ref"), pygit2.enums.FileMode.BLOB
+        )
+    )
+    newer = repository.create_commit(
+        "refs/heads/frontend-next",
+        signature,
+        signature,
+        "next",
+        tree.write_tree(repository),
+        [commit],
+    )
+    library = pygit2.Index()
+    for name, payload in {
+        "pyproject.toml": (
+            '[project]\nname="fixture-helper"\nversion="9.0"\n'
+            'dependencies=["fixture-base==1.0"]\n'
+            '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        ),
+        "fixture_helper/__init__.py": "VALUE = 83\n",
+    }.items():
+        library.add(
+            pygit2.IndexEntry(
+                name, repository.create_blob(payload.encode()), pygit2.enums.FileMode.BLOB
+            )
+        )
+    helper = repository.create_commit(
+        "refs/heads/frontend-helper",
+        signature,
+        signature,
+        "helper",
+        library.write_tree(repository),
+        [],
+    )
     repository.free()
     artifact = _artifact(tmp_path, str(commit))
     monkeypatch.setattr(
@@ -904,10 +944,45 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
         "--json",
     ]
     try:
+        code, combined = _run(
+            root,
+            "source",
+            "add",
+            "https://github.com/Kosinkadink/source",
+            "--library",
+            "fixture-helper",
+            "--ref",
+            "frontend-helper",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, combined
+        assert _run(root, "stop", "--yes")[0] == 0
+        helper_origin = _run(root, "status")[1]["sources"]["libraries"]["fixture-helper"]
+        assert helper_origin["commit"] == str(helper)
+        base = Generation.read(root / "generations/1/generation.json").base
+        base_files = {
+            path: content_digest(path)
+            for path in object_path(Path(fixture["store"]) / "bases", base).rglob("*")
+            if path.is_file()
+        }
+        tools = tmp_path / "frontend-no-git-tools"
+        tools.mkdir()
+        uv = shutil.which("uv")
+        assert uv is not None
+        shutil.copyfile(uv, tools / Path(uv).name)
+        (tools / Path(uv).name).chmod(0o755)
+        monkeypatch.setenv("PATH", str(tools))
+        assert shutil.which("git") is None
+        requests = len(git_server["requests"])
+        tunnels = len(git_server["tunnels"])
+        generations = sorted(path.name for path in (root / "generations").iterdir())
         assert environment.run(environment.argument_parser().parse_args([*args, "--plan"])) == 0
         preview = json.loads(capsys.readouterr().out)
         assert any("CI bundle" in line for line in preview["plan"])
-        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        assert sorted(path.name for path in (root / "generations").iterdir()) == generations
         assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 0
         applied = json.loads(capsys.readouterr().out)
         selected = _run(root, "status")[1]["sources"]["frontend"]
@@ -952,6 +1027,183 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
             html(root / "generations" / str(restored["current"]))
             == "<main>selected frontend</main>"
         )
+        assert _run(root, "stop", "--yes")[0] == 0
+        original_artifact = artifact
+        next_assets = tmp_path / "next-assets"
+        next_assets.mkdir()
+        artifact = _artifact(next_assets, str(newer), extra="assets/next-ref.js")
+        update_args = [
+            "--root",
+            str(root),
+            "source",
+            "update",
+            "--frontend",
+            "--ref",
+            "frontend-next",
+            "--yes",
+            "--json",
+        ]
+        assert environment.run(environment.argument_parser().parse_args(update_args)) == 0
+        changed = json.loads(capsys.readouterr().out)
+        status = _run(root, "status")[1]
+        assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
+        newer_origin = status["sources"]["frontend"]
+        assert newer_origin["commit"] == str(newer)
+        assert newer_origin["requestedRef"] == "frontend-next"
+        assert newer_origin["wheel"]["sha256"] != selected["wheel"]["sha256"]
+        changed_root = root / "generations" / str(changed["current"])
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(changed_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; import fixture_helper; "
+                    "print(fixture_helper.VALUE, "
+                    "files('dinkster_frontend').joinpath('static/assets/next-ref.js').read_text())",
+                ],
+                text=True,
+            ).strip()
+            == "83 marker=73"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        before = _run(root, "status")[1]["current"]
+        generations = sorted(path.name for path in (root / "generations").iterdir())
+        assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 1
+        refused = json.loads(capsys.readouterr().out)
+        assert "identity differs" in refused["error"]
+        assert _run(root, "status")[1]["current"] == before
+        assert sorted(path.name for path in (root / "generations").iterdir()) == generations
+        artifact = original_artifact
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/frontend-ci"].set_target(newer)
+        repository.free()
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        status = _run(root, "status")[1]
+        assert status["sources"]["frontend"] == selected
+        assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
+        restored_root = root / "generations" / str(restored["current"])
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(restored_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; "
+                    "print(files('dinkster_frontend').joinpath('static/assets/next-ref.js').is_file())",
+                ],
+                text=True,
+            ).strip()
+            == "False"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        history = _run(root, "history")[1]["history"]
+        exported = history[-1]["snapshot"]
+        manifest = json.loads(exported["metadata"]["engine-manifest.json"])
+        assert exported["source"] == "source"
+        assert manifest["sources"]["frontend"] == selected
+        assert manifest["sources"]["libraries"]["fixture-helper"] == helper_origin
+        wheel = selected["wheel"]
+        store = Path(fixture["store"])
+        cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
+        payload = cached.read_bytes()
+        cached.unlink()
+        try:
+            code, refused = _run(
+                root,
+                "update",
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(artifacts),
+                "--yes",
+                timeout=180,
+            )
+            assert code == 1 and "retained Git library wheel" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == restored["current"]
+            assert _run(root, "status")[1]["sources"] == manifest["sources"]
+        finally:
+            cached.write_bytes(payload)
+        published = original_wheel(tmp_path, "dinkster_frontend", "0.3.0", 0)
+        with zipfile.ZipFile(published, "a") as archive:
+            archive.writestr("dinkster_frontend/__init__.py", "")
+            archive.writestr(
+                "dinkster_frontend/manifest.json",
+                json.dumps(
+                    {
+                        "format": "dinkster.frontend/1",
+                        "repository": "Kosinkadink/Dinkster-Frontend",
+                        "version": "0.3.0",
+                        "engineApi": {"min": 1, "max": 2},
+                    }
+                ),
+            )
+            archive.writestr("dinkster_frontend/static/index.html", "published replacement")
+        published_row = {
+            "filename": published.name,
+            "url": "https://files.pythonhosted.org/packages/" + published.name,
+            "digests": {"sha256": content_digest(published)[7:]},
+            "size": published.stat().st_size,
+        }
+        read = environment_downloads.read_metadata
+        download = environment_downloads.fetch_artifact
+
+        def metadata(location, path):
+            if location == "https://pypi.org/pypi/dinkster-frontend":
+                assert path == "0.3.0/json"
+                return json.dumps({"urls": [published_row]}).encode()
+            return read(location, path)
+
+        def transfer(locations, name, destination, sha, size):
+            if locations == ("https://files.pythonhosted.org/packages",):
+                locations = (str(tmp_path),)
+            return download(locations, name, destination, sha, size)
+
+        monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
+        monkeypatch.setattr(environment_downloads, "fetch_artifact", transfer)
+        monkeypatch.setattr(environment_artifacts, "fetch_artifact", transfer)
+        published_args = [
+            "--root",
+            str(root),
+            "update",
+            "--frontend-version",
+            "0.3.0",
+            "--catalog-lock",
+            str(catalog),
+            "--artifacts",
+            str(artifacts),
+            "--yes",
+            "--json",
+        ]
+        assert environment.run(environment.argument_parser().parse_args(published_args)) == 0
+        replacement = json.loads(capsys.readouterr().out)
+        status = _run(root, "status")[1]
+        assert "frontend" not in status["sources"]
+        assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
+        replacement_root = root / "generations" / str(replacement["current"])
+        assert html(replacement_root) == "published replacement"
+        assert (
+            Generation.read(replacement_root / "generation.json").base
+            == Generation.read(restored_root / "generation.json").base
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, recovered = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, recovered
+        assert _run(root, "status")[1]["sources"]["frontend"] == selected
+        assert (
+            html(root / "generations" / str(recovered["current"]))
+            == "<main>selected frontend</main>"
+        )
+        assert {path: content_digest(path) for path in base_files} == base_files
+        assert len(git_server["requests"]) > requests
+        assert all(
+            path.startswith("/Kosinkadink/source.git/")
+            for path in git_server["requests"][requests:]
+        )
+        assert len(git_server["tunnels"]) == tunnels
     finally:
         assert _run(root, "stop", "--yes")[0] == 0
 
