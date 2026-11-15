@@ -1472,13 +1472,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        capability = detect_bubblewrap()
-        available = (
-            capability.available and capability.bwrap is not None and capability.user_namespaces
-        )
-        detail = capability.detail
-        if capability.available and not capability.user_namespaces:
-            detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
+        if sys.platform == "darwin":
+            from .seatbelt import detect_seatbelt
+
+            seatbelt = detect_seatbelt()
+            available = seatbelt.available and seatbelt.sandbox_exec is not None
+            detail = seatbelt.detail
+        else:
+            capability = detect_bubblewrap()
+            available = (
+                capability.available and capability.bwrap is not None and capability.user_namespaces
+            )
+            detail = capability.detail
+            if capability.available and not capability.user_namespaces:
+                detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
         report = {
             "format": "dinkster.sandbox-readiness/1",
             "available": available,

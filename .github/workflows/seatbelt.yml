@@ -13,6 +13,7 @@ on:
       - packages/dinkster-workers/src/dinkster_workers/__init__.py
       - src/dinkster/compose.py
       - tests/test_seatbelt.py
+      - tests/test_doctor.py
       - uv.lock
 
 permissions:
@@ -33,4 +34,4 @@ jobs:
       - run: |
           uv run --no-project python scripts/develop.py setup --variant mac-arm64 --yes
           uv run --no-project python scripts/develop.py stop --yes
-          uv run --no-project python scripts/develop.py run -- python -m pytest tests/test_seatbelt.py -n 0 -q
+          uv run --no-project python scripts/develop.py run -- python -m pytest tests/test_seatbelt.py tests/test_doctor.py -n 0 -q

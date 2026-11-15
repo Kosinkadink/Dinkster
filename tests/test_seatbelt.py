@@ -30,6 +30,7 @@ def make_spec(tmp_path: Path, script: str) -> LaunchSpec:
     return LaunchSpec((sys.executable, "-c", script), {}, endpoint, pack, sys.executable, True)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Seatbelt profiles use POSIX paths")
 @pytest.mark.parametrize("grant", ["/Library", "/private", "/Users", str(Path.home())])
 def test_broad_grants_refuse(tmp_path: Path, grant: str) -> None:
     spec = make_spec(tmp_path, "pass")
@@ -39,6 +40,7 @@ def test_broad_grants_refuse(tmp_path: Path, grant: str) -> None:
         )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Seatbelt profiles use POSIX paths")
 def test_interpreter_outside_macos_system_paths_is_readable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -53,6 +55,7 @@ def test_interpreter_outside_macos_system_paths_is_readable(
     assert '(allow file-read* (subpath "/opt"))' not in profile
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Seatbelt profiles use POSIX paths")
 @pytest.mark.parametrize("cache_name", ["com.apple.metal", "com.apple.metalfe"])
 def test_shared_metal_cache_grants_refuse(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cache_name: str
