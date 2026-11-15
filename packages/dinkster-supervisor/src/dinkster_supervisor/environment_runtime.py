@@ -138,6 +138,20 @@ def _start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    development = target / "development-sources.json"
+    if frontend_root is None and frontend_dev is None and development.is_file():
+        selection = read_document(development)
+        frontend_root = cast("str | None", selection.get("frontendRoot"))
+        saved_dev = selection.get("frontendDev")
+        if saved_dev is not None:
+            from .environment_development import frontend_development_url
+
+            frontend_dev = frontend_development_url(
+                str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
+            )
+    if frontend_root is not None and frontend_dev is not None:
+        raise EnvironmentError("development frontend folder and dev server are exclusive")
+
     previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
@@ -157,7 +171,6 @@ def _start_engine(
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
-    prepare_process(lifecycle, instance)
     url = f"http://127.0.0.1:{port}"
     record: dict[str, object] = {
         "name": name,
@@ -173,7 +186,6 @@ def _start_engine(
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
-    _write_record(root, name, record)
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
     command = [
@@ -208,13 +220,12 @@ def _start_engine(
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]
-    development = target / "development-sources.json"
-    if frontend_root is None and frontend_dev is None and development.is_file():
-        frontend_root = cast("str | None", read_document(development).get("frontendRoot"))
     if frontend_root is not None:
         command.extend(["--frontend-root", frontend_root])
     if frontend_dev is not None:
         command.extend(["--frontend-dev", frontend_dev])
+    prepare_process(lifecycle, instance)
+    _write_record(root, name, record)
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
         log_offset = log.tell()

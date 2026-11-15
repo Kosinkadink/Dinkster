@@ -2913,6 +2913,73 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
     assert not store.exists()
 
 
+@pytest.mark.parametrize(
+    ("url", "allow_remote", "accepted"),
+    [
+        ("http://localhost:5173/", False, True),
+        ("http://127.0.0.2:5173", False, True),
+        ("http://[::1]:5173", False, True),
+        ("https://192.0.2.1:5173", False, False),
+        ("https://192.0.2.1:5173", True, True),
+        ("https://localhost.example:5173", False, False),
+        ("http://user:password@localhost:5173", True, False),
+        ("file:///tmp/frontend", True, False),
+        ("http://localhost:5173/path", True, False),
+        ("http://localhost:5173?token=value", True, False),
+        ("http://localhost:5173#fragment", True, False),
+        ("http://localhost:70000", True, False),
+    ],
+)
+def test_development_frontend_plan_reviews_origin_and_remote_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str, allow_remote: bool, accepted: bool
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root, store = tmp_path / "project", tmp_path / "store"
+    arguments = [
+        "develop",
+        "--source",
+        str(Path(__file__).resolve().parents[1]),
+        "--contributor",
+        "--variant",
+        "win-cpu" if sys.platform == "win32" else "linux-cpu",
+        "--data",
+        str(store),
+        "--frontend-dev",
+        url,
+        "--plan",
+    ]
+    if allow_remote:
+        arguments.append("--allow-frontend-dev-remote")
+    code, plan = _run(root, *arguments)
+    assert code == (0 if accepted else 1), plan
+    if accepted:
+        assert plan["development"]["frontendDev"] == url.rstrip("/")
+        assert plan["development"]["allowFrontendDevRemote"] is allow_remote
+        assert any(url.rstrip("/") in line for line in plan["plan"])
+        changed = arguments.copy()
+        changed[changed.index(url)] = "http://127.0.0.1:5174"
+        code, refusal = _run(root, *changed, "--approve", plan["sourceApproval"])
+        assert code == 1 and "changed from the approved plan" in refusal["error"]
+        if allow_remote:
+            changed = [arg for arg in arguments if arg != "--allow-frontend-dev-remote"]
+            changed[changed.index(url)] = "http://127.0.0.1:5173"
+            code, local_plan = _run(root, *changed)
+            assert code == 0, local_plan
+            code, refusal = _run(
+                root,
+                *changed,
+                "--allow-frontend-dev-remote",
+                "--approve",
+                local_plan["sourceApproval"],
+            )
+            assert code == 1 and "changed from the approved plan" in refusal["error"]
+    else:
+        assert "frontend dev server" in plan["error"]
+    assert not root.exists()
+    assert not store.exists()
+
+
 @pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference"])
 def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch

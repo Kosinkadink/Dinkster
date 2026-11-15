@@ -119,26 +119,11 @@ def release_version(root: Path, tag: str) -> str:
 def development_version(root: Path) -> str:
     _, version = project_metadata(root / "pyproject.toml")
     major, minor, patch = (int(part) for part in version.split("."))
-    tag = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            str(root),
-            "describe",
-            "--tags",
-            "--match",
-            "v[0-9]*",
-            "--abbrev=0",
-            "--always",
-            "HEAD",
-        ],
-        text=True,
-    ).strip()
-    revision = f"{tag}..HEAD" if tag.startswith("v") else "HEAD"
+    # Main only advances by descendants; tags must not reset its version counter.
     count = subprocess.check_output(
-        ["git", "-C", str(root), "rev-list", "--count", revision], text=True
+        ["git", "-C", str(root), "rev-list", "--count", "HEAD"], text=True
     ).strip()
-    return f"{major}.{minor}.{patch + 1}.dev{count}+g{git_head(root)}"
+    return f"{major}.{minor}.{patch + 1}.dev{count}"
 
 
 @contextmanager
@@ -152,12 +137,17 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
         with tarfile.open(fileobj=io.BytesIO(archive)) as source:
             source.extractall(staged, filter="data")
         projects = workspace_projects(staged)
+        commit = git_head(root)
         versions = {
             name: version if uses_engine_version(path) else project_metadata(path)[1]
             for name, path in projects.items()
         }
         for name, path in projects.items():
             text = path.read_text(encoding="utf-8")
+            text += (
+                "\n[project.urls]\n"
+                f'Source = "https://github.com/Kosinkadink/Dinkster/tree/{commit}"\n'
+            )
             text = re.sub(
                 r'(?m)^version = "[^"]+"$', f'version = "{versions[name]}"', text, count=1
             )
@@ -208,9 +198,12 @@ def validate_engine_wheels(wheels: list[Path]) -> None:
     from email.parser import Parser
 
     from packaging.requirements import Requirement
+    from packaging.version import Version
 
     for path in wheels:
         name, version = wheel_metadata(path)
+        if Version(version).local is not None:
+            raise ValueError(f"release wheel requires a public version: {path.name}")
         with zipfile.ZipFile(path) as wheel:
             files = set(wheel.namelist())
             engine_files = {
@@ -572,7 +565,7 @@ def build(
         "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
         "builtAt": built_at.isoformat().replace("+00:00", "Z"),
-        "label": f"{built_at.date().isoformat()}-{version.partition('+')[0]}",
+        "label": f"{built_at.date().isoformat()}-{version}",
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),

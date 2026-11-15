@@ -42,7 +42,9 @@
   the target variant's published dependency lock and its exact base binding.
   Plans identify skipped newer versions and their unmet minimums. Exact incompatible
   selections refuse with upgrade guidance instead of installing a pack with silently
-  missing nodes.
+  missing nodes. Only verified incompatibility permits an older compatible selection.
+  Missing or corrupt published locks refuse the update with the affected version
+  rather than silently selecting an older cached source.
 - Equivalent requirement spelling and unordered namespace or base replacement
   declarations do not refuse admission. Namespaces must still match their grants,
   replacement names remain unique, and selected wheel identities stay exact.
@@ -1040,6 +1042,14 @@ for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
 `run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
 generation. The CPU variant is the default; pass `--variant NAME` to setup for
 another host-compatible variant.
+Contributor generations accept either `--frontend-root` for a built bundle or
+`--frontend-dev` for a running HTTP(S) dev server, retained across restarts.
+The dev server defaults to loopback; another address requires explicit
+`--allow-frontend-dev-remote`. Both the origin and permission are bound to the
+reviewed source approval and disclosed in development status/history. Dev-server
+websockets retain their subprotocol for live reload and close when the client disconnects.
+Local live packs support flat and `src` Python layouts without selecting an
+installed copy instead of the chosen working folder.
 
 Use `--live-engine`, `--live-pack /absolute/pack`, or
 `--live-library /absolute/helper` on both plan and apply commands to run from

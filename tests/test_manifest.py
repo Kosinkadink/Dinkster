@@ -51,6 +51,32 @@ def test_in_process_wheel_keeps_standard_library_imports_unshadowed(
         sys.modules.pop("wheel_import_boundary", None)
 
 
+@pytest.mark.parametrize("layout", [".", "src"])
+def test_local_pack_loads_selected_code_instead_of_installed_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str
+) -> None:
+    import importlib
+
+    name = "selected_development_pack"
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    (installed / f"{name}.py").write_text("NODES = []; ORIGIN = 'installed'\n")
+    project = tmp_path / "project"
+    source = project / layout
+    source.mkdir(parents=True)
+    (source / f"{name}.py").write_text("NODES = []; ORIGIN = 'selected'\n")
+    manifest = project / "dinkster-pack.toml"
+    manifest.write_text(
+        f'[pack]\nname = "selected-development-pack"\n[pack.entry]\nnodes = "{name}:NODES"\n'
+    )
+    monkeypatch.syspath_prepend(str(installed))
+    try:
+        load_pack(load_manifest(manifest), import_from_pack_root=True)
+        assert importlib.import_module(name).ORIGIN == "selected"
+    finally:
+        sys.modules.pop(name, None)
+
+
 def write_manifest(path: Path, handler: object = None) -> Path:
     handler_line = "" if handler is None else f"workgroup_handler = {handler}\n"
     path.write_text(

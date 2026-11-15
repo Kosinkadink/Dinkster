@@ -19,6 +19,7 @@ dependencies = [
     "pyobjc-framework-libdispatch>=12.2.2; sys_platform == 'darwin'",
     "scipy>=1.11",
     "simpleeval==1.0.8",
+    "yarl>=1.17",
     "zeroconf>=0.147",
     # Image codecs use numpy at call time; dinkster-values stays dependency-free.
     "numpy>=1.26",

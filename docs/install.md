@@ -491,6 +491,16 @@ Pack code reloads while serving; engine and library changes need stop/start,
 not another build. Dependency or manifest edits need a new build. Live packs
 require isolated hosting. Live generations change with their author folders and
 cannot be restored exactly; capture without live marks for exact recovery.
+Local packs support both flat and `src` Python layouts.
+
+Contributor projects may select a built frontend with
+`--contributor --frontend-root /absolute/bundle` (requires `index.html`) or a
+running frontend server with `--contributor --frontend-dev http://localhost:5173`.
+These options are exclusive and persist across stop/start. HTTP and websocket
+requests are proxied for live reload. Dev servers must use a loopback address
+unless `--allow-frontend-dev-remote` is explicitly selected. The origin and remote
+permission are part of the reviewed source approval; changing either requires a
+new plan. Credentials, paths, queries and fragments are not accepted in origins.
 
 ### Explicit from-scratch development setup
 

@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 from test_frontend_artifact import artifact
 
 from scripts.build_release import (
@@ -210,14 +211,26 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
     assert discovered == str(installed / "dinkster/frontend_bundle/static")
 
 
+def test_development_versions_increase_without_resetting_at_release_tags(tmp_path: Path) -> None:
+    repository = tmp_path / "source"
+    subprocess.run(["git", "clone", "--shared", str(ROOT), str(repository)], check=True)
+    subprocess.run(["git", "checkout", "HEAD~1"], cwd=repository, check=True)
+    before = Version(development_version(repository))
+    subprocess.run(["git", "tag", "v999.0.0"], cwd=repository, check=True)
+    assert Version(development_version(repository)) == before
+    subprocess.run(["git", "checkout", "-"], cwd=repository, check=True)
+    after = Version(development_version(repository))
+    assert before < after
+    assert before.local is after.local is None
+
+
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
 ) -> None:
     version = development_version(ROOT)
     assert version.startswith("0.0.7.dev")
-    assert version.endswith(
-        "+g" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    )
+    assert Version(version).local is None
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
@@ -232,6 +245,15 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
                 check=True,
             )
     validate_engine_wheels(list(output.glob("*.whl")))
+    for wheel in output.glob("*.whl"):
+        with zipfile.ZipFile(wheel) as archive:
+            [metadata_path] = [
+                name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+            ]
+            assert (
+                f"Project-URL: Source, https://github.com/Kosinkadink/Dinkster/tree/{commit}\n"
+                in archive.read(metadata_path).decode()
+            )
     [wheel] = output.glob("dinkster-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]

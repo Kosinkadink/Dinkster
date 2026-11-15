@@ -452,11 +452,14 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
     async def scenario() -> None:
         finished = asyncio.Event()
         sent = 0
+        peer_phase = "not-connected"
 
         async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            nonlocal sent
+            nonlocal sent, peer_phase
+            peer_phase = "awaiting-request"
             try:
                 await reader.readuntil(b"\r\n\r\n")
+                peer_phase = "trickling"
                 if part == "headers":
                     writer.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
                 elif part == "chunk-framing":
@@ -470,9 +473,11 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
                         sent += 1
                         await asyncio.sleep(0.03)
             finally:
+                peer_phase = "closing"
                 writer.close()
                 with suppress(ConnectionError):
                     await writer.wait_closed()
+                peer_phase = "closed"
                 finished.set()
 
         server = await asyncio.start_server(serve, "127.0.0.1", 0)
@@ -483,11 +488,18 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
                 ProvenanceStore(tmp_path / "provenance.json"),
                 fetch_timeout=0.2,
             )
-            with pytest.raises(ResolverSubscriptionError):
+            with pytest.raises(ResolverSubscriptionError) as refusal:
                 await asyncio.to_thread(store.subscribe, f"http://127.0.0.1:{port}/index")
-            await asyncio.wait_for(finished.wait(), 1.0)
-            assert 0 < sent < 100
-            assert store.subscriptions() == ()
+            try:
+                await asyncio.wait_for(finished.wait(), 1.0)
+                assert 0 < sent < 100
+                assert store.subscriptions() == ()
+            except (TimeoutError, AssertionError):
+                print(
+                    f"resolver deadline: part={part}, refusal={refusal.value!s}, "
+                    f"peer_phase={peer_phase}, sent={sent}, finished={finished.is_set()}"
+                )
+                raise
 
     run_scenario(scenario())
 
