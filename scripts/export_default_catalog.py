@@ -28,7 +28,7 @@ def export_catalog(output: Path) -> None:
             "DINKSTER_REMOTE_CATALOG_BASE": "",
             "DINKSTER_REMOTE_GATEWAY_BASE": "",
         }
-        published = discover(("https://releases.dinkster.org",), "main")
+        published = discover(("https://releases.dinkster.org",), "nightly")
         supervisor = next(
             row
             for row in artifact_rows(published.engine["artifacts"], "name")
@@ -79,7 +79,7 @@ def export_catalog(output: Path) -> None:
                 "--mirror",
                 "https://releases.dinkster.org",
                 "--channel",
-                "main",
+                "nightly",
                 "--variant",
                 "linux-cpu",
                 "--engine-release",
