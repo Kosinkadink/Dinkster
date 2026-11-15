@@ -1,3 +1,13 @@
+# Public Hugging Face model downloads
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public SD 1.5 consent, cancel, verified named download and full native quickstart | X570 Linux CPU, Python 3.14.10, torch 2.14.1+cpu | [Real browser and native receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901157634): HTTP 409/409/202, no download before consent or after Cancel, all seven nodes executed with no cached/skipped nodes, real 512x512 RGB PNG. Provider SHA-256, declared BLAKE3 and persisted source/license verified. |
+| Stock ComfyUI loads the same downloaded file from the same folder | X570 Linux CPU, inherited ComfyUI af89add63f71, Python 3.12.13, torch 2.15.0+cpu | [Same-file receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901213963): actual Run completed decode/save and a real 512x512 RGB PNG without copying or renaming the checkpoint. Not a numerical or performance-parity claim. |
+
+- Whole Ruff check/format and pyright passed; 196 targeted acquisition/writer/model/mount/receipt tests passed.
+- Gated credentials, Civitai, folder visibility management, byte-progress jobs and export/output model hashes are not accepted by these public-download receipts.
+
 # Published remote catalog defaults
 
 - Registry default resolution requires remote pack 0.0.7 or newer. The public static registry resolved and delivered 0.0.7 with verified wheel bytes and all six published native install locks.
