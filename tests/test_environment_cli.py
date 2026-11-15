@@ -181,6 +181,14 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
         assert any(filename in row["path"] for row in result["runtimeInputs"])
         assert any(identity in row["path"] for row in result["runtimeInputs"])
         assert any("explicit published frontend 0.2.0" in line for line in result["plan"])
+        approval = result["frontendApproval"]
+        assert approval.startswith("sha256:") and len(approval) == 71
+        code, confirmed = plan("--frontend-version", "0.2.0", "--frontend-approval", approval)
+        assert code == 0 and confirmed["frontend"] == result["frontend"]
+        code, refused = plan(
+            "--frontend-version", "0.2.0", "--frontend-approval", "sha256:" + "0" * 64
+        )
+        assert code == 1 and "changed after planning" in refused["error"]
     wheel.write_bytes(wheel.read_bytes() + b"changed")
     code, result = plan("--frontend-version", "0.2.0")
     assert code == 1

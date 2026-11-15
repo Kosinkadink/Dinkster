@@ -324,7 +324,9 @@ to select an exact published `dinkster-frontend` release instead of the channel
 pin. This explicit online operation reads the permanent PyPI wheel, verifies
 its size and SHA-256, and checks its declared engine API range before acquiring
 or activating a generation. Plans disclose the selected version, hash and API
-range. The generation retains the selection for exact rollback and export.
+range. JSON plans expose `frontendApproval`; repeat it with
+`--frontend-approval DIGEST --yes` to require the reviewed wheel identity.
+The generation retains the selection for exact rollback and export.
 Without this option, the engine/channel frontend pin remains authoritative.
 Release installation does not contact PyPI implicitly.
 

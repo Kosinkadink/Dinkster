@@ -701,6 +701,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             select_frontend(catalog.engine, document)
             catalog = replace(catalog, document=document)
             result["frontend"] = document["frontend"]
+            result["frontendApproval"] = approval
         if args.engine_release is not None and (
             catalog.channel.engine_release != args.engine_release
             or catalog.channel.base_for(variant) != args.base_id

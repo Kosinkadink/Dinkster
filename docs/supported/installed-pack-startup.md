@@ -28,7 +28,8 @@
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
   on setup/update selects a published PyPI frontend wheel and its declared API
-  range instead. Incompatible engine schema API ranges refuse before activation;
+  range instead. JSON plans provide the exact frontend approval for confirmed
+  selection. Incompatible engine schema API ranges refuse before activation;
   compatible frontend-only updates retain the engine. Without an explicit version,
   release installation retains its offline published-artifact path.
 - `dinkster-serve --frontend-root PATH` serves a built frontend folder;
