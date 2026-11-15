@@ -526,15 +526,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 contributor=args.contributor,
             )
             if args.frontend_root is not None:
-                if not args.contributor:
-                    raise EnvironmentError("--frontend-root requires --contributor")
                 frontend = args.frontend_root.resolve()
                 if not (frontend / "index.html").is_file():
-                    raise EnvironmentError("contributor frontend bundle requires index.html")
+                    raise EnvironmentError("development frontend bundle requires index.html")
                 development["frontendRoot"] = str(frontend)
             if args.frontend_dev is not None:
-                if not args.contributor:
-                    raise EnvironmentError("--frontend-dev requires --contributor")
                 development["frontendDev"] = frontend_development_url(
                     args.frontend_dev, allow_remote=args.allow_frontend_dev_remote
                 )
@@ -1733,8 +1729,8 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         help="import this selected library folder; restart after edits",
     )
     frontend = develop.add_mutually_exclusive_group()
-    frontend.add_argument("--frontend-root", type=Path, help="contributor editor bundle folder")
-    frontend.add_argument("--frontend-dev", help="contributor HTTP(S) frontend dev server origin")
+    frontend.add_argument("--frontend-root", type=Path, help="development editor bundle folder")
+    frontend.add_argument("--frontend-dev", help="development HTTP(S) frontend dev server origin")
     develop.add_argument(
         "--allow-frontend-dev-remote",
         action="store_true",

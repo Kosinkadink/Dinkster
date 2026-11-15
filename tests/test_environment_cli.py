@@ -2013,6 +2013,54 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     ]
     assert main([*changed, "--approve", plan["sourceApproval"]]) == 1
     assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+    if git_kind == "engine":
+        frontend = tmp_path / "frontend"
+        frontend.mkdir()
+        (frontend / "index.html").write_text("<title>Selected frontend</title>")
+        previous_approval = plan["sourceApproval"]
+        for extra, field, expected in (
+            ([], None, None),
+            (["--frontend-root", str(frontend)], "frontendRoot", str(frontend)),
+            (["--frontend-dev", "http://localhost:5173"], "frontendDev", "http://localhost:5173"),
+            (
+                ["--frontend-dev", "https://192.0.2.1:5173", "--allow-frontend-dev-remote"],
+                "frontendDev",
+                "https://192.0.2.1:5173",
+            ),
+        ):
+            engine_only = arguments.copy()
+            for option in ("--pack-source", "--library-source"):
+                option_index = engine_only.index(option)
+                del engine_only[option_index : option_index + 2]
+            selected_arguments = [*engine_only, *extra]
+            assert main(selected_arguments) == 0
+            selected_plan = json.loads(capsys.readouterr().out)
+            assert [row["kind"] for row in selected_plan["development"]["sources"]] == ["engine"]
+            assert all(not row["live"] for row in selected_plan["development"]["sources"])
+            assert selected_plan["development"]["contributor"] is False
+            if field:
+                assert selected_plan["development"][field] == expected
+            assert main([*selected_arguments, "--approve", selected_plan["sourceApproval"]]) == 0
+            json.loads(capsys.readouterr().out)
+            assert main([*selected_arguments, "--approve", previous_approval]) == 1
+            assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+            previous_approval = selected_plan["sourceApproval"]
+            if "--allow-frontend-dev-remote" in extra:
+                assert selected_plan["development"]["allowFrontendDevRemote"] is True
+                assert (
+                    main(
+                        [
+                            value
+                            for value in selected_arguments
+                            if value != "--allow-frontend-dev-remote"
+                        ]
+                    )
+                    == 1
+                )
+                assert (
+                    "requires --allow-frontend-dev-remote"
+                    in json.loads(capsys.readouterr().out)["error"]
+                )
     live_code = main([*arguments, "--live-engine"])
     live_plan = json.loads(capsys.readouterr().out)
     if git_kind == "engine":

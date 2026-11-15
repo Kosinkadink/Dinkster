@@ -973,8 +973,13 @@ for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
 `run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
 generation. The CPU variant is the default; pass `--variant NAME` to setup for
 another host-compatible variant.
-Contributor generations accept either `--frontend-root` for a built bundle or
-`--frontend-dev` for a running HTTP(S) dev server, retained across restarts.
+All development generations accept either `--frontend-root` for a built bundle
+or `--frontend-dev` for a running HTTP(S) dev server, retained across restarts.
+Neither frontend option requires `--contributor` or makes a captured engine live.
+Pack selections are optional for captured engines as well as contributor engines;
+an engine-only selection uses no development packs. Git engine inputs stay
+captured, including when a local frontend is selected, and cannot use
+`--contributor` or `--live-engine`.
 The dev server defaults to loopback; another address requires explicit
 `--allow-frontend-dev-remote`. Both the origin and permission are bound to the
 reviewed source approval and disclosed in development status/history. Dev-server
