@@ -722,7 +722,10 @@ class MountTable:
             row = self._rows.get(mount_id)
             if row is None:
                 raise MountsError(f"unknown mount: {mount_id!r}")
-            self._library_for(row).refresh_writes()
+            library = self._library_for(row)
+            library.refresh_writes()
+            row.entry_count = len(library.entries())
+        library.persist_index()
         self.write_snapshot()
 
     def entries(self, mount_id: str) -> tuple[AssetEntry, ...]:

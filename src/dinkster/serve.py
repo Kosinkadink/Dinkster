@@ -157,7 +157,7 @@ from .generation_api import GenerationModel, GenerationService, add_generation_r
 from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
-from .model_downloads import ModelDownloads, shared_model_mounts
+from .model_downloads import QUICKSTART_CHECKPOINT, ModelDownloads, shared_model_mounts
 from .mounts_api import MountService, add_mount_routes
 from .pack_install_api import add_pack_install_routes
 from .reload_api import add_reload_routes, apply_reload
@@ -1987,6 +1987,7 @@ def main(argv: list[str] | None = None) -> None:
                         (mount.id for mount in configured if mount.path == root / "imports"),
                         "imports",
                     )
+            model_downloads = ModelDownloads(mount_service, provenance) if mount_service else None
             library = ServerLibrary(
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
@@ -1998,15 +1999,15 @@ def main(argv: list[str] | None = None) -> None:
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
                 import_mount=import_mount,
-                acquire_model=(
-                    ModelDownloads(mount_service, provenance).acquire if mount_service else None
-                ),
+                acquire_model=model_downloads.acquire if model_downloads else None,
+                model_destination=model_downloads.destination if model_downloads else None,
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.
                 provenance=provenance,
                 receipts=receipts,
                 public_sources_for=resolver_indexes.public_sources,
+                asset_needs={QUICKSTART_CHECKPOINT.digest: QUICKSTART_CHECKPOINT},
                 # Pack-declared assets ([[pack.assets]]): the composer
                 # maintains this catalog across add/reload/remove; the
                 # library reads it for job preflight and the sources

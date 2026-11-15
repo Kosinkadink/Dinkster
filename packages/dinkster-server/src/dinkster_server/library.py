@@ -212,6 +212,8 @@ class ServerLibrary:
     #: type. Job preflight consults it; acquisition still verifies every
     #: byte and still waits for digest-exact consent.
     pack_assets: PackAssetCatalog | None = None
+    #: Host-declared distribution leads, required only when a graph names the digest.
+    asset_needs: Mapping[str, AssetNeed] = field(default_factory=dict[str, AssetNeed])
     #: Receipt evidence is written only by verified public HTTPS acquisition.
     receipts: PublicAcquisitionReceiptStore | None = None
     #: Current trusted declarations, kept separate from advisory provenance.
@@ -219,6 +221,7 @@ class ServerLibrary:
     acquire_model: (
         Callable[[AssetNeed, str, Callable[[AssetRef, str], None]], AcquisitionResult] | None
     ) = None
+    model_destination: Callable[[AssetNeed, str], str | None] | None = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Explicit host configuration, never a client-selected filesystem target.
@@ -256,6 +259,11 @@ class ServerLibrary:
         if path is None and self.resolver is not None:
             path = self.resolver.resolve(digest)
         return path
+
+    def asset_need(self, digest: str) -> AssetNeed | None:
+        """Look up distribution metadata without making it an execution requirement."""
+        declared = self.pack_assets.need_for(digest) if self.pack_assets is not None else None
+        return declared if declared is not None else self.asset_needs.get(digest)
 
     def asset_available(self, digest: str) -> bool:
         """Check local bytes with read authority, never acquisition or catalog recovery."""
@@ -1511,19 +1519,16 @@ async def handle_asset_sources_get(request: web.Request) -> web.Response:
         "metadata": {},
     }
     wire: dict[str, object] = record.to_wire() if record is not None else empty
-    # Pack-declared leads ([[pack.assets]] urls) merge at READ time, never
-    # into the persistent store: the manifest stays the single source of
-    # truth, so removing the pack removes its leads instead of leaving
-    # stale URLs fossilized in provenance.json.
-    if library.pack_assets is not None:
-        declared = library.pack_assets.need_for(digest)
-        if declared is not None:
-            known = cast("list[str]", wire["sources"])
-            wire["sources"] = known + [
-                source.url
-                for source in declared.sources
-                if isinstance(source, RemoteSource) and source.url not in known
-            ]
+    # Declarations merge at read time so withdrawing a pack or host source
+    # removes its leads instead of leaving stale URLs in provenance.json.
+    declared = library.asset_need(digest)
+    if declared is not None:
+        known = cast("list[str]", wire["sources"])
+        wire["sources"] = known + [
+            source.url
+            for source in declared.sources
+            if isinstance(source, RemoteSource) and source.url not in known
+        ]
     return web.json_response(wire)
 
 
