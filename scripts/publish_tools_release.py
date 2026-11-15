@@ -13,12 +13,19 @@ from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from dinkster_supervisor.environment_artifacts import artifact_rows, parse_metadata
+from dinkster_supervisor.environment_artifacts import artifact_rows
+from dinkster_supervisor.environment_channel_signatures import verify_channel
 from dinkster_supervisor.environment_downloads import fetch_artifact, read_metadata
 from dinkster_supervisor.environment_state import Channel, write_document
 from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
 
-from scripts.publish_environment_channel import check_collision, object_store, upload, write_index
+from scripts.publish_environment_channel import (
+    check_collision,
+    object_store,
+    sign_channel_file,
+    upload,
+    write_index,
+)
 
 
 def publish(release: Path) -> None:
@@ -221,7 +228,7 @@ def publish(release: Path) -> None:
         if os.environ["GITHUB_REF"].startswith("refs/tags/v"):
             print(f"Published version-tag tools {label}: {digest}; engine publication moves Stable")
             return
-        channel = parse_metadata(read_metadata(public, "channels/nightly.json"))
+        channel = verify_channel(read_metadata(public, "channels/nightly.json"), "nightly")
         Channel.parse(channel)
         reference = tools_reference(
             {
@@ -255,6 +262,7 @@ def publish(release: Path) -> None:
         channel["tools"] = reference
         path = work / "nightly.json"
         write_document(path, channel)
+        sign_channel_file(path, "nightly")
         upload(
             client,
             path,

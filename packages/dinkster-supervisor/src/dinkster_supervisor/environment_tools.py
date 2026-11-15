@@ -15,11 +15,8 @@ from urllib.parse import urlsplit
 from dinkster_store import object_path, readable_label
 from packaging.version import InvalidVersion, Version
 
-from .environment_artifacts import (
-    artifact_rows,
-    parse_metadata,
-    trusted_metadata,
-)
+from .environment_artifacts import artifact_rows, parse_metadata
+from .environment_channel_signatures import verify_channel
 from .environment_downloads import fetch_artifact, read_metadata
 from .environment_state import Channel, EnvironmentError
 
@@ -125,8 +122,9 @@ def acquire_tools(
     document: dict[str, object] = {}
     for mirror in mirrors:
         try:
-            trusted_metadata(mirror)
-            document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
+            document = verify_channel(
+                read_metadata(mirror, f"channels/{channel_name}.json"), channel_name
+            )
             channel = Channel.parse(document)
             break
         except (OSError, ValueError, HTTPException):
