@@ -467,12 +467,48 @@ alone does not enable runtime mount editing. Managed local `dinkster-env`
 launches also enable operator folder editing; direct server launches remain
 opt-in. A deliberately unconfigured library can still report `outputMount: null`.
 
-The managed engine initializes `<project-root>/dinkster-library/mounts.toml`
+Model downloads use folders shared by all projects. Managed first serve creates
+`~/.dinkster/model-settings.json` (`%USERPROFILE%\.dinkster\model-settings.json`
+on Windows), or the same filename under `DINKSTER_HOME` when set. Its default
+location is `~/Dinkster/Models`, with ordinary ComfyUI subfolders including
+`checkpoints`, `loras`, `vae`, `text_encoders`, `diffusion_models`, `controlnet`,
+`upscale_models`, `embeddings`, and `clip_vision`. An existing `clip` folder is
+also recognized; new text encoders prefer `text_encoders`. The shared folders
+are visible in model pickers and do not live inside a project library.
+
+The model settings file contains no credentials. To choose another download
+root or share an existing ComfyUI models tree, stop the engine, edit the file,
+and restart. Paths must be absolute. For example:
+
+```json
+{
+  "version": 1,
+  "downloadLocation": "downloads",
+  "locations": [
+    { "id": "downloads", "path": "/home/name/Models", "mode": "readwrite" },
+    { "id": "comfy", "path": "/home/name/ComfyUI/models", "mode": "read" }
+  ]
+}
+```
+
+On Windows use paths such as `C:/Users/name/Models`. `downloadLocation` must
+name a writable location; other locations may be read-only or writable. Each
+location is a root containing the ComfyUI category subfolders, not an individual
+checkpoint folder. The default writable root is preferred for downloads.
+Existing files are not moved or renamed. Files with the same name but different
+content are preserved; a new download receives a digest suffix on collision.
+To find or delete a downloaded model, open its displayed download folder in
+your file manager. Stop work that uses it before deleting it; Dinkster can ask
+to acquire it again when a workflow references it. A stock ComfyUI installation
+can use the same root without copying files or changing provider filenames.
+
+Project libraries still keep their own output and mount configuration. The
+managed engine initializes `<project-root>/dinkster-library/mounts.toml`
 on first serve. With the default project this is
 `~/.dinkster/project/dinkster-library/mounts.toml` on Linux and macOS and
 `%USERPROFILE%\.dinkster\project\dinkster-library\mounts.toml` on Windows.
-Download model files into a folder you control and grant that folder read-only
-access with an absolute path:
+For a single model directory rather than a shared category tree, keep a
+project-specific read-only grant with an absolute path:
 
 ```toml
 [mounts.models]

@@ -7,6 +7,14 @@ Dinkster currently exposes two generation families through `dinkster_inference`:
 - MiniMax H3 text-to-video with audio through the fork's model, conditioning,
   sampler, and VAE implementations.
 
+The [SD 1.5 quickstart](../quickstart.md#generate-a-first-image) references an
+exact checkpoint digest. Its public Hugging Face download requires explicit
+consent before writing the provider filename to the shared ComfyUI-layout model
+folder. Existing configured model folders are searched first; startup and
+workflow opening do not acquire model weights. Provider SHA-256, size and the
+workflow's BLAKE3 digest are verified before publication. This path does not yet
+support gated credentials or Civitai sources.
+
 The native Empty MiniMax H3 AV Latent node constructs paired video and audio
 streams on the model's 17k+5 frame grid at 24 fps.
 
