@@ -704,9 +704,9 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("development", [False, True])
+@pytest.mark.parametrize("source_kind", ["registry", "captured", "live"])
 def test_generation_resident_models_cross_packs_without_sharing_unrelated_workers(
-    tmp_path: Path, development: bool
+    tmp_path: Path, source_kind: str
 ) -> None:
     import json
     import subprocess
@@ -714,7 +714,7 @@ def test_generation_resident_models_cross_packs_without_sharing_unrelated_worker
 
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
-    from dinkster_workers.pack_lock import PackLock
+    from dinkster_workers.pack_lock import LockedDistribution, PackLock
 
     from dinkster.compose import compose_serving
     from dinkster.generation_packs import load_generation_packs, stage_generation_packs
@@ -729,15 +729,20 @@ def test_generation_resident_models_cross_packs_without_sharing_unrelated_worker
         ("dinkster-models", "dinkster", "source", "SOURCE_NODES"),
         ("dinkster-conditioning", "dinkster", "merge", "MERGE_NODES"),
         ("unrelated", "example", "unrelated", "[]"),
+        ("dinkster-conflicting", "dinkster", "conflicting", "[]"),
     )
     for name, publisher, namespace, nodes in definitions:
+        dependency_version = "2.0" if namespace == "conflicting" else "1.0"
+        requirements = ["dinkster-inference", f"resident-fixture=={dependency_version}"]
+        if namespace == "merge":
+            requirements.append("consumer-fixture==1.0")
         root = tmp_path / name
         root.mkdir()
         module = namespace + "_nodes"
         (root / "dinkster-pack.toml").write_text(
             f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
             f'namespaces = ["{namespace}"]\n'
-            'requires = ["dinkster-inference"]\n'
+            f"requires = {json.dumps(requirements)}\n"
             f'[pack.entry]\nnodes = "{module}:NODES"\n'
             + (
                 'types = "dinkster_inference_wire:register_inference_types"\n'
@@ -765,6 +770,11 @@ class ProcessId(Node):
     @classmethod
     def execute(cls):
         import os
+        import resident_fixture
+        assert resident_fixture.VERSION == "{dependency_version}"
+        if "{namespace}" == "merge":
+            import consumer_fixture
+            assert consumer_fixture.VALUE == 37
         return cls.outputs(pid=os.getpid())
 
 NODES = [*{nodes}, ProcessId]
@@ -773,18 +783,38 @@ NODES = [*{nodes}, ProcessId]
         archive = tmp_path / f"{name}.zip"
         digest = build_artifact(root, archive)
         artifacts[name] = archive
-        source = "local-build:" + str(root) if development else "registry:official"
+        source = "registry:official" if source_kind == "registry" else "local-build:" + str(root)
         entries.append(LockedPack(name, "1.0.0", digest, publisher, (namespace,), source))
-        sources.append({"kind": "pack", "path": str(root)})
+        sources.append(
+            {
+                "kind": "pack",
+                "path": str(root),
+                "live": source_kind == "live" and namespace == "merge",
+            }
+        )
         environment = generation / "packs" / name
         subprocess.run(
             ["uv", "venv", "--python", sys.executable, "--system-site-packages", str(environment)],
             check=True,
             capture_output=True,
         )
-        PackLock(name, "linux-cpu", ">=3.12", (), (), ()).write(environment / "pack-lock.json")
+        python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        site_packages = Path(
+            subprocess.check_output(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+        )
+        (site_packages / "resident_fixture.py").write_text(f'VERSION = "{dependency_version}"\n')
+        packages = [LockedDistribution("resident-fixture", dependency_version, ())]
+        if namespace == "merge":
+            (site_packages / "consumer_fixture.py").write_text("VALUE = 37\n")
+            packages.append(LockedDistribution("consumer-fixture", "1.0", ()))
+        PackLock(name, "linux-cpu", ">=3.12", (), (), tuple(packages)).write(
+            environment / "pack-lock.json"
+        )
     stage_generation_packs(generation, Lockfile.of(entries), artifacts)
-    if development:
+    if source_kind != "registry":
         (generation / "development-sources.json").write_text(
             json.dumps({"format": "dinkster.development-sources/1", "sources": sources})
         )
@@ -815,12 +845,12 @@ NODES = [*{nodes}, ProcessId]
                     "w": GraphNode("source.weight", {"model": Link("m", "model")}),
                     **{
                         namespace: GraphNode(f"{namespace}.pid")
-                        for namespace in ("source", "merge", "unrelated")
+                        for namespace in ("source", "merge", "unrelated", "conflicting")
                     },
                 }
             )
             result = await composition.make_engine(lambda event: None).run(
-                graph, ["w", "source", "merge", "unrelated"]
+                graph, ["w", "source", "merge", "unrelated", "conflicting"]
             )
             assert result.outputs["w"]["weight"].resolve() == -0.5
             source_pid = result.outputs["source"]["pid"].resolve()
@@ -829,6 +859,8 @@ NODES = [*{nodes}, ProcessId]
             assert unrelated_pid != source_pid
             assert unrelated_pid != os.getpid()
             assert source_pid != os.getpid()
+            conflicting_pid = result.outputs["conflicting"]["pid"].resolve()
+            assert conflicting_pid not in (source_pid, unrelated_pid, os.getpid())
         finally:
             await composition.close()
 
