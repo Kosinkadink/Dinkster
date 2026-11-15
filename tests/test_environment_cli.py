@@ -111,7 +111,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
     (release / "release-manifest.json").write_bytes(data)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
         archive.writestr(
@@ -1734,7 +1734,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert code == 0, result
         assert (
             _run(root, "status")[1]["engine"]["release"]
-            == json.loads(Path(fixture["initialChannel"]).read_text())["engine"]["release"]
+            == read_channel(Path(fixture["initialChannel"]), "nightly")["engine"]["release"]
         )
         assert _run(root, "stop", "--yes")[0] == 0
         code, result = _run(root, "rollback", "--yes")

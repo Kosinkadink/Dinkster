@@ -479,13 +479,16 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         Journal("setup", None, 1, "complete", history_entry=first).write(root / "journal/1.json")
         acquisition.close()
         assert not selected_library.exists()
-        (server["root"] / "source.git").rename(server["root"] / "unavailable.git")
         shutil.rmtree(source)
         shutil.rmtree(library)
         shutil.rmtree(index)
         monkeypatch.delenv("UV_FIND_LINKS")
         shutil.rmtree(root / "generations/1/python")
-        restored = restore_entry(root, 1, apply=True)
+        (server["root"] / "source.git").rename(server["root"] / "unavailable.git")
+        try:
+            restored = restore_entry(root, 1, apply=True)
+        finally:
+            (server["root"] / "unavailable.git").rename(server["root"] / "source.git")
         assert restored["exact"] is True
         rebuilt = root / "generations" / str(restored["current"])
         assert (
@@ -1946,7 +1949,7 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
     variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
     fixture = build(tmp_path / "fixture", variant, 31977)
     store = tmp_path / "store"
-    catalog = discover((fixture["mirror"],), "main", store=store)
+    catalog = discover((fixture["mirror"],), "nightly", store=store)
     constraints = acquire(catalog, variant, store)
     base = catalog.bases[variant]
     assert isinstance(base["id"], str)
