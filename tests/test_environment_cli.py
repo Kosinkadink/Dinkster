@@ -479,16 +479,12 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
-def test_managed_git_libraries_retain_release_base_and_exact_rollback(
-    tmp_path: Path, monkeypatch, git_server, capsys
-):
+@pytest.fixture
+def managed_git_source_project(tmp_path: Path, monkeypatch, git_server):
     import pygit2
-    from dinkster_supervisor import environment, environment_frontend_sources, environment_inference
-    from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+    from dinkster_supervisor.environment_state import Generation
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
-    from test_environment_frontend_sources import _artifact as frontend_artifact
-    from test_installer import _serve_artifacts
 
     from tests.fixtures.environments import build as publisher
 
@@ -596,7 +592,7 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             )
         commits.append(
             repository.create_commit(
-                "refs/heads/" + branch,
+                None,
                 signature,
                 signature,
                 branch,
@@ -604,8 +600,68 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
                 [],
             )
         )
+        repository.references.create("refs/heads/" + branch, commits[-1], force=True)
     repository.free()
     endpoint = "https://github.com/Kosinkadink/source#subdirectory="
+    try:
+        yield SimpleNamespace(
+            fixture=fixture,
+            root=root,
+            store=store,
+            original=original,
+            before=before,
+            original_wheels=original_wheels,
+            signature=signature,
+            commits=commits,
+            endpoint=endpoint,
+            original_wheel=original_wheel,
+        )
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+def _select_git_libraries(project, git_server):
+    root, endpoint = project.root, project.endpoint
+    for folder, name in (("inference", "dinkster-inference"), ("helper", "fixture-helper")):
+        code, result = _run(
+            root,
+            "source",
+            "add",
+            endpoint + folder,
+            "--library",
+            name,
+            "--ref",
+            "library-old",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, result
+        assert _run(root, "stop", "--yes")[0] == 0
+    first_root = root / "generations" / str(result["current"])
+    return result["current"], json.loads((first_root / "engine-manifest.json").read_text())
+
+
+@pytest.mark.parametrize("replacement", [False, True], ids=["git-ref", "published-wheel"])
+def test_managed_git_libraries_retain_release_base_and_exact_rollback(
+    managed_git_source_project, git_server, replacement, request, tmp_path, monkeypatch, capsys
+):
+    import pygit2
+    from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+
+    if replacement:
+        _assert_git_library_replacement(
+            request.getfixturevalue("managed_git_selected_sources"),
+            tmp_path,
+            monkeypatch,
+            git_server,
+            capsys,
+        )
+        return
+    project = managed_git_source_project
+    root, endpoint, original = project.root, project.endpoint, project.original
+    before, original_wheels, commits = project.before, project.original_wheels, project.commits
     try:
         code, preview = _run(
             root,
@@ -635,26 +691,7 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             "--yes",
         )
         assert code == 1 and "release-base" in refused["error"], refused
-        for folder, name in (("inference", "dinkster-inference"), ("helper", "fixture-helper")):
-            code, result = _run(
-                root,
-                "source",
-                "add",
-                endpoint + folder,
-                "--library",
-                name,
-                "--ref",
-                "library-old",
-                "--git-mirror",
-                git_server["proxy"],
-                "--yes",
-                timeout=180,
-            )
-            assert code == 0, result
-            assert _run(root, "stop", "--yes")[0] == 0
-        first = result["current"]
-        first_root = root / "generations" / str(first)
-        first_manifest = json.loads((first_root / "engine-manifest.json").read_text())
+        first, first_manifest = _select_git_libraries(project, git_server)
         selection = ("source", "update", "--library", "dinkster-inference", "--ref", "library-new")
         code, preview = _run(root, *selection, "--plan")
         assert code == 0, preview
@@ -737,9 +774,20 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         assert history[-1]["sources"]["libraries"]["dinkster-inference"]["commit"] == str(
             commits[0]
         )
-        repository = pygit2.Repository(git_server["root"] / "source.git")
-        repository.references.create("refs/heads/library-captured", commits[0])
-        repository.free()
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+def test_managed_git_pack_and_frontend_source_approval(
+    managed_git_source_project, tmp_path, monkeypatch, git_server, capsys
+):
+    from dinkster_supervisor import environment, environment_frontend_sources
+    from test_environment_frontend_sources import _artifact as frontend_artifact
+
+    project = managed_git_source_project
+    root, endpoint, commits = project.root, project.endpoint, project.commits
+    _, first_manifest = _select_git_libraries(project, git_server)
+    try:
         code, packed = _run(
             root,
             "source",
@@ -806,6 +854,83 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         assert all_sources["frontend"]["commit"] == str(commits[0])
         assert all_sources["libraries"] == first_manifest["sources"]["libraries"]
         assert _run(root, "stop", "--yes")[0] == 0
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+@pytest.fixture
+def managed_git_selected_sources(
+    managed_git_source_project, tmp_path, monkeypatch, git_server, capsys
+):
+    from dinkster_supervisor import environment, environment_frontend_sources
+    from test_environment_frontend_sources import _artifact as frontend_artifact
+
+    project = managed_git_source_project
+    root, endpoint, commits = project.root, project.endpoint, project.commits
+    _, first_manifest = _select_git_libraries(project, git_server)
+    code, packed = _run(
+        root,
+        "source",
+        "add",
+        endpoint + "nodes",
+        "--pack",
+        "healthy-nodes",
+        "--ref",
+        str(commits[0]),
+        "--git-mirror",
+        git_server["proxy"],
+        "--yes",
+        timeout=180,
+    )
+    assert code == 0, packed
+    assert _run(root, "stop", "--yes")[0] == 0
+    artifact = frontend_artifact(tmp_path, str(commits[0]))
+    monkeypatch.setattr(environment_frontend_sources, "frontend_ci_artifact", lambda _: artifact)
+
+    def fetch(roots, name, destination, sha, size):
+        assert sha == artifact["digest"][7:]
+        destination.write_bytes(artifact["path"].read_bytes())
+
+    monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+    frontend_args = [
+        "--root",
+        str(root),
+        "source",
+        "add",
+        endpoint + "frontend",
+        "--frontend",
+        "--ref",
+        str(commits[0]),
+        "--git-mirror",
+        git_server["proxy"],
+        "--yes",
+        "--json",
+    ]
+    assert environment.run(environment.argument_parser().parse_args(frontend_args)) == 0
+    capsys.readouterr()
+    all_sources = _run(root, "status")[1]["sources"]
+    assert _run(root, "stop", "--yes")[0] == 0
+    return SimpleNamespace(project=project, first_manifest=first_manifest, all_sources=all_sources)
+
+
+def test_managed_git_engine_selection_retains_sources(
+    managed_git_selected_sources, tmp_path, monkeypatch, git_server, capsys
+):
+    import pygit2
+    from dinkster_supervisor import environment
+    from dinkster_supervisor.environment_state import Generation, interpreter
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+
+    selected = managed_git_selected_sources
+    project = selected.project
+    root, store, original = project.root, project.store, project.original
+    signature, fixture = project.signature, project.fixture
+    first_manifest, all_sources, before = (
+        selected.first_manifest,
+        selected.all_sources,
+        project.before,
+    )
+    try:
         engine_source = tmp_path / "engine-source"
         engine_source.mkdir()
         engine_wheel = next(Path(fixture["mirror"]).glob("engine/*/*.whl"))
@@ -968,6 +1093,43 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             == "31 31"
         )
         assert _run(root, "stop", "--yes")[0] == 0
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+def _assert_git_library_replacement(selected, tmp_path, monkeypatch, git_server, capsys):
+    import pygit2
+    from dinkster_supervisor import environment, environment_inference
+    from dinkster_supervisor.environment_state import Generation, interpreter
+    from test_installer import _serve_artifacts
+
+    project = selected.project
+    root, store, original = project.root, project.store, project.original
+    commits, signature, original_wheel = project.commits, project.signature, project.original_wheel
+    first_manifest, all_sources, before = (
+        selected.first_manifest,
+        selected.all_sources,
+        project.before,
+    )
+    updated = _run(root, "status")[1]
+    updated_sources = updated["sources"]
+    updated_root = root / "generations" / str(updated["current"])
+    update = (
+        "update",
+        "--catalog-lock",
+        str(updated_root / "dinkster.lock"),
+        "--artifacts",
+        str(
+            object_path(
+                store / "engines",
+                Generation.read(updated_root / "generation.json").engine_release,
+            )
+            / "artifacts"
+        ),
+        "--pack-lock",
+        str(updated_root / "packs/healthy-nodes/pack-lock.json"),
+    )
+    try:
         published = original_wheel(tmp_path, "dinkster_inference", "9.0", 167)
         incompatible = original_wheel(tmp_path, "dinkster_inference", "9.1", 229)
         page = "".join(
