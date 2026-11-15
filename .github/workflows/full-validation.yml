@@ -189,6 +189,8 @@ jobs:
       - name: Export the published default catalog
         if: matrix.os == 'linux' && matrix.run_checks
         run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/checkout@v4
         if: matrix.os == 'linux' && matrix.run_checks
         with:
