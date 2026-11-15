@@ -39,6 +39,36 @@ def test_broad_grants_refuse(tmp_path: Path, grant: str) -> None:
         )
 
 
+def test_interpreter_outside_macos_system_paths_is_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefix = "/opt/dinkster-test-interpreter"
+    exists = os.path.exists
+    monkeypatch.setattr(os.path, "exists", lambda path: str(path) == prefix or exists(path))
+    spec = make_spec(tmp_path, "pass")
+    python = prefix + "/bin/python3.14"
+    spec = LaunchSpec((python, "-c", "pass"), {}, spec.endpoint_dir, spec.pack_root, python, False)
+    profile = build_seatbelt_profile(spec, SandboxPolicy(), scratch=spec.endpoint_dir / "tmp")
+    assert f'(allow file-read* (subpath "{prefix}"))' in profile
+    assert '(allow file-read* (subpath "/opt"))' not in profile
+
+
+@pytest.mark.parametrize("cache_name", ["com.apple.metal", "com.apple.metalfe"])
+def test_shared_metal_cache_grants_refuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cache_name: str
+) -> None:
+    cache_root = tmp_path / "user-cache"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(os, "confstr", lambda key: str(cache_root) if key == 65538 else None)
+    spec = make_spec(tmp_path, "pass")
+    with pytest.raises(SandboxError, match="dissolve"):
+        build_seatbelt_profile(
+            spec,
+            SandboxPolicy(rw_binds=(str(cache_root / cache_name),)),
+            scratch=spec.endpoint_dir / "tmp",
+        )
+
+
 def test_unavailable_launcher_refuses(tmp_path: Path) -> None:
     launcher = SeatbeltLauncher(capability=SeatbeltCapability(False, None, "test unavailable"))
     with pytest.raises(SandboxUnavailable, match="test unavailable"):
@@ -217,30 +247,21 @@ Path({str(output)!r}).write_text(json.dumps(cache))
 
 @native
 def test_isolated_worker_runs_image_graph() -> None:
-    from dinkster_caches import MemoryLRUCache
-    from dinkster_engine import Engine
     from dinkster_graph import Graph, GraphNode, Link
-    from dinkster_values import TypeRegistry, register_core_types
-    from dinkster_workers import IsolatedWorker
+
+    from dinkster.compose import PackSpec, ServingComposer
 
     root = Path(__file__).parents[1]
 
     async def scenario() -> None:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        worker = IsolatedWorker(
-            root / "packages/dinkster-nodes-dev/dinkster-pack.toml",
-            registry,
-            launcher=SeatbeltLauncher(SandboxPolicy(ro_binds=(str(root),))),
-        )
-        await worker.start()
+        composer = ServingComposer(sandbox_policy=SandboxPolicy(ro_binds=(str(root),)))
         try:
-            engine = Engine(
-                schemas=dict(worker.schemas),
-                registry=registry,
-                worker=worker,
-                cache=MemoryLRUCache(),
+            await composer.add_pack(
+                PackSpec(
+                    root / "packages/dinkster-nodes-dev/dinkster-pack.toml", trust_reserved=True
+                )
             )
+            engine = composer.composition.make_engine(lambda _event: None)
             result = await engine.run(
                 Graph(
                     nodes={
@@ -255,7 +276,7 @@ def test_isolated_worker_runs_image_graph() -> None:
             assert isinstance(mean, float)
             assert mean == pytest.approx(0.5, abs=0.001)
         finally:
-            await worker.close()
+            await composer.close()
 
     asyncio.run(scenario())
 

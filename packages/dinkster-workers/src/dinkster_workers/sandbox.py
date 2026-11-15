@@ -249,8 +249,8 @@ def _existing(paths: Iterable[str]) -> list[str]:
     return seen
 
 
-def _covered_by_system(path: str) -> bool:
-    return any(path == root or path.startswith(root + "/") for root in SANDBOX_SYSTEM_PATHS)
+def _covered_by_system(path: str, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS) -> bool:
+    return any(path == root or path.startswith(root + "/") for root in system_paths)
 
 
 def _next_symlink_step(path: Path) -> tuple[Path, Path, Path] | None:
@@ -275,7 +275,9 @@ def _absolute_executable(python: str) -> str:
     return os.path.abspath(shutil.which(python) or python)
 
 
-def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def _interpreter_mounts(
+    python: str, *, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS
+) -> tuple[list[str], list[tuple[str, str]]]:
     """Binds and symlinks needed to reproduce an interpreter installation."""
     binds: list[str] = []
     symlinks: list[tuple[str, str]] = []
@@ -301,12 +303,12 @@ def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
     binds = [
         path
         for path in _existing(binds)
-        if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path)
+        if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path, system_paths)
     ]
     symlinks = [
         (target, link)
         for target, link in dict.fromkeys(symlinks)
-        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link)
+        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link, system_paths)
     ]
     return binds, symlinks
 
@@ -616,14 +618,16 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     }
 
 
-def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def _import_surface_mounts(
+    python: str, *, system_paths: tuple[str, ...] = SANDBOX_SYSTEM_PATHS
+) -> tuple[list[str], list[tuple[str, str]]]:
     """The read-only paths the probe child needs to import what its parent
     can import: the interpreter's own prefixes plus every existing absolute
     ``sys.path`` entry (editable installs land their source roots there via
     .pth files, so this covers dev workspaces and deployed site-packages
     with one rule). Nothing here is writable and nothing outside it is
     visible."""
-    binds, symlinks = _interpreter_mounts(python)
+    binds, symlinks = _interpreter_mounts(python, system_paths=system_paths)
     mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):
@@ -631,7 +635,7 @@ def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]
         normalized = os.path.normpath(entry)
         if normalized in FORBIDDEN_BIND_ROOTS:
             continue
-        if _covered_by_system(normalized):
+        if _covered_by_system(normalized, system_paths):
             continue
         if any(normalized == path or normalized.startswith(path + os.sep) for path in mounted):
             continue

@@ -71,20 +71,23 @@ def _quote(value: str) -> str:
 
 def _checked(paths: tuple[str, ...], *, role: str) -> list[str]:
     forbidden = set(_FORBIDDEN_ROOTS)
-    shared_metal = None
+    shared_metal: list[str] = []
     if sys.platform == "darwin":
         for key in (65536, 65537, 65538):
             root = os.confstr(key)
             if root:
                 forbidden.add(os.path.realpath(root))
                 if key == 65538:
-                    shared_metal = os.path.join(root, "com.apple.metal")
+                    shared_metal = [
+                        os.path.join(root, "com.apple.metal"),
+                        os.path.join(root, "com.apple.metalfe"),
+                    ]
     for path in paths:
         resolved = os.path.realpath(path)
         if (
             resolved in forbidden
             or any(root.startswith(resolved + os.sep) for root in forbidden)
-            or (shared_metal is not None and _paths_overlap(path, shared_metal))
+            or any(_paths_overlap(path, cache) for cache in shared_metal)
         ):
             raise SandboxError(f"{role} grant '{path}' would dissolve the sandbox")
     return _validated(paths, role=role)
@@ -99,9 +102,9 @@ def build_seatbelt_profile(
     probe: bool = False,
 ) -> str:
     """Generate the same filesystem and process boundary for workers and doctor."""
-    interpreter, aliases = _interpreter_mounts(spec.python)
+    interpreter, aliases = _interpreter_mounts(spec.python, system_paths=SYSTEM_READ_PATHS)
     if probe:
-        interpreter, aliases = _import_surface_mounts(spec.python)
+        interpreter, aliases = _import_surface_mounts(spec.python, system_paths=SYSTEM_READ_PATHS)
     pythonpath = spec.env.get("PYTHONPATH", "")
     if not pythonpath and "PYTHONPATH" in policy.env_passthrough:
         pythonpath = os.environ.get("PYTHONPATH", "")

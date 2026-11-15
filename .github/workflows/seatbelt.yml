@@ -2,18 +2,25 @@ name: Native macOS sandbox
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/seatbelt.yml
       - packages/dinkster-workers/src/dinkster_workers/seatbelt.py
       - packages/dinkster-workers/src/dinkster_workers/sandbox.py
       - packages/dinkster-workers/src/dinkster_workers/doctor.py
+      - packages/dinkster-workers/src/dinkster_workers/launch.py
+      - packages/dinkster-workers/src/dinkster_workers/transport.py
+      - packages/dinkster-workers/src/dinkster_workers/__init__.py
+      - src/dinkster/compose.py
       - tests/test_seatbelt.py
+      - uv.lock
 
 permissions:
   contents: read
 
 jobs:
   seatbelt:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-15
     timeout-minutes: 15
     steps:
