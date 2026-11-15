@@ -89,6 +89,163 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     return result.returncode, document
 
 
+def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_server
+) -> None:
+    import pygit2
+    from dinkster_registry import LockedPack, build_artifact
+    from dinkster_supervisor.environment_state import Generation
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_lock import PackLock
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root = Path(fixture["root"])
+    store = Path(fixture["store"])
+    empty = tmp_path / "initial.lock"
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = tmp_path / "retained"
+    retained.mkdir()
+    (retained / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace("healthy", "retained").replace(
+            'requires = ["numpy>=1.26"]', 'version = "1.0"\nengine = ">=0"\nrequires = []'
+        )
+    )
+    (retained / "retained_nodes.py").write_text(HEALTHY_NODES.replace("healthy", "retained"))
+    archive = artifacts / "retained.zip"
+    retained_digest = build_artifact(retained, archive)
+    archive.rename(artifacts / f"{retained_digest[7:]}.zip")
+    retained_entry = LockedPack(
+        "retained-nodes", "1.0", retained_digest, "dinkster", ("retained",), "registry:official"
+    )
+    empty.write_text(Lockfile.of([retained_entry]).record_json())
+    dependency = tmp_path / "retained.pack-lock.json"
+    PackLock("retained-nodes", "fixture-cpu", ">=3.12", (), (), (), engine=">=0").write(dependency)
+    setup = fixture["commands"]["setup"]
+    code, result = _run(
+        root,
+        *setup[setup.index("setup") : -1],
+        "--catalog-lock",
+        str(empty),
+        "--artifacts",
+        str(artifacts),
+        "--pack-lock",
+        str(dependency),
+    )
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    original = Generation.read(root / "generations/1/generation.json")
+    before = {
+        path: content_digest(path)
+        for parent in ("bases", "wheels")
+        for path in (store / parent).rglob("*")
+        if path.is_file() and path.name != ".objects.json"
+    }
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+    commits = []
+    for branch, value in (("managed-pack", 31), ("managed-pack-new", 79)):
+        tree = pygit2.Index()
+        for name, payload in {
+            "dinkster-pack.toml": HEALTHY_MANIFEST.replace(
+                'requires = ["numpy>=1.26"]', 'version = "1.0"\nengine = ">=0"\nrequires = []'
+            ),
+            "healthy_nodes.py": HEALTHY_NODES + f"\nVALUE = {value}\n",
+        }.items():
+            tree.add(pygit2.IndexEntry(name, repository.create_blob(payload.encode()), 0o100644))
+        commits.append(
+            repository.create_commit(
+                "refs/heads/" + branch,
+                signature,
+                signature,
+                branch,
+                tree.write_tree(repository),
+                commits[-1:],
+            )
+        )
+    repository.free()
+    endpoint = "https://github.com/Kosinkadink/source"
+    index = tmp_path / "index"
+    index.mkdir()
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    try:
+        for branch, expected, commit in (
+            ("managed-pack", 31, commits[0]),
+            ("managed-pack-new", 79, commits[1]),
+        ):
+            arguments = (
+                ["add", endpoint, "--pack", "healthy-nodes", "--git-mirror", git_server["proxy"]]
+                if expected == 31
+                else ["update", "--pack", "healthy-nodes"]
+            )
+            code, result = _run(
+                root,
+                "source",
+                *arguments,
+                "--ref",
+                branch,
+                "--package-index",
+                index.as_uri(),
+                "--yes",
+                timeout=180,
+            )
+            assert code == 0, result
+            current = root / "generations" / str(result["current"])
+            record = Generation.read(current / "generation.json")
+            assert record.source == "source" and record.engine_release == original.engine_release
+            assert record.base == original.base
+            selected = Lockfile.from_record_json((current / "dinkster.lock").read_text())
+            assert (
+                next(entry for entry in selected.packs if entry.pack == "retained-nodes")
+                == retained_entry
+            )
+            assert (current / "packs/retained-nodes/pack-lock.json").read_bytes() == (
+                root / "generations/1/packs/retained-nodes/pack-lock.json"
+            ).read_bytes()
+            status = _run(root, "status")[1]
+            assert status["sources"]["packs"]["healthy-nodes"]["commit"] == str(commit)
+            assert status["published"] is False and status["reproducible"] is False
+            assert record.drift(current) == ()
+            assert (
+                (current / "pack-sources/healthy-nodes/healthy_nodes.py")
+                .read_text()
+                .endswith(f"VALUE = {expected}\n")
+            )
+            assert {path: content_digest(path) for path in before} == before
+            assert _run(root, "stop", "--yes")[0] == 0
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        current = root / "generations" / str(restored["current"])
+        assert (
+            (current / "pack-sources/healthy-nodes/healthy_nodes.py")
+            .read_text()
+            .endswith("VALUE = 31\n")
+        )
+        assert _run(root, "status")[1]["sources"]["packs"]["healthy-nodes"]["commit"] == str(
+            commits[0]
+        )
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
 def test_source_engine_ref_update_and_exact_commit_rollback(
     tmp_path: Path, monkeypatch, git_server
 ):

@@ -172,7 +172,7 @@ def restore_entry(
                     "tuple[str, str, str]", (engine_id, base_id, variant)
                 )
                 engine_bytes = (inputs / "engine-manifest.json").read_bytes()
-                source = snapshot.get("source") == "source"
+                source = read_document(inputs / "engine-manifest.json").get("source") == "git"
                 local = snapshot.get("source") == "local" or source
                 if source:
                     from .environment_sources import restore_source_inputs
@@ -314,7 +314,7 @@ def restore_entry(
                     else None,
                     acquire_pack_wheels=True,
                     acquire_pack_sources=True,
-                    source_kind="source" if source else "local" if local else "published",
+                    source_kind=cast("str", snapshot["source"]),
                     artifact_sources=provenance if not local or source else None,
                 )
             entry = prepare_entry(

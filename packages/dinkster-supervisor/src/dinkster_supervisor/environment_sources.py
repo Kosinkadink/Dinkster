@@ -12,6 +12,7 @@ import tempfile
 import tomllib
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -66,6 +67,208 @@ def acquired_source_engine(args: Any) -> Generator[Any]:
         yield selected
 
 
+def select_source_pack(
+    root: Path,
+    *,
+    value: str | None,
+    pack: str,
+    ref: str | None,
+    mirror: str | None,
+    package_index: str | None,
+    apply: bool,
+) -> dict[str, Any]:
+    """Replace only a selected Git pack through ordinary generation provisioning."""
+    from urllib.parse import urlencode
+
+    from .environment_generations import (
+        build_generation,
+        restore_pack_sources,
+    )
+    from .environment_pack_install import current_software
+    from .environment_runtime import require_idle
+    from .environment_state import Journal, writer_lock
+    from .environment_transactions import (
+        activate,
+        begin_activation,
+        next_generation,
+        recover_activation,
+    )
+    from .git_sources import fetched_git_source, parse_git_source
+
+    root = root.resolve()
+    source, generation, store = current_software(root)
+    if generation.source == "local":
+        raise EnvironmentError("managed Git packs require an installed release base")
+    provenance = read_document(source / "artifact-sources.json")
+    previous = cast("dict[str, dict[str, Any]]", provenance.get("packs", {}))
+    if value is None:
+        if not pack or pack not in previous:
+            raise EnvironmentError("source pack update requires a recorded Git pack name")
+        origin = previous[pack]
+        value = (
+            origin["url"]
+            + "#"
+            + urlencode(
+                {
+                    **({"ref": origin["requestedRef"]} if origin["requestedRef"] else {}),
+                    "subdirectory": origin["subdirectory"],
+                }
+            )
+        )
+        mirror = mirror or origin.get("gitMirror")
+    url, requested, subdirectory = parse_git_source(cast("str", value))
+    specification = (
+        url
+        + "#"
+        + urlencode(
+            {
+                **({"ref": ref or requested} if ref or requested else {}),
+                "subdirectory": subdirectory,
+            }
+        )
+    )
+    mirror = mirror or os.environ.get("DINKSTER_GIT_MIRROR")
+    software = content_digest(source / "generation.json")
+    settings = (root / "project.json").read_bytes()
+    store_pointer = (root / "store").read_bytes()
+
+    def revalidate() -> None:
+        from .environment_state import read_current
+
+        if (
+            read_current(root) != generation.number
+            or content_digest(source / "generation.json") != software
+            or generation.drift(source)
+            or (root / "project.json").read_bytes() != settings
+            or (root / "store").read_bytes() != store_pointer
+        ):
+            raise EnvironmentError("project changed after source planning; request a new plan")
+
+    with fetched_git_source(specification, mirror=mirror) as (checkout, origin):
+        name = tomllib.loads((checkout / "dinkster-pack.toml").read_text())["pack"]["name"]
+        if pack and pack != name:
+            raise EnvironmentError("selected Git checkout names a different pack")
+        identity = source_identity(source_files(checkout))
+        selected = {
+            **origin,
+            "kind": "pack",
+            "gitMirror": mirror,
+            "contentDigest": identity,
+            "source": "git:"
+            + cast("str", origin["url"])
+            + ("#" + urlencode({"subdirectory": subdirectory}) if subdirectory else "")
+            + "@"
+            + cast("str", origin["commit"]),
+        }
+        result = {
+            "current": generation.number,
+            "sources": {"packs": {**previous, name: selected}},
+            "kind": "source",
+            "published": False,
+            "reproducible": False,
+            "status": "planned",
+            "plan": [
+                f"source: unpublished and non-reproducible; Git pack {name}",
+                f"repository {origin['url']}; ref {origin['requestedRef']}; "
+                f"commit {origin['commit']}",
+                "keep the installed engine, release base, frontend and unselected pack sources",
+                "resolve only the selected pack against the target engine constraints",
+            ],
+        }
+        if not apply:
+            return result
+        with writer_lock(store), writer_lock(root):
+            revalidate()
+            require_idle(root)
+            with tempfile.TemporaryDirectory(dir=store, prefix=".source-pack-") as directory:
+                scratch = Path(directory)
+                artifacts = scratch / "artifacts"
+                prepared = json.loads(
+                    run_local_command(
+                        [
+                            str(interpreter(source)),
+                            "-I",
+                            "-B",
+                            "-m",
+                            "dinkster_workers.development_sources",
+                        ],
+                        cwd=source,
+                        input=json.dumps(
+                            {
+                                "generation": str(source),
+                                "store": str(store),
+                                "artifacts": str(artifacts),
+                                "libraries": [],
+                                "packs": [str(checkout)],
+                                "packPaths": [str(checkout)],
+                                "origins": {str(checkout): selected},
+                                "installedLock": str(source / "dinkster.lock"),
+                                "variant": generation.variant,
+                                "accelerator": "cpu"
+                                if generation.variant.endswith("cpu")
+                                else "mps"
+                                if generation.variant == "mac-arm64"
+                                else "cuda",
+                                "index": package_index
+                                or json.loads(settings).get("packageIndex")
+                                or "https://pypi.org/simple",
+                            }
+                        ),
+                    )
+                )
+                if "sources" not in prepared:
+                    raise EnvironmentError(
+                        "installed engine does not support managed Git pack inputs"
+                    )
+                if source_identity(source_files(checkout)) != identity:
+                    raise EnvironmentError("selected Git pack changed during preparation")
+                catalog = artifacts / "development-packs.lock"
+                restore_pack_sources(
+                    source, catalog_lock=catalog, artifacts=artifacts, project=root, store=store
+                )
+                provenance["packs"] = {**previous, **prepared["sources"]}
+                revalidate()
+                target = next_generation(root)
+                journal = begin_activation(root, target, "update")
+                try:
+                    replace(Journal.read(journal), stage="building").write(journal)
+                    build_generation(
+                        root=root,
+                        number=target,
+                        store=store,
+                        base=generation.base,
+                        engine_release=generation.engine_release,
+                        engine_version=generation.engine_version,
+                        constraints=source / "constraints.txt",
+                        variant=generation.variant,
+                        worker_protocol=generation.worker_protocol,
+                        source_generation=source,
+                        pack_locks=tuple(Path(path) for path in prepared["locks"]),
+                        in_process_packs=generation.in_process_packs,
+                        own_environment_size=sum(
+                            path.stat().st_size
+                            for path in (
+                                object_path(store / "bases", generation.base) / "python"
+                            ).rglob("*")
+                            if path.is_file()
+                        ),
+                        catalog_lock=catalog,
+                        artifacts=artifacts,
+                        acquire_pack_wheels=True,
+                        source_kind="source",
+                        artifact_sources=provenance,
+                    )
+                    activate(root, journal, revalidate=revalidate)
+                except Exception as exc:
+                    replace(Journal.read(journal), error=str(exc)).write(journal)
+                    recover_activation(root, journal)
+                    raise
+                result.update(
+                    current=target, status="applied", sources={"packs": provenance["packs"]}
+                )
+                return result
+
+
 def installed_release_catalog(generation: Path, channel_name: str) -> EnvironmentCatalog:
     """Keep source operations on the selected generation's release base and code wheelhouse."""
     record = Generation.read(generation / "generation.json")
@@ -80,7 +283,7 @@ def installed_release_catalog(generation: Path, channel_name: str) -> Environmen
         (generation / "base-manifest.json").read_bytes(), record.base, record.variant
     )
     manifest = read_document(generation / "engine-manifest.json")
-    if record.source == "source":
+    if manifest.get("source") == "git":
         if source_identity(manifest) != record.engine_release:
             raise EnvironmentError("source engine manifest identity mismatch")
         engine_bytes = cast("str", manifest["publishedManifest"]).encode("utf-8")

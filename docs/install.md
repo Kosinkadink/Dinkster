@@ -338,6 +338,27 @@ bytes; unavailable inputs are reported rather than replaced by a new build.
 published generation. Ordinary release setup remains unchanged and does not
 fetch Git sources implicitly.
 
+### Managed pack sources
+
+Select a single pack without replacing the installed engine or other packs:
+
+```sh
+dinkster source --root ROOT add https://github.com/OWNER/PACK --pack PACK_NAME --ref BRANCH --yes
+dinkster source --root ROOT update --pack PACK_NAME --ref OTHER --yes
+```
+
+Omit `--ref` on update to refresh that pack's recorded ref. Omit `--yes` to
+inspect its source identity without changing the project. `--git-mirror` and
+`--package-index` apply to the explicit source and its dependencies. The pack
+must declare a compatible engine range and version. Its dependencies resolve
+against the installed generation's constraints; incompatible requirements
+refuse before activation. Unselected source entries and dependency locks remain
+unchanged. The generation retains its release base, engine and pinned frontend.
+Status and history disclose the pack URL, requested ref, exact commit and
+unpublished/non-reproducible status. Rollback uses the retained source archive
+or verifies an archive reacquired at the recorded commit, never a moved ref.
+The local directory `--pack` development loop is unchanged.
+
 ### Public git refs and mirrors
 
 `dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists

@@ -192,7 +192,7 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 base = validate_manifest(manifest.read_bytes(), generation.base, generation.variant)
                 result["base"] = base_details(base)
         manifest = generation_root / "engine-manifest.json"
-        if generation.source == "source" and manifest.is_file():
+        if manifest.is_file() and read_document(manifest).get("source") == "git":
             from .environment_development import source_identity
 
             engine = read_document(manifest)
@@ -226,6 +226,21 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
                 "version": generation.engine_version,
                 "label": engine.get("label"),
             }
+        provenance = generation_root / "artifact-sources.json"
+        if provenance.is_file() and read_document(provenance).get("packs"):
+            if content_digest(provenance) != dict(generation.files).get(provenance.name):
+                raise EnvironmentError("retained source identities do not match active generation")
+            sources = cast("dict[str, object]", result.setdefault("sources", {}))
+            sources["packs"] = read_document(provenance)["packs"]
+            result.update(
+                source="source",
+                kind="source",
+                published=False,
+                reproducible=False,
+                sourceDescription=(
+                    "source: unpublished and non-reproducible; selected Git pack code"
+                ),
+            )
     if args.operation == "catalog":
         mirrors = tuple(args.mirror or (cast("list[str]", settings["mirrors"]) if settings else ()))
         channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")
@@ -1728,6 +1743,21 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
         if not entries:
             raise EnvironmentError("project has no recorded release generation")
         return _restore(args, result, cast("int", entries[-1]["id"]))
+    if args.pack is not None:
+        from .environment_sources import select_source_pack
+
+        result.update(
+            select_source_pack(
+                args.root,
+                value=args.url if args.source_action == "add" else None,
+                pack=args.pack,
+                ref=args.ref,
+                mirror=args.git_mirror,
+                package_index=args.package_index,
+                apply=args.yes,
+            )
+        )
+        return 0
     git_mirror = args.git_mirror
     if args.source_action == "add":
         value = args.url
@@ -1837,6 +1867,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
             command.add_argument("url", help="explicit public HTTPS engine repository URL")
         command.set_defaults(approve=None)
         if action != "release":
+            command.add_argument(
+                "--pack", nargs="?", const="", help="select a Git pack; update requires its name"
+            )
             command.add_argument("--ref", help="branch, tag, PR ref or exact commit")
             command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
             command.add_argument("--package-index", help="index for missing locked wheels")

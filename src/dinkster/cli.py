@@ -47,7 +47,7 @@ _COMMANDS: dict[str, _Command] = {
     "source": _Command(
         "dinkster.source",
         passes_argv=True,
-        summary="select explicit Git engines or inspect public refs",
+        summary="select explicit Git engines or packs, or inspect public refs",
     ),
     "pack": _Command(
         "dinkster.manager",

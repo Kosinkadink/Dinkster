@@ -11,6 +11,13 @@
   the selected source generation's API and inference distribution versions,
   not the planning tool's installed packages.
 
+- `source add URL --pack NAME --ref REF` and `source update --pack NAME`
+  explicitly select or refresh one managed Git pack on the installed engine and
+  release base. Unselected pack source entries and dependency locks remain
+  unchanged. Target engine constraints still apply. Status and history disclose
+  its requested ref, exact commit and unpublished/non-reproducible state;
+  rollback restores recorded source identities rather than following refs.
+
 - Pack wheels preserve manifest-relative blueprint, template, icon, settings,
   documentation and frontend resource paths, including resources inside Python
   source packages. Missing declared resources refuse build or admission before
