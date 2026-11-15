@@ -35,7 +35,6 @@ import json
 import math
 import os
 import shutil
-import sys
 import tempfile
 import urllib.parse
 import urllib.request
@@ -2650,8 +2649,6 @@ class ServingComposer:
             protected_rw_exceptions.append(str(scratch))
         ro_binds.extend(str(manifest.root) for manifest in manifests)
         protected_ro_exceptions.extend(str(manifest.root) for manifest in manifests)
-        python = Path(spec.python or sys.executable).absolute()
-        protected_ro_exceptions.append(str(python.parent.parent))
         for name in _SANDBOX_RO_PATH_ENV:
             if value := effective_env.get(name):
                 if name == "DINKSTER_MOUNTS_SNAPSHOT" and any(

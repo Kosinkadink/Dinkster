@@ -521,8 +521,8 @@ def build_bwrap_command(
     command.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
     system_binds = _existing(SANDBOX_SYSTEM_PATHS)
-    interpreter_binds, interpreter_symlinks = _interpreter_mounts(spec.python)
-    interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter")
+    interpreter_binds, interpreter_symlinks = _import_surface_mounts(spec.python)
+    interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter imports")
     interpreter_aliases = _validated(
         tuple(link for _, link in interpreter_symlinks), role="interpreter alias"
     )
@@ -579,7 +579,12 @@ def build_bwrap_command(
     _validate_protected_binds(
         read_only_binds,
         protected_roots=policy.protected_roots,
-        exceptions=policy.protected_ro_exceptions,
+        # The host-selected interpreter is trusted launch input, not a pack grant.
+        exceptions=(
+            *policy.protected_ro_exceptions,
+            *_interpreter_mounts(spec.python)[0],
+            *interpreter_aliases,
+        ),
         role="read-only",
     )
     _validate_protected_binds(
@@ -696,18 +701,19 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
 
 
 def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
-    """The read-only paths the probe child needs to import what its parent
-    can import: the interpreter's own prefixes plus every existing absolute
-    ``sys.path`` entry (editable installs land their source roots there via
-    .pth files, so this covers dev workspaces and deployed site-packages
-    with one rule). Nothing here is writable and nothing outside it is
-    visible."""
+    """Read-only interpreter prefixes and installed import roots for children.
+
+    Editable installs add source roots through .pth files. The working directory
+    is not an installed import root and may contain the protected host library.
+    """
     binds, symlinks = _interpreter_mounts(python)
     mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):
             continue
         normalized = os.path.normpath(entry)
+        if _resolved(normalized) == _resolved(os.getcwd()):
+            continue
         if normalized in FORBIDDEN_BIND_ROOTS:
             continue
         if _covered_by_system(normalized):

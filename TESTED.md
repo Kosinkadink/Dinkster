@@ -5,6 +5,11 @@
 - Driver filesystem was read-only in granted workers and its digest stayed unchanged. Windows-drive, live interop socket, /init, host-loopback and external-TCP exclusions had successful plain controls.
 - Desktop private-distribution provisioning and sandbox-toggle integration remain separate validation; these receipts do not establish that experience.
 
+# Published catalog bootstrap authentication
+
+- The focused bootstrap check fails on unchanged main when a token is set; the exporter now authenticates that API request. Absent and empty tokens preserve unauthenticated behavior. Draft, prerelease, invalid-tag and missing-digest refusals remain intact.
+- An authenticated public bootstrap downloaded supervisor 0.0.6 and verified its published SHA-256 and size (265380 bytes). This checks release discovery and wheel integrity, not complete catalog export or packaged Desktop recovery.
+
 # Public Hugging Face model downloads
 
 | Scenario | Host | Result |
