@@ -65,6 +65,7 @@ from dinkster_assets import (
     load_output_mount,
     require_region,
 )
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
 from dinkster_graph import GraphNode
@@ -1835,6 +1836,7 @@ def main(argv: list[str] | None = None) -> None:
         vault: AssetVault | None = None
         if args.library_root:
             root = Path(args.library_root)
+            ProducedAssetInventory.initialize_vault(root / "vault")
             vault = AssetVault(root / "vault")
             assert mount_service is not None
         sandbox_policy: SandboxPolicy | None = None

@@ -41,10 +41,14 @@ from dinkster_protocol import (
 )
 from dinkster_schema import (
     InputSpec,
+    MappingSource,
     Node,
     NodeSchema,
     OutputSpec,
+    ReplacementCase,
+    ReplacementRule,
     TypeExpr,
+    ValueTransform,
     build_node_types,
     build_schemas,
     report_preview,
@@ -918,6 +922,59 @@ def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
             assert (await (await client.get("/api/packs/other-pack/settings")).json())[
                 "values"
             ] == {"label": "other"}
+
+    run_scenario(scenario())
+
+
+def test_invalid_retired_node_value_is_an_admission_error_not_a_server_error() -> None:
+    schemas = {
+        **SCHEMAS,
+        "new": NodeSchema(
+            "new",
+            inputs=(InputSpec("value", FLOAT),),
+            replacements=(
+                ReplacementRule(
+                    "old",
+                    (
+                        ReplacementCase.build(
+                            "new",
+                            inputs={
+                                "value": MappingSource.from_value(
+                                    "value", ValueTransform.scale(100)
+                                )
+                            },
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    }
+
+    def factory(on_event: EventListener | None = None) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(NODES), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        async with TestClient(TestServer(create_app(factory, schemas))) as client:
+            response = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    Graph({"saved": GraphNode("old", {"value": "not-a-number"})}),
+                    ["saved"],
+                ),
+            )
+            assert response.status == 400
+            body = await response.json()
+            assert body["error"] == "node-replacement"
+            assert "value" in body["message"] and "numeric" in body["message"]
+            assert (await (await client.get("/api/jobs")).json())["jobs"] == []
 
     run_scenario(scenario())
 

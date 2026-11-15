@@ -9,12 +9,23 @@
   following a moved branch. Recovery reports unavailable locally built wheels
   instead of silently rebuilding different bytes.
 
+- Pack wheels preserve manifest-relative blueprint, template, icon, settings,
+  documentation and frontend resource paths, including resources inside Python
+  source packages. Missing declared resources refuse build or admission before
+  catalog preparation. Source manifests are not rewritten.
+
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
   refuse before activation; compatible frontend-only updates retain the engine.
 
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
+- Registry pack updates select the newest version compatible with the engine API,
+  inference and other engine-provided package versions, including requirements in
+  the target variant's published dependency lock and its exact base binding.
+  Plans identify skipped newer versions and their unmet minimums. Exact incompatible
+  selections refuse with upgrade guidance instead of installing a pack with silently
+  missing nodes.
 - Equivalent requirement spelling and unordered namespace or base replacement
   declarations do not refuse admission. Namespaces must still match their grants,
   replacement names remain unique, and selected wheel identities stay exact.
@@ -366,6 +377,12 @@
   manifests. Engine-only changes select none; shared vision changes select all
   affected vision packs. Native dependency locking can consume that independent
   selected catalog without replacing its versions with the engine version.
+- Every regular engine version tag publishes native environment tools from the
+  same commit, then moves Stable only after the engine, selected bases, tools
+  and frontend bytes have been verified at their public locations. A tools
+  failure leaves Stable unchanged and fails publication; missing publication
+  configuration is an error, not a successful skip. Main continues to move on
+  successful engine builds and retains its independently published tools.
 - After a successful same-commit engine release, natural main publication selects
   every declared official pack and library version missing from the public index,
   even when a predecessor never published. Older or newer public versions do not
@@ -989,7 +1006,9 @@ live snapshot; omit all live marks to capture a restorable generation.
 
 Selected helper wheels participate in engine
 resolution before packs are built, including replacements for engine dependencies
-whose real versions still satisfy the declared constraints. The exception is an
+whose real versions still satisfy the declared constraints. Contributor packs
+share the exact selected helper wheel installed in their generation; another
+wheel with the same name and version is not an interchangeable substitute. The exception is an
 explicitly selected local `dinkster-inference`: `develop` may override the engine's
 exact inference pin, reports the pinned and local versions, and retains the local
 wheel for restore. For example, add `--library-source /absolute/dinkster-inference`

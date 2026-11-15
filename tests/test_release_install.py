@@ -214,7 +214,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     tmp_path: Path,
 ) -> None:
     version = development_version(ROOT)
-    assert version.startswith("0.0.4.dev")
+    assert version.startswith("0.0.7.dev")
     assert version.endswith(
         "+g" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     )
@@ -315,8 +315,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert f"Requires-Dist: dinkster-engine=={version}\n" in metadata
     assert "dinkster-frontend" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.1\n" not in metadata
-    assert "Requires-Dist: dinkster-inference==0.1.1; extra == 'inference'\n" in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.2\n" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.2; extra == 'inference'\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [

@@ -215,10 +215,22 @@ model wholesale (hazard H10):
 **Lifecycle metadata is schema data, never validity.** Deprecation, search
 visibility, and pack-declared replacement rules (a closed, serializable rule
 vocabulary mirroring the frontend's ReplacementRule model - guards, source
-mappings, transforms; static interface ids only) ride the schema wire additively
-and are excluded from the schema signature: migration advice must not invalidate
-caches. Cross-schema reference validation is advisory at server startup and an
-error in `dinkster doctor`.
+mappings, transforms, helper nodes and dynamic families) ride the schema wire
+additively and are excluded from the schema signature: migration advice must not
+invalidate caches. Cross-schema reference validation is advisory at server startup
+and an error in `dinkster doctor`.
+
+A changed input meaning or removed output requires a new node type and a declared
+replacement, never reinterpretation of a served ID. ComfyUI-class IDs keep their
+original meaning. Reordering inputs, adding inputs with defaults, and extending
+choice values keep the ID: native documents store values and links by input ID,
+not position. The shared replacement table selects recorded `fromSignature` or
+foreign `fromVersion` identities when declared, maps values and links once on
+open/admission, and saves the successor ID. Foreign positional widget streams
+must first be decoded using their historical class/version layout. Backend graphs
+carry optional `schemaSignature`; foreign version guards belong to document
+import before graph compilation. Rules may be removed twelve months after they
+land, with removal announced in release notes.
 
 ### 3.2 Value envelopes: nothing crosses an edge raw
 
