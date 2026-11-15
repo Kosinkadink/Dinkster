@@ -280,6 +280,7 @@ class Generation:
     files: tuple[tuple[str, str], ...]
     in_process_packs: tuple[str, ...] = ()
     source: str = "published"
+    isolated_inference_packs: tuple[str, ...] = ()
 
     @classmethod
     def read(cls, path: Path) -> Generation:
@@ -320,6 +321,15 @@ class Generation:
         packs = cast("list[str]", entries)
         if len(set(packs)) != len(packs):
             raise EnvironmentError("inProcessPacks must not repeat a pack")
+        isolated = value.get("isolatedInferencePacks", [])
+        if not isinstance(isolated, list) or any(
+            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
+            for pack in cast("list[object]", isolated)
+        ):
+            raise EnvironmentError("isolatedInferencePacks must be an array of pack ids")
+        isolated_packs = cast("list[str]", isolated)
+        if len(set(isolated_packs)) != len(isolated_packs):
+            raise EnvironmentError("isolatedInferencePacks must not repeat a pack")
         source = value.get("source", "published")
         if source not in ("published", "local", "source"):
             raise EnvironmentError("generation source must be published, local or source")
@@ -334,6 +344,7 @@ class Generation:
             tuple(sorted((relative_file(name), digest(sha)) for name, sha in hashes.items())),
             tuple(packs),
             cast("str", source),
+            tuple(isolated_packs),
         )
 
     def write(self, path: Path) -> None:
@@ -349,6 +360,11 @@ class Generation:
                 "workerProtocol": self.worker_protocol,
                 "files": dict(self.files),
                 "inProcessPacks": list(self.in_process_packs),
+                **(
+                    {"isolatedInferencePacks": list(self.isolated_inference_packs)}
+                    if self.isolated_inference_packs
+                    else {}
+                ),
                 **({"source": self.source} if self.source != "published" else {}),
                 **(
                     {"kind": "source", "published": False, "reproducible": False}

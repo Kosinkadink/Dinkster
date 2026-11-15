@@ -1501,11 +1501,19 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
     server = _serve_artifacts(registry_files, registry_requests)
     try:
         setup = fixture["commands"]["setup"]
-        code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
+        code, result = _run(
+            root,
+            *setup[setup.index("setup") : -1],
+            *catalog_flags,
+            "--inference-pack",
+            "healthy=isolated",
+            timeout=120,
+        )
         assert code == 0 and result["current"] == 1, result
         assert _run(root, "stop", "--yes")[0] == 0
         shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
-        code, result = _run(root, "update", *catalog_flags, "--yes", timeout=120)
+        admission_flags = ("--inference-pack", "healthy=auto") if pack_route == "command" else ()
+        code, result = _run(root, "update", *catalog_flags, *admission_flags, "--yes", timeout=120)
         assert code == 0 and result["current"] == 2, result
         assert _run(root, "stop", "--yes")[0] == 0
         (root / "registries.toml").write_text(
@@ -1636,6 +1644,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert all(row["base"] == snapshots[0]["base"] for row in snapshots)
         assert all(row["tools"] == {"version": version("dinkster-supervisor")} for row in snapshots)
         assert all(row["inProcessPacks"] == [] for row in snapshots)
+        assert [row["isolatedInferencePacks"] for row in snapshots] == (
+            [["healthy"], [], []] if pack_route == "command" else [["healthy"]] * 3
+        )
         assert all(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
@@ -1713,6 +1724,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         assert not (root / "generations/4/packs/healthy").exists()
         materialized = Generation.read(root / "generations/4/generation.json")
         assert materialized.in_process_packs == ()
+        assert materialized.isolated_inference_packs == ("healthy",)
         assert materialized.engine_release == initial["engine"]["release"]
         assert materialized.engine_version == "1.0"
         assert materialized.base == initial["base"]["fixture-cpu"]["id"]

@@ -1,3 +1,10 @@
+# Persisted inference pack exclusions
+
+- Setup, update and development accept `--inference-pack PACK=isolated` and `PACK=auto`. Public setup/update/pack-install/exact-restore cases preserve exclusions or explicitly restore automatic placement. Repair and cross-volume relocation preserve exclusions.
+- Public resident-model composition controls fail against the original grouping for opt-out, network and writable-folder requests (3 failures) and pass with grant/exclusion filtering. Compatible first-party model passing and unrelated/conflicting pack isolation remain covered.
+- Focused lifecycle/execution/record checks: 21 passed. Automatic-placement reset, exact history and invalid-switch checks: 6 passed. Complete state, collection and composition controls: 144 passed, 3 existing skips. Ruff check/format and Pyright pass.
+- Automatic third-party admission, sealed shared membership and exact per-node admission refusal are not implemented by these controls.
+
 # Published remote catalog defaults
 
 - Registry default resolution requires remote pack 0.0.7 or newer. The public static registry resolved and delivered 0.0.7 with verified wheel bytes and all six published native install locks.

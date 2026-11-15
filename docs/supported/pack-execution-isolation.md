@@ -38,7 +38,11 @@
   separate workers, even when they depend on inference. Explicit in-process
   selections remain unchanged. First-party packs with dependencies unavailable
   in the shared environment remain isolated with a diagnostic. The remote pack
-  remains separate because it requires an asset-vault write grant.
+  remains separate because it requires an asset-vault write grant. Packs requesting
+  network or writable-folder grants stay outside the shared worker. Setup, update
+  and develop accept `--inference-pack PACK=isolated` to persist a per-pack exclusion;
+  `--inference-pack PACK=auto` restores automatic placement. Repair, relocation and
+  software snapshots preserve these exclusions.
 - First-party runtime packs install shared inference, asset and audio codecs in
   their workers. Pack dependencies order composition; isolated workers do not
   share a registry. Family-specific codecs retain their producer's identity,

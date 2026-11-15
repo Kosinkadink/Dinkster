@@ -812,6 +812,8 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             *fixture["commands"]["setup"][5:],
             "--pack-lock",
             str(release.parent / identity / lock_path.name),
+            "--inference-pack",
+            "example=isolated",
             "--yes",
             timeout=120,
         )
@@ -823,6 +825,11 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
             return
         assert code == 0, result
         assert result["current"] == 1
+        from dinkster_supervisor.environment_state import Generation
+
+        assert Generation.read(root / "generations/1/generation.json").isolated_inference_packs == (
+            "example",
+        )
         assert (
             object_path(store / "wheels", "sha256:" + sha) / wheel.name
         ).read_bytes() == wheel.read_bytes()
@@ -1027,6 +1034,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         variant=variant,
         worker_protocol=PROTOCOL_VERSION,
         in_process_packs=("healthy",),
+        isolated_inference_packs=("other",),
         pack_locks=tuple(locks),
         own_environment_size=1000,
         catalog_lock=catalog,
@@ -1113,6 +1121,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         generation = invoke()
         target = root / "generations" / str(number)
         assert generation.drift(target) == ()
+        assert generation.isolated_inference_packs == ("other",)
         assert {
             f"{entry.artifact_digest[7:]}.zip": pack_archive_path(
                 store / "engines" / ("b" * 64) / "artifacts", entry.artifact_digest
@@ -1426,7 +1435,9 @@ environment.main()
             assert _run(destination, "doctor")[1]["status"] == "clean"
             assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
             moved_tree = destination / "generations/1"
-            assert Generation.read(moved_tree / "generation.json").drift(moved_tree) == ()
+            moved_record = Generation.read(moved_tree / "generation.json")
+            assert moved_record.drift(moved_tree) == ()
+            assert moved_record.isolated_inference_packs == ("other",)
             if problem == "move-cross-volume-plain":
                 resolved = object_path(moved_store / "wheels", "sha256:" + sha)
                 assert resolved.name == "stable_fixture-1.0-py3-none-any--2"
@@ -1518,6 +1529,7 @@ environment.main()
 
                 repaired = Generation.read(root / "generations/2/generation.json")
                 assert repaired.drift(root / "generations/2") == ()
+                assert repaired.isolated_inference_packs == ("other",)
                 assert all(
                     f"packs/{name}/pack-lock.json" in dict(repaired.files)
                     for name in ("healthy", "other")

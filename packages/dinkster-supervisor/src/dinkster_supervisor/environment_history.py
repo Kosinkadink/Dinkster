@@ -72,6 +72,7 @@ def _sealed_software(generation: Path) -> dict[str, object]:
         "workerProtocol": record.worker_protocol,
         "source": record.source,
         "inProcessPacks": list(record.in_process_packs),
+        "isolatedInferencePacks": list(record.isolated_inference_packs),
         "metadata": metadata,
     }
 

@@ -854,6 +854,7 @@ def build_generation(
     variant: str,
     worker_protocol: int,
     in_process_packs: tuple[str, ...] = (),
+    isolated_inference_packs: tuple[str, ...] | None = None,
     source_generation: Path | None = None,
     pack_locks: tuple[Path, ...] = (),
     own_environment_size: int | None = None,
@@ -880,6 +881,13 @@ def build_generation(
     generation_number(number)
     digest(base)
     digest(engine_release)
+    if isolated_inference_packs is None:
+        previous = source_generation / "generation.json" if source_generation else None
+        isolated_inference_packs = (
+            Generation.read(previous).isolated_inference_packs
+            if previous is not None and previous.is_file()
+            else ()
+        )
     if (catalog_lock is None) != (artifacts is None):
         raise EnvironmentError("source staging requires both catalog lock and artifact cache")
     source = object_path(store / "bases", base) / "python"
@@ -1058,6 +1066,7 @@ def build_generation(
             files,
             in_process_packs,
             source_kind,
+            isolated_inference_packs,
         )
         generation.write(destination / "generation.json")
         return generation

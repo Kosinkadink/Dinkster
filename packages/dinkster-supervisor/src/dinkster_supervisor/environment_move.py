@@ -344,6 +344,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 worker_protocol=generation.worker_protocol,
                 source_generation=tree if (tree / "packs").exists() else None,
                 in_process_packs=generation.in_process_packs,
+                isolated_inference_packs=generation.isolated_inference_packs,
                 own_environment_size=sum(
                     p.stat().st_size for p in (tree / "python").rglob("*") if p.is_file()
                 ),

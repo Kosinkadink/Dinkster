@@ -298,6 +298,9 @@ def restore_entry(
                     variant=variant,
                     worker_protocol=protocol,
                     in_process_packs=tuple(cast("list[str]", in_process)),
+                    isolated_inference_packs=tuple(
+                        cast("list[str]", snapshot.get("isolatedInferencePacks", []))
+                    ),
                     source_generation=inputs
                     if (inputs / "packs").is_dir()
                     or (inputs / "development-sources.json").is_file()
@@ -330,6 +333,12 @@ def restore_entry(
             )
             entry["recordedTools"] = tools
             rebuilt = cast("dict[str, object]", entry["snapshot"])
+            if rebuilt.get("isolatedInferencePacks", []) != snapshot.get(
+                "isolatedInferencePacks", []
+            ):
+                raise EnvironmentError(
+                    "rebuilt inference exclusions differ from the recorded snapshot"
+                )
             if any(
                 rebuilt[key] != snapshot.get(key)
                 for key in (

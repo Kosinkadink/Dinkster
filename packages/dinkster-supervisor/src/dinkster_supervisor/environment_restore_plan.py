@@ -593,7 +593,7 @@ def _local_missing_inputs(
 
 
 def _substitutions(before: dict[str, object], after: dict[str, object]) -> list[dict[str, object]]:
-    fields = ["engine", "base", "constraints", "inProcessPacks", "source"]
+    fields = ["engine", "base", "constraints", "inProcessPacks", "isolatedInferencePacks", "source"]
     changes = [
         {"field": key, "before": before.get(key), "after": after.get(key)}
         for key in fields

@@ -389,14 +389,31 @@ def generation_pack_specs(
 
 
 def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[PackSpec, ...]:
-    if not (generation / "generation.json").is_file():
+    record = generation / "generation.json"
+    if not record.is_file():
         return tuple(specs)
+    isolated = json.loads(record.read_text(encoding="utf-8")).get("isolatedInferencePacks", [])
+    if (
+        not isinstance(isolated, list)
+        or any(
+            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
+            for pack in isolated
+        )
+        or len(set(isolated)) != len(isolated)
+    ):
+        raise CompositionError("generation isolatedInferencePacks must contain distinct pack ids")
+    excluded = set(isolated)
     # A shared worker must use one real, already-provisioned environment,
     # not a PYTHONPATH overlay of incompatible private site-packages.
     candidates = [
         index
         for index, spec in enumerate(specs)
-        if spec.trust_reserved and not spec.in_process and not spec.asset_vault_write
+        if spec.trust_reserved
+        and not spec.in_process
+        and not spec.asset_vault_write
+        and load_manifest(spec.manifest).name not in excluded
+        and not load_manifest(spec.manifest).sandbox.network
+        and not load_manifest(spec.manifest).sandbox.writable_mounts
     ]
     if len(candidates) < 2:
         return tuple(specs)
