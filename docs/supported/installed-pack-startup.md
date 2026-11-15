@@ -1,5 +1,10 @@
 ## Installed pack startup
 
+- Pack wheels preserve manifest-relative blueprint, template, icon, settings,
+  documentation and frontend resource paths, including resources inside Python
+  source packages. Missing declared resources refuse build or admission before
+  catalog preparation. Source manifests are not rewritten.
+
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
   refuse before activation; compatible frontend-only updates retain the engine.
