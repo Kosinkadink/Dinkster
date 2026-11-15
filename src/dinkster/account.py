@@ -169,16 +169,22 @@ class AccountSession:
             raise AccountError("Account session expiry is invalid; sign in again")
         if expiry > time.time() + 60:
             return _text(state, "access_token")
-        result = self._object(
-            "/token",
-            form={
-                "grant_type": "refresh_token",
-                "client_id": _text(state, "client_id"),
-                "refresh_token": _text(state, "refresh_token"),
-            },
-        )
-        self._accept_oauth(state, result)
-        self._save(state)
+        try:
+            result = self._object(
+                "/token",
+                form={
+                    "grant_type": "refresh_token",
+                    "client_id": _text(state, "client_id"),
+                    "refresh_token": _text(state, "refresh_token"),
+                },
+            )
+            self._accept_oauth(state, result)
+            self._save(state)
+        except (AccountError, OSError):
+            # A lost reply may already have rotated the refresh family. Never replay it.
+            self.token_path.unlink(missing_ok=True)
+            self.state_path.unlink(missing_ok=True)
+            raise
         return _text(state, "access_token")
 
     def _accept_oauth(self, state: dict[str, object], result: Mapping[str, object]) -> None:
@@ -341,6 +347,34 @@ class AccountSession:
             try:
                 self._mint(state, project)
             except (AccountError, OSError):
+                self.token_path.unlink(missing_ok=True)
+                raise
+
+    def ensure_gateway(self) -> None:
+        """Keep a selected project's bearer fresh without opening browser consent."""
+        with hold_lock(self.lock_path, timeout=20):
+            self.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if os.name != "nt":
+                self.token_path.parent.chmod(0o700)
+            if not self.state_path.exists():
+                self.token_path.unlink(missing_ok=True)
+                return
+            try:
+                state = self._read()
+                if "project_id" not in state:
+                    self.token_path.unlink(missing_ok=True)
+                    return
+                project = str(UUID(_text(state, "project_id")))
+                expiry = state.get("gateway_expires_at")
+                if (
+                    isinstance(expiry, (int, float))
+                    and math.isfinite(expiry)
+                    and expiry > time.time() + 60
+                    and self.token_path.is_file()
+                ):
+                    return
+                self._mint(state, project)
+            except (ValueError, OSError):
                 self.token_path.unlink(missing_ok=True)
                 raise
 

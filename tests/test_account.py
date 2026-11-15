@@ -6,7 +6,11 @@ import base64
 import hashlib
 import json
 import os
+import socket
+import subprocess
+import sys
 import threading
+import time
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,6 +77,9 @@ def identity():
                 self.reply({"client_id": "public-install-client"})
             elif self.path == "/token":
                 fields = parse_qs(raw.decode())
+                if observed.get("lost_refresh") and fields["grant_type"] == ["refresh_token"]:
+                    self.connection.close()
+                    return
                 assert fields["client_id"] == ["public-install-client"]
                 if fields["grant_type"] == ["authorization_code"]:
                     assert fields["code"] == ["one-use-code"]
@@ -94,7 +101,9 @@ def identity():
                         "refresh_token": refresh,
                         "scope": "projects:gateway offline_access",
                         "token_type": "Bearer",
-                        "expires_in": 30 if access == "oauth-first" else 600,
+                        "expires_in": 30
+                        if access == "oauth-first"
+                        else observed.get("oauth_lifetime", 600),
                     }
                 )
             else:
@@ -106,9 +115,9 @@ def identity():
                 else:
                     self.reply(
                         {
-                            "access_token": "project-gateway-token",
+                            "access_token": observed.get("gateway_token", "project-gateway-token"),
                             "token_type": "Bearer",
-                            "expires_in": 600,
+                            "expires_in": observed.get("gateway_lifetime", 600),
                         }
                     )
 
@@ -239,6 +248,122 @@ def test_pkce_project_selection_refresh_revocation_and_endpoint_isolation(
         "project-gateway-token",
     ):
         assert secret not in captured.out + captured.err
+
+
+def test_automatic_refresh_boundary_and_lost_rotation_are_fail_closed(
+    identity: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import account
+
+    clock = [account.time.time()]
+    monkeypatch.setattr(account.time, "time", lambda: clock[0])
+    identity["oauth_lifetime"] = 3600
+    session = AccountSession(
+        resolve_services(identity_base=identity["base"], catalog_base=identity["base"]),
+        home=tmp_path,
+    )
+    session.ensure_gateway()
+    assert not identity["requests"]
+    assert not session.token_path.exists()
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    session.ensure_gateway()
+    assert not session.token_path.exists()
+    session.select_project(PROJECT)
+    before = len(identity["requests"])
+    clock[0] += 539
+    session.ensure_gateway()
+    assert len(identity["requests"]) == before
+    identity["gateway_token"] = "replacement-bearer"
+    clock[0] += 2
+    session.ensure_gateway()
+    assert len(identity["requests"]) == before + 1
+    assert session.token_path.read_text() == "replacement-bearer"
+    session.token_path.unlink()
+    session.ensure_gateway()
+    assert len(identity["requests"]) == before + 2
+    assert session.token_path.read_text() == "replacement-bearer"
+    identity["lost_refresh"] = True
+    clock[0] += 3600
+    with pytest.raises(AccountError, match="no exchange was retried"):
+        session.ensure_gateway()
+    after_failure = len(identity["requests"])
+    assert not session.state_path.exists()
+    assert not session.token_path.exists()
+    session.ensure_gateway()
+    assert len(identity["requests"]) == after_failure
+
+
+def test_engine_refreshes_only_the_selected_install_account(identity: dict, tmp_path: Path) -> None:
+    install = tmp_path / "install"
+    home = tmp_path / "user"
+    services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
+    session = AccountSession(services, home=home, install_root=install)
+    opener, callbacks = browser(identity)
+    session.login(open_browser=opener, timeout=5)
+    for thread in callbacks:
+        thread.join(timeout=5)
+    identity["gateway_lifetime"] = 1
+    session.select_project(PROJECT)
+    identity["gateway_token"] = "engine-startup-bearer"
+    identity["gateway_lifetime"] = 600
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    log = tmp_path / "engine.log"
+    with log.open("w") as output:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "dinkster.serve",
+                "--no-default-packs",
+                "--account-root",
+                str(install),
+                "--account-identity-base",
+                identity["base"],
+                "--remote-catalog-base",
+                identity["base"],
+                "--remote-gateway-base",
+                identity["base"],
+                "--library-root",
+                str(tmp_path / "library"),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ],
+            env={**os.environ, "DINKSTER_HOME": str(home)},
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+
+        def wait_for_bearer(expected: str) -> None:
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                assert process.poll() is None, log.read_text()
+                if session.token_path.exists() and session.token_path.read_text() == expected:
+                    return
+                time.sleep(0.05)
+            pytest.fail("engine did not refresh the install bearer: " + log.read_text())
+
+        wait_for_bearer("engine-startup-bearer")
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as response:
+            assert response.status == 200
+        identity["gateway_token"] = "engine-periodic-bearer"
+        session.token_path.unlink()
+        wait_for_bearer("engine-periodic-bearer")
+        session.logout()
+        assert not session.token_path.exists()
+        assert not session.state_path.exists()
+    finally:
+        process.terminate()
+        process.wait(timeout=30)
+    assert "oauth-first" not in log.read_text()
+    assert "refresh-next" not in log.read_text()
 
 
 def test_consent_denial_never_exchanges_or_persists_tokens(identity: dict, tmp_path: Path) -> None:

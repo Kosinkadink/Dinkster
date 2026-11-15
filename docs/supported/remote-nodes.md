@@ -25,3 +25,11 @@
   bases. Credentials are kept outside projects, isolated by install path and
   identity/catalog/gateway/audience. OAuth secrets are separate from the
   gateway-only token file. Remote workers never receive OAuth refresh secrets.
+- Serving uses the selected install account by default, refreshes its gateway
+  token before remote pack composition and before expiry, and keeps explicit
+  `--remote-auth-token-file` overrides. Managed generations use their install
+  root; direct serving accepts `--account-root` (`DINKSTER_ACCOUNT_ROOT`) and
+  `--account-identity-base` (`DINKSTER_ACCOUNT_IDENTITY_BASE`) for custom services.
+  Sandboxed account-backed workers see token replacements without access to
+  the OAuth session. A failed or ambiguous OAuth refresh requires sign-in again;
+  no refresh exchange is automatically replayed.

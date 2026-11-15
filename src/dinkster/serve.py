@@ -133,6 +133,7 @@ from dinkster_workers.catalog import read_catalog
 from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.provision import workspace_packages_for
 
+from .account import AccountSession
 from .activation import add_activation_routes
 from .benchmark import (
     BenchmarkAssembler,
@@ -506,6 +507,7 @@ def _with_remote_config(
     gateway_base: str | None = None,
     poll_interval: float | None = None,
     token_file: str | None = None,
+    token_directory: Path | None = None,
 ) -> PackSpec:
     services = resolve_services(
         os.environ.get("DINKSTER_SERVICES", "production"),
@@ -531,6 +533,7 @@ def _with_remote_config(
     return replace(
         spec,
         env={**spec.env, **environment},
+        remote_token_directory=token_directory,
         execution_config={"catalog_base": catalog_base, "gateway_base": gateway_base},
     )
 
@@ -918,6 +921,17 @@ def main(argv: list[str] | None = None) -> None:
         "--services",
         default=os.environ.get("DINKSTER_SERVICES", "production"),
         help="hosted account and remote-node services (default: production)",
+    )
+    parser.add_argument(
+        "--account-root",
+        type=Path,
+        default=os.environ.get("DINKSTER_ACCOUNT_ROOT"),
+        help="account install root (default: managed generation root or default install)",
+    )
+    parser.add_argument(
+        "--account-identity-base",
+        default=os.environ.get("DINKSTER_ACCOUNT_IDENTITY_BASE"),
+        help="custom account identity service URL",
     )
     parser.add_argument(
         "--remote-catalog-base",
@@ -1331,6 +1345,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         services = resolve_services(
             args.services,
+            identity_base=args.account_identity_base,
             catalog_base=args.remote_catalog_base,
             gateway_base=args.remote_gateway_base,
         )
@@ -1372,6 +1387,8 @@ def main(argv: list[str] | None = None) -> None:
         _OPENAI_STREAM_ENV,
         _OPENAI_TIMEOUT_ENV,
         "DINKSTER_SERVICES",
+        "DINKSTER_ACCOUNT_ROOT",
+        "DINKSTER_ACCOUNT_IDENTITY_BASE",
         _REMOTE_CATALOG_BASE_ENV,
         _REMOTE_GATEWAY_BASE_ENV,
         _REMOTE_AUTH_TOKEN_FILE_ENV,
@@ -1727,6 +1744,19 @@ def main(argv: list[str] | None = None) -> None:
     )
     if security is not None:
         security.refresh()
+    account: AccountSession | None = None
+    if services.catalog_base and services.gateway_base and not args.remote_auth_token_file:
+        account_root = args.account_root or (
+            args.generation.parent.parent if args.generation is not None else args.install_root
+        )
+        account = AccountSession(
+            services, install_root=Path(account_root) if account_root else None
+        )
+        account.token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            account.token_path.parent.chmod(0o700)
+        args.remote_auth_token_file = str(account.token_path)
+    token_directory = account.token_path.parent if account is not None else None
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
     live_pack_names: set[str] = set()
@@ -1740,6 +1770,7 @@ def main(argv: list[str] | None = None) -> None:
                     gateway_base=services.gateway_base,
                     poll_interval=args.remote_catalog_poll_interval,
                     token_file=args.remote_auth_token_file,
+                    token_directory=token_directory,
                 )
             else:
                 spec = replace(
@@ -1785,6 +1816,7 @@ def main(argv: list[str] | None = None) -> None:
                         gateway_base=services.gateway_base,
                         poll_interval=args.remote_catalog_poll_interval,
                         token_file=args.remote_auth_token_file,
+                        token_directory=token_directory,
                     )
                 specs.append(spec)
         except (
@@ -1875,6 +1907,8 @@ def main(argv: list[str] | None = None) -> None:
                 protected_roots.append(str(Path(args.install_root)))
             if args.generation is not None:
                 protected_roots.append(str(args.generation))
+            if account is not None:
+                protected_roots.append(str(account.state_path.parent.parent))
             secret_paths = (
                 args.auth,
                 args.federated_assets_cursor_key,
@@ -2357,7 +2391,25 @@ def main(argv: list[str] | None = None) -> None:
             if security is not None:
                 drive_tasks.append(asyncio.create_task(monitor_security()))
 
+            async def refresh_account() -> None:
+                assert account is not None
+                try:
+                    await asyncio.to_thread(account.ensure_gateway)
+                except (ValueError, OSError):
+                    log.warning(
+                        "Remote account credentials unavailable; sign in or select a project"
+                    )
+
+            async def monitor_account() -> None:
+                while True:
+                    await asyncio.sleep(30)
+                    await refresh_account()
+
             async def drive() -> None:
+                if account is not None:
+                    await refresh_account()
+                    drive_tasks.append(asyncio.create_task(monitor_account()))
+
                 async def publish_delta(delta: PackDelta) -> int:
                     validation = await state.prepare_replace(
                         (), (), delta.schemas, delta.packs, delta.node_packs
