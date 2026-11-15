@@ -356,8 +356,12 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Pa
 
 @pytest.mark.parametrize("migration", [False, True])
 def test_update_preserves_previous_tree_and_publishes_selected_settings(
-    tmp_path: Path, migration: bool
+    tmp_path: Path, migration: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "dinkster_supervisor.environment_runtime.sandbox_readiness",
+        lambda *_: {"available": True, "detail": "available"},
+    )
     retained = _target(tmp_path, 1)
     before = (retained / "generation.json").read_bytes()
     identity = interpreter(retained).stat()
@@ -372,7 +376,7 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
             }
         )
     )
-    start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",))
+    start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",), sandbox_packs=migration)
     parked_port = free_port()
     start_engine(tmp_path, 1, "parked", parked_port)
     parked_path = tmp_path / "runtime/1/parked.json"
@@ -399,6 +403,8 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
         binding = next(row for row in Journal.read(path).bindings if row["name"] == "main")
         with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/generation") as response:  # noqa: S310
             assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/2")}
+        with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/sandbox") as response:  # noqa: S310
+            assert json.loads(response.read()) == {"sandboxPacks": migration}
 
     try:
         activate(tmp_path, path, revalidate=revalidate)
