@@ -6,6 +6,7 @@
 | Stock ComfyUI loads the same downloaded file from the same folder | X570 Linux CPU, inherited ComfyUI af89add63f71, Python 3.12.13, torch 2.15.0+cpu | [Same-file receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901213963): actual Run completed decode/save and a real 512x512 RGB PNG without copying or renaming the checkpoint. Not a numerical or performance-parity claim. |
 
 - Whole Ruff check/format and pyright passed; 196 targeted acquisition/writer/model/mount/receipt tests passed.
+- Managed folder-grant restart, runtime grant/browse/revoke and mounted save tests use isolated shared model settings and assert the complete configured model mount set. All four cases reproduce the obsolete two-mount expectation, then pass while retaining path/mode/source, restart, real saved bytes, digest-streaming and revocation checks.
 - Gated credentials, Civitai, folder visibility management, byte-progress jobs and export/output model hashes are not accepted by these public-download receipts.
 
 # Checkout engine version

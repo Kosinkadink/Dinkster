@@ -2019,7 +2019,9 @@ def test_serve_strict_packs_failure_exits_nonzero(tmp_path: Path) -> None:
             process.stderr.close()
 
 
-def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
+def test_serve_runtime_mounts_end_to_end(
+    tmp_path: Path, shared_model_folders: dict[str, Path]
+) -> None:
     """Real dinkster-serve with a library root and --allow-mount-changes:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
@@ -2071,7 +2073,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.get(base + "/api/mounts") as resp:
                 listing = await resp.json()
                 rows = {row["id"]: row for row in listing["mounts"]}
-                assert set(rows) == {"imports", "output"}
+                assert set(rows) == {"imports", "output", *shared_model_folders}
+                for mount_id, path in shared_model_folders.items():
+                    assert rows[mount_id]["path"] == str(path)
+                    assert rows[mount_id]["mode"] == "readwrite"
+                    assert rows[mount_id]["source"] == "shared-models"
                 assert listing["outputMount"] == "output"
                 output = rows["output"]
                 assert output["path"] == str(library_root / "output")
@@ -2082,7 +2088,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 assert imports["mode"] == "readwrite"
             async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
                 listing = await resp.json()
-                assert {row["id"] for row in listing["mounts"]} == {"imports", "output"}
+                assert {row["id"] for row in listing["mounts"]} == {
+                    "imports",
+                    "output",
+                    *shared_model_folders,
+                }
                 assert listing["outputMount"] is None
             assert (library_root / "imports").is_dir()
             assert (library_root / "output").is_dir()
@@ -2152,7 +2162,7 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
                         rows = {row["id"]: row for row in (await resp.json())["mounts"]}
-                        assert set(rows) == {"imports", "output", "shots"}
+                        assert set(rows) == {"imports", "output", "shots", *shared_model_folders}
                         row = rows["shots"]
                     if row["state"] == "ready":
                         break
@@ -2168,7 +2178,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:
-                assert {row["id"] for row in (await resp.json())["mounts"]} == {"imports", "output"}
+                assert {row["id"] for row in (await resp.json())["mounts"]} == {
+                    "imports",
+                    "output",
+                    *shared_model_folders,
+                }
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
             async with session.get(
@@ -2213,7 +2227,9 @@ async def _peek_value(
     return data["descriptor"]["value"]
 
 
-def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
+def test_serve_mounted_save_end_to_end(
+    tmp_path: Path, shared_model_folders: dict[str, Path]
+) -> None:
     """The write path, real process to real bytes: grant a readwrite mount
     over the API while dinkster-serve runs, execute the PGM saver in
     that same process, verify the file landed inside the mount with the
@@ -2332,7 +2348,7 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
                         rows = {row["id"]: row for row in (await resp.json())["mounts"]}
-                        assert set(rows) == {"imports", "output", "renders"}
+                        assert set(rows) == {"imports", "output", "renders", *shared_model_folders}
                         row = rows["renders"]
                     if row["state"] == "ready":
                         break
