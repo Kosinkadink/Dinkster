@@ -26,6 +26,7 @@ any rescan of the mount.
 from __future__ import annotations
 
 import errno
+import hashlib
 import importlib
 import json
 import os
@@ -43,8 +44,8 @@ from dinkster_values import MEBIBYTE
 from dinkster_values.asset_folders import current_asset_folders
 
 from .file3d import validate_resource_name
-from .identity import DIGEST_PREFIX, AssetError, new_hasher
-from .integrity import verification_record_for_publication
+from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
+from .integrity import digest_file_with_record, verification_record_for_publication
 from .library import INDEX_NAME, append_write_record, load_write_records
 from .model import AssetRef
 from .mounts import MOUNT_NAMESPACE
@@ -272,6 +273,36 @@ class AssetWriter:
             )
         return ref
 
+    def save_model_stream(
+        self,
+        target: object,
+        source: BinaryIO,
+        *,
+        sha256: str,
+        size: int,
+        digest: str,
+        before_publish: Callable[[AssetRef], None] | None = None,
+    ) -> AssetRef:
+        """Verify a provider stream and publish its filename without overwriting bytes."""
+        if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+            raise AssetError("model download requires a full SHA-256")
+        require_digest(digest)
+        parsed = self._validated_named_target(target, size)
+        root, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            ref, _ = self._write_stream(
+                parsed,
+                source,
+                suffix="",
+                media_type="application/octet-stream",
+                limit=size,
+                expected_root=root,
+                expected_sha256=sha256,
+                expected_digest=digest,
+                before_publish=before_publish,
+            )
+        return ref
+
     @staticmethod
     def _validated_named_target(target: object, limit: int) -> SaveTarget:
         if type(limit) is not int or limit < 0:
@@ -487,6 +518,8 @@ class AssetWriter:
         strict_counter: bool = False,
         prefer_exact_name: bool = False,
         before_publish: Callable[[AssetRef], None] | None = None,
+        expected_sha256: str = "",
+        expected_digest: str = "",
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed, expected_root=expected_root)
         stem = parsed.stem if stem is None else stem
@@ -502,8 +535,10 @@ class AssetWriter:
                 try:
                     source.seek(0)
                 except (AttributeError, OSError) as exc:
-                    raise AssetError("save source must be seekable binary input") from exc
+                    if not expected_sha256:
+                        raise AssetError("save source must be seekable binary input") from exc
             hasher = new_hasher()
+            provider_hasher = hashlib.sha256() if expected_sha256 else None
             size = 0
             with tmp.open("xb") as output:
                 while chunk := source.read(8 * MEBIBYTE):
@@ -511,6 +546,8 @@ class AssetWriter:
                     if size > limit:
                         raise AssetError("save source exceeds limit")
                     hasher.update(chunk)
+                    if provider_hasher is not None:
+                        provider_hasher.update(chunk)
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
@@ -521,7 +558,12 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
-            if prefer_exact_name:
+            if provider_hasher is not None:
+                if size != limit or provider_hasher.hexdigest() != expected_sha256:
+                    raise AssetError("model download size or SHA-256 did not verify")
+                if digest != expected_digest:
+                    raise AssetError("model download does not match its declared digest")
+            if prefer_exact_name or expected_sha256:
                 self._writable_folder(parsed, expected_root=root)
 
             def prepare(final: Path) -> None:
@@ -535,9 +577,9 @@ class AssetWriter:
                             f"{MOUNT_NAMESPACE}/{parsed.mount}/{final.relative_to(root).as_posix()}",
                         )
                     )
-                    if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
-                        raise AssetError("import mount changed its root before publication")
-                    self._require_contained(root, final, parsed)
+                if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                    raise AssetError("import mount changed its root before publication")
+                self._require_contained(root, final, parsed)
 
             final, used_counter = self._claim_and_land(
                 folder,
@@ -547,13 +589,22 @@ class AssetWriter:
                 counter,
                 strict_counter=strict_counter,
                 prefer_exact_name=prefer_exact_name,
-                before_publish=prepare if before_publish is not None else None,
+                before_publish=prepare if before_publish is not None or expected_sha256 else None,
+                model_sha256=expected_sha256,
             )
         finally:
             tmp.unlink(missing_ok=True)
         assert final is not None and used_counter is not None
         stat = final.stat()
-        record = verification_record_for_publication(digest, verified_stat, stat)
+        if expected_sha256 and (verified_stat.st_dev, verified_stat.st_ino) != (
+            stat.st_dev,
+            stat.st_ino,
+        ):
+            existing_digest, record = digest_file_with_record(final)
+            if existing_digest != digest:
+                raise AssetError("existing model changed before reuse")
+        else:
+            record = verification_record_for_publication(digest, verified_stat, stat)
         relative = final.relative_to(root).as_posix()
         try:
             append_write_record(
@@ -801,6 +852,7 @@ class AssetWriter:
         strict_counter: bool = False,
         prefer_exact_name: bool = False,
         before_publish: Callable[[Path], None] | None = None,
+        model_sha256: str = "",
     ) -> tuple[Path, int]:
         """Publish the temp file under the next free counter name.
 
@@ -808,6 +860,40 @@ class AssetWriter:
         atomic no-replace semantics. Concurrent savers therefore get distinct
         names, without exposing an empty placeholder to readers.
         """
+        if model_sha256:
+            original = Path(stem + suffix)
+            candidates = (
+                original.name,
+                *(
+                    f"{original.stem}-{model_sha256[:length]}{original.suffix}"
+                    for length in range(8, 65, 4)
+                ),
+            )
+            for name in candidates:
+                final = folder / name
+                if before_publish is not None:
+                    before_publish(final)
+                try:
+                    os.link(tmp, final)
+                except FileExistsError:
+                    if final.is_symlink() or not final.is_file():
+                        continue
+                    with final.open("rb") as existing:
+                        before = os.fstat(existing.fileno())
+                        matches = (
+                            hashlib.file_digest(existing, "sha256").hexdigest() == model_sha256
+                        )
+                        after = os.fstat(existing.fileno())
+                        current = final.lstat()
+                    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                    if matches and all(
+                        getattr(before, field) == getattr(after, field) == getattr(current, field)
+                        for field in fields
+                    ):
+                        return final, 0
+                else:
+                    return final, 0
+            raise AssetError("no unoccupied model filename for the verified download")
         if prefer_exact_name:
             final = folder / f"{stem}{suffix}"
             if before_publish is not None:
