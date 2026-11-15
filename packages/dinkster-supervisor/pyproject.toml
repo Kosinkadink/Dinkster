@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-environment-tools = ["uv==0.11.29"]
+environment-tools = ["uv==0.13.6"]
 
 [project.scripts]
 dinkster-env = "dinkster_supervisor.environment:main"
