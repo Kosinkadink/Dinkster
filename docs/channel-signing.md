@@ -24,6 +24,11 @@ between -9007199254740991 and 9007199254740991; unknown signed fields are
 covered by the signature, not discarded before authentication.
 
 Environment tools and Desktop embed independently provisioned public keys.
+The pinned channel root has key ID
+`sha256:4b5b2c78b32db1ebedc4702a92d6e4e252c17531f0e102ab82dd910be6dec7b9`.
+Its raw public key is `m6rm7XY806I6eifUgiElbaK4nYkWQlDU+WjdsH8Eb9Q=`
+in base64. Publication self-verifies the final envelope against the pinned
+roots before uploading; a different workflow key refuses publication.
 A mirror-provided key cannot authorize itself. The registry security-notice
 key is a different authority: it cannot sign channels, and the channel key
 cannot issue registry notices. Both use the same canonical Ed25519 envelope
