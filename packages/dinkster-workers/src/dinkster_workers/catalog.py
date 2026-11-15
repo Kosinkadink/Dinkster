@@ -113,6 +113,7 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
     return {
         "schemas": {name: schema_to_wire(schema) for name, schema in worker.schemas.items()},
         "registeredTypes": sorted(getattr(worker, "registered_types", ())),
+        "residentTypes": sorted(getattr(worker, "resident_types", ())),
         "comboChoices": {name: list(values) for name, values in worker.combo_choices.items()},
         "lazyChoiceIds": sorted(worker.lazy_choice_ids),
         "compatSkips": {name: value.to_wire() for name, value in worker.compat_skips.items()},
@@ -162,7 +163,7 @@ def write_catalog(manifest: PackManifest, declarations: Mapping[str, Any], *, so
     PackCatalog(declarations, source)
     destination = catalog_path(manifest.path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    data = {"version": 2, "source": source, "declarations": declarations}
+    data = {"version": 3, "source": source, "declarations": declarations}
     fd, temporary = tempfile.mkstemp(dir=destination.parent, prefix="catalog-", suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -175,7 +176,7 @@ def write_catalog(manifest: PackManifest, declarations: Mapping[str, Any], *, so
 def read_catalog(manifest: PackManifest) -> PackCatalog | None:
     try:
         data = json.loads(catalog_path(manifest.path).read_text(encoding="utf-8"))
-        if data["version"] != 2 or data["source"] != source_digest(manifest):
+        if data["version"] != 3 or data["source"] != source_digest(manifest):
             return None
         return PackCatalog(data["declarations"], data["source"])
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):

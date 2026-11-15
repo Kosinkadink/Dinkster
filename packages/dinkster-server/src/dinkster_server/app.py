@@ -2419,6 +2419,15 @@ async def handle_nodes(request: web.Request) -> web.Response:
         if (pack_id, type_id) in documented_nodes:
             entry["hasDocs"] = True
         entry["executionArms"] = list(state.execution_arms[type_id])
+        residency = state.engine.pin_execution().resident_topology
+        if residency is not None:
+            entry["residentAffinity"] = {
+                "types": sorted(residency.types),
+                "routes": [
+                    {"process": route.process, "pack": route.pack, "worker": route.worker}
+                    for route in residency.routes.get(type_id, ())
+                ],
+            }
         # Interface identity for environment stamping and drift diagnostics:
         # ALWAYS present (frontend contract - stamping never has holes) and
         # opaque (clients compare for equality, never parse). Transport
@@ -3365,6 +3374,28 @@ async def handle_submit(request: web.Request) -> web.Response:
             targets = list(compiled_graph.targets)
         else:
             preflight_graph = execution_graph
+        if execution.resident_topology is not None:
+            assert execution.schemas is not None
+            residency_problems = execution.resident_topology.validate(
+                preflight_graph, execution.schemas, execution.placement_worker
+            )
+            if residency_problems:
+                return web.json_response(
+                    {
+                        "error": "resident-process-boundary",
+                        "message": residency_problems[0].message,
+                        "problems": [
+                            {
+                                "code": problem.code,
+                                "message": problem.message,
+                                "nodeId": problem.node_id,
+                                "inputId": problem.input_id,
+                            }
+                            for problem in residency_problems
+                        ],
+                    },
+                    status=400,
+                )
         remote_provider_digests = frozenset[str]()
         remote_provider_plan: list[dict[str, object]] = []
         if execution.preflight_provider_assets is not None:

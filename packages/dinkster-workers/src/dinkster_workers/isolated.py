@@ -243,6 +243,10 @@ class IsolatedWorker:
         return self._session.renditions
 
     @property
+    def resident_types(self) -> tuple[str, ...]:
+        return self._session.resident_types
+
+    @property
     def registered_types(self) -> tuple[str, ...]:
         return self._session.registered_types
 
@@ -544,6 +548,10 @@ class GroupMemberWorker:
     @property
     def renditions(self):
         return self._session.renditions
+
+    @property
+    def resident_types(self):
+        return self._session.resident_types
 
     @property
     def registered_types(self):

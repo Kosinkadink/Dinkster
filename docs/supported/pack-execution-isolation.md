@@ -26,6 +26,13 @@
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.
+- Submit refuses links carrying resident types between packs in different
+  processes before queueing the job. The reason names both packs and offers
+  admission to the shared inference process or engine-run nodes on references.
+  Resident type declarations include MODEL, CLIP, VAE, ControlNet and custom
+  registered resident codecs. CONDITIONING, SAMPLER and NOISE can contain
+  resident payloads and require the same process when linked between packs.
+  The node catalog publishes process affinity for pre-run diagnostics.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.

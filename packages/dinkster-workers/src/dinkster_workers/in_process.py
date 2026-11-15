@@ -229,6 +229,9 @@ class InProcessWorker:
         self._node_types = dict(node_types)
         self._registry = registry
         self.registered_types = registered_types
+        self.resident_types = tuple(
+            tid for tid in registry.type_ids() if registry.spec(tid).may_hold_resident
+        )
         self._pack_context = pack_context or contextlib.nullcontext
         if attention_route_token is not None and not isinstance(
             cast("object", attention_route_token), AttentionRouteToken

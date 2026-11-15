@@ -53,6 +53,7 @@ from dinkster_graph import (
     validate_loops,
 )
 from dinkster_graph.plan import output_node_targets
+from dinkster_graph.residency import ResidentTopology
 from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
     AdmissionInvocation,
@@ -283,6 +284,7 @@ class ExecutionRuntime:
     graph_compiler_registry: GraphCompilerRegistrySnapshot = GraphCompilerRegistrySnapshot()
     graph_compile_transport: GraphCompileTransport | None = None
     schemas: Mapping[str, NodeSchema] | None = None
+    resident_topology: ResidentTopology | None = None
     prepare_host_types: Callable[[set[str]], Awaitable[None]] | None = None
     known_types: Container[str] | None = None
     placement_worker: Callable[[str], str | None] | None = None

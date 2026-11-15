@@ -686,10 +686,43 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
                     "mixed_weight": GraphNode("source.weight", {"model": Link("mixed", "model")}),
                 }
             )
-            if not shared_group:
-                with pytest.raises(ExecutionError, match="unknown producer arm"):
-                    await composer.composition.make_engine(lambda event: None).run(graph, ["w"])
-                return
+            from aiohttp.test_utils import TestClient, TestServer
+            from dinkster_graph import graph_to_wire
+            from dinkster_server import STATE_KEY, create_app
+
+            composition = composer.composition
+            app = create_app(composition.make_engine, composition.schemas)
+            async with TestClient(TestServer(app)) as client:
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "resident-test",
+                        "jobId": "crosspack",
+                        "graph": graph_to_wire(graph),
+                        "targets": ["w"],
+                    },
+                )
+                submitted = await response.json()
+                job = app[STATE_KEY].queue.get("resident-test", "crosspack")
+                if not shared_group:
+                    assert response.status == 400
+                    assert submitted["error"] == "resident-process-boundary"
+                    assert submitted["message"] == (
+                        "Pack 'merge' cannot receive a resident value from pack 'source' "
+                        "in another process; admit the pack to the shared inference process "
+                        "or use the owner's node through an engine-run node on a reference."
+                    )
+                    assert submitted["problems"][0]["nodeId"] == "m"
+                    assert job is None
+                    return
+                assert response.status == 202, submitted
+                assert job is not None
+                async with asyncio.timeout(10):
+                    while job.state not in ("completed", "failed"):
+                        await asyncio.sleep(0.01)
+                assert job.state == "completed", job.error
+                assert job.result is not None
+                assert job.result.outputs["w"]["weight"].resolve() == -0.5
             for reload in (False, True):
                 if reload:
                     await composer.reload_pack("source")

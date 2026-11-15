@@ -273,6 +273,7 @@ def register_sampling_type(
         fingerprint=fingerprint,
         meta=metadata if type_id != SIGMAS_TYPE else None,
         validate_encoded=validate,
+        may_hold_resident=type_id != SIGMAS_TYPE,
     )
     if type_id != SIGMAS_TYPE:
         registry.register_resident_table(table)
