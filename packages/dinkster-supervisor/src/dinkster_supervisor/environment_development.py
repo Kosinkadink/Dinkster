@@ -147,7 +147,8 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
     from .git_sources import fetched_git_source
 
     selected = copy.copy(args)
-    selected.git_origins = {}
+    git_origins: dict[str, dict[str, object]] = {}
+    selected.git_origins = git_origins
     with ExitStack() as stack:
 
         def acquire(value: str | Path) -> Path:
@@ -157,7 +158,7 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
             folder, origin = stack.enter_context(
                 fetched_git_source(text, mirror=getattr(args, "git_mirror", None))
             )
-            selected.git_origins[str(folder.resolve())] = origin
+            git_origins[str(folder.resolve())] = origin
             return folder
 
         selected.source = acquire(args.source)
@@ -165,9 +166,7 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
         selected.library_source = [acquire(value) for value in args.library_source]
         if getattr(args, "frontend_source", None) is not None:
             selected.frontend_source = acquire(args.frontend_source)
-            if str(selected.frontend_source.resolve()) not in cast(
-                "dict[str, dict[str, object]]", selected.git_origins
-            ):
+            if str(selected.frontend_source.resolve()) not in git_origins:
                 raise EnvironmentError("--frontend-source requires a public HTTPS Git source")
         if args.inference and "://" in args.inference:
             inference = acquire(args.inference)
