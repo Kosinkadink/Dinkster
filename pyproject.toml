@@ -104,6 +104,9 @@ dinkster-supervisor = { workspace = true }
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.dinkster]
+engine-capabilities = ["bound-endpoint/1"]
+
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/dinkster",

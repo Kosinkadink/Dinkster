@@ -601,6 +601,10 @@ def build(
         "commit": git_head(root),
         "version": version,
         "workerProtocol": int(protocol[1]),
+        "capabilities": tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        .get("tool", {})
+        .get("dinkster", {})
+        .get("engine-capabilities", []),
         "schemaApi": api,
         "frontend": sources,
         "workspaceWheels": [wheel.name for wheel in wheels],
