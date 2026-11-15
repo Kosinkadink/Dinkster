@@ -255,6 +255,7 @@ jobs:
           path: .release/tools
       - name: Publish tools and update the verified channel under the publication lock
         env:
+          DINKSTER_CHANNEL_SIGNING_KEY: ${{ secrets.DINKSTER_CHANNEL_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

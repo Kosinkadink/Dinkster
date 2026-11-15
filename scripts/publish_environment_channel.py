@@ -26,11 +26,14 @@ from botocore.exceptions import (
     EndpointConnectionError,
     ReadTimeoutError,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from dinkster_supervisor.environment_artifacts import (
     artifact_rows,
     parse_metadata,
     validate_manifest,
 )
+from dinkster_supervisor.environment_channel_signatures import sign_channel, verify_channel
 from dinkster_supervisor.environment_channels import engine_publication_names, write_channel
 from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
 from dinkster_supervisor.environment_frontend import (
@@ -41,6 +44,21 @@ from dinkster_supervisor.environment_frontend import (
 from dinkster_supervisor.environment_state import Channel, content_digest, write_document
 from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
 from packaging.specifiers import SpecifierSet
+
+
+def sign_channel_file(path: Path, channel: str) -> None:
+    """Sign final selections and refuse an unpinned workflow key before upload."""
+    started = time.perf_counter()
+    key = load_pem_private_key(
+        os.environ["DINKSTER_CHANNEL_SIGNING_KEY"].encode("ascii"), password=None
+    )
+    if not isinstance(key, Ed25519PrivateKey):
+        raise ValueError("channel publication requires an Ed25519 private key")
+    envelope = sign_channel(parse_metadata(path.read_bytes()), channel, key)
+    verify_channel(envelope, channel)
+    path.write_bytes(envelope)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    print(f"Channel {channel} signing and self-verification: {elapsed_ms:.5f} ms")
 
 
 def object_store():
@@ -301,7 +319,7 @@ def recover_engine_mirrors(report_path: Path) -> None:
                     and (
                         "engine" not in pin
                         or SpecifierSet(pin["engine"]).contains(
-                            manifest["version"], prereleases=True
+                            cast("str", manifest["version"]), prereleases=True
                         )
                     )
                 ]
@@ -412,10 +430,10 @@ def publish(
             for row in artifact_rows(tools_manifest["artifacts"], "name"):
                 fetch_artifact(
                     (tools_url,),
-                    row["name"],
-                    work / "verified-tools" / row["name"],
-                    row["sha256"],
-                    row["size"],
+                    cast("str", row["name"]),
+                    work / "verified-tools" / cast("str", row["name"]),
+                    cast("str", row["sha256"]),
+                    cast("int", row["size"]),
                 )
             document = parse_metadata(path.read_bytes())
             document["tools"] = tools_reference(
@@ -440,7 +458,7 @@ def publish(
                 if not isinstance(cause, HTTPError) or cause.code != 404:
                     raise
             else:
-                published_document = parse_metadata(published_bytes)
+                published_document = verify_channel(published_bytes, channel)
                 published = Channel.parse(published_document)
                 if frontend is None and "frontend" in published_document:
                     document = parse_metadata(path.read_bytes())
@@ -484,7 +502,7 @@ def publish(
                     else:
                         document.pop("nightlyDate", None)
                     write_document(path, document)
-                    if published_bytes == path.read_bytes():
+                    if published_document == document:
                         client.delete_object(
                             Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
                         )
@@ -529,6 +547,7 @@ def publish(
                 cast("int", selected_frontend["size"]),
             )
             verify_frontend_wheel(wheel_path, selected_frontend)
+        sign_channel_file(path, channel)
         upload(
             client,
             path,

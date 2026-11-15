@@ -294,6 +294,68 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
 
 
 @pytest.mark.parametrize("channel_name", ["stable", "nightly"])
+def test_signed_discovery_authenticates_mirrors_and_preserves_original_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, channel_name: str
+):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from dinkster_supervisor import environment_channel_signatures as signatures
+
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _, engine, document = _mirror(mirror)
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    keys = {"sha256:" + hashlib.sha256(public).hexdigest(): public}
+    monkeypatch.setattr(signatures, "CHANNEL_KEYS", keys)
+    path = mirror / f"channels/{channel_name}.json"
+    envelope = signatures.sign_channel(document, channel_name, key)
+    path.write_bytes(envelope)
+    origin = "https://independent-mirror.example"
+    read = environment_artifacts.read_metadata
+
+    def independent(root: str, name: str) -> bytes:
+        if root == origin or root.startswith(origin + "/"):
+            root = str(mirror) + root[len(origin) :]
+        return read(root, name)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(environment_artifacts, "read_metadata", independent)
+        catalog = discover((origin,), channel_name)
+        assert catalog.engine == engine
+        assert catalog.channel_envelope == envelope
+        assert catalog.engine_sources[0].startswith(origin + "/engine/")
+        for invalid in (
+            _json(document),
+            envelope.replace(
+                b'"minimumDesktopVersion":"0.2.0"', b'"minimumDesktopVersion":"9.0.0"'
+            ),
+            signatures.sign_channel(document, channel_name, Ed25519PrivateKey.generate()),
+            signatures.sign_channel(
+                document, "stable" if channel_name == "nightly" else "nightly", key
+            ),
+        ):
+            assert invalid != envelope
+            path.write_bytes(invalid)
+            with pytest.raises(EnvironmentError, match="no mirror"):
+                discover((origin,), channel_name)
+
+    path.write_bytes(envelope)
+    catalog = discover((str(mirror),), channel_name)
+    # Selection documents may change; only the original producer statement is cached.
+    catalog.document["minimumDesktopVersion"] = "99.0.0"
+    acquire(catalog, "fixture-cpu", store)
+    [cached] = (store / "metadata" / "channels").rglob(f"{channel_name}.json")
+    assert cached.read_bytes() == envelope
+    offline = discover((str(mirror),), channel_name, store=store, offline=True)
+    assert offline.cached_channel
+    assert offline.channel_envelope == envelope
+    assert offline.document["minimumDesktopVersion"] == "0.2.0"
+    assert offline.engine == engine
+    cached.write_bytes(_json(offline.document))
+    with pytest.raises(EnvironmentError, match="offline channel metadata"):
+        discover((str(mirror),), channel_name, store=store, offline=True)
+
+
+@pytest.mark.parametrize("channel_name", ["stable", "nightly"])
 def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_bytes(
     tmp_path: Path,
     channel_name: str,
@@ -1260,14 +1322,29 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         ).read_bytes()
 
 
-@pytest.mark.parametrize("previous_day", ["same", "yesterday", "missing", "readback-mismatch"])
+@pytest.mark.parametrize(
+    "previous_day", ["same", "yesterday", "missing", "readback-mismatch", "unsigned", "wrong-key"]
+)
 def test_nightly_publication_advances_only_once_per_utc_day(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str
 ):
     from datetime import timedelta
 
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+    from dinkster_supervisor import environment_channel_signatures as signatures
+
     from scripts import publish_environment_channel as publisher
 
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    monkeypatch.setattr(
+        signatures, "CHANNEL_KEYS", {"sha256:" + hashlib.sha256(public).hexdigest(): public}
+    )
+    monkeypatch.setenv(
+        "DINKSTER_CHANNEL_SIGNING_KEY",
+        key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode("ascii"),
+    )
     mirror = tmp_path / "mirror"
     base, engine, channel = _mirror(mirror)
     release = mirror / "engine" / channel["engine"]["release"][7:]
@@ -1286,7 +1363,13 @@ def test_nightly_publication_advances_only_once_per_utc_day(
             today if previous_day == "same" else today - timedelta(days=1)
         ).isoformat()
     channel_path = mirror / "channels/nightly.json"
-    channel_path.write_bytes(_json(channel))
+    channel_path.write_bytes(signatures.sign_channel(channel, "nightly", key))
+    if previous_day == "unsigned":
+        channel_path.write_bytes(_json(channel))
+    elif previous_day == "wrong-key":
+        channel_path.write_bytes(
+            signatures.sign_channel(channel, "nightly", Ed25519PrivateKey.generate())
+        )
     before = channel_path.read_bytes()
     for name, value in {
         "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
@@ -1327,18 +1410,24 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
     monkeypatch.setattr(publisher, "urlopen", response)
     monkeypatch.setattr(publisher, "upload", upload)
+    if previous_day in {"unsigned", "wrong-key"}:
+        with pytest.raises(EnvironmentError):
+            publisher.publish(release, [base_path], "nightly", "0.2.0")
+        assert channel_path.read_bytes() == before
+        assert old_channel.read_bytes() == before
+        return
     if previous_day == "readback-mismatch":
         with pytest.raises(ValueError, match="public channel differs after publication"):
             publisher.publish(release, [base_path], "nightly", "0.2.0")
         assert old_channel.read_bytes() == before
         return
     publisher.publish(release, [base_path], "nightly", "0.2.0")
-    after = json.loads(channel_path.read_bytes())
+    after = signatures.verify_channel(channel_path.read_bytes(), "nightly")
     if previous_day == "same":
         assert channel_path.read_bytes() == before
     else:
         assert (
-            after["engine"]["release"]
+            cast("dict[str, object]", after["engine"])["release"]
             == "sha256:"
             + hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
         )
