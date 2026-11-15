@@ -543,7 +543,11 @@ def validate_dependency_base(selection: object, base: dict[str, object]) -> None
 
 
 def engine_package_versions(
-    engine: dict[str, object], variant: str, base: dict[str, object] | None = None
+    engine: dict[str, object],
+    variant: str,
+    base: dict[str, object] | None = None,
+    *,
+    inference: dict[str, object] | None = None,
 ) -> dict[str, str]:
     """Describe the target engine's shared packages without inspecting the planning host."""
     versions: dict[str, str] = {}
@@ -569,6 +573,8 @@ def engine_package_versions(
                 for row in cast("list[dict[str, object]]", base["wheels"])
             }
         )
+    if inference is not None:
+        versions["dinkster-inference"] = cast("str", inference["version"])
     return versions
 
 

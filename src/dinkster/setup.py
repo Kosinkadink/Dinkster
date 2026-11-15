@@ -132,7 +132,9 @@ def _plan(args: argparse.Namespace) -> dict[str, object]:
         select_registry(config, selector),
         cast("dict[str, str]", defaults),
         engine_version=cast("str", catalog.engine["version"]),
-        engine_packages=artifacts.engine_package_versions(catalog.engine, variant, base),
+        engine_packages=artifacts.engine_package_versions(
+            catalog.engine, variant, base, inference=inference
+        ),
         skipped=skipped,
         markers={
             **cast("dict[str, str]", default_environment()),

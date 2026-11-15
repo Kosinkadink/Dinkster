@@ -2020,6 +2020,7 @@ def test_inference_requests_report_oldest_containing_release(
         "--json",
     ]
     root = tmp_path / "project"
+    setup_engine_packages: list[dict[str, str]] = []
     if operation != "develop":
         mirror = tmp_path / "mirror"
         _, engine, channel = _mirror(mirror)
@@ -2038,7 +2039,10 @@ def test_inference_requests_report_oldest_containing_release(
             (mirror / "channels/main.json").write_bytes(_json(channel))
             monkeypatch.setattr(
                 "dinkster.registries.plan_registry_sources",
-                lambda *args, **kwargs: (Lockfile.of(()), ()),
+                lambda *args, **kwargs: (
+                    setup_engine_packages.append(kwargs["engine_packages"]) or Lockfile.of(()),
+                    (),
+                ),
             )
         root = tmp_path / "project"
         arguments = [
@@ -2079,6 +2083,8 @@ def test_inference_requests_report_oldest_containing_release(
         assert plan["inference"]["sourceCommit"] == commits["0.2.0"]
         assert plan["inference"]["fallback"] is True
         assert any("oldest containing tagged release 0.2.0" in line for line in plan["plan"])
+        if operation == "setup":
+            assert setup_engine_packages[-1]["dinkster-inference"] == "0.2.0"
     before = {
         path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
     }
