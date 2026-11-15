@@ -533,24 +533,91 @@ jobs:
           packages-dir: publish/
           skip-existing: true
 
+  supervisor-wheel:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - name: Build the independent supervisor wheel with exact source metadata
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          arguments=()
+          if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release \
+            --supervisor-only --output .release/supervisor "${arguments[@]}"
+          uvx twine check --strict .release/supervisor/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-pypi-wheel
+          path: |
+            .release/supervisor/*.whl
+            .release/supervisor/release-provenance.json
+          if-no-files-found: error
+
   publish-supervisor:
-    needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
+    needs: supervisor-wheel
+    if: ${{ !cancelled() && needs.supervisor-wheel.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-supervisor
       url: https://pypi.org/project/dinkster-supervisor/
     permissions:
       id-token: write
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: engine-release
+          name: supervisor-pypi-wheel
           path: dist
       - name: Select the supervisor distribution
         run: |
           mkdir publish
           cp dist/dinkster_supervisor-[0-9]*.whl publish/
+      - name: Record independent supervisor development provenance
+        if: github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const manifest = JSON.parse(fs.readFileSync('dist/release-provenance.json', 'utf8'));
+            if (manifest.sourceCommit !== context.sha) throw new Error('Supervisor commit mismatch');
+            const tag = `supervisor-main-${manifest.version}`;
+            let object;
+            try {
+              object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              const annotation = await github.rest.git.createTag({
+                ...context.repo, tag, type: 'commit', object: context.sha, message: JSON.stringify(manifest),
+              });
+              try {
+                await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: annotation.data.sha });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+              object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+            }
+            if (object.type !== 'tag') throw new Error('Supervisor tag must be annotated');
+            const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;
+            const provenance = JSON.parse(annotation.message);
+            if (annotation.tag !== tag || provenance.version !== manifest.version ||
+                provenance.sourceCommit !== context.sha || provenance.sha256 !== manifest.sha256) {
+              throw new Error('Supervisor tag annotation differs from the wheel provenance');
+            }
+            object = annotation.object;
+            if (object.type !== 'commit' || object.sha !== context.sha) {
+              throw new Error('Supervisor tag targets a different source commit');
+            }
       - name: Publish the release wheels with PyPI trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

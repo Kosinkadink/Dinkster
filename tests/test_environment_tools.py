@@ -148,6 +148,21 @@ def tools_publication(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     return output, payloads
 
 
+def test_independent_tools_versions_keep_the_supervisor_release_line(
+    tools_publication: tuple[Path, dict[str, bytes]], tmp_path: Path
+):
+    output, payloads = tools_publication
+    development = json.loads((output / "tools-manifest.json").read_bytes())
+    assert development["version"].startswith("2.7.5.dev")
+    stable_output = tmp_path / "stable"
+    stable_output.mkdir()
+    for name, data in payloads.items():
+        (stable_output / name).write_bytes(data)
+    stable = build_tools_release.build(tmp_path, stable_output, stable=True)
+    assert stable["version"] == "2.7.4"
+    assert stable["commit"] == development["commit"]
+
+
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")
 @pytest.mark.parametrize("invalid_input", [None, "abi", "dependency"])
 def test_tools_archive_runs_from_relocated_path_without_host_tools(

@@ -179,6 +179,10 @@
 - Engine manifests can acquire workspace wheels directly from their exact PyPI
   file URLs, verify the published size and SHA-256, and reuse verified cached
   bytes offline. Release mirrors remain optional wheel fallback sources.
+- Independent supervisor development wheels and native tools use the supervisor's
+  own next-patch public development version, with the same exact wheel bytes as
+  the engine release at that source commit. Supervisor-only changes can publish
+  that wheel without rebuilding an engine.
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.

@@ -512,6 +512,32 @@ def read_base_manifest(path: Path) -> dict:
     return manifest
 
 
+def build_supervisor_wheel(
+    root: Path, output: Path, tag: str | None = None, uv: str = "uv"
+) -> Path:
+    """Use identical supervisor bytes in engine and independent tools publications."""
+    version = release_version(root, tag) if tag else development_version(root)
+    with versioned_sources(root, version) as staged:
+        subprocess.run(
+            [uv, "build", "--package", "dinkster-supervisor", "--wheel", "--out-dir", str(output)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = output.glob("*.whl")
+    (output / "release-provenance.json").write_text(
+        json.dumps(
+            {
+                "version": wheel_metadata(wheel)[1],
+                "sourceCommit": git_head(root),
+                "sha256": sha256(wheel),
+            }
+        )
+        + "\n",
+        encoding="ascii",
+    )
+    return wheel
+
+
 def build(
     root: Path,
     output: Path,
@@ -729,6 +755,7 @@ if __name__ == "__main__":
     parser.add_argument("--frontend-artifact", type=Path)
     parser.add_argument("--check", action="store_true", help="Check finalized contents and size")
     parser.add_argument("--bind-pypi", action="store_true", help="Verify and bind published wheels")
+    parser.add_argument("--supervisor-only", action="store_true")
     parser.add_argument("--max-bytes", type=int, default=100_000_000)
     parser.add_argument(
         "--extend", action="store_true", help="Verify and extend an existing release"
@@ -740,6 +767,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.check:
         check_release(args.output.resolve(), args.max_bytes)
+    elif args.supervisor_only:
+        build_supervisor_wheel(
+            Path(__file__).resolve().parents[1], args.output.resolve(), args.tag, args.uv
+        )
     elif args.bind_pypi:
         bind_pypi_wheels(args.output.resolve())
     elif args.extend:

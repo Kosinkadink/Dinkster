@@ -288,6 +288,14 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
     [supervisor_wheel] = output.glob("dinkster_supervisor-*.whl")
     assert supervisor_wheel.name == f"dinkster_supervisor-{supervisor_version}-py3-none-any.whl"
+    independent = tmp_path / "independent-supervisor"
+    independent_wheel = build_release.build_supervisor_wheel(ROOT, independent)
+    assert independent_wheel.read_bytes() == supervisor_wheel.read_bytes()
+    assert json.loads((independent / "release-provenance.json").read_bytes()) == {
+        "version": supervisor_version,
+        "sourceCommit": commit,
+        "sha256": hashlib.sha256(supervisor_wheel.read_bytes()).hexdigest(),
+    }
     wheels = sorted(output.glob("*.whl"))
     (output / ".gitignore").unlink(missing_ok=True)
     constraints = output / "constraints.txt"
