@@ -1452,6 +1452,93 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
 
 @pytest.mark.parametrize(
+    "state",
+    ["legacy", "missing", "signed", "unknown-key", "tampered", "unsigned-stable", "readback"],
+)
+def test_stable_initializes_nightly_without_trusting_unsigned_selections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+):
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+    from dinkster_supervisor.environment_channel_signatures import sign_channel, verify_channel
+
+    from scripts import publish_environment_channel as publisher
+    from tests.fixtures.environments.build import KEY
+
+    mirror = tmp_path / "mirror"
+    _, _, selection = _mirror(mirror)
+    stable = tmp_path / "stable.json"
+    stable_payload = dict(selection, minimumDesktopVersion="0.7.1", extension="stable authority")
+    stable.write_bytes(_channel_json(stable_payload, "stable"))
+    nightly = mirror / "channels/nightly.json"
+    # A legacy mirror's fields must never survive initialization.
+    previous: dict[str, object] = dict(
+        selection, minimumDesktopVersion="99.0.0", extension="untrusted mirror"
+    )
+    nightly.write_bytes(_json(dict(previous, signature=None)))
+    if state == "signed":
+        nightly.write_bytes(_channel_json(previous))
+    elif state == "unknown-key":
+        nightly.write_bytes(sign_channel(previous, "nightly", Ed25519PrivateKey.generate()))
+    elif state == "tampered":
+        nightly.write_bytes(_channel_json(previous).replace(b"99.0.0", b"98.0.0"))
+    elif state == "unsigned-stable":
+        stable.write_bytes(_json(stable_payload))
+    elif state == "missing":
+        nightly.unlink()
+    before = nightly.read_bytes() if nightly.exists() else None
+    old = mirror / "channels/main.json"
+    old.write_bytes(b"legacy alias")
+    monkeypatch.setenv("R2_BUCKET", "fixture")
+    monkeypatch.setenv(
+        "DINKSTER_CHANNEL_SIGNING_KEY",
+        KEY.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode("ascii"),
+    )
+    read = publisher.read_metadata
+
+    def read_metadata(root, name):
+        if name == "channels/nightly.json" and not nightly.exists():
+            raise DownloadError("missing") from HTTPError(
+                str(nightly), 404, "missing", Message(), None
+            )
+        return read(root, name)
+
+    def upload(client, source, key, **kwargs):
+        if state != "readback":
+            (mirror / key).write_bytes(source.read_bytes())
+
+    class Store:
+        def delete_object(self, *, Bucket, Key):
+            (mirror / Key).unlink(missing_ok=True)
+
+    monkeypatch.setattr(publisher, "read_metadata", read_metadata)
+    monkeypatch.setattr(publisher, "upload", upload)
+    if state in {"unknown-key", "tampered", "unsigned-stable", "readback"}:
+        with pytest.raises((EnvironmentError, ValueError)):
+            publisher.initialize_nightly(Store(), stable, str(mirror))
+        assert nightly.read_bytes() == before
+        assert old.read_bytes() == b"legacy alias"
+        return
+    publisher.initialize_nightly(Store(), stable, str(mirror))
+    if state == "signed":
+        assert nightly.read_bytes() == before
+        assert old.exists()
+    else:
+        result = verify_channel(nightly.read_bytes(), "nightly")
+        assert result == dict(stable_payload, channel="nightly")
+        assert not old.exists()
+        assert verify_channel(stable.read_bytes(), "stable") == dict(
+            stable_payload, channel="stable"
+        )
+        initialized = nightly.read_bytes()
+        publisher.initialize_nightly(Store(), stable, str(mirror))
+        assert nightly.read_bytes() == initialized
+
+
+@pytest.mark.parametrize(
     ("damage", "reason"),
     [
         ("constraints", "artifact constraints.txt differs"),

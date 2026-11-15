@@ -61,6 +61,47 @@ def sign_channel_file(path: Path, channel: str) -> None:
     print(f"Channel {channel} signing and self-verification: {elapsed_ms:.5f} ms")
 
 
+def initialize_nightly(client, stable_path: Path, public: str) -> None:
+    """Seed unsigned installations only from the authenticated Stable publication."""
+    stable = verify_channel(stable_path.read_bytes(), "stable")
+    Channel.parse(stable)
+    try:
+        previous = read_metadata(public, "channels/nightly.json")
+    except DownloadError as error:
+        cause = error.__cause__
+        if not isinstance(cause, HTTPError) or cause.code != 404:
+            raise
+    else:
+        document = parse_metadata(previous)
+        if "signed" in document or "signatures" in document:
+            Channel.parse(verify_channel(previous, "nightly"))
+            print("Signed Nightly already exists; initialization is unnecessary")
+            return
+        if (
+            document.get("format") != "dinkster.channel/1"
+            or document.get("signature") is not None
+            or document.get("channel") not in {None, "nightly"}
+        ):
+            raise ValueError("Nightly initialization requires a missing or legacy unsigned channel")
+    # No predecessor selection is trusted, even on the operated mirror.
+    document = dict(stable, channel="nightly")
+    document.pop("nightlyDate", None)
+    Channel.parse(document)
+    path = stable_path.with_name("nightly.json")
+    write_document(path, document)
+    sign_channel_file(path, "nightly")
+    upload(
+        client,
+        path,
+        "channels/nightly.json",
+        extra={"ContentType": "application/json", "CacheControl": "no-cache"},
+    )
+    if read_metadata(public, "channels/nightly.json") != path.read_bytes():
+        raise ValueError("public Nightly differs after authenticated initialization")
+    client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
+    print("Initialized Nightly from authenticated Stable; no unsigned selections retained")
+
+
 def object_store():
     return boto3.client(
         "s3",
@@ -558,6 +599,8 @@ def publish(
             raise ValueError("public channel differs after publication")
         if channel == "nightly":
             client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
+        else:
+            initialize_nightly(client, path, public)
         print(f"Published {channel} channel for engine {identity}")
 
 

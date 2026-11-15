@@ -49,6 +49,20 @@ existing sealed exact provenance; they are not relabeled as newly signed or
 silently replaced with today's channel during restoration. Git refs remain
 explicit unpublished source choices, not release-channel statements.
 
+## First signed publication
+
+Publish an ordinary Stable release after signed-channel readers are distributed.
+The release workflow signs and self-verifies Stable, then checks its exact public
+readback before initializing Nightly. If Nightly is missing or is a legacy
+unsigned channel, initialization copies only the authenticated Stable selections,
+changes the channel binding to `nightly`, signs with the workflow key, and checks
+exact public readback. It never inherits engine, tools, frontend, version or date
+fields from the unsigned predecessor. The next ordinary Nightly release advances
+from that authenticated engine. A valid signed Nightly is left unchanged; an
+invalid signed envelope is an error, not permission to overwrite it or downgrade
+it to unsigned metadata. Normal Nightly publication still requires a verified
+predecessor. No consumer accepts unsigned channels during initialization.
+
 ## Generate and provision a key
 
 Run these commands on a trusted machine with OpenSSL and an authenticated
