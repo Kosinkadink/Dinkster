@@ -163,9 +163,6 @@ def generation_pack_specs(
     generation: Path, in_process_packs: tuple[str, ...] = (), *, local_build: bool = False
 ) -> tuple[PackSpec, ...]:
     """Select verified admitted sources and their already-provisioned interpreters."""
-    from .compose import PackSpec
-    from .packs import pack_info_from_manifest
-
     if not generation.is_absolute():
         raise CompositionError("--generation requires an absolute path")
     generation = generation.resolve()
@@ -204,6 +201,9 @@ def generation_pack_specs(
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
+        from .compose import PackSpec
+        from .packs import pack_info_from_manifest
+
         root = generation / "pack-sources" / entry.pack
         if not root.resolve().is_relative_to(generation / "pack-sources"):
             raise CompositionError(f"generation pack {entry.pack!r} source escapes generation")
