@@ -14,6 +14,7 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dinkster_registry import (
     ArtifactError,
@@ -37,9 +38,11 @@ from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
 
 from . import __version__ as engine_version
-from .compose import CompositionError, PackSpec
-from .packs import pack_info_from_manifest
+from .composition_error import CompositionError
 from .registries import RegistryConfig
+
+if TYPE_CHECKING:
+    from .compose import PackSpec
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
@@ -160,6 +163,9 @@ def generation_pack_specs(
     generation: Path, in_process_packs: tuple[str, ...] = (), *, local_build: bool = False
 ) -> tuple[PackSpec, ...]:
     """Select verified admitted sources and their already-provisioned interpreters."""
+    from .compose import PackSpec
+    from .packs import pack_info_from_manifest
+
     if not generation.is_absolute():
         raise CompositionError("--generation requires an absolute path")
     generation = generation.resolve()
