@@ -1,3 +1,8 @@
+# Checkout engine version
+
+- The checkout version guard failed on main (runtime 0.0.7 versus project 0.0.8) and passed after alignment; all eight CLI tests passed on Linux CPU.
+- From-scratch Linux CPU setup reproduced the inconsistent registry-input refusal before alignment. Published Stable 0.0.8 and Nightly 0.0.9.dev1080 wheels have matching runtime and distribution versions.
+
 # Signed release channels
 
 - CPU contributor setup passed. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
