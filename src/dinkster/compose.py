@@ -68,6 +68,7 @@ from dinkster_assets import (
     register_file3d_types,
     register_load3d_type,
     register_save_target_type,
+    register_video_value_type,
     resolver_from_env,
 )
 from dinkster_assets.file3d import FILE3D_FORMATS
@@ -197,6 +198,7 @@ from dinkster_values import (
     MEBIBYTE,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
+    VIDEO_TYPE,
     ListPayload,
     Rendition,
     ResourcePins,
@@ -7587,6 +7589,8 @@ class ServingComposer:
             raise CompositionError(str(exc)) from exc
         if COMPOSITOR_TYPE in type_ids:
             register_compositor_type(registry)
+        if VIDEO_TYPE in type_ids and VIDEO_TYPE not in registry:
+            register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
         if ASSET_TYPE in type_ids and ASSET_TYPE not in registry:
             register_asset_type(registry, resolver_from_env())
         if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:

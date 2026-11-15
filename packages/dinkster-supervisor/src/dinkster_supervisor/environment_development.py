@@ -200,8 +200,6 @@ def development_selection(
     contributor: bool = False,
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
-    if not packs and not contributor:
-        raise EnvironmentError("development requires at least one explicit --pack-source")
     live_paths: dict[str, set[Path]] = {
         "engine": {source.resolve()} if live_engine or contributor else set(),
         "pack": {path.resolve() for path in live_packs},

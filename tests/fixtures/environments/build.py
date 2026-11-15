@@ -221,7 +221,7 @@ def executable_release(mirror: Path, base: dict, version: str, value: int) -> No
         (directory / "release-manifest.json").write_bytes(data)
         (directory / "constraints.txt").write_bytes(constraints)
         (directory / path.name).write_bytes(payload)
-        channel_path = mirror / "channels/main.json"
+        channel_path = mirror / "channels/nightly.json"
         channel = json.loads(channel_path.read_bytes())
         channel["engine"] = {
             "version": version,
@@ -260,13 +260,13 @@ def build(output: Path, variant: str, port: int) -> dict:
         "minimumDesktopVersion": "0.2.0",
         "signature": None,
     }
-    (channels / "main.json").write_bytes(canonical_json(channel))
+    (channels / "nightly.json").write_bytes(canonical_json(channel))
     executable_release(mirror, base, "1.0", 41)
-    initial = (channels / "main.json").read_bytes()
+    initial = (channels / "nightly.json").read_bytes()
     (output / "initial-channel.json").write_bytes(initial)
     executable_release(mirror, base, "2.0", 59)
-    (output / "updated-channel.json").write_bytes((channels / "main.json").read_bytes())
-    for name in ("main", "stable"):
+    (output / "updated-channel.json").write_bytes((channels / "nightly.json").read_bytes())
+    for name in ("nightly", "stable"):
         (channels / f"{name}.json").write_bytes(initial)
     root, store = output / "project", output / "store"
     command = [sys.executable, "-m", "dinkster_supervisor.environment", "--root", str(root)]
@@ -275,7 +275,7 @@ def build(output: Path, variant: str, port: int) -> dict:
         "root": str(root),
         "store": str(store),
         "variant": variant,
-        "channel": "main",
+        "channel": "nightly",
         "port": port,
         "baseManifest": str(mirror / "base" / variant / base["id"][7:] / "manifest.json"),
         "initialChannel": str(output / "initial-channel.json"),
@@ -287,7 +287,7 @@ def build(output: Path, variant: str, port: int) -> dict:
                 "--mirror",
                 str(mirror),
                 "--channel",
-                "main",
+                "nightly",
                 "--variant",
                 variant,
                 "--data",
@@ -327,7 +327,7 @@ def main() -> None:
     if args.advance:
         output = args.advance.resolve()
         data = (output / "updated-channel.json").read_bytes()
-        for name in ("main", "stable"):
+        for name in ("nightly", "stable"):
             destination = output / "mirror/channels" / f"{name}.json"
             temporary = destination.with_suffix(".tmp")
             temporary.write_bytes(data)

@@ -16,7 +16,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 from dinkster_store import object_path, readable_label
 from packaging.requirements import Requirement
@@ -234,31 +234,15 @@ def retain_wheels(
                     / filename
                 )
                 fetch_artifact((directory,), filename, destination, sha, size)
-        if sha is not None and size is None:
-            cached = (
-                object_path(
-                    store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
-                )
-                / filename
-            )
-            if (
-                cached.is_file()
-                and not cached.is_symlink()
-                and content_digest(cached) == "sha256:" + sha
-            ):
-                size = cached.stat().st_size
-        if sha is not None and size is None and urlsplit(url).scheme in {"https", "http"}:
-            with urlopen(Request(url, method="HEAD"), timeout=30) as response:
-                size = int(response.headers["Content-Length"])
         source_path = unquote(urlsplit(url).path)
         if os.name == "nt":
             source_path = source_path.removeprefix("/")
         local = Path(source_path)
-        if sha is None or size is None:
-            if urlsplit(url).scheme != "file":
-                raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
+        if urlsplit(url).scheme == "file":
             sha = sha or content_digest(local)[7:]
             size = size if size is not None else local.stat().st_size
+        if sha is None:
+            raise EnvironmentError(f"resolver omitted wheel integrity: {filename}")
         destination = (
             object_path(
                 store / "wheels", "sha256:" + sha, label=readable_label(Path(filename).stem)
@@ -273,7 +257,7 @@ def retain_wheels(
                 "version": package["version"],
                 "filename": filename,
                 "sha256": sha,
-                "size": size,
+                "size": destination.stat().st_size,
                 "url": "local" if urlsplit(url).scheme == "file" else url,
             }
         )

@@ -9,6 +9,7 @@ import os
 import re
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError
@@ -79,7 +80,7 @@ def inventory(client, scope: str = "engine") -> tuple[dict[str, int], list[tuple
             name = f"{manifest['label']}-{identity[7:15]}"
         else:
             manifest = validate_manifest(data, identity, None)
-            name, _ = engine_publication_names(manifest, identity, "main")
+            name, _ = engine_publication_names(manifest, identity, "nightly")
         if key != f"{scope}/{name}/{manifest_name}":
             raise ValueError(f"{scope} directory differs from its manifest identity: {key}")
         manifests.append((key, identity, manifest))
@@ -180,7 +181,7 @@ def upload(client, path: Path, key: str, *, extra: dict[str, str] | None = None)
 def mirror_engine(client, release: Path, work: Path) -> None:
     engine = json.loads((release / "release-manifest.json").read_bytes())
     identity = content_digest(release / "release-manifest.json")
-    name, _ = engine_publication_names(engine, identity, "main")
+    name, _ = engine_publication_names(engine, identity, "nightly")
     public = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
     check_collision(client, identity)
     prefix = f"engine/{name}"
@@ -288,7 +289,7 @@ def recover_engine_mirrors(report_path: Path) -> None:
                     (release / "release-manifest.json").read_bytes(), identity, None
                 )
                 _, expected_tag = engine_publication_names(
-                    manifest, identity, "main" if published["prerelease"] else "stable"
+                    manifest, identity, "nightly" if published["prerelease"] else "stable"
                 )
                 if manifest.get("repository") != "Kosinkadink/Dinkster" or tag != expected_tag:
                     raise ValueError(f"GitHub engine tag differs from its manifest identity: {tag}")
@@ -345,7 +346,7 @@ def publish(
     engine = json.loads((release / "release-manifest.json").read_bytes())
     identity = content_digest(release / "release-manifest.json")
     _, tag = engine_publication_names(engine, identity, channel)
-    expected_ref = "refs/heads/main" if channel == "main" else f"refs/tags/{tag}"
+    expected_ref = "refs/heads/main" if channel == "nightly" else f"refs/tags/{tag}"
     if (
         os.environ.get("GITHUB_REPOSITORY") != "Kosinkadink/Dinkster"
         or os.environ.get("GITHUB_EVENT_NAME") != "push"
@@ -427,9 +428,13 @@ def publish(
             )
             Channel.parse(document)
             write_document(path, document)
-        if channel == "main":
+        if channel == "nightly":
+            publication_date = datetime.now(UTC).date().isoformat()
+            document = parse_metadata(path.read_bytes())
+            document["nightlyDate"] = publication_date
+            write_document(path, document)
             try:
-                published_bytes = read_metadata(public, "channels/main.json")
+                published_bytes = read_metadata(public, "channels/nightly.json")
             except DownloadError as error:
                 cause = error.__cause__
                 if not isinstance(cause, HTTPError) or cause.code != 404:
@@ -473,8 +478,17 @@ def publish(
                 with urlopen(request, timeout=120) as response:
                     status = json.load(response)["status"]
                 if status == "identical":
+                    document = parse_metadata(path.read_bytes())
+                    if "nightlyDate" in published_document:
+                        document["nightlyDate"] = published_document["nightlyDate"]
+                    else:
+                        document.pop("nightlyDate", None)
+                    write_document(path, document)
                     if published_bytes == path.read_bytes():
-                        print(f"Verified main channel for engine {identity}")
+                        client.delete_object(
+                            Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
+                        )
+                        print(f"Verified Nightly channel for engine {identity}")
                         return
                     candidate = parse_metadata(path.read_bytes())
                     unchanged = dict(published_document)
@@ -484,12 +498,25 @@ def publish(
                         raise ValueError("public channel differs for the same engine commit")
                 if status in {"behind", "diverged"}:
                     print(
-                        f"Main channel skipped: published {published_commit}, "
+                        f"Nightly channel skipped: published {published_commit}, "
                         f"candidate {engine['commit']} ({status})"
                     )
                     return
                 if status not in {"ahead", "identical"}:
                     raise ValueError(f"unexpected GitHub comparison status: {status}")
+                previous_date = published_document.get("nightlyDate")
+                if previous_date is not None:
+                    if (
+                        not isinstance(previous_date, str)
+                        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", previous_date) is None
+                    ):
+                        raise ValueError("published Nightly date must be YYYY-MM-DD")
+                    if previous_date >= publication_date:
+                        client.delete_object(
+                            Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
+                        )
+                        print(f"Nightly channel already advanced on {previous_date}")
+                        return
         selected_frontend = select_frontend(engine, parse_metadata(path.read_bytes()))
         if selected_frontend is not None:
             wheel_name = frontend_filename(selected_frontend)
@@ -510,6 +537,8 @@ def publish(
         )
         if read_metadata(public, f"channels/{channel}.json") != path.read_bytes():
             raise ValueError("public channel differs after publication")
+        if channel == "nightly":
+            client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
         print(f"Published {channel} channel for engine {identity}")
 
 
@@ -521,7 +550,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--base-manifest", type=Path, action="append")
-    parser.add_argument("--channel", choices=("main", "stable"))
+    parser.add_argument("--channel", choices=("nightly", "stable"))
     parser.add_argument("--minimum-desktop-version")
     parser.add_argument("--frontend", type=Path, help="optional published frontend reference JSON")
     parser.add_argument("--tools", type=Path, help="same-source published tools release for Stable")

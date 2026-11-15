@@ -13,7 +13,7 @@ from pathlib import Path
 from dinkster_supervisor.environment_tools import TOOLS_ARCHIVES, validate_tools_manifest
 from packaging.version import Version
 
-from scripts.build_release import git_head, project_metadata, sha256
+from scripts.build_release import development_version, git_head, project_metadata, sha256
 
 
 def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
@@ -69,12 +69,16 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     return selected(before) != selected(after)
 
 
-def build(root: Path, output: Path) -> dict[str, object]:
+def build(root: Path, output: Path, *, stable: bool = False) -> dict[str, object]:
     """Hash native ZIPs without deriving the tools version from an engine release."""
     actual = {path.name for path in output.iterdir()}
     if actual != TOOLS_ARCHIVES:
         raise ValueError("tools finalization requires exactly the three native ZIPs")
-    _, version = project_metadata(root / "packages/dinkster-supervisor/pyproject.toml")
+    version = (
+        project_metadata(root / "packages/dinkster-supervisor/pyproject.toml")[1]
+        if stable
+        else development_version(root, "dinkster-supervisor")
+    )
     built_at = datetime.now(UTC)
     manifest: dict[str, object] = {
         "format": "dinkster.tools/1",
@@ -103,6 +107,7 @@ def build(root: Path, output: Path) -> dict[str, object]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stable", action="store_true")
     operation = parser.add_mutually_exclusive_group(required=True)
     operation.add_argument("--output", type=Path)
     operation.add_argument("--changed-from")
@@ -111,4 +116,4 @@ if __name__ == "__main__":
     if args.changed_from:
         print(f"changed={str(inputs_changed(root, args.changed_from)).lower()}")
     else:
-        build(root, args.output)
+        build(root, args.output, stable=args.stable)

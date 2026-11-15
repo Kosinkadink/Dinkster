@@ -54,7 +54,7 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         "release": str(release),
         "label": label,
     }
-    (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
+    (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
     shutil.rmtree(mirror / "engine")
     shutil.rmtree(mirror / "base")
     destination = tmp_path / "acquired"
@@ -96,7 +96,7 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         assert not destination.exists()
     if damage == "missing-pointer":
         del channel["tools"]
-        (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
+        (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
     elif damage:
         (release / ("tools-manifest.json" if damage == "manifest" else name)).write_bytes(b"wrong")
     monkeypatch.setattr(sys, "argv", [*arguments, "--yes"])
@@ -146,6 +146,21 @@ def tools_publication(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
         (output / name).write_bytes(data)
     build_tools_release.build(tmp_path, output)
     return output, payloads
+
+
+def test_independent_tools_versions_keep_the_supervisor_release_line(
+    tools_publication: tuple[Path, dict[str, bytes]], tmp_path: Path
+):
+    output, payloads = tools_publication
+    development = json.loads((output / "tools-manifest.json").read_bytes())
+    assert development["version"].startswith("2.7.5.dev")
+    stable_output = tmp_path / "stable"
+    stable_output.mkdir()
+    for name, data in payloads.items():
+        (stable_output / name).write_bytes(data)
+    stable = build_tools_release.build(tmp_path, stable_output, stable=True)
+    assert stable["version"] == "2.7.4"
+    assert stable["commit"] == development["commit"]
 
 
 @pytest.mark.network("pypi.org", "files.pythonhosted.org")

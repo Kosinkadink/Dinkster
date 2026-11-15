@@ -28,7 +28,8 @@ def export_catalog(output: Path) -> None:
             "DINKSTER_REMOTE_CATALOG_BASE": "",
             "DINKSTER_REMOTE_GATEWAY_BASE": "",
         }
-        published = discover(("https://releases.dinkster.org",), "main")
+        # Schema decoding must not depend on an unpublished development channel.
+        published = discover(("https://releases.dinkster.org",), "stable")
         supervisor = next(
             row
             for row in artifact_rows(published.engine["artifacts"], "name")
@@ -79,7 +80,7 @@ def export_catalog(output: Path) -> None:
                 "--mirror",
                 "https://releases.dinkster.org",
                 "--channel",
-                "main",
+                "stable",
                 "--variant",
                 "linux-cpu",
                 "--engine-release",

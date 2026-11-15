@@ -168,7 +168,7 @@ def _mirror(
         "signature": None,
     }
     (root / "channels").mkdir()
-    for name in ("stable", "main"):
+    for name in ("stable", "nightly"):
         (root / f"channels/{name}.json").write_bytes(_json(channel))
     return base, engine, channel
 
@@ -176,7 +176,7 @@ def _mirror(
 def _release_sources(
     mirror: Path, *, dependency_locks: dict[str, bytes] | None = None
 ) -> tuple[Path, dict[str, bytes]]:
-    channel_path = mirror / "channels/main.json"
+    channel_path = mirror / "channels/nightly.json"
     channel = json.loads(channel_path.read_bytes())
     previous = mirror / "engine" / channel["engine"]["release"][7:]
     engine = json.loads((previous / "release-manifest.json").read_bytes())
@@ -227,7 +227,7 @@ def test_acquires_only_selected_variant_dependency_locks(tmp_path: Path):
         payloads[path.name] = path.read_bytes()
     release, _ = _release_sources(mirror, dependency_locks=payloads)
     (release / "first-pack-0.4.0.dev1-win-cpu.pack-lock.json").write_bytes(b"unselected corruption")
-    catalog = discover((str(mirror),), "main")
+    catalog = discover((str(mirror),), "nightly")
     acquired = acquire_pack_locks(catalog, "fixture-cpu", store)
     assert {path.name for path in acquired} == {
         "first-pack-0.4.0.dev1-fixture-cpu.pack-lock.json",
@@ -250,7 +250,7 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
     mirror, store = tmp_path / "mirror", tmp_path / "store"
     _mirror(mirror)
     release, payloads = _release_sources(mirror)
-    catalog = discover((str(mirror),), "main")
+    catalog = discover((str(mirror),), "nightly")
     with pytest.raises(EnvironmentError, match="intact cached release source"):
         acquire_sources(catalog, store, download=False)
     assert not store.exists()
@@ -293,7 +293,7 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
     assert not list((tmp_path / "fresh-store").rglob("*.zip"))
 
 
-@pytest.mark.parametrize("channel_name", ["stable", "main"])
+@pytest.mark.parametrize("channel_name", ["stable", "nightly"])
 def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_bytes(
     tmp_path: Path,
     channel_name: str,
@@ -301,6 +301,8 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     mirror, store = tmp_path / "mirror", tmp_path / "data"
     base, engine, channel = _mirror(mirror)
     before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    with pytest.raises(EnvironmentError, match="channel must be stable or nightly"):
+        discover((str(mirror),), "main")
     catalog = discover((str(mirror),), channel_name)
     assert catalog.document == channel
     assert catalog.engine == engine
@@ -372,9 +374,9 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
     (release / "release-manifest.json").write_bytes(data)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    path = mirror / "channels/main.json"
+    path = mirror / "channels/nightly.json"
     path.write_bytes(_json(channel))
-    initial = discover((str(mirror),), "main")
+    initial = discover((str(mirror),), "nightly")
     initial_constraints = acquire(initial, "fixture-cpu", store)
     requirements = initial_constraints.read_text()
     assert f"dinkster-frontend==0.1.0 --hash=sha256:{original['sha256']}" in requirements
@@ -383,10 +385,10 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
     before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
     if api in {1, 5}:
         with pytest.raises(EnvironmentError, match="supports engine schema API 2 through 4"):
-            discover((str(mirror),), "main")
+            discover((str(mirror),), "nightly")
         assert {p: p.read_bytes() for p in store.rglob("*") if p.is_file()} == before
         return
-    selected = discover((str(mirror),), "main")
+    selected = discover((str(mirror),), "nightly")
     assert selected.engine_bytes == initial.engine_bytes
     assert selected.channel.engine_release == initial.channel.engine_release
     requirements = acquire(selected, "fixture-cpu", store).read_text()
@@ -410,7 +412,7 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
 ):
     mirror, store = tmp_path / "mirror", tmp_path / "store"
     base, engine, channel = _mirror(mirror)
-    catalog = discover((str(mirror),), "main")
+    catalog = discover((str(mirror),), "nightly")
     constraints = acquire(catalog, "fixture-cpu", store).read_bytes()
     mirror.rename(tmp_path / "disconnected")
     before = {
@@ -424,11 +426,11 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
             return read(root, path)
 
         patch.setattr(environment_artifacts, "read_metadata", cache_only)
-        offline = discover((str(mirror),), "main", store=store, offline=True)
+        offline = discover((str(mirror),), "nightly", store=store, offline=True)
         assert offline.document == channel
         assert offline.engine == engine
         assert offline.bases == {"fixture-cpu": base}
-    cached = discover((str(mirror),), "main", store=store)
+    cached = discover((str(mirror),), "nightly", store=store)
     assert cached.document == channel
     assert cached.engine == engine
     assert cached.bases == {"fixture-cpu": base}
@@ -440,10 +442,10 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
     } == before
     assert acquire(cached, "fixture-cpu", store).read_bytes() == constraints
     with pytest.raises(EnvironmentError, match="no mirror"):
-        discover((str(tmp_path / "different-mirror"),), "main", store=store)
+        discover((str(tmp_path / "different-mirror"),), "nightly", store=store)
     (store / "metadata" / f"{base['id'][7:]}.json").write_text("{}")
     with pytest.raises(EnvironmentError, match="intact expected artifact manifest"):
-        discover((str(mirror),), "main", store=store)
+        discover((str(mirror),), "nightly", store=store)
     (store / "metadata" / f"{channel['engine']['release'][7:]}.json").unlink()
     before = {
         path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
@@ -451,7 +453,7 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
     with monkeypatch.context() as patch:
         patch.setattr(environment_artifacts, "read_metadata", cache_only)
         with pytest.raises(EnvironmentError) as refused:
-            discover((str(mirror),), "main", store=store, offline=True)
+            discover((str(mirror),), "nightly", store=store, offline=True)
     assert channel["engine"]["release"] in str(refused.value)
     assert base["id"] in str(refused.value)
     assert {
@@ -467,7 +469,7 @@ def test_offline_runtime_acquisition_reports_all_missing_inputs_without_writes(
 
     mirror, store = tmp_path / "mirror", tmp_path / "store"
     base, engine, _ = _mirror(mirror)
-    catalog = discover((str(mirror),), "main")
+    catalog = discover((str(mirror),), "nightly")
     if cache != "empty":
         acquire(catalog, "fixture-cpu", store)
     if cache == "corrupt":
@@ -541,7 +543,7 @@ def test_acquisition_retains_published_base_metadata_without_replacing_custom_pr
         },
     )
     (mirror / "base/fixture-cpu" / base["id"][7:] / "manifest.json").write_bytes(_json(base))
-    catalog = discover((str(mirror),), "main")
+    catalog = discover((str(mirror),), "nightly")
     acquire(catalog, "fixture-cpu", store)
     retained = object_path(store / "bases", base["id"]) / "manifest.json"
     assert retained.parent == store / "bases/fixture-cpu/2026-11-01-py3.14.10-torchnone"
@@ -578,8 +580,8 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{release.name}/release-manifest.json"}
     ]
-    (mirror / "channels/main.json").write_bytes(_json(channel))
-    catalog = discover((str(mirror),), "main")
+    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    catalog = discover((str(mirror),), "nightly")
     assert not store.exists()
     manifest.write_bytes(b"changed after discovery")
     acquire(catalog, "fixture-cpu", store)
@@ -623,7 +625,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
     thread.start()
     try:
         index = f"http://127.0.0.1:{server.server_port}"
-        catalog = discover((str(mirror),), "main")
+        catalog = discover((str(mirror),), "nightly")
         base, engine = cast("dict", catalog.bases["fixture-cpu"]), cast("dict", catalog.engine)
         channel = cast("dict", catalog.document)
         previous_engine = mirror / channel["engine"]["locations"][0]["path"]
@@ -661,9 +663,9 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
         channel["engine"]["locations"] = [
             {"type": "mirror", "path": f"engine/{identity[7:]}/release-manifest.json"}
         ]
-        (mirror / "channels/main.json").write_bytes(_json(channel))
+        (mirror / "channels/nightly.json").write_bytes(_json(channel))
         (release / "release-manifest.json").write_bytes(data)
-        catalog = discover((str(mirror),), "main")
+        catalog = discover((str(mirror),), "nightly")
         inference: dict[str, object] = {
             "version": "0.2.0",
             "requested": "0.2.0.dev3",
@@ -753,7 +755,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
                     "--mirror",
                     str(mirror),
                     "--channel",
-                    "main",
+                    "nightly",
                     "--variant",
                     "fixture-cpu",
                     "--data",
@@ -860,7 +862,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
                 shutil.rmtree(published.parent)
                 shutil.rmtree(object_path(store / "bases", base["id"]))
                 shutil.rmtree(object_path(store / "downloads", base["id"]))
-            (mirror / "channels/main.json").write_bytes(_json(channel))
+            (mirror / "channels/nightly.json").write_bytes(_json(channel))
             proposed = run("restore", "1", "--plan")
             alternatives = proposed["restorePlan"]["alternatives"]
             if replacement in {"incompatible-base", "incompatible-engine"}:
@@ -971,8 +973,8 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         channel["engine"]["locations"] = [
             {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
         ]
-        (mirror / "channels/main.json").write_bytes(_json(channel))
-        catalog = discover((str(mirror),), "main")
+        (mirror / "channels/nightly.json").write_bytes(_json(channel))
+        catalog = discover((str(mirror),), "nightly")
         package_index = origin + "/simple" if source == "index" else None
         if failure is None:
             inspected = runtime_inputs(catalog, "fixture-cpu", store)
@@ -1062,7 +1064,7 @@ def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
     base, _, _ = _mirror(
         mirror, variant="mac-arm64" if target[0] == "macos" else "fixture-cpu", target=target
     )
-    catalog = discover((str(mirror),), "main")
+    catalog = discover((str(mirror),), "nightly")
     monkeypatch.setattr(environment_artifacts, "sys", SimpleNamespace(platform=host))
     monkeypatch.setattr(environment_artifacts, "machine", lambda: architecture)
     variant = next(iter(catalog.bases))
@@ -1085,6 +1087,56 @@ def test_acquisition_requires_manifest_os_and_architecture_to_match_host(
     )
 
 
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_engine_pypi_wheels_are_acquired_by_manifest_hash_without_a_release_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: bool
+):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _, engine, channel = _mirror(mirror)
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    [wheel] = release.glob("*.whl")
+    published = tmp_path / "pypi"
+    published.mkdir()
+    (published / wheel.name).write_bytes(
+        b"X" * wheel.stat().st_size if corrupt else wheel.read_bytes()
+    )
+    wheel.unlink()
+    [row] = [row for row in engine["artifacts"] if row["name"].endswith(".whl")]
+    row["url"] = f"https://files.pythonhosted.org/packages/fixture/{wheel.name}"
+    data = _json(engine)
+    identity = hashlib.sha256(data).hexdigest()
+    (release / "release-manifest.json").write_bytes(data)
+    release.rename(release.with_name(identity))
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"] = [
+        {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+    ]
+    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    catalog = discover((str(mirror),), "nightly")
+    fetch = environment_artifacts.fetch_artifact
+
+    def local_transport(sources, *args, **kwargs):
+        sources = tuple(
+            str(published) if source.startswith("https://files.pythonhosted.org/") else source
+            for source in sources
+        )
+        return fetch(sources, *args, **kwargs)
+
+    monkeypatch.setattr(environment_artifacts, "fetch_artifact", local_transport)
+    if corrupt:
+        with pytest.raises(DownloadError):
+            acquire(catalog, "fixture-cpu", store)
+        assert not list(store.glob("wheels/*/fixture_engine*.whl"))
+    else:
+        constraints = acquire(catalog, "fixture-cpu", store)
+        assert "fixture-engine==2.0 --hash=sha256:" + row["sha256"] in constraints.read_text()
+        assert (
+            next(store.glob("wheels/*/fixture_engine*.whl")).read_bytes() == b"engine wheel bytes"
+        )
+        (published / wheel.name).unlink()
+        assert acquire(catalog, "fixture-cpu", store, offline=True) == constraints
+
+
 def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path: Path):
     first, second = tmp_path / "first", tmp_path / "second"
     _, engine, channel = _mirror(first)
@@ -1097,7 +1149,7 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
     release = channel["engine"]["release"][7:]
     (first / f"engine/{release}/release-manifest.json").write_bytes(b"corrupt")
     (first / f"engine/{release}/fixture_engine-2.0-py3-none-any.whl").write_bytes(b"short")
-    catalog = discover((str(first), str(second)), "main")
+    catalog = discover((str(first), str(second)), "nightly")
     assert catalog.engine == engine
     acquire(catalog, "fixture-cpu", tmp_path / "store")
     assert (
@@ -1115,7 +1167,7 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
 def test_refuses_protocol_mismatch_before_creating_a_store(tmp_path: Path):
     _mirror(tmp_path / "mirror", protocol=12)
     with pytest.raises(EnvironmentError, match="workerProtocol mismatch"):
-        discover((str(tmp_path / "mirror"),), "main")
+        discover((str(tmp_path / "mirror"),), "nightly")
 
 
 def test_unsigned_external_channel_is_refused_before_network(monkeypatch: pytest.MonkeyPatch):
@@ -1129,7 +1181,7 @@ def test_unsigned_external_channel_is_refused_before_network(monkeypatch: pytest
 
 def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_path: Path):
     base, _, _ = _mirror(tmp_path / "mirror", damaged_archive=True)
-    catalog = discover((str(tmp_path / "mirror"),), "main")
+    catalog = discover((str(tmp_path / "mirror"),), "nightly")
     store = tmp_path / "store"
     with pytest.raises(EnvironmentError, match="extracted base wheel differs"):
         acquire(catalog, "fixture-cpu", store)
@@ -1170,7 +1222,7 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
     expected_id = (
         "sha256:" + hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
     )
-    for name in ("main", "stable"):
+    for name in ("nightly", "stable"):
         command = [
             sys.executable,
             "-m",
@@ -1203,9 +1255,98 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         assert selected.channel.base_for("win-cpu") == extra["id"]
         assert {path: path.read_bytes() for path in before} == before
     if not labelled:
-        assert (mirror / "channels/main.json").read_bytes() == (
+        assert (mirror / "channels/nightly.json").read_bytes() == (
             mirror / "channels/stable.json"
         ).read_bytes()
+
+
+@pytest.mark.parametrize("previous_day", ["same", "yesterday", "missing", "readback-mismatch"])
+def test_nightly_publication_advances_only_once_per_utc_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str
+):
+    from datetime import timedelta
+
+    from scripts import publish_environment_channel as publisher
+
+    mirror = tmp_path / "mirror"
+    base, engine, channel = _mirror(mirror)
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    base_path = mirror / "base/fixture-cpu" / base["id"][7:] / "manifest.json"
+    previous_engine = dict(engine, commit="e" * 40)
+    previous_data = _json(previous_engine)
+    previous_id = hashlib.sha256(previous_data).hexdigest()
+    previous_path = mirror / f"engine/{previous_id}/release-manifest.json"
+    previous_path.parent.mkdir()
+    previous_path.write_bytes(previous_data)
+    channel["engine"]["release"] = "sha256:" + previous_id
+    channel["engine"]["locations"][0]["path"] = f"engine/{previous_id}/release-manifest.json"
+    today = datetime.now(UTC).date()
+    if previous_day != "missing":
+        channel["nightlyDate"] = (
+            today if previous_day == "same" else today - timedelta(days=1)
+        ).isoformat()
+    channel_path = mirror / "channels/nightly.json"
+    channel_path.write_bytes(_json(channel))
+    before = channel_path.read_bytes()
+    for name, value in {
+        "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": engine["commit"],
+        "GITHUB_TOKEN": "test-only",
+        "R2_ACCESS_KEY_ID": "test-only",
+        "R2_SECRET_ACCESS_KEY": "test-only",
+        "R2_ACCOUNT_ID": "test-only",
+        "R2_BUCKET": "test-only",
+        "R2_PUBLIC_BASE_URL": str(mirror),
+    }.items():
+        monkeypatch.setenv(name, value)
+    old_channel = mirror / "channels/main.json"
+    old_channel.write_bytes(before)
+
+    class Store:
+        def delete_object(self, *, Bucket, Key):
+            (mirror / Key).unlink(missing_ok=True)
+
+    monkeypatch.setattr(publisher, "object_store", Store)
+    monkeypatch.setattr(publisher, "mirror_engine", lambda *args: None)
+
+    def response(request, **kwargs):
+        if isinstance(request, str):
+            return io.BytesIO((release / "release-manifest.json").read_bytes())
+        if request.full_url.endswith(f"{engine['commit']}...{engine['commit']}"):
+            return io.BytesIO(b'{"status":"identical"}')
+        assert request.full_url.endswith(f"{previous_engine['commit']}...{engine['commit']}")
+        return io.BytesIO(b'{"status":"ahead"}')
+
+    def upload(client, source, key, **kwargs):
+        assert key == "channels/nightly.json"
+        (mirror / key).write_bytes(
+            before if previous_day == "readback-mismatch" else source.read_bytes()
+        )
+
+    monkeypatch.setattr(publisher, "urlopen", response)
+    monkeypatch.setattr(publisher, "upload", upload)
+    if previous_day == "readback-mismatch":
+        with pytest.raises(ValueError, match="public channel differs after publication"):
+            publisher.publish(release, [base_path], "nightly", "0.2.0")
+        assert old_channel.read_bytes() == before
+        return
+    publisher.publish(release, [base_path], "nightly", "0.2.0")
+    after = json.loads(channel_path.read_bytes())
+    if previous_day == "same":
+        assert channel_path.read_bytes() == before
+    else:
+        assert (
+            after["engine"]["release"]
+            == "sha256:"
+            + hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
+        )
+        assert after["nightlyDate"] == today.isoformat()
+    selected_bytes = channel_path.read_bytes()
+    publisher.publish(release, [base_path], "nightly", "0.2.0")
+    assert channel_path.read_bytes() == selected_bytes
+    assert not (mirror / "channels/main.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -1262,7 +1403,7 @@ def test_channel_builder_refuses_invalid_inputs_without_replacing_channels(
             write_channel(
                 release,
                 selected,
-                channel="main",
+                channel="nightly",
                 output_root=output,
                 minimum_desktop_version="0.2.0",
             )

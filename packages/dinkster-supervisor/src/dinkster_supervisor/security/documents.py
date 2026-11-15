@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import re
 from datetime import datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
+
+from .signatures import canonical as canonical
+from .signatures import parse_signed_json, verify_envelope
 
 Digest = Annotated[str, Field(pattern=r"^(?:blake3|sha256):[0-9a-f]{64}$")]
 KeyId = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
@@ -191,50 +191,24 @@ class _Envelope(_Model):
         return self
 
 
-def canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("ascii")
-
-
-def _unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise SecurityError("duplicate security field")
-        result[key] = value
-    return result
-
-
 def signed_payload(data: bytes) -> bytes:
     """Retain received signed fields, including omitted defaults, in revision checkpoints."""
     try:
-        raw = json.loads(data, object_pairs_hook=_unique_fields)
-        return canonical(raw["signed"])
+        return canonical(parse_signed_json(data)["signed"])
     except (ValueError, TypeError, KeyError) as exc:
         raise SecurityError("invalid security document") from exc
 
 
 def _authenticated(data: bytes, trust: Trust) -> Document | Trust:
     try:
-        payload = signed_payload(data)
+        keys = {key.key_id: _decode(key.public_key, 32) for key in trust.keys}
+        verify_envelope(data, keys)
         envelope = _Envelope.model_validate_json(data)
         if envelope.signed.registry != trust.registry:
             raise SecurityError("security registry differs from independently trusted registry")
-        keys = {key.key_id: _decode(key.public_key, 32) for key in trust.keys}
-        for signature in envelope.signatures:
-            if signature.key_id not in keys:
-                continue
-            try:
-                Ed25519PublicKey.from_public_bytes(keys[signature.key_id]).verify(
-                    _decode(signature.signature, 64), payload
-                )
-            except InvalidSignature:
-                continue
-            return envelope.signed
+        return envelope.signed
     except (ValueError, TypeError, KeyError) as exc:
         raise SecurityError("invalid security document") from exc
-    raise SecurityError("no valid independently trusted security signature")
 
 
 def verify_document(data: bytes, trust: Trust, *, previous: bytes | None = None) -> Document:

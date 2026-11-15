@@ -130,6 +130,21 @@ def validate_manifest(
             raise EnvironmentError("engine manifest must name its full commit")
         select_frontend(document)
         rows = artifact_rows(document.get("artifacts"), "name")
+        for row in rows:
+            if "url" in row:
+                url = row["url"]
+                if not isinstance(url, str):
+                    raise EnvironmentError("engine artifact URL must be a string")
+                parsed = urlparse(url)
+                if (
+                    not str(row["name"]).endswith(".whl")
+                    or parsed.scheme != "https"
+                    or parsed.netloc != "files.pythonhosted.org"
+                    or unquote(parsed.path.rsplit("/", 1)[-1]) != row["name"]
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise EnvironmentError("engine wheel URL must name its exact PyPI file")
         if not any(row["name"] == "constraints.txt" for row in rows):
             raise EnvironmentError("engine release has no constraints.txt artifact")
         if "defaultPacks" in document:
@@ -324,8 +339,8 @@ def discover(
     offline: bool = False,
 ) -> EnvironmentCatalog:
     """Read channel and exact manifests without creating project or store files."""
-    if channel_name not in {"stable", "main"}:
-        raise EnvironmentError("channel must be stable or main")
+    if channel_name not in {"stable", "nightly"}:
+        raise EnvironmentError("channel must be stable or nightly")
     document: dict[str, object] | None = None
     channel: Channel | None = None
     cached_channel = False
@@ -812,8 +827,11 @@ def acquire(
             destination = release_root / name
         else:
             continue
+        sources = catalog.engine_sources
+        if "url" in row:
+            sources = (cast("str", row["url"]).rsplit("/", 1)[0], *sources)
         fetch_artifact(
-            (str(destination.parent),) if offline else catalog.engine_sources,
+            (str(destination.parent),) if offline else sources,
             name,
             destination,
             sha,

@@ -26,6 +26,12 @@ Dinkster deliberately stays out of the ComfyUI port neighborhood
 (8188/8189/8199) so a Dinkster install never collides with a running
 ComfyUI or comfy-runner allocation.
 
+Contributor wheel acquisition uses the resolver's SHA-256 to verify each selected
+wheel. When resolver metadata omits the size, the downloader measures the verified
+file rather than issuing a separate HEAD request. An already verified retained
+wheel needs no network request. Explicit sizes still enforce byte counts, and
+unknown-size interrupted HTTP downloads restart without guessing a resume range.
+
 ## Signed security feed refresh
 
 The supervisor-owned `dinkster_supervisor.security.host.SecurityHost` reads independently provisioned
@@ -343,7 +349,7 @@ mirror; `{type: "github", repository, tag, asset}` names an immutable release as
 New mirror paths are `engine/<YYYY-MM-DD>-<version>-<hash8>/release-manifest.json`
 and `base/<variant>/<YYYY-MM-DD>-py<python>-torch<torch>[-cu<nnn>]-<hash8>/manifest.json`.
 Legacy full-hash directory paths remain supported. GitHub assets use those same manifest
-basenames, never alias tags. Both stable and main name exact content digests,
+basenames, never alias tags. Both stable and nightly name exact content digests,
 never a latest-release lookup. Location hints do not replace digest verification.
 A null signature is acceptable only for a Dinkster-operated mirror; signed
 documents are refused until signature verification is available. Engine and base
@@ -387,10 +393,10 @@ The `Supervisor tools publication` workflow runs when supervisor sources,
 native build/publication scripts or tools build inputs change. It publishes
 `tools/<date>-<public-supervisor-version>-<manifest-hash8>/`, `tools/index.json`
 and the corresponding `tools-<label>` GitHub prerelease, verifies both sources,
-then moves the main channel's `tools` pointer without changing its engine/base
+then moves the Nightly channel's `tools` pointer without changing its engine/base
 selection. An unpublished local output is not a production download pin.
 
-`dinkster-env --root /absolute/tools-cache tools --channel main --mirror
+`dinkster-env --root /absolute/tools-cache tools --channel nightly --mirror
 https://releases.dinkster.org --yes --json` acquires the channel's native ZIP
 using its tools manifest hash and archive size/hash, without acquiring engine
 or base payloads. Omit `--yes` to inspect the selection without creating a cache.
@@ -424,7 +430,7 @@ production-format mirror inputs for Desktop/CLI equivalence, not production
 tools or release artifacts.
 
 `python -m dinkster_supervisor.environment_channels --release RELEASE_DIRECTORY
---base-manifest BASE_MANIFEST --channel main --output-root MIRROR_DIRECTORY
+--base-manifest BASE_MANIFEST --channel nightly --output-root MIRROR_DIRECTORY
 --minimum-desktop-version X.Y.Z` builds a local channel document. Repeat
 `--base-manifest` for every selected variant; `--channel stable` uses the same
 builder. It hashes the final release manifest bytes, derives the labelled location
@@ -586,7 +592,7 @@ verification or extraction removes staging trees.
 
 ## Environment queries and runtime
 
-`setup --mirror PATH --channel main --variant VARIANT --data PATH` plans a first
+`setup --mirror PATH --channel nightly --variant VARIANT --data PATH` plans a first
 generation; `update` plans the configured channel's next generation. Both require
 `--yes` or terminal confirmation before creating project/store state or acquiring
 payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
@@ -694,7 +700,7 @@ HTTP proxies.
 `dinkster-env --root <absolute-path> catalog|status|doctor --json` emits one
 `dinkster.environment-result/1` object with `operation`, `root`, `current`,
 `plan` and `status`. Catalog accepts repeatable `--mirror` and `--channel`
-stable/main; it adds `channel`, `channelManifest` and intact `variants`.
+stable/nightly; it adds `channel`, `channelManifest` and intact `variants`.
 Status returns configured `channel`/`variant` and observed `engines`, never
 starts a process and never creates a prospective root. Doctor reports content
 and pack drift without repair and exits nonzero on drift or errors.
