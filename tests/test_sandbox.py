@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -217,6 +218,39 @@ class TestBuildBwrapCommand:
 
 
 class TestDetection:
+    @pytest.mark.skipif(sys.platform != "linux", reason="Linux bubblewrap")
+    @pytest.mark.parametrize("missing", ["--disable-userns", "--seccomp"])
+    def test_missing_hardening_option_refuses_before_pack_execution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+    ) -> None:
+        bwrap = shutil.which("bwrap")
+        if bwrap is None or CAPABILITY is None or not CAPABILITY.available:
+            pytest.skip("requires working bubblewrap")
+        old_bwrap = tmp_path / "bwrap"
+        old_bwrap.write_text(
+            f'#!/bin/sh\nfor arg do\nif [ "$arg" = "{missing}" ]; then\n'
+            f'echo "bwrap: Unknown option {missing}" >&2\nexit 1\nfi\ndone\n'
+            f'exec "{bwrap}" "$@"\n'
+        )
+        old_bwrap.chmod(0o700)
+        monkeypatch.setattr(shutil, "which", lambda _: str(old_bwrap))
+        capability = detect_bubblewrap()
+        assert not capability.available
+        assert f"Unknown option {missing}" in capability.detail
+        marker = tmp_path / "executed"
+
+        async def scenario() -> None:
+            with pytest.raises(SandboxUnavailable, match=f"Unknown option {missing}"):
+                await BubblewrapLauncher().launch(
+                    make_spec(
+                        tmp_path,
+                        command=(sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"),
+                    )
+                )
+
+        run_scenario(scenario())
+        assert not marker.exists()
+
     def test_unavailable_capability_refuses_loudly(self, tmp_path: Path) -> None:
         launcher = BubblewrapLauncher(
             capability=BubblewrapCapability(
@@ -255,6 +289,79 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    def test_kernel_interfaces_are_denied_but_dataloader_and_shared_memory_work(
+        self, tmp_path: Path
+    ) -> None:
+        report = tmp_path / "endpoint" / "hardening.json"
+        script = f"""
+import ctypes
+import errno
+import json
+import os
+import threading
+from pathlib import Path
+from multiprocessing.shared_memory import SharedMemory
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+seccomp = ctypes.CDLL('libseccomp.so.2')
+seccomp.seccomp_syscall_resolve_name.argtypes = [ctypes.c_char_p]
+seccomp.seccomp_syscall_resolve_name.restype = ctypes.c_int
+results = {{}}
+def denied(name, args, expected):
+    number = seccomp.seccomp_syscall_resolve_name(name.encode())
+    assert number >= 0, name
+    ctypes.set_errno(0)
+    value = libc.syscall(ctypes.c_long(number), *args)
+    results[name] = [value, ctypes.get_errno()]
+    assert results[name] == [-1, expected], (name, results[name])
+
+# These calls normally succeed, or return an error other than EPERM. Testing
+# them avoids mistaking an existing kernel capability check for our filter.
+denied('personality', [0xffffffff], errno.EPERM)
+denied('process_vm_readv', [os.getpid(), 0, 0, 0, 0, 0], errno.EPERM)
+denied('ioctl', [-1, 0x5412, 0], errno.EPERM)
+denied('unshare', [0x10000000], errno.EPERM)
+denied('clone', [0x10000000 | 17, 0, 0, 0, 0], errno.EPERM)
+denied('clone3', [0, 0], errno.ENOSYS)
+denied('io_uring_setup', [0, 0], errno.ENOSYS)
+for name in ('syslog', 'mount', 'bpf', 'userfaultfd', 'perf_event_open', 'keyctl', 'setns'):
+    denied(name, [0, 0, 0, 0, 0, 0], errno.EPERM)
+
+values = []
+thread = threading.Thread(target=lambda: values.append(37))
+thread.start()
+thread.join()
+assert values == [37]
+segment = SharedMemory(create=True, size=16)
+try:
+    reader = SharedMemory(name=segment.name)
+    try:
+        segment.buf[:4] = b'pack'
+        assert bytes(reader.buf[:4]) == b'pack'
+    finally:
+        reader.close()
+finally:
+    segment.close()
+    segment.unlink()
+data = torch.arange(13, dtype=torch.int64)
+loader = DataLoader(TensorDataset(data), batch_size=4, num_workers=2)
+assert torch.cat([batch[0] for batch in loader]).tolist() == list(range(13))
+Path({str(report)!r}).write_text(json.dumps(results))
+"""
+
+        async def scenario() -> None:
+            launcher = BubblewrapLauncher()
+            process = await launcher.launch(
+                make_spec(tmp_path, command=(sys.executable, "-c", script))
+            )
+            assert await asyncio.wait_for(process.wait(), timeout=60) == 0
+
+        run_scenario(scenario())
+        assert json.loads(report.read_text())["clone3"] == [-1, 38]
+
     def test_asset_selections_read_granted_members_without_write_or_parent_access(
         self, tmp_path: Path
     ) -> None:
