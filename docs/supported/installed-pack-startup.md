@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed engines declaring `bound-endpoint/1` acquire their own internal port
+  before the supervisor can probe it. Engines without that declaration retain
+  the fixed-port launch path for installed-generation compatibility; another
+  process can take that port before the engine binds. Launch diagnostics warn
+  when this legacy path is selected.
+
 - An installed release project can explicitly select a public Git engine with
   `source add`, change or refresh its ref with `source update`, and restore its
   last published generation with `source release`. Source generations keep the

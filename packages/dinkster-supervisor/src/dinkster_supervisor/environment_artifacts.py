@@ -106,6 +106,11 @@ def validate_manifest(
     if variant is None:
         if document.get("format") != "dinkster.engine/1":
             raise EnvironmentError("unsupported engine manifest format")
+        capabilities = document.get("capabilities", [])
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", capabilities)
+        ):
+            raise EnvironmentError("engine capabilities must be a list of strings")
         if allow_source and document.get("source") == "git":
             from .environment_development import source_identity
 

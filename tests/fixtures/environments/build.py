@@ -230,6 +230,7 @@ def executable_release(mirror: Path, base: dict, version: str, value: int) -> No
             "commit": "d" * 40,
             "version": version,
             "workerProtocol": 11,
+            "capabilities": ["bound-endpoint/1"],
             "artifacts": [artifact("constraints.txt", constraints), artifact(path.name, payload)],
         }
         data = canonical_json(engine) + b"\n"
