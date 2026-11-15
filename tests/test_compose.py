@@ -1017,6 +1017,79 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("in_process", [False, True])
+def test_composed_media_references_survive_cache_restart(tmp_path: Path, in_process: bool) -> None:
+    from dinkster_assets import digest_bytes
+    from dinkster_assets.value import value_asset_references
+    from dinkster_caches import DiskCacheStore
+
+    module = f"media_references_{in_process}"
+    (tmp_path / f"{module}.py").write_text(
+        "from dinkster_api.v1 import register_video_value_type, resolver_from_env\n"
+        "def register_types(registry):\n"
+        "    if 'VIDEO' not in registry:\n"
+        "        register_video_value_type(registry, 'VIDEO', resolver_from_env())\n"
+        "    registry.register('media.opaque')\n"
+        "NODES = ()\n",
+        encoding="ascii",
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "media"\npublisher = "dinkster"\nnamespaces = ["media"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\ntypes = "{module}:register_types"\n',
+        encoding="ascii",
+    )
+    ref = AssetRef(digest_bytes(b"external video source"), "clip.mkv", 21)
+    video = Value(
+        "VIDEO",
+        "video-payload-not-a-root",
+        ValueMeta({"asset_refs": [ref.to_wire()]}),
+        EncodedPayload("VIDEO", b"persisted video", None),
+    )
+    layers = Value(
+        "LAYERS",
+        "layers-payload-not-a-root",
+        ValueMeta(),
+        EncodedPayload("LAYERS", b"persisted layers", None),
+    )
+    opaque = Value(
+        "media.opaque",
+        "opaque",
+        ValueMeta(),
+        EncodedPayload("media.opaque", b"opaque payload", None),
+    )
+
+    async def scenario() -> None:
+        cache_root = tmp_path / "cache"
+        previous = DiskCacheStore(cache_root, TypeRegistry())
+        await previous.put("retained", {"video": video, "layers": layers})
+        with pytest.raises(AssetError, match="incomplete"):
+            with previous.hold_asset_references():
+                pytest.fail("unadmitted media was certified complete")
+        composition = await compose_serving(
+            [PackSpec(manifest, in_process=in_process)],
+            worker_env={"PYTHONPATH": str(tmp_path)},
+        )
+        try:
+            registry = composition.make_engine(lambda _event: None).registry
+            assert value_asset_references(
+                {"video": video, "layers": layers}, complete_registry=registry
+            ) == {ref.digest: ref}
+            restarted = DiskCacheStore(cache_root, registry)
+            with restarted.hold_asset_references() as roots:
+                assert roots == {ref.digest}
+            with pytest.raises(AssetError, match="incomplete"):
+                value_asset_references({"opaque": opaque}, complete_registry=registry)
+            await restarted.put("opaque", {"opaque": opaque})
+            with pytest.raises(AssetError, match="incomplete"):
+                with restarted.hold_asset_references():
+                    pytest.fail("a declared type without a complete codec allowed collection")
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
 def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Path) -> None:
     owner = tmp_path / "owner"
     consumer = tmp_path / "consumer"

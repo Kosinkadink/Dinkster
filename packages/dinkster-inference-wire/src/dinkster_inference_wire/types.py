@@ -213,6 +213,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             decode=partial(decode_latent, require_samples=False),
             fingerprint=latent_fingerprint(LAYERS_TYPE),
             validate_encoded=partial(validate_latent_encoded, require_samples=False),
+            asset_references_complete=True,
         )
     registered.append(registry.spec(LAYERS_TYPE))
     registered.append(
