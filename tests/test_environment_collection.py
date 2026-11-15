@@ -1054,7 +1054,7 @@ def test_successful_cli_stop_attempts_cleanup_without_turning_failure_into_faile
         root / "project.json",
         {
             "format": "dinkster.project/1",
-            "channel": "main",
+            "channel": "nightly",
             "variant": "linux-cpu",
             "mirrors": [str(root / "mirror")],
             "port": 3639,
@@ -1176,7 +1176,7 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         for number, value in ((2, 59), (3, 73), (4, 91)):
             preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
             if number == 2:
-                (mirror / "channels/main.json").write_bytes(
+                (mirror / "channels/nightly.json").write_bytes(
                     Path(fixture["updatedChannel"]).read_bytes()
                 )
             else:
@@ -1206,7 +1206,7 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
         entries = history(root)
         preserved = {path: path.read_bytes() for path in (root / "history").glob("*.json")}
         executable_release(mirror, base, "5.0", 113)
-        channel = json.loads((mirror / "channels/main.json").read_bytes())
+        channel = json.loads((mirror / "channels/nightly.json").read_bytes())
         release = mirror / "engine" / channel["engine"]["release"][7:]
         next(release.glob("*.whl")).write_bytes(b"corrupt next release")
         code, failed = _run(root, "update", "--yes")
@@ -1594,7 +1594,7 @@ def test_shared_store_collection_keeps_all_registered_references_and_recovers_fr
             project / "project.json",
             {
                 "format": "dinkster.project/1",
-                "channel": "main",
+                "channel": "nightly",
                 "variant": "linux-cpu",
                 "mirrors": [str(tmp_path / "mirror")],
                 "port": 3639,
@@ -1702,7 +1702,7 @@ def test_collection_keeps_actual_predecessor_and_recovers_before_other_mutations
         json.dumps(
             {
                 "format": "dinkster.project/1",
-                "channel": "main",
+                "channel": "nightly",
                 "variant": "linux-cpu",
                 "mirrors": [str(tmp_path / "mirror")],
                 "port": 3639,
@@ -2249,7 +2249,7 @@ def test_space_report_checks_other_project_references_before_claiming_store_savi
     archives = engine / "artifacts"
     archives.mkdir(parents=True)
     (archives / "fixture.zip").write_bytes(b"pack archive" * 733)
-    metadata = store / "metadata/channels/main.json"
+    metadata = store / "metadata/channels/nightly.json"
     metadata.parent.mkdir(parents=True)
     metadata.write_bytes(b"retained channel manifest" * 733)
     for path in tmp_path.rglob("*"):

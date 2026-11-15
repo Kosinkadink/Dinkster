@@ -702,7 +702,7 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
                 publications.append((engine, (mirror.rstrip("/") + "/" + path,), data))
             except (OSError, ValueError):
                 continue
-        for channel in ("main", "stable"):
+        for channel in ("nightly", "stable"):
             try:
                 catalog = discover((mirror,), channel)
                 publications.append((catalog.engine, catalog.engine_sources, catalog.engine_bytes))
@@ -833,7 +833,7 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
                 publications[identity] = (base, (mirror.rstrip("/") + "/" + path,))
             except (OSError, ValueError):
                 continue
-        for channel in ("main", "stable"):
+        for channel in ("nightly", "stable"):
             try:
                 catalog = discover((mirror,), channel)
                 base = catalog.bases[variant]

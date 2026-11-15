@@ -38,6 +38,7 @@ from dinkster_workers.provision import ProvisionError
 from packaging.version import Version
 
 import dinkster.installer as installer_module
+from dinkster import __version__
 from dinkster.installer import (
     Installer,
     VenvSpec,
@@ -243,14 +244,19 @@ def test_generation_reserved_composition_requires_local_build_or_registry(
         ("relative", "absolute paths"),
         (
             "engine-below",
-            "pack example@1.2.3 declares engine >=0.0.7; engine 0.0.6 is incompatible",
+            f"pack example@1.2.3 declares engine >{__version__}; "
+            f"engine {__version__} is incompatible",
         ),
-        ("engine-above", "pack example@1.2.3 declares engine <0.0.6; engine 0.0.6 is incompatible"),
+        (
+            "engine-above",
+            f"pack example@1.2.3 declares engine <{__version__}; "
+            f"engine {__version__} is incompatible",
+        ),
     ],
 )
 def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
     pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
-    engine = {"engine-below": ">=0.0.7", "engine-above": "<0.0.6"}.get(
+    engine = {"engine-below": f">{__version__}", "engine-above": f"<{__version__}"}.get(
         problem or "", ">=0.0.2.dev0,<0.1"
     )
     manifest = pack / "dinkster-pack.toml"

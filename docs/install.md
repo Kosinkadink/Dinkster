@@ -23,7 +23,7 @@ published runtime variant for your machine:
 
 ```sh
 python -m pip install dinkster
-dinkster setup --variant linux-cpu --channel main
+dinkster setup --variant linux-cpu --channel nightly
 dinkster
 ```
 
@@ -258,7 +258,7 @@ host Python or uv. Verify the ZIP against the same release's manifest and
 `python/bin/python3 -I -m dinkster_supervisor.environment` from that tree,
 prepending its absolute `python/bin` directory to that command's PATH so it
 uses the bundled uv. Do not change the global PATH.
-Setup selects `mac-arm64` automatically; select the `main` channel to use a
+Setup selects `mac-arm64` automatically; select the `nightly` channel to use a
 pre-release engine. Intel Macs and CUDA on macOS are not supported.
 
 The arm64 Desktop ZIP contains an unsigned `.app`. Extract it and copy the app
@@ -299,7 +299,7 @@ resolved with torch. `extras-index` defaults to PyPI. Torch comes only from
 then PyPI. Index URLs must use HTTPS without embedded credentials.
 
 ```sh
-dinkster-env --root /absolute/project setup --channel main \
+dinkster-env --root /absolute/project setup --channel nightly \
   --variant linux-custom-cuda --variants /absolute/variants.toml --yes
 ```
 
