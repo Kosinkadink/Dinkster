@@ -228,12 +228,17 @@ def test_development_versions_increase_without_resetting_at_release_tags(tmp_pat
     assert before.local is after.local is None
 
 
+@pytest.mark.parametrize("tag", [None, "v0.0.8"])
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    tag: str | None,
 ) -> None:
-    version = development_version(ROOT)
-    assert version.startswith("0.0.8.dev")
+    version = build_release.release_version(ROOT, tag) if tag else development_version(ROOT)
+    if tag:
+        assert version == "0.0.8"
+    else:
+        assert version.startswith("0.0.9.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
@@ -263,8 +268,9 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
-        supervisor_version = development_version(ROOT, "dinkster-supervisor")
-        assert supervisor_version.startswith("0.0.6.dev")
+        supervisor_version = "0.0.6" if tag else development_version(ROOT, "dinkster-supervisor")
+        if not tag:
+            assert supervisor_version.startswith("0.0.7.dev")
         assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {
@@ -289,7 +295,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     [supervisor_wheel] = output.glob("dinkster_supervisor-*.whl")
     assert supervisor_wheel.name == f"dinkster_supervisor-{supervisor_version}-py3-none-any.whl"
     independent = tmp_path / "independent-supervisor"
-    independent_wheel = build_release.build_supervisor_wheel(ROOT, independent)
+    independent_wheel = build_release.build_supervisor_wheel(ROOT, independent, tag=tag)
     assert independent_wheel.read_bytes() == supervisor_wheel.read_bytes()
     assert json.loads((independent / "release-provenance.json").read_bytes()) == {
         "version": supervisor_version,

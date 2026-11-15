@@ -1,5 +1,11 @@
 ## Installed pack startup
 
+- Managed engines declaring `bound-endpoint/1` acquire their own internal port
+  before the supervisor can probe it. Engines without that declaration retain
+  the fixed-port launch path for installed-generation compatibility; another
+  process can take that port before the engine binds. Launch diagnostics warn
+  when this legacy path is selected.
+
 - An installed release project can explicitly select a public Git engine with
   `source add`, change or refresh its ref with `source update`, and restore its
   last published generation with `source release`. Source generations keep the
@@ -24,6 +30,12 @@
   documentation and frontend resource paths, including resources inside Python
   source packages. Missing declared resources refuse build or admission before
   catalog preparation. Source manifests are not rewritten.
+
+- Published Stable and Nightly selections require an independently trusted channel
+  signature before metadata is used, including local copies and offline channel
+  caches. Signed selections can come from third-party HTTPS mirrors. Referenced
+  artifact hashes and sizes are still checked. Cached producer bytes remain separate
+  from local selection overrides and sealed historical provenance.
 
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
@@ -756,6 +768,9 @@
   after releasing transaction locks. Managed supervisors attempt startup,
   hourly collection, retrying busy locks sooner. Acknowledged stops attempt
   collection after durably recording the stopped engine assignment.
+  Confirmed start and stop wait for generation-only maintenance before taking
+  the project writer lock; a competing explicit environment writer still refuses
+  the operation. Planning and status remain read-only.
   Cleanup failures remain warnings rather than invalidating a successful
   update. Legacy trees without provable coverage still defer; Desktop controls
   are separate.

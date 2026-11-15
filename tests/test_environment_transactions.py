@@ -46,6 +46,10 @@ from test_environment_artifacts import _mirror
 from test_environment_cli import _run
 from test_environment_runtime import free_port, make_generation
 
+from tests.fixtures.environments.build import channel_json, read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
+
 
 @pytest.mark.parametrize("explicit", [False, True])
 def test_missing_store_registration_is_replaced_without_losing_rollback(
@@ -352,8 +356,12 @@ def test_activation_replaces_an_occupied_planned_port_before_switch(tmp_path: Pa
 
 @pytest.mark.parametrize("migration", [False, True])
 def test_update_preserves_previous_tree_and_publishes_selected_settings(
-    tmp_path: Path, migration: bool
+    tmp_path: Path, migration: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "dinkster_supervisor.environment_runtime.sandbox_readiness",
+        lambda *_: {"available": True, "detail": "available"},
+    )
     retained = _target(tmp_path, 1)
     before = (retained / "generation.json").read_bytes()
     identity = interpreter(retained).stat()
@@ -368,7 +376,7 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
             }
         )
     )
-    start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",))
+    start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",), sandbox_packs=migration)
     parked_port = free_port()
     start_engine(tmp_path, 1, "parked", parked_port)
     parked_path = tmp_path / "runtime/1/parked.json"
@@ -395,6 +403,8 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
         binding = next(row for row in Journal.read(path).bindings if row["name"] == "main")
         with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/generation") as response:  # noqa: S310
             assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/2")}
+        with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/sandbox") as response:  # noqa: S310
+            assert json.loads(response.read()) == {"sandboxPacks": migration}
 
     try:
         activate(tmp_path, path, revalidate=revalidate)
@@ -446,7 +456,10 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
-        shutil.copyfile(mirror / "channels/nightly.json", mirror / "channels/stable.json")
+        channel = read_channel(mirror / "channels/nightly.json")
+        (mirror / "channels/stable.json").write_bytes(
+            channel_json(dict(channel, channel="stable"), "stable")
+        )
     old = _target(root, 1)
     (old / "dinkster.lock").write_text(Lockfile().record_json())
     (root / "store").write_text(str(store) + "\n")
@@ -542,9 +555,16 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         gpus: tuple[str, ...] = (),
         *,
         activation_journal: Path | None = None,
+        sandbox_packs: bool = False,
     ) -> dict[str, object]:
         result = original_start(
-            root, generation, name, port, gpus, activation_journal=activation_journal
+            root,
+            generation,
+            name,
+            port,
+            gpus,
+            activation_journal=activation_journal,
+            sandbox_packs=sandbox_packs,
         )
         if generation != 2:
             return result

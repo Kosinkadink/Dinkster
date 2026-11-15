@@ -200,6 +200,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                     cast("int", binding["targetPort"]),
                     tuple(cast("list[str]", binding["gpus"])),
                     activation_journal=path if journal.previous is not None else None,
+                    sandbox_packs=binding.get("sandboxPacks") is True,
                 )
                 journal = Journal.read(path)
             else:
@@ -262,6 +263,7 @@ def recover_activation(root: Path, path: Path) -> None:
                 cast("str", binding["name"]),
                 cast("int", binding["port"]),
                 tuple(cast("list[str]", binding["gpus"])),
+                sandbox_packs=binding.get("sandboxPacks") is True,
             )
     target_root = root / "generations" / str(journal.target)
     if target_root.exists() and (

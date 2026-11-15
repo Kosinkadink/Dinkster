@@ -14,6 +14,14 @@
   and `dinkster_inference` for tensor operations.
 - Safetensors weights load from extensionless content-addressed vault paths
   as well as named model mounts. Weight format does not depend on the asset name.
+- Consented public Hugging Face model acquisition verifies the provider's pinned
+  revision, SHA-256, byte size and declared content identity before publishing
+  the provider filename in a shared ComfyUI-layout model folder. Provider/source
+  and reported-license metadata must be saved before a new file becomes visible.
+  Existing bytes are never overwritten. Model locations are shared across project
+  libraries; the default is `~/Dinkster/Models`. Existing read-only locations stay read-only.
+  The host declares the SD 1.5 quickstart checkpoint as an available source,
+  not as a required download for every checkpoint loader.
 - Shared VOXEL values preserve dense occupancy or sparse coordinate tensors,
   all voxel color channels, optional resolution and supported metadata without
   converting geometry layouts.

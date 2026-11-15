@@ -33,7 +33,11 @@ from test_environment_generations import _assert_shared, _workspace_tree
 from test_environment_runtime import free_port, make_generation
 from test_environment_state import _generation
 
+from tests.fixtures.environments.build import channel_json as _channel_json
 from tests.fixtures.environments.build import executable_release as _executable_release
+from tests.fixtures.environments.build import read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
 
 
 def _run(root: Path, *arguments: str, timeout: float = 120) -> tuple[int, dict]:
@@ -107,7 +111,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
     (release / "release-manifest.json").write_bytes(data)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
         archive.writestr(
@@ -1894,7 +1898,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert code == 0, result
         assert (
             _run(root, "status")[1]["engine"]["release"]
-            == json.loads(Path(fixture["initialChannel"]).read_text())["engine"]["release"]
+            == read_channel(Path(fixture["initialChannel"]), "nightly")["engine"]["release"]
         )
         assert _run(root, "stop", "--yes")[0] == 0
         code, result = _run(root, "rollback", "--yes")
@@ -1916,7 +1920,7 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     assert result["plan"] == []
     assert result["status"] == "clean"
     assert result["channel"] == "nightly"
-    assert result["channelManifest"] == channel
+    assert result["channelManifest"] == dict(channel, channel="nightly")
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
     assert not root.exists()
@@ -2349,7 +2353,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
     ]
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     if operation == "update":
         _generation(root, 1)
         (root / "current").write_bytes(b"1\n")
@@ -2835,7 +2839,7 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
     fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
     root, store, mirror = (Path(fixture[key]) for key in ("root", "store", "mirror"))
     command = fixture["commands"]["setup"]
-    setup = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    setup = run_with_diagnostics(command, timeout=60)
     assert setup.returncode == 0, setup.stdout + setup.stderr
     try:
         assert _run(root, "stop", "--yes")[0] == 0
@@ -2975,6 +2979,52 @@ def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Pa
     assert (tmp_path / "current").read_text() == "1\n"
 
 
+@pytest.mark.parametrize("command", ["start", "stop"])
+def test_runtime_waits_for_automatic_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+    from threading import Event
+
+    from dinkster_supervisor import environment, environment_collection
+
+    _runtime_project(tmp_path)
+    assert _run(tmp_path, "start", "--yes")[0] == 0
+    entered, release = Event(), Event()
+    policy = environment_collection.collection_policy
+
+    def paused_policy(root):
+        entered.set()
+        assert release.wait(10), "cleanup was not released"
+        return policy(root)
+
+    monkeypatch.setattr(environment_collection, "collection_policy", paused_policy)
+    args = environment.argument_parser().parse_args(
+        ["--root", str(tmp_path), command, "--yes", "--json"]
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=2) as threads:
+            cleanup = threads.submit(
+                environment_collection.automatic_generation_collection, tmp_path
+            )
+            try:
+                assert entered.wait(10), "cleanup did not acquire the project"
+                started = threads.submit(environment.run, args)
+                with pytest.raises(FutureTimeout):
+                    started.result(timeout=0.5)
+            finally:
+                release.set()
+            assert cleanup.result(timeout=10)["status"] == "deferred"
+            assert started.result(timeout=10) == 0
+        code, status = _run(tmp_path, "status")
+        assert code == 0, status
+        assert status["engines"][0]["state"] == ("ready" if command == "start" else "stopped")
+    finally:
+        release.set()
+        assert _run(tmp_path, "stop", "--yes")[0] == 0
+
+
 def test_cpu_assignment_masks_inherited_gpu_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -2996,7 +3046,7 @@ def test_runtime_apply_refuses_writer_contention_and_recovers_incomplete_journal
         code, refused = _run(tmp_path, "start", "--yes")
     assert code == 1
     assert "another environment writer" in refused["error"]
-    assert not (tmp_path / "runtime").exists()
+    assert _run(tmp_path, "status")[1]["engines"] == []
     Journal("update", 1, 2, "building").write(tmp_path / "journal/interrupted.json")
     code, recovered = _run(tmp_path, "start", "--yes")
     try:
@@ -3250,7 +3300,7 @@ environment.build_generation = interrupt
 sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
 environment.main()
 """
-        interrupted = subprocess.run([sys.executable, "-c", script, str(root)], timeout=30)
+        interrupted = run_with_diagnostics([sys.executable, "-c", script, str(root)], timeout=30)
         assert interrupted.returncode == 73
         journals = sorted((root / "journal").glob("*.json"))
         assert Journal.read(journals[-1]).stage == "building"
@@ -3354,9 +3404,7 @@ environment.main()
         assert not list(store.glob(".workflow-*"))
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
-        engine = json.loads((mirror / "channels/nightly.json").read_bytes())["engine"]["release"][
-            7:
-        ]
+        engine = read_channel(mirror / "channels/nightly.json")["engine"]["release"][7:]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
         before_settings = (root / "project.json").read_bytes()
@@ -4103,7 +4151,7 @@ def test_inference_requests_report_oldest_containing_release(
                 release="sha256:" + identity,
                 locations=[{"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}],
             )
-            (mirror / "channels/nightly.json").write_bytes(_json(channel))
+            (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
             monkeypatch.setattr(
                 "dinkster.registries.plan_registry_sources",
                 lambda *args, **kwargs: (

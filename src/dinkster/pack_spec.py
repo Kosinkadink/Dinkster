@@ -33,6 +33,8 @@ class PackSpec:
     manifest: Path | str
     python: str | None = None
     env: Mapping[str, str] = field(default_factory=dict, repr=False)
+    remote_token_directory: Path | None = None
+    """Dedicated gateway-only directory, bound instead of a replaceable token inode."""
     aimdo: str = "off"
     vram_budgets: Mapping[str, int] = field(default_factory=dict)
     reserve_vram: int | None = None

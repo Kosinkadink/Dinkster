@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,11 +13,49 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import cast
+from urllib.parse import quote
 
-from dinkster_supervisor.environment_artifacts import artifact_rows, discover
 from dinkster_supervisor.environment_downloads import fetch_artifact
 from verify_release_launch import available_port, stop
+
+
+def published_supervisor(root: Path) -> Path:
+    """Bootstrap the published reader independently of the checkout's channel format."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "dinkster-catalog"}
+    if token := os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        "https://api.github.com/repos/Kosinkadink/Dinkster/releases/latest",
+        headers=headers,
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        release = json.load(response)
+    tag = release["tag_name"]
+    if (
+        release["draft"]
+        or release["prerelease"]
+        or re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) is None
+    ):
+        raise ValueError("catalog bootstrap requires a published Stable version tag")
+    [asset] = [
+        row
+        for row in release["assets"]
+        if re.fullmatch(
+            r"dinkster_supervisor-[0-9]+\.[0-9]+\.[0-9]+-py3-none-any\.whl", row["name"]
+        )
+    ]
+    digest = asset.get("digest", "")
+    if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+        raise ValueError("published supervisor requires a GitHub SHA-256 asset digest")
+    wheel = root / asset["name"]
+    fetch_artifact(
+        ("https://github.com/Kosinkadink/Dinkster/releases/download/" + quote(tag, safe=""),),
+        wheel.name,
+        wheel,
+        digest[7:],
+        asset["size"],
+    )
+    return wheel
 
 
 def export_catalog(output: Path) -> None:
@@ -28,22 +67,7 @@ def export_catalog(output: Path) -> None:
             "DINKSTER_REMOTE_CATALOG_BASE": "",
             "DINKSTER_REMOTE_GATEWAY_BASE": "",
         }
-        # Schema decoding must not depend on an unpublished development channel.
-        published = discover(("https://releases.dinkster.org",), "stable")
-        supervisor = next(
-            row
-            for row in artifact_rows(published.engine["artifacts"], "name")
-            if str(row["name"]).startswith("dinkster_supervisor-")
-            and str(row["name"]).endswith(".whl")
-        )
-        wheel = root / str(supervisor["name"])
-        fetch_artifact(
-            published.engine_sources,
-            wheel.name,
-            wheel,
-            cast("str", supervisor["sha256"]),
-            cast("int", supervisor["size"]),
-        )
+        wheel = published_supervisor(root)
         # Published engines and their supervisors must agree on the management protocol.
         management = [
             "uv",
@@ -83,10 +107,6 @@ def export_catalog(output: Path) -> None:
                 "stable",
                 "--variant",
                 "linux-cpu",
-                "--engine-release",
-                published.channel.engine_release,
-                "--base-id",
-                str(published.bases["linux-cpu"]["id"]),
                 "--data",
                 str(root / "store"),
                 "--port",

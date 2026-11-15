@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import aiohttp
@@ -162,6 +164,58 @@ class TestBuildBwrapCommand:
         with pytest.raises(SandboxError, match="dissolve the sandbox"):
             build_bwrap_command(make_spec(tmp_path), SandboxPolicy(ro_binds=(str(grant),)))
 
+    @pytest.mark.skipif(os.name != "posix", reason="requires POSIX interpreter symlinks")
+    def test_managed_interpreter_mounts_do_not_expose_the_protected_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        editable = tmp_path / "editable-source"
+        editable.mkdir()
+        monkeypatch.syspath_prepend(str(editable))
+        generation = tmp_path / "generation"
+        runtime = generation / "python"
+        pack = generation / "packs" / "example"
+        for prefix in (runtime, pack):
+            (prefix / "bin").mkdir(parents=True)
+        (runtime / "bin" / "python3").touch()
+        python = pack / "bin" / "python"
+        python.symlink_to(runtime / "bin" / "python3")
+        policy = SandboxPolicy(
+            protected_roots=(str(generation),),
+            protected_ro_exceptions=(str(pack),),
+        )
+        spec = make_spec(tmp_path, python=str(python), pack_root=pack)
+        argv = build_bwrap_command(spec, policy)
+        binds = pairs(argv, "--ro-bind")
+        assert (str(runtime), str(runtime)) in binds
+        assert (str(editable), str(editable)) in binds
+        assert (str(pack), str(pack)) in binds
+        assert (str(generation), str(generation)) not in binds
+        settings = generation / "settings"
+        settings.mkdir()
+        for field in ("ro_binds", "rw_binds"):
+            with pytest.raises(SandboxError, match="protected root"):
+                build_bwrap_command(spec, replace(policy, **{field: (str(settings),)}))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, replace(policy, ro_binds=(str(generation),)))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, replace(policy, rw_binds=(str(runtime),)))
+        secret = runtime / "auth.token"
+        secret.touch()
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(
+                spec, replace(policy, protected_roots=(str(generation), str(secret)))
+            )
+        monkeypatch.setenv("PYTHONPATH", str(settings))
+        monkeypatch.syspath_prepend(str(settings))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(replace(spec, env={"PYTHONPATH": str(settings)}), policy)
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, policy)
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if entry != str(settings)])
+        monkeypatch.syspath_prepend(str(generation))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, policy)
+
     def test_protected_roots_and_read_only_grants_cannot_be_overridden(
         self, tmp_path: Path
     ) -> None:
@@ -217,6 +271,39 @@ class TestBuildBwrapCommand:
 
 
 class TestDetection:
+    @pytest.mark.skipif(sys.platform != "linux", reason="Linux bubblewrap")
+    @pytest.mark.parametrize("missing", ["--disable-userns", "--seccomp"])
+    def test_missing_hardening_option_refuses_before_pack_execution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+    ) -> None:
+        bwrap = shutil.which("bwrap")
+        if bwrap is None or CAPABILITY is None or not CAPABILITY.available:
+            pytest.skip("requires working bubblewrap")
+        old_bwrap = tmp_path / "bwrap"
+        old_bwrap.write_text(
+            f'#!/bin/sh\nfor arg do\nif [ "$arg" = "{missing}" ]; then\n'
+            f'echo "bwrap: Unknown option {missing}" >&2\nexit 1\nfi\ndone\n'
+            f'exec "{bwrap}" "$@"\n'
+        )
+        old_bwrap.chmod(0o700)
+        monkeypatch.setattr(shutil, "which", lambda _: str(old_bwrap))
+        capability = detect_bubblewrap()
+        assert not capability.available
+        assert f"Unknown option {missing}" in capability.detail
+        marker = tmp_path / "executed"
+
+        async def scenario() -> None:
+            with pytest.raises(SandboxUnavailable, match=f"Unknown option {missing}"):
+                await BubblewrapLauncher().launch(
+                    make_spec(
+                        tmp_path,
+                        command=(sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"),
+                    )
+                )
+
+        run_scenario(scenario())
+        assert not marker.exists()
+
     def test_unavailable_capability_refuses_loudly(self, tmp_path: Path) -> None:
         launcher = BubblewrapLauncher(
             capability=BubblewrapCapability(
@@ -255,6 +342,79 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    def test_kernel_interfaces_are_denied_but_dataloader_and_shared_memory_work(
+        self, tmp_path: Path
+    ) -> None:
+        report = tmp_path / "endpoint" / "hardening.json"
+        script = f"""
+import ctypes
+import errno
+import json
+import os
+import threading
+from pathlib import Path
+from multiprocessing.shared_memory import SharedMemory
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+seccomp = ctypes.CDLL('libseccomp.so.2')
+seccomp.seccomp_syscall_resolve_name.argtypes = [ctypes.c_char_p]
+seccomp.seccomp_syscall_resolve_name.restype = ctypes.c_int
+results = {{}}
+def denied(name, args, expected):
+    number = seccomp.seccomp_syscall_resolve_name(name.encode())
+    assert number >= 0, name
+    ctypes.set_errno(0)
+    value = libc.syscall(ctypes.c_long(number), *args)
+    results[name] = [value, ctypes.get_errno()]
+    assert results[name] == [-1, expected], (name, results[name])
+
+# These calls normally succeed, or return an error other than EPERM. Testing
+# them avoids mistaking an existing kernel capability check for our filter.
+denied('personality', [0xffffffff], errno.EPERM)
+denied('process_vm_readv', [os.getpid(), 0, 0, 0, 0, 0], errno.EPERM)
+denied('ioctl', [-1, 0x5412, 0], errno.EPERM)
+denied('unshare', [0x10000000], errno.EPERM)
+denied('clone', [0x10000000 | 17, 0, 0, 0, 0], errno.EPERM)
+denied('clone3', [0, 0], errno.ENOSYS)
+denied('io_uring_setup', [0, 0], errno.ENOSYS)
+for name in ('syslog', 'mount', 'bpf', 'userfaultfd', 'perf_event_open', 'keyctl', 'setns'):
+    denied(name, [0, 0, 0, 0, 0, 0], errno.EPERM)
+
+values = []
+thread = threading.Thread(target=lambda: values.append(37))
+thread.start()
+thread.join()
+assert values == [37]
+segment = SharedMemory(create=True, size=16)
+try:
+    reader = SharedMemory(name=segment.name)
+    try:
+        segment.buf[:4] = b'pack'
+        assert bytes(reader.buf[:4]) == b'pack'
+    finally:
+        reader.close()
+finally:
+    segment.close()
+    segment.unlink()
+data = torch.arange(13, dtype=torch.int64)
+loader = DataLoader(TensorDataset(data), batch_size=4, num_workers=2)
+assert torch.cat([batch[0] for batch in loader]).tolist() == list(range(13))
+Path({str(report)!r}).write_text(json.dumps(results))
+"""
+
+        async def scenario() -> None:
+            launcher = BubblewrapLauncher()
+            process = await launcher.launch(
+                make_spec(tmp_path, command=(sys.executable, "-c", script))
+            )
+            assert await asyncio.wait_for(process.wait(), timeout=60) == 0
+
+        run_scenario(scenario())
+        assert json.loads(report.read_text())["clone3"] == [-1, 38]
+
     def test_asset_selections_read_granted_members_without_write_or_parent_access(
         self, tmp_path: Path
     ) -> None:
@@ -562,6 +722,77 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                     await process.wait()
                 server.close()
                 await server.wait_closed()
+
+        run_scenario(scenario())
+
+    def test_gateway_bearer_rotation_is_visible_without_oauth_access(self, tmp_path: Path) -> None:
+        from dinkster.compose import PackSpec, compose_serving
+
+        home = tmp_path / "account-home"
+        token = home / "gateway-tokens" / "install" / "access-token"
+        token.parent.mkdir(parents=True)
+        token.write_text("first-bearer")
+        secret = home / "accounts" / "install" / "session.json"
+        secret.parent.mkdir(parents=True)
+        secret.write_text('{"refresh_token":"must-stay-private"}')
+        pack = tmp_path / "pack"
+        pack.mkdir()
+        manifest = pack / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname="credential-probe"\npublisher="dinkster"\n'
+            'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
+        )
+        (pack / "credential_probe.py").write_text(
+            "import json, os\nfrom pathlib import Path\n"
+            "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "class Probe(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='credentialprobe.read', idempotent=False, "
+            "outputs=(OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "    @classmethod\n"
+            "    async def execute(cls):\n"
+            "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+            f"        secret = Path({str(secret)!r})\n"
+            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists()]))\n"
+            "NODES = (Probe,)\n"
+        )
+        spec = PackSpec(
+            manifest,
+            env={"PYTHONPATH": str(pack), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
+            remote_token_directory=token.parent,
+        )
+
+        async def scenario() -> None:
+            composition = await compose_serving(
+                (spec,),
+                include_default_packs=False,
+                sandbox_policy=SandboxPolicy(
+                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home),)
+                ),
+            )
+            try:
+                engine = composition.make_engine(lambda event: None)
+                graph = Graph(nodes={"read": GraphNode("credentialprobe.read", {})})
+                first = await engine.run(graph, ["read"])
+                report = first.outputs["read"]["report"].resolve()
+                assert isinstance(report, str)
+                assert json.loads(report) == [
+                    "first-bearer",
+                    False,
+                ]
+                replacement = token.with_suffix(".new")
+                replacement.write_text("second-bearer")
+                replacement.replace(token)
+                second = await engine.run(graph, ["read"])
+                report = second.outputs["read"]["report"].resolve()
+                assert isinstance(report, str)
+                assert json.loads(report) == [
+                    "second-bearer",
+                    False,
+                ]
+            finally:
+                await composition.close()
 
         run_scenario(scenario())
 

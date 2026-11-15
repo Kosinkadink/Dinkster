@@ -102,6 +102,48 @@ def run_generation(root: Path, command: list[str]) -> int:
         return subprocess.run([executable, *command[1:]], env=environment).returncode
 
 
+def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
+    """Ask the selected engine's worker launcher, not the tools host, about isolation."""
+    with generation_runtime_lock(root):
+        target = root / "generations" / str(generation)
+        Generation.read(target / "generation.json")
+        try:
+            completed = subprocess.run(
+                [
+                    str(interpreter(target)),
+                    "-I",
+                    "-m",
+                    "dinkster_workers.doctor",
+                    "--sandbox-readiness",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            value: object = json.loads(completed.stdout)
+            if not isinstance(value, dict):
+                raise ValueError("invalid sandbox readiness report")
+            report = cast("dict[str, object]", value)
+            detail = report.get("detail")
+            if (
+                report.get("format") != "dinkster.sandbox-readiness/1"
+                or type(report.get("available")) is not bool
+                or not isinstance(detail, str)
+                or not detail.strip()
+            ):
+                raise ValueError("invalid sandbox readiness report")
+            return report
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return {
+                "format": "dinkster.sandbox-readiness/1",
+                "available": False,
+                "detail": "The selected engine could not report pack sandbox readiness. "
+                "Update or repair the engine, then check again.",
+            }
+
+
 def start_engine(
     root: Path,
     generation: int,
@@ -112,12 +154,25 @@ def start_engine(
     activation_journal: Path | None = None,
     frontend_root: str | None = None,
     frontend_dev: str | None = None,
+    sandbox_packs: bool = False,
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
+    if sandbox_packs:
+        readiness = sandbox_readiness(root, generation)
+        if not readiness["available"]:
+            raise EnvironmentError(f"pack sandbox unavailable: {readiness['detail']}")
     with generation_runtime_lock(root):
         return _start_engine(
-            root, generation, name, port, gpus, activation_journal, frontend_root, frontend_dev
+            root,
+            generation,
+            name,
+            port,
+            gpus,
+            activation_journal,
+            frontend_root,
+            frontend_dev,
+            sandbox_packs,
         )
 
 
@@ -130,6 +185,7 @@ def _start_engine(
     activation_journal: Path | None,
     frontend_root: str | None,
     frontend_dev: str | None,
+    sandbox_packs: bool,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
@@ -157,6 +213,8 @@ def _start_engine(
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if sandbox_packs != previous.get("sandboxPacks", False):
+                    raise EnvironmentError("pack sandbox selection changed; stop the engine first")
                 if (
                     frontend_root is not None and frontend_root != previous.get("frontendRoot")
                 ) or (frontend_dev is not None and frontend_dev != previous.get("frontendDev")):
@@ -183,11 +241,15 @@ def _start_engine(
         "url": url,
         "state": "starting",
         "_processState": lifecycle,
+        "sandboxPacks": sandbox_packs,
         **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
         **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
+    manifest = target / "engine-manifest.json"
+    capabilities = read_document(manifest).get("capabilities") if manifest.is_file() else None
+    bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
     command = [
         sys.executable,
         "-m",
@@ -207,6 +269,7 @@ def _start_engine(
             if activation_journal is not None
             else []
         ),
+        *(["--engine-bound-endpoint"] if bound_endpoint else []),
         "--",
         str(python),
         "-I",
@@ -220,6 +283,8 @@ def _start_engine(
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]
+    if sandbox_packs:
+        command.append("--sandbox-packs")
     if frontend_root is not None:
         command.extend(["--frontend-root", frontend_root])
     if frontend_dev is not None:
@@ -377,6 +442,7 @@ def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
             {key: record[key] for key in ("name", "port", "gpus")}
             | {
                 "running": record["state"] == "ready",
+                "sandboxPacks": record.get("sandboxPacks", False),
             }
         )
     return rows
@@ -550,6 +616,7 @@ def _parse_record(path: Path) -> dict[str, object]:
         or state not in _STATES
         or type(pid) is not int
         or pid < 0
+        or type(record.get("sandboxPacks", False)) is not bool
     ):
         raise EnvironmentError(f"runtime record {path.name} is invalid")
     record["_processState"] = _process_directory(path, instance)
@@ -717,7 +784,9 @@ def _assignment(record: dict[str, object]) -> tuple[int, int, tuple[str, ...]]:
 
 
 def _public_row(record: dict[str, object]) -> dict[str, object]:
-    return {key: record[key] for key in ("name", "generation", "state", "url")}
+    return {key: record[key] for key in ("name", "generation", "state", "url")} | (
+        {"sandboxPacks": True} if record.get("sandboxPacks") is True else {}
+    )
 
 
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> object:
