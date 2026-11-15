@@ -704,6 +704,137 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("development", [False, True])
+def test_generation_resident_models_cross_packs_without_sharing_unrelated_workers(
+    tmp_path: Path, development: bool
+) -> None:
+    import json
+    import subprocess
+    import sys
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from dinkster_workers.pack_lock import PackLock
+
+    from dinkster.compose import compose_serving
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
+
+    generation = tmp_path / "generation"
+    generation.mkdir()
+    fixture = Path(__file__).with_name("crosspack_nodes.py").read_text()
+    entries = []
+    artifacts = {}
+    sources = []
+    definitions = (
+        ("dinkster-models", "dinkster", "source", "SOURCE_NODES"),
+        ("dinkster-conditioning", "dinkster", "merge", "MERGE_NODES"),
+        ("unrelated", "example", "unrelated", "[]"),
+    )
+    for name, publisher, namespace, nodes in definitions:
+        root = tmp_path / name
+        root.mkdir()
+        module = namespace + "_nodes"
+        (root / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\npublisher = "{publisher}"\n'
+            f'namespaces = ["{namespace}"]\n'
+            'requires = ["dinkster-inference"]\n'
+            f'[pack.entry]\nnodes = "{module}:NODES"\n'
+            + (
+                'types = "dinkster_inference_wire:register_inference_types"\n'
+                if publisher == "dinkster"
+                else ""
+            )
+        )
+        (root / f"{module}.py").write_text(
+            (
+                fixture
+                if publisher == "dinkster"
+                else "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            )
+            + f"""
+
+class ProcessId(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(
+            node_type="{namespace}.pid",
+            inputs=(),
+            outputs=(OutputSpec("pid", TypeExpr.concrete("INT")),),
+        )
+
+    @classmethod
+    def execute(cls):
+        import os
+        return cls.outputs(pid=os.getpid())
+
+NODES = [*{nodes}, ProcessId]
+"""
+        )
+        archive = tmp_path / f"{name}.zip"
+        digest = build_artifact(root, archive)
+        artifacts[name] = archive
+        source = "local-build:" + str(root) if development else "registry:official"
+        entries.append(LockedPack(name, "1.0.0", digest, publisher, (namespace,), source))
+        sources.append({"kind": "pack", "path": str(root)})
+        environment = generation / "packs" / name
+        subprocess.run(
+            ["uv", "venv", "--python", sys.executable, "--system-site-packages", str(environment)],
+            check=True,
+            capture_output=True,
+        )
+        PackLock(name, "linux-cpu", ">=3.12", (), (), ()).write(environment / "pack-lock.json")
+    stage_generation_packs(generation, Lockfile.of(entries), artifacts)
+    if development:
+        (generation / "development-sources.json").write_text(
+            json.dumps({"format": "dinkster.development-sources/1", "sources": sources})
+        )
+    for name, _publisher, _namespace, _nodes in definitions:
+        report = prepare_catalog(
+            generation / "pack-sources" / name / "dinkster-pack.toml",
+            interpreter=sys.executable,
+        )
+        assert report.ok, report.findings
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {"format": "dinkster.generation/1", "variant": "linux-cpu", "inProcessPacks": []}
+        )
+    )
+
+    async def scenario() -> None:
+        _variant, specs = load_generation_packs(generation)
+        composition = await compose_serving(specs, include_default_packs=False)
+        try:
+            graph = Graph(
+                nodes={
+                    "a": GraphNode("source.model", {"weight": 10.0}),
+                    "b": GraphNode("source.model", {"weight": -4.0}),
+                    "m": GraphNode(
+                        "merge.simple",
+                        {"a": Link("a", "model"), "b": Link("b", "model"), "ratio": 0.25},
+                    ),
+                    "w": GraphNode("source.weight", {"model": Link("m", "model")}),
+                    **{
+                        namespace: GraphNode(f"{namespace}.pid")
+                        for namespace in ("source", "merge", "unrelated")
+                    },
+                }
+            )
+            result = await composition.make_engine(lambda event: None).run(
+                graph, ["w", "source", "merge", "unrelated"]
+            )
+            assert result.outputs["w"]["weight"].resolve() == -0.5
+            source_pid = result.outputs["source"]["pid"].resolve()
+            assert result.outputs["merge"]["pid"].resolve() == source_pid
+            unrelated_pid = result.outputs["unrelated"]["pid"].resolve()
+            assert unrelated_pid != source_pid
+            assert unrelated_pid != os.getpid()
+            assert source_pid != os.getpid()
+        finally:
+            await composition.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("optional_execution", [False, True])
 def test_schema_only_owner_routes_only_after_provider_composes(
     tmp_path: Path, optional_execution: bool
