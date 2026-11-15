@@ -46,6 +46,10 @@ from test_environment_artifacts import _mirror
 from test_environment_cli import _run
 from test_environment_runtime import free_port, make_generation
 
+from tests.fixtures.environments.build import channel_json, read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
+
 
 @pytest.mark.parametrize("explicit", [False, True])
 def test_missing_store_registration_is_replaced_without_losing_rollback(
@@ -446,7 +450,10 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
-        shutil.copyfile(mirror / "channels/nightly.json", mirror / "channels/stable.json")
+        channel = read_channel(mirror / "channels/nightly.json")
+        (mirror / "channels/stable.json").write_bytes(
+            channel_json(dict(channel, channel="stable"), "stable")
+        )
     old = _target(root, 1)
     (old / "dinkster.lock").write_text(Lockfile().record_json())
     (root / "store").write_text(str(store) + "\n")

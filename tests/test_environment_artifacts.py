@@ -39,6 +39,10 @@ from dinkster_supervisor.environment_state import EnvironmentError, content_dige
 from test_environment_generations import _standalone_tree
 
 from dinkster.generation_packs import stage_generation_packs
+from tests.fixtures.environments.build import channel_json as _channel_json
+from tests.fixtures.environments.build import read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
 
 
 def _json(value: dict) -> bytes:
@@ -169,7 +173,8 @@ def _mirror(
     }
     (root / "channels").mkdir()
     for name in ("stable", "nightly"):
-        (root / f"channels/{name}.json").write_bytes(_json(channel))
+        (root / f"channels/{name}.json").write_bytes(_channel_json(channel, name))
+    channel.pop("signature")
     return base, engine, channel
 
 
@@ -177,7 +182,7 @@ def _release_sources(
     mirror: Path, *, dependency_locks: dict[str, bytes] | None = None
 ) -> tuple[Path, dict[str, bytes]]:
     channel_path = mirror / "channels/nightly.json"
-    channel = json.loads(channel_path.read_bytes())
+    channel = read_channel(channel_path)
     previous = mirror / "engine" / channel["engine"]["release"][7:]
     engine = json.loads((previous / "release-manifest.json").read_bytes())
     entries, payloads = [], {}
@@ -207,7 +212,7 @@ def _release_sources(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
     ]
-    channel_path.write_bytes(_json(channel))
+    channel_path.write_bytes(_channel_json(channel))
     return release, payloads
 
 
@@ -294,6 +299,68 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
 
 
 @pytest.mark.parametrize("channel_name", ["stable", "nightly"])
+def test_signed_discovery_authenticates_mirrors_and_preserves_original_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, channel_name: str
+):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from dinkster_supervisor import environment_channel_signatures as signatures
+
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _, engine, document = _mirror(mirror)
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    keys = {"sha256:" + hashlib.sha256(public).hexdigest(): public}
+    monkeypatch.setattr(signatures, "CHANNEL_KEYS", keys)
+    path = mirror / f"channels/{channel_name}.json"
+    envelope = signatures.sign_channel(document, channel_name, key)
+    path.write_bytes(envelope)
+    origin = "https://independent-mirror.example"
+    read = environment_artifacts.read_metadata
+
+    def independent(root: str, name: str) -> bytes:
+        if root == origin or root.startswith(origin + "/"):
+            root = str(mirror) + root[len(origin) :]
+        return read(root, name)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(environment_artifacts, "read_metadata", independent)
+        catalog = discover((origin,), channel_name)
+        assert catalog.engine == engine
+        assert catalog.channel_envelope == envelope
+        assert catalog.engine_sources[0].startswith(origin + "/engine/")
+        for invalid in (
+            _json(document),
+            envelope.replace(
+                b'"minimumDesktopVersion":"0.2.0"', b'"minimumDesktopVersion":"9.0.0"'
+            ),
+            signatures.sign_channel(document, channel_name, Ed25519PrivateKey.generate()),
+            signatures.sign_channel(
+                document, "stable" if channel_name == "nightly" else "nightly", key
+            ),
+        ):
+            assert invalid != envelope
+            path.write_bytes(invalid)
+            with pytest.raises(EnvironmentError, match="no mirror"):
+                discover((origin,), channel_name)
+
+    path.write_bytes(envelope)
+    catalog = discover((str(mirror),), channel_name)
+    # Selection documents may change; only the original producer statement is cached.
+    catalog.document["minimumDesktopVersion"] = "99.0.0"
+    acquire(catalog, "fixture-cpu", store)
+    [cached] = (store / "metadata" / "channels").rglob(f"{channel_name}.json")
+    assert cached.read_bytes() == envelope
+    offline = discover((str(mirror),), channel_name, store=store, offline=True)
+    assert offline.cached_channel
+    assert offline.channel_envelope == envelope
+    assert offline.document["minimumDesktopVersion"] == "0.2.0"
+    assert offline.engine == engine
+    cached.write_bytes(_json(offline.document))
+    with pytest.raises(EnvironmentError, match="offline channel metadata"):
+        discover((str(mirror),), channel_name, store=store, offline=True)
+
+
+@pytest.mark.parametrize("channel_name", ["stable", "nightly"])
 def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_bytes(
     tmp_path: Path,
     channel_name: str,
@@ -304,7 +371,7 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
     with pytest.raises(EnvironmentError, match="channel must be stable or nightly"):
         discover((str(mirror),), "main")
     catalog = discover((str(mirror),), channel_name)
-    assert catalog.document == channel
+    assert catalog.document == dict(channel, channel=channel_name)
     assert catalog.engine == engine
     assert catalog.variants() == [
         {
@@ -375,13 +442,13 @@ def test_frontend_only_channel_update_keeps_engine_and_checks_api_before_acquisi
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
     path = mirror / "channels/nightly.json"
-    path.write_bytes(_json(channel))
+    path.write_bytes(_channel_json(channel))
     initial = discover((str(mirror),), "nightly")
     initial_constraints = acquire(initial, "fixture-cpu", store)
     requirements = initial_constraints.read_text()
     assert f"dinkster-frontend==0.1.0 --hash=sha256:{original['sha256']}" in requirements
     channel["frontend"] = updated
-    path.write_bytes(_json(channel))
+    path.write_bytes(_channel_json(channel))
     before = {p: p.read_bytes() for p in store.rglob("*") if p.is_file()}
     if api in {1, 5}:
         with pytest.raises(EnvironmentError, match="supports engine schema API 2 through 4"):
@@ -427,11 +494,11 @@ def test_discovery_reuses_verified_acquisition_metadata_without_network_or_write
 
         patch.setattr(environment_artifacts, "read_metadata", cache_only)
         offline = discover((str(mirror),), "nightly", store=store, offline=True)
-        assert offline.document == channel
+        assert offline.document == dict(channel, channel="nightly")
         assert offline.engine == engine
         assert offline.bases == {"fixture-cpu": base}
     cached = discover((str(mirror),), "nightly", store=store)
-    assert cached.document == channel
+    assert cached.document == dict(channel, channel="nightly")
     assert cached.engine == engine
     assert cached.bases == {"fixture-cpu": base}
     assert cached.cached_channel
@@ -580,7 +647,7 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{release.name}/release-manifest.json"}
     ]
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     catalog = discover((str(mirror),), "nightly")
     assert not store.exists()
     manifest.write_bytes(b"changed after discovery")
@@ -663,7 +730,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
         channel["engine"]["locations"] = [
             {"type": "mirror", "path": f"engine/{identity[7:]}/release-manifest.json"}
         ]
-        (mirror / "channels/nightly.json").write_bytes(_json(channel))
+        (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
         (release / "release-manifest.json").write_bytes(data)
         catalog = discover((str(mirror),), "nightly")
         inference: dict[str, object] = {
@@ -862,7 +929,7 @@ def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
                 shutil.rmtree(published.parent)
                 shutil.rmtree(object_path(store / "bases", base["id"]))
                 shutil.rmtree(object_path(store / "downloads", base["id"]))
-            (mirror / "channels/nightly.json").write_bytes(_json(channel))
+            (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
             proposed = run("restore", "1", "--plan")
             alternatives = proposed["restorePlan"]["alternatives"]
             if replacement in {"incompatible-base", "incompatible-engine"}:
@@ -973,7 +1040,7 @@ def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
         channel["engine"]["locations"] = [
             {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
         ]
-        (mirror / "channels/nightly.json").write_bytes(_json(channel))
+        (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
         catalog = discover((str(mirror),), "nightly")
         package_index = origin + "/simple" if source == "index" else None
         if failure is None:
@@ -1111,7 +1178,7 @@ def test_engine_pypi_wheels_are_acquired_by_manifest_hash_without_a_release_copy
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
     ]
-    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel))
     catalog = discover((str(mirror),), "nightly")
     fetch = environment_artifacts.fetch_artifact
 
@@ -1170,13 +1237,20 @@ def test_refuses_protocol_mismatch_before_creating_a_store(tmp_path: Path):
         discover((str(tmp_path / "mirror"),), "nightly")
 
 
-def test_unsigned_external_channel_is_refused_before_network(monkeypatch: pytest.MonkeyPatch):
-    def fail(*args, **kwargs):
-        pytest.fail("untrusted channel attempted network access")
+def test_unsigned_external_channel_is_refused_before_manifest_reads(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    reads = []
 
-    monkeypatch.setattr("dinkster_supervisor.environment_artifacts.read_metadata", fail)
+    def unsigned(mirror, path):
+        reads.append(path)
+        assert path == "channels/stable.json"
+        return _json({"format": "dinkster.channel/1", "channel": "stable"})
+
+    monkeypatch.setattr("dinkster_supervisor.environment_artifacts.read_metadata", unsigned)
     with pytest.raises(EnvironmentError, match="valid trusted channel"):
         discover(("https://not-dinkster.example",), "stable")
+    assert reads == ["channels/stable.json"]
 
 
 def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_path: Path):
@@ -1248,6 +1322,7 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
             else engine["tag"]
         )
         assert generated["minimumDesktopVersion"] == "0.7.2"
+        (mirror / "channels" / f"{name}.json").write_bytes(_channel_json(generated, name))
         selected = discover((str(mirror),), name)
         assert selected.engine == engine
         assert selected.bases == {"linux-cpu": base, "win-cpu": extra}
@@ -1255,19 +1330,34 @@ def test_channel_builder_round_trips_both_channels_without_changing_publisher_in
         assert selected.channel.base_for("win-cpu") == extra["id"]
         assert {path: path.read_bytes() for path in before} == before
     if not labelled:
-        assert (mirror / "channels/nightly.json").read_bytes() == (
-            mirror / "channels/stable.json"
-        ).read_bytes()
+        nightly = read_channel(mirror / "channels/nightly.json")
+        stable = read_channel(mirror / "channels/stable.json")
+        assert dict(nightly, channel="stable") == stable
 
 
-@pytest.mark.parametrize("previous_day", ["same", "yesterday", "missing", "readback-mismatch"])
+@pytest.mark.parametrize(
+    "previous_day", ["same", "yesterday", "missing", "readback-mismatch", "unsigned", "wrong-key"]
+)
 def test_nightly_publication_advances_only_once_per_utc_day(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_day: str
 ):
     from datetime import timedelta
 
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+    from dinkster_supervisor import environment_channel_signatures as signatures
+
     from scripts import publish_environment_channel as publisher
 
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    monkeypatch.setattr(
+        signatures, "CHANNEL_KEYS", {"sha256:" + hashlib.sha256(public).hexdigest(): public}
+    )
+    monkeypatch.setenv(
+        "DINKSTER_CHANNEL_SIGNING_KEY",
+        key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode("ascii"),
+    )
     mirror = tmp_path / "mirror"
     base, engine, channel = _mirror(mirror)
     release = mirror / "engine" / channel["engine"]["release"][7:]
@@ -1286,7 +1376,13 @@ def test_nightly_publication_advances_only_once_per_utc_day(
             today if previous_day == "same" else today - timedelta(days=1)
         ).isoformat()
     channel_path = mirror / "channels/nightly.json"
-    channel_path.write_bytes(_json(channel))
+    channel_path.write_bytes(signatures.sign_channel(channel, "nightly", key))
+    if previous_day == "unsigned":
+        channel_path.write_bytes(_json(channel))
+    elif previous_day == "wrong-key":
+        channel_path.write_bytes(
+            signatures.sign_channel(channel, "nightly", Ed25519PrivateKey.generate())
+        )
     before = channel_path.read_bytes()
     for name, value in {
         "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
@@ -1327,18 +1423,24 @@ def test_nightly_publication_advances_only_once_per_utc_day(
 
     monkeypatch.setattr(publisher, "urlopen", response)
     monkeypatch.setattr(publisher, "upload", upload)
+    if previous_day in {"unsigned", "wrong-key"}:
+        with pytest.raises(EnvironmentError):
+            publisher.publish(release, [base_path], "nightly", "0.2.0")
+        assert channel_path.read_bytes() == before
+        assert old_channel.read_bytes() == before
+        return
     if previous_day == "readback-mismatch":
         with pytest.raises(ValueError, match="public channel differs after publication"):
             publisher.publish(release, [base_path], "nightly", "0.2.0")
         assert old_channel.read_bytes() == before
         return
     publisher.publish(release, [base_path], "nightly", "0.2.0")
-    after = json.loads(channel_path.read_bytes())
+    after = signatures.verify_channel(channel_path.read_bytes(), "nightly")
     if previous_day == "same":
         assert channel_path.read_bytes() == before
     else:
         assert (
-            after["engine"]["release"]
+            cast("dict[str, object]", after["engine"])["release"]
             == "sha256:"
             + hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
         )
@@ -1347,6 +1449,93 @@ def test_nightly_publication_advances_only_once_per_utc_day(
     publisher.publish(release, [base_path], "nightly", "0.2.0")
     assert channel_path.read_bytes() == selected_bytes
     assert not (mirror / "channels/main.json").exists()
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["legacy", "missing", "signed", "unknown-key", "tampered", "unsigned-stable", "readback"],
+)
+def test_stable_initializes_nightly_without_trusting_unsigned_selections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+):
+    from email.message import Message
+    from urllib.error import HTTPError
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+    from dinkster_supervisor.environment_channel_signatures import sign_channel, verify_channel
+
+    from scripts import publish_environment_channel as publisher
+    from tests.fixtures.environments.build import KEY
+
+    mirror = tmp_path / "mirror"
+    _, _, selection = _mirror(mirror)
+    stable = tmp_path / "stable.json"
+    stable_payload = dict(selection, minimumDesktopVersion="0.7.1", extension="stable authority")
+    stable.write_bytes(_channel_json(stable_payload, "stable"))
+    nightly = mirror / "channels/nightly.json"
+    # A legacy mirror's fields must never survive initialization.
+    previous: dict[str, object] = dict(
+        selection, minimumDesktopVersion="99.0.0", extension="untrusted mirror"
+    )
+    nightly.write_bytes(_json(dict(previous, signature=None)))
+    if state == "signed":
+        nightly.write_bytes(_channel_json(previous))
+    elif state == "unknown-key":
+        nightly.write_bytes(sign_channel(previous, "nightly", Ed25519PrivateKey.generate()))
+    elif state == "tampered":
+        nightly.write_bytes(_channel_json(previous).replace(b"99.0.0", b"98.0.0"))
+    elif state == "unsigned-stable":
+        stable.write_bytes(_json(stable_payload))
+    elif state == "missing":
+        nightly.unlink()
+    before = nightly.read_bytes() if nightly.exists() else None
+    old = mirror / "channels/main.json"
+    old.write_bytes(b"legacy alias")
+    monkeypatch.setenv("R2_BUCKET", "fixture")
+    monkeypatch.setenv(
+        "DINKSTER_CHANNEL_SIGNING_KEY",
+        KEY.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode("ascii"),
+    )
+    read = publisher.read_metadata
+
+    def read_metadata(root, name):
+        if name == "channels/nightly.json" and not nightly.exists():
+            raise DownloadError("missing") from HTTPError(
+                str(nightly), 404, "missing", Message(), None
+            )
+        return read(root, name)
+
+    def upload(client, source, key, **kwargs):
+        if state != "readback":
+            (mirror / key).write_bytes(source.read_bytes())
+
+    class Store:
+        def delete_object(self, *, Bucket, Key):
+            (mirror / Key).unlink(missing_ok=True)
+
+    monkeypatch.setattr(publisher, "read_metadata", read_metadata)
+    monkeypatch.setattr(publisher, "upload", upload)
+    if state in {"unknown-key", "tampered", "unsigned-stable", "readback"}:
+        with pytest.raises((EnvironmentError, ValueError)):
+            publisher.initialize_nightly(Store(), stable, str(mirror))
+        assert nightly.read_bytes() == before
+        assert old.read_bytes() == b"legacy alias"
+        return
+    publisher.initialize_nightly(Store(), stable, str(mirror))
+    if state == "signed":
+        assert nightly.read_bytes() == before
+        assert old.exists()
+    else:
+        result = verify_channel(nightly.read_bytes(), "nightly")
+        assert result == dict(stable_payload, channel="nightly")
+        assert not old.exists()
+        assert verify_channel(stable.read_bytes(), "stable") == dict(
+            stable_payload, channel="stable"
+        )
+        initialized = nightly.read_bytes()
+        publisher.initialize_nightly(Store(), stable, str(mirror))
+        assert nightly.read_bytes() == initialized
 
 
 @pytest.mark.parametrize(

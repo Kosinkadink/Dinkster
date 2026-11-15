@@ -28,7 +28,17 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize(
     ("damage", "layout"),
     [(None, "fresh"), (None, "collision"), (None, "legacy")]
-    + [(damage, "fresh") for damage in ("manifest", "archive", "missing-pointer")],
+    + [
+        (damage, "fresh")
+        for damage in (
+            "manifest",
+            "archive",
+            "missing-pointer",
+            "unsigned-channel",
+            "tampered-channel",
+            "wrong-channel",
+        )
+    ],
 )
 def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     tools_publication: tuple[Path, dict[str, bytes]],
@@ -38,8 +48,16 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     damage: str | None,
     layout: str,
 ) -> None:
-    from dinkster_supervisor import environment, environment_tools
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from dinkster_supervisor import environment, environment_channel_signatures, environment_tools
 
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    monkeypatch.setattr(
+        environment_channel_signatures,
+        "CHANNEL_KEYS",
+        {"sha256:" + hashlib.sha256(public).hexdigest(): public},
+    )
     output, payloads = tools_publication
     mirror = tmp_path / "mirror"
     _, _, channel = _mirror(mirror)
@@ -54,7 +72,9 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         "release": str(release),
         "label": label,
     }
-    (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
+    (mirror / "channels/nightly.json").write_bytes(
+        environment_channel_signatures.sign_channel(channel, "nightly", key)
+    )
     shutil.rmtree(mirror / "engine")
     shutil.rmtree(mirror / "base")
     destination = tmp_path / "acquired"
@@ -96,7 +116,19 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         assert not destination.exists()
     if damage == "missing-pointer":
         del channel["tools"]
-        (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
+        (mirror / "channels/nightly.json").write_bytes(
+            environment_channel_signatures.sign_channel(channel, "nightly", key)
+        )
+    elif damage in {"unsigned-channel", "tampered-channel", "wrong-channel"}:
+        channel_path = mirror / "channels/nightly.json"
+        if damage == "unsigned-channel":
+            channel_path.write_text(json.dumps(channel), encoding="ascii")
+        elif damage == "tampered-channel":
+            channel_path.write_bytes(channel_path.read_bytes().replace(sha.encode(), b"0" * 64))
+        else:
+            channel_path.write_bytes(
+                environment_channel_signatures.sign_channel(channel, "stable", key)
+            )
     elif damage:
         (release / ("tools-manifest.json" if damage == "manifest" else name)).write_bytes(b"wrong")
     monkeypatch.setattr(sys, "argv", [*arguments, "--yes"])

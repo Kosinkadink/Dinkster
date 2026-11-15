@@ -95,6 +95,7 @@ def write_channel(
         }
     document: dict[str, object] = {
         "format": "dinkster.channel/1",
+        "channel": channel,
         "engine": {
             "version": engine["version"],
             "release": engine_id,
@@ -111,7 +112,6 @@ def write_channel(
         },
         "base": selected,
         "minimumDesktopVersion": minimum_desktop_version,
-        "signature": None,
     }
     if frontend is not None:
         select_frontend(engine, {"frontend": frontend})
