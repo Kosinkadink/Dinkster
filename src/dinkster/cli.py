@@ -20,6 +20,11 @@ class _Command:
 
 
 _COMMANDS: dict[str, _Command] = {
+    "account": _Command(
+        "dinkster.account",
+        True,
+        "sign in and select a remote-node project",
+    ),
     "doctor": _Command(
         "dinkster_workers.doctor",
         passes_argv=True,

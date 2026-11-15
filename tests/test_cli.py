@@ -92,6 +92,38 @@ def test_unknown_command_is_loud_exit_2(capsys) -> None:
     assert "usage: dinkster" in err
 
 
+@pytest.mark.parametrize("command", ["doctor", "prepare-catalogs"])
+@pytest.mark.parametrize("endpoint", [None, "", "http://127.0.0.1:8123"])
+def test_default_pack_helpers_do_not_enable_hosted_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, endpoint: str | None
+) -> None:
+    from dinkster_server import PackInfo
+
+    from dinkster import compose
+
+    for name in ("DINKSTER_REMOTE_CATALOG_BASE", "DINKSTER_REMOTE_GATEWAY_BASE"):
+        monkeypatch.delenv(name, raising=False)
+    pack = write_pack(tmp_path / "healthy")
+    expected = endpoint or ""
+    module = pack / "healthy/__init__.py"
+    module.write_text(
+        "import os\n"
+        f"assert os.environ.get('DINKSTER_REMOTE_CATALOG_BASE') == {expected!r}\n"
+        f"assert os.environ.get('DINKSTER_REMOTE_GATEWAY_BASE') == {expected!r}\n" + HEALTHY_NODES
+    )
+    spec = compose.PackSpec(
+        pack / "dinkster-pack.toml",
+        packs={"dinkster-nodes-remote": PackInfo("Remote")},
+        env={"PYTHONPATH": str(pack)},
+        in_process=True,
+    )
+    monkeypatch.setattr(compose, "default_pack_specs", lambda: (spec,))
+    arguments = ["pack", command, "--defaults"]
+    if endpoint is not None:
+        arguments += ["--remote-catalog-base", endpoint]
+    assert main(arguments) == 0
+
+
 def test_doctor_subcommand_is_the_real_publish_gate(tmp_path: Path, capsys) -> None:
     """`dinkster doctor` runs the identical doctor main: same JSON report,
     same exit codes, against a real pack."""

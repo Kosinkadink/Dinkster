@@ -79,7 +79,13 @@
   returns an explicit error and serving can select another capable worker.
 - Linux supports opt-in OS sandboxing for local isolated packs through
   `dinkster-serve --sandbox-packs`. Requested sandboxing fails closed unless full
-  user, PID, mount, and network namespace isolation is available. Pack
+  user, PID, mount, and network namespace isolation, seccomp kernel-interface
+  filtering, and prevention of nested user namespaces are available. Linux
+  needs bubblewrap with `--disable-userns` and `--seccomp`, kernel seccomp
+  support, and libseccomp2/libseccomp. Missing support is reported before
+  pack code starts. The filter denies privileged kernel management, process
+  inspection, keyrings, new namespaces, and io_uring; ordinary threads,
+  subprocesses, shared memory, and granted GPU access remain available. Pack
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
