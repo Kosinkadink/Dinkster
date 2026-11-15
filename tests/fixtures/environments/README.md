@@ -8,7 +8,11 @@ uv run --locked python tests/fixtures/environments/build.py --output /tmp/dinkst
 
 `--output` must be a new directory. The builder writes a local release mirror,
 prints one JSON object to stdout, and saves the identical object as
-`<output>/fixture.json`. No test runner or private test helpers are imported.
+`<output>/fixture.json`. No test runner is imported. Channels are signed by an
+ephemeral fixture key, never by the release key. The public keys are included as
+hex bytes in `channelKeys`; the generated CLI commands explicitly pin those keys
+inside their test-only Python entry point. Production clients reject these
+fixture signatures.
 `--port <1..65535>` selects the initial engine port; the default finds an
 available loopback port (not reserved after building). `--variant <name>`
 overrides `win-cpu` on Windows or `linux-cpu` on Linux. Build on the target
@@ -26,8 +30,8 @@ order, checking exit code and parsing stdout as JSON:
 
 1. `commands.setup`: real environment CLI setup, confirmed, with JSON results.
 2. `commands.status` / `commands.doctor`: live runtime and sealed-file checks.
-3. `commands.advance`: atomically replace each mirror channel file (`main` and
-   `stable`) with the updated channel. This only changes fixture publication,
+3. `commands.advance`: atomically replace each mirror channel file (`nightly` and
+   `stable`) with its separately signed updated channel. This only changes fixture publication,
    not the installed project; repeating it is safe. It prints the fixture JSON.
 4. `commands.update`: real environment CLI update to the second release.
 5. `commands.rollback`: real environment CLI rollback to the first generation.

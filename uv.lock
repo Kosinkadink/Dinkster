@@ -809,7 +809,7 @@ nvtx = [
 
 [[package]]
 name = "dinkster"
-version = "0.0.7"
+version = "0.0.8"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -935,7 +935,7 @@ release-publication = [
 
 [[package]]
 name = "dinkster-api"
-version = "0.0.7"
+version = "0.0.8"
 source = { editable = "packages/dinkster-api" }
 dependencies = [
     { name = "aiohttp" },
@@ -1025,7 +1025,7 @@ requires-dist = [{ name = "aiohttp", specifier = ">=3.10" }]
 
 [[package]]
 name = "dinkster-engine"
-version = "0.0.7"
+version = "0.0.8"
 source = { editable = "packages/dinkster-engine" }
 dependencies = [
     { name = "dinkster-api" },
@@ -1275,7 +1275,7 @@ requires-dist = [
 
 [[package]]
 name = "dinkster-supervisor"
-version = "0.0.5"
+version = "0.0.6"
 source = { editable = "packages/dinkster-supervisor" }
 dependencies = [
     { name = "aiohttp" },

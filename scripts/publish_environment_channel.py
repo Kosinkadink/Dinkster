@@ -26,11 +26,14 @@ from botocore.exceptions import (
     EndpointConnectionError,
     ReadTimeoutError,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from dinkster_supervisor.environment_artifacts import (
     artifact_rows,
     parse_metadata,
     validate_manifest,
 )
+from dinkster_supervisor.environment_channel_signatures import sign_channel, verify_channel
 from dinkster_supervisor.environment_channels import engine_publication_names, write_channel
 from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
 from dinkster_supervisor.environment_frontend import (
@@ -41,6 +44,61 @@ from dinkster_supervisor.environment_frontend import (
 from dinkster_supervisor.environment_state import Channel, content_digest, write_document
 from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
 from packaging.specifiers import SpecifierSet
+
+
+def sign_channel_file(path: Path, channel: str) -> None:
+    """Sign final selections and refuse an unpinned workflow key before upload."""
+    started = time.perf_counter()
+    key = load_pem_private_key(
+        os.environ["DINKSTER_CHANNEL_SIGNING_KEY"].encode("ascii"), password=None
+    )
+    if not isinstance(key, Ed25519PrivateKey):
+        raise ValueError("channel publication requires an Ed25519 private key")
+    envelope = sign_channel(parse_metadata(path.read_bytes()), channel, key)
+    verify_channel(envelope, channel)
+    path.write_bytes(envelope)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    print(f"Channel {channel} signing and self-verification: {elapsed_ms:.5f} ms")
+
+
+def initialize_nightly(client, stable_path: Path, public: str) -> None:
+    """Initialize Nightly solely from authenticated Stable selections."""
+    stable = verify_channel(stable_path.read_bytes(), "stable")
+    Channel.parse(stable)
+    try:
+        previous = read_metadata(public, "channels/nightly.json")
+    except DownloadError as error:
+        cause = error.__cause__
+        if not isinstance(cause, HTTPError) or cause.code != 404:
+            raise
+    else:
+        document = parse_metadata(previous)
+        if "signed" in document or "signatures" in document:
+            Channel.parse(verify_channel(previous, "nightly"))
+            print("Signed Nightly already exists; initialization is unnecessary")
+            return
+        if (
+            document.get("format") != "dinkster.channel/1"
+            or document.get("signature") is not None
+            or document.get("channel") not in {None, "nightly"}
+        ):
+            raise ValueError("Nightly initialization requires a missing or legacy unsigned channel")
+    document = dict(stable, channel="nightly")
+    document.pop("nightlyDate", None)
+    Channel.parse(document)
+    path = stable_path.with_name("nightly.json")
+    write_document(path, document)
+    sign_channel_file(path, "nightly")
+    upload(
+        client,
+        path,
+        "channels/nightly.json",
+        extra={"ContentType": "application/json", "CacheControl": "no-cache"},
+    )
+    if read_metadata(public, "channels/nightly.json") != path.read_bytes():
+        raise ValueError("public Nightly differs after authenticated initialization")
+    client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
+    print("Initialized Nightly from authenticated Stable; no unsigned selections retained")
 
 
 def object_store():
@@ -529,6 +587,8 @@ def publish(
                 cast("int", selected_frontend["size"]),
             )
             verify_frontend_wheel(wheel_path, selected_frontend)
+        if channel == "stable":
+            sign_channel_file(path, channel)
         upload(
             client,
             path,
@@ -537,6 +597,9 @@ def publish(
         )
         if read_metadata(public, f"channels/{channel}.json") != path.read_bytes():
             raise ValueError("public channel differs after publication")
+        if channel == "stable":
+            Channel.parse(verify_channel(read_metadata(public, "channels/stable.json"), "stable"))
+            initialize_nightly(client, path, public)
         if channel == "nightly":
             client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
         print(f"Published {channel} channel for engine {identity}")

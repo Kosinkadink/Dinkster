@@ -72,6 +72,32 @@ def pytest_terminal_summary(terminalreporter) -> None:
                         terminalreporter.write_line(text)
 
 
+@pytest.fixture
+def signed_channels(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster_supervisor import environment_channel_signatures
+
+    from tests.fixtures.environments.build import KEY, KEYS, PUBLIC
+
+    monkeypatch.setattr(environment_channel_signatures, "CHANNEL_KEYS", KEYS)
+    monkeypatch.setenv("DINKSTER_TEST_CHANNEL_PUBLIC_KEY", PUBLIC.hex())
+    monkeypatch.setenv("DINKSTER_TEST_CHANNEL_SEED", KEY.private_bytes_raw().hex())
+
+    import subprocess
+
+    run = subprocess.run
+    client = (
+        "from dinkster_supervisor import environment, environment_channel_signatures; "
+        f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}; environment.main()"
+    )
+
+    def signed_run(command, *args, **kwargs):
+        if isinstance(command, list) and command[1:3] == ["-m", "dinkster_supervisor.environment"]:
+            command = [command[0], "-c", client, *command[3:]]
+        return run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", signed_run)
+
+
 @pytest.fixture(scope="session")
 def network_reachability() -> dict[str, str | None]:
     return {}

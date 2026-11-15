@@ -5,6 +5,12 @@
   source packages. Missing declared resources refuse build or admission before
   catalog preparation. Source manifests are not rewritten.
 
+- Published Stable and Nightly selections require an independently trusted channel
+  signature before metadata is used, including local copies and offline channel
+  caches. Signed selections can come from third-party HTTPS mirrors. Referenced
+  artifact hashes and sizes are still checked. Cached producer bytes remain separate
+  from local selection overrides and sealed historical provenance.
+
 - Managed environments select the engine's versioned frontend or a channel-selected
   frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
   refuse before activation; compatible frontend-only updates retain the engine.
