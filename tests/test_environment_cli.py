@@ -3342,14 +3342,20 @@ environment.main()
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+@pytest.mark.parametrize("frontend_build", ["ci", "local"])
 def test_development_setup_shares_the_generations_selected_library(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_server, frontend_build: str, capsys
 ) -> None:
+    import pygit2
+    from dinkster_supervisor import environment_frontend_sources
     from dinkster_supervisor.environment_development import prepare_development_packs
     from dinkster_supervisor.environment_state import EnvironmentError, interpreter
     from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_environment_frontend_sources import _artifact
     from test_environment_generations import _wheel
     from test_installer import write_publishable_pack
+
+    from dinkster.cli import main
 
     source = Path(__file__).resolve().parents[1]
     root, store = tmp_path / "project", tmp_path / "store"
@@ -3376,30 +3382,115 @@ def test_development_setup_shares_the_generations_selected_library(
             "[pack.entry]", 'requires=["selected-helper==1.0"]\n[pack.entry]'
         )
     )
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    index = pygit2.Index()
+    for name, data in {
+        "package.json": '{"version":"0.2.0"}',
+        "frontend-release.json": '{"engineApi":{"min":1,"max":9999}}',
+    }.items():
+        index.add(pygit2.IndexEntry(name, repository.create_blob(data), pygit2.enums.FileMode.BLOB))
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+    commit = repository.create_commit(
+        f"refs/heads/development-build-{frontend_build}",
+        signature,
+        signature,
+        "frontend",
+        index.write_tree(repository),
+        [],
+    )
+    repository.free()
+    artifact = _artifact(tmp_path, str(commit))
+    monkeypatch.setattr(
+        environment_frontend_sources,
+        "frontend_ci_artifact",
+        lambda _: artifact if frontend_build == "ci" else None,
+    )
+
+    def fetch(roots, name, destination, sha, size):
+        destination.write_bytes(artifact["path"].read_bytes())
+
+    monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+    commands = []
+
+    def build(command, *, cwd):
+        commands.append(command)
+        if command[-1] == "build":
+            dist = cwd / "packages/app/dist"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("<main>local frontend</main>")
+
+    monkeypatch.setattr(environment_frontend_sources, "run_local_command", build)
+    which = shutil.which
+    monkeypatch.setattr(
+        environment_frontend_sources.shutil,
+        "which",
+        lambda name: None if name in {"node", "pnpm"} else which(name),
+    )
     variant = {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu")
-    try:
-        code, result = _run(
-            root,
-            "develop",
-            "--source",
-            str(source),
-            "--contributor",
-            "--pack-source",
-            str(pack),
-            "--library-source",
-            str(library),
-            "--variant",
-            variant,
-            "--python",
-            sys.executable,
-            "--data",
-            str(store),
-            "--port",
-            str(free_port()),
-            "--yes",
-            timeout=300,
+    frontend_source = f"{git_server['url']}#ref=development-build-{frontend_build}"
+    arguments = [
+        "develop",
+        "--source",
+        str(source),
+        "--contributor",
+        "--pack-source",
+        str(pack),
+        "--library-source",
+        str(library),
+        "--frontend-source",
+        frontend_source,
+        "--variant",
+        {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu"),
+        "--python",
+        sys.executable,
+        "--data",
+        str(store),
+        "--port",
+        str(free_port()),
+    ]
+
+    def run(*extra):
+        code = main([*arguments, "--root", str(root), *extra, "--json"])
+        return code, json.loads(capsys.readouterr().out)
+
+    code, preview = run("--plan")
+    assert code == 0, preview
+    if frontend_build == "local":
+        assert any("requires Node and pnpm" in line for line in preview["plan"])
+        code, refused = run("--approve", preview["sourceApproval"], "--yes")
+        assert code == 1 and "local build requires node and pnpm" in refused["error"], refused
+        assert not (root / "current").exists() and not commands
+        monkeypatch.setattr(
+            environment_frontend_sources.shutil,
+            "which",
+            lambda name: "/tools/" + name if name in {"node", "pnpm"} else which(name),
         )
+    else:
+        original = artifact["path"].read_bytes()
+        artifact["path"].write_bytes(b"not a zip archive")
+        code, refused = run("--approve", preview["sourceApproval"], "--yes")
+        assert code == 1 and "invalid Git frontend build metadata" in refused["error"], refused
+        assert not (root / "current").exists() and not commands
+        artifact["path"].write_bytes(original)
+    try:
+        code, result = run("--approve", preview["sourceApproval"], "--yes")
         assert code == 0, result
+        generation = root / "generations" / str(result["current"])
+        html = subprocess.check_output(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-c",
+                "import importlib.resources as r; "
+                "print(r.files('dinkster_frontend').joinpath('static/index.html').read_text())",
+            ],
+            text=True,
+        ).strip()
+        assert html == (
+            "<main>selected frontend</main>"
+            if frontend_build == "ci"
+            else "<main>local frontend</main>"
+        )
     finally:
         if (root / "current").exists():
             assert _run(root, "stop", "--yes")[0] == 0

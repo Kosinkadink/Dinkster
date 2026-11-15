@@ -5,6 +5,13 @@
 - Seven source lifecycle and frontend API-boundary cases pass with the Nightly channel contract. Assertions remain unchanged; the cases exercise both API boundaries and both refusals, exact rollback, dependency acquisition and retained sources.
 - Desktop bundled tools integration and its whole-unit acceptance are separate from backend verification.
 
+# Development Git frontend
+
+- Public Git engine/frontend selection installed the verified CI frontend wheel without an interpreter override; served HTML matched generation assets and survived stop/start.
+- Exact restore reused the retained frontend and development metadata without fetching Git or rebuilding the frontend, including a project with no packs.
+- Public development CLI coverage checks selected frontend HTML for both verified CI and local builds, corrupt archive refusal and missing Node/pnpm refusal before activation. The local producer and CI download boundaries are controlled fixtures, not another real frontend build claim.
+- Existing source-approval coverage checks changed Git refs, changed CI artifact identities, local-build selection changes and incompatible frontend API refusal. Existing shared-library mismatch assertions remain intact.
+
 # Contributor wheel acquisition
 
 - Real linux-cpu resolver: 14 selected wheels retained, including 10 wheel rows without sizes; verified files carry measured byte counts.

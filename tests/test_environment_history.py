@@ -2126,6 +2126,19 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
             variant=first.variant,
             worker_protocol=first.worker_protocol,
             source_kind="local",
+            prepare_packs=lambda destination: write_document(
+                destination / "development-sources.json",
+                {
+                    "format": "dinkster.development-sources/1",
+                    "sources": [
+                        {
+                            "kind": "engine",
+                            "path": str(tmp_path / "absent-author-source"),
+                            "live": False,
+                        }
+                    ],
+                },
+            ),
         )
         activate(root, journal, revalidate=lambda: None)
         before = history(root)
