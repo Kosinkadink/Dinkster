@@ -8,10 +8,11 @@ import mimetypes
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import cast
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import WSMsgType, web
+from yarl import URL
 
 _HOP_BY_HOP = frozenset(
     {
@@ -143,9 +144,14 @@ def install_frontend(
                 location = parameters.response.headers.get(
                     "Location"
                 ) or parameters.response.headers.get("URI")
-                destination = urlparse(urljoin(str(parameters.response.url), location or ""))
-                if (destination.scheme, destination.netloc) != (parsed.scheme, parsed.netloc):
-                    raise web.HTTPBadGateway(text="frontend redirect leaves the approved origin")
+                try:
+                    destination = parameters.response.url.join(URL(location or ""))
+                    if destination.user is None and destination.origin() == URL(base).origin():
+                        return
+                except ValueError:
+                    pass
+                parameters.response.close()
+                raise web.HTTPBadGateway(text="frontend redirect leaves the approved origin")
 
             trace = aiohttp.TraceConfig()
             trace.on_request_redirect.append(check_redirect)

@@ -829,6 +829,7 @@ dependencies = [
     { name = "pyopengl" },
     { name = "scipy" },
     { name = "simpleeval" },
+    { name = "yarl" },
     { name = "zeroconf" },
 ]
 
@@ -896,6 +897,7 @@ requires-dist = [
     { name = "pyopengl", specifier = ">=3.1.8,<4" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "simpleeval", specifier = "==1.0.8" },
+    { name = "yarl", specifier = ">=1.17" },
     { name = "zeroconf", specifier = ">=0.147" },
 ]
 provides-extras = ["inference", "default", "collab", "supervisor"]
