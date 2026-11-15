@@ -39,6 +39,7 @@ from dinkster_supervisor.environment_frontend import (
 )
 from dinkster_supervisor.environment_state import Channel, content_digest, write_document
 from dinkster_supervisor.environment_tools import tools_reference, validate_tools_manifest
+from packaging.specifiers import SpecifierSet
 
 
 def object_store():
@@ -224,6 +225,115 @@ def mirror_engine(client, release: Path, work: Path) -> None:
         raise ValueError("public engine index differs after publication")
 
 
+def recover_engine_mirrors(report_path: Path) -> None:
+    if (
+        os.environ.get("GITHUB_REPOSITORY") != "Kosinkadink/Dinkster"
+        or os.environ.get("GITHUB_EVENT_NAME") != "push"
+        or os.environ.get("GITHUB_REF") != "refs/heads/main"
+    ):
+        raise ValueError("engine mirror recovery requires the owning repository main push")
+    report = json.loads(report_path.read_bytes())
+    pins = [
+        pin
+        for pin in report["unresolvedConsumerPins"]
+        if pin["repository"] == "Kosinkadink/Dinkster"
+        and pin.get("scope", "engine") == "engine"
+        and ("tag" in pin or "engine" in pin)
+    ]
+    if not pins:
+        print("No unresolved engine consumers require mirror recovery")
+        return
+    token = os.environ["GITHUB_TOKEN"]
+    client = object_store()
+    with tempfile.TemporaryDirectory(prefix="engine-mirror-recovery-") as directory:
+        work = Path(directory)
+        staged = []
+        page = 1
+        while pins:
+            request = Request(
+                "https://api.github.com/repos/Kosinkadink/Dinkster/releases"
+                f"?per_page=100&page={page}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urlopen(request, timeout=120) as response:
+                releases = json.load(response)
+            if not releases:
+                raise ValueError(f"No original GitHub engine release satisfies consumers: {pins}")
+            for published in releases:
+                tag = published["tag_name"]
+                if published["draft"] or not re.fullmatch(r"(?:main-|v)[A-Za-z0-9._+-]+", tag):
+                    continue
+                if not any("engine" in pin or pin.get("tag") == tag for pin in pins):
+                    continue
+                assets = {row["name"]: row for row in published["assets"]}
+                if "release-manifest.json" not in assets:
+                    continue
+                release = work / tag
+                release.mkdir()
+                source = "https://github.com/Kosinkadink/Dinkster/releases/download/" + quote(
+                    tag, safe=""
+                )
+                manifest_asset = assets["release-manifest.json"]
+                identity = manifest_asset.get("digest", "")
+                if not re.fullmatch(r"sha256:[0-9a-f]{64}", identity):
+                    raise ValueError(f"GitHub engine manifest digest is missing: {tag}")
+                fetch_artifact(
+                    (source,),
+                    "release-manifest.json",
+                    release / "release-manifest.json",
+                    identity[7:],
+                    manifest_asset["size"],
+                )
+                manifest = validate_manifest(
+                    (release / "release-manifest.json").read_bytes(), identity, None
+                )
+                _, expected_tag = engine_publication_names(
+                    manifest, identity, "main" if published["prerelease"] else "stable"
+                )
+                if manifest.get("repository") != "Kosinkadink/Dinkster" or tag != expected_tag:
+                    raise ValueError(f"GitHub engine tag differs from its manifest identity: {tag}")
+                matching = [
+                    pin
+                    for pin in pins
+                    if ("tag" not in pin or pin["tag"] == tag)
+                    and ("identity" not in pin or pin["identity"] == identity)
+                    and (
+                        "engine" not in pin
+                        or SpecifierSet(pin["engine"]).contains(
+                            manifest["version"], prereleases=True
+                        )
+                    )
+                ]
+                if not matching:
+                    continue
+                for row in [
+                    *artifact_rows(manifest["artifacts"], "name"),
+                    {
+                        "name": "SHA256SUMS",
+                        "sha256": assets["SHA256SUMS"]["digest"][7:],
+                        "size": assets["SHA256SUMS"]["size"],
+                    },
+                ]:
+                    name = row["name"]
+                    asset = assets[name]
+                    if (
+                        asset.get("digest") != "sha256:" + row["sha256"]
+                        or asset["size"] != row["size"]
+                    ):
+                        raise ValueError(
+                            f"GitHub engine artifact differs from manifest: {tag}/{name}"
+                        )
+                    fetch_artifact((source,), name, release / name, row["sha256"], row["size"])
+                staged.append(release)
+                pins = [pin for pin in pins if pin not in matching]
+                if not pins:
+                    break
+            page += 1
+        for release in staged:
+            mirror_engine(client, release, work / release.name)
+            print(f"Recovered original engine mirror: {release.name}")
+
+
 def publish(
     release: Path,
     bases: list[Path],
@@ -405,7 +515,10 @@ def publish(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release", type=Path, required=True)
+    parser.add_argument("--release", type=Path)
+    parser.add_argument(
+        "--recover-engine-mirrors", type=Path, help="fresh retention dry-run report"
+    )
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--base-manifest", type=Path, action="append")
     parser.add_argument("--channel", choices=("main", "stable"))
@@ -413,7 +526,20 @@ if __name__ == "__main__":
     parser.add_argument("--frontend", type=Path, help="optional published frontend reference JSON")
     parser.add_argument("--tools", type=Path, help="same-source published tools release for Stable")
     args = parser.parse_args()
-    if args.preflight:
+    if args.recover_engine_mirrors is not None:
+        if (
+            args.release
+            or args.preflight
+            or args.channel
+            or args.base_manifest
+            or args.tools
+            or args.frontend
+        ):
+            parser.error("mirror recovery cannot select a release or change a channel")
+        recover_engine_mirrors(args.recover_engine_mirrors)
+    elif args.release is None:
+        parser.error("publication requires a release directory")
+    elif args.preflight:
         check_collision(object_store(), content_digest(args.release / "release-manifest.json"))
     elif not args.base_manifest or not args.channel or not args.minimum_desktop_version:
         parser.error("publication requires base manifests, channel and minimum Desktop version")
