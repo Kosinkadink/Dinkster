@@ -21,7 +21,7 @@ from dinkster_assets import (
     SaveTarget,
 )
 from dinkster_assets.acquire import AcquisitionResult
-from dinkster_assets.huggingface import select_huggingface_file
+from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
 
@@ -186,9 +186,24 @@ class ModelDownloads:
                 selection = select_huggingface_file(source.url)
                 name = Path(selection.file).name
 
-                def publish(ref: AssetRef, url: str = selection.url) -> None:
+                def publish(ref: AssetRef, selected: HuggingFaceFile = selection) -> None:
                     try:
-                        before_publish(ref, url)
+                        before_publish(ref, selected.url)
+                        self.provenance.add(
+                            ProvenanceRecord(
+                                digest=ref.digest,
+                                sources=(selected.url,),
+                                license=selected.license,
+                                metadata={
+                                    "provider": "huggingface",
+                                    "repo": selected.repo,
+                                    "revision": selected.revision,
+                                    "file": selected.file,
+                                    "sha256": selected.sha256,
+                                    "size": selected.size,
+                                },
+                            )
+                        )
                     except Exception as exc:
                         raise AssetPublicationError(
                             "asset publication metadata is unavailable"
@@ -203,21 +218,6 @@ class ModelDownloads:
             except (AssetError, OSError, HTTPException):
                 continue
             table.refresh_publication(mount_id)
-            self.provenance.add(
-                ProvenanceRecord(
-                    digest=ref.digest,
-                    sources=(selection.url,),
-                    license=selection.license,
-                    metadata={
-                        "provider": "huggingface",
-                        "repo": selection.repo,
-                        "revision": selection.revision,
-                        "file": selection.file,
-                        "sha256": selection.sha256,
-                        "size": selection.size,
-                    },
-                )
-            )
             return AcquisitionResult(need, "acquired", path=table.resolve(ref.digest))
         return AcquisitionResult(
             need,

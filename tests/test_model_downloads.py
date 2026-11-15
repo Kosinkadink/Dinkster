@@ -158,9 +158,9 @@ def test_invalid_model_settings_create_no_model_folders(
     assert not (tmp_path / "other").exists()
 
 
-@pytest.mark.parametrize("metadata_failure", [False, True])
+@pytest.mark.parametrize("metadata_failure", ["", "journal", "provenance"])
 def test_shared_model_default_is_used_and_published_before_scan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_failure: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_failure: str
 ) -> None:
     from dinkster_assets import (
         AssetNeed,
@@ -223,9 +223,11 @@ def test_shared_model_default_is_used_and_published_before_scan(
     expected = tmp_path / "selected" / "text_encoders" / "encoder.safetensors"
 
     def publish(_ref: object, _url: str) -> None:
-        if metadata_failure:
+        if metadata_failure == "journal":
             raise OSError("journal unavailable")
 
+    if metadata_failure == "provenance":
+        (tmp_path / "provenance.json").mkdir()
     if metadata_failure:
         from dinkster_assets.vault import AssetPublicationError
 
@@ -267,7 +269,7 @@ def test_shared_model_default_is_used_and_published_before_scan(
     assert not list((tmp_path / "other").rglob("*.safetensors"))
     assert MountSnapshotResolver(snapshot).resolve(need.digest) == expected
     assert table.ref("mounts/selected-text-encoder/encoder.safetensors").read_bytes() == payload
-    record = service.provenance.get(need.digest)
+    record = ProvenanceStore(tmp_path / "provenance.json").get(need.digest)
     assert record is not None and record.license == "apache-2.0"
     assert record.metadata["sha256"] == sha256
 
