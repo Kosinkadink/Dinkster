@@ -3261,14 +3261,16 @@ def add_pack_root_to_import_path(manifest: PackManifest, import_path: list[str])
     package = manifest.name.replace("-", "_").replace(".", "_")
     if directory.name == package and (directory / "__init__.py").is_file():
         directory = directory.parent
-    root = str(directory)
-    if root in import_path:
-        return
     module = manifest.nodes_entry.partition(":")[0]
-    source = directory.joinpath(*module.split("."))
-    if source.with_suffix(".py").is_file() or source.is_dir():
-        import_path.insert(0, root)
-    else:
+    for candidate in (directory, directory / "src"):
+        source = candidate.joinpath(*module.split("."))
+        if source.with_suffix(".py").is_file() or source.is_dir():
+            root = str(candidate)
+            if root not in import_path:
+                import_path.insert(0, root)
+            return
+    root = str(directory)
+    if root not in import_path:
         import_path.append(root)
 
 

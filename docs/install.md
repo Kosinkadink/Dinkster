@@ -23,7 +23,7 @@ published runtime variant for your machine:
 
 ```sh
 python -m pip install dinkster
-dinkster setup --variant linux-cpu --channel main
+dinkster setup --variant linux-cpu --channel nightly
 dinkster
 ```
 
@@ -258,7 +258,7 @@ host Python or uv. Verify the ZIP against the same release's manifest and
 `python/bin/python3 -I -m dinkster_supervisor.environment` from that tree,
 prepending its absolute `python/bin` directory to that command's PATH so it
 uses the bundled uv. Do not change the global PATH.
-Setup selects `mac-arm64` automatically; select the `main` channel to use a
+Setup selects `mac-arm64` automatically; select the `nightly` channel to use a
 pre-release engine. Intel Macs and CUDA on macOS are not supported.
 
 The arm64 Desktop ZIP contains an unsigned `.app`. Extract it and copy the app
@@ -299,7 +299,7 @@ resolved with torch. `extras-index` defaults to PyPI. Torch comes only from
 then PyPI. Index URLs must use HTTPS without embedded credentials.
 
 ```sh
-dinkster-env --root /absolute/project setup --channel main \
+dinkster-env --root /absolute/project setup --channel nightly \
   --variant linux-custom-cuda --variants /absolute/variants.toml --yes
 ```
 
@@ -359,6 +359,16 @@ Pack code reloads while serving; engine and library changes need stop/start,
 not another build. Dependency or manifest edits need a new build. Live packs
 require isolated hosting. Live generations change with their author folders and
 cannot be restored exactly; capture without live marks for exact recovery.
+Local packs support both flat and `src` Python layouts.
+
+Contributor projects may select a built frontend with
+`--contributor --frontend-root /absolute/bundle` (requires `index.html`) or a
+running frontend server with `--contributor --frontend-dev http://localhost:5173`.
+These options are exclusive and persist across stop/start. HTTP and websocket
+requests are proxied for live reload. Dev servers must use a loopback address
+unless `--allow-frontend-dev-remote` is explicitly selected. The origin and remote
+permission are part of the reviewed source approval; changing either requires a
+new plan. Credentials, paths, queries and fragments are not accepted in origins.
 
 ### Explicit from-scratch development setup
 

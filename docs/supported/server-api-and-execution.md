@@ -70,7 +70,11 @@
   events, status and completed-value discovery expose the exact runtime
   node/output binding. Selecting a nested element retains the complete
   parent-output source rather than narrowing its roots. Unknown
-  codecs remain incomplete. This does not cover live previews or restored
+  codecs remain incomplete. Portable VIDEO and legacy tensor-layer results
+  have complete reference accounting, including previously stored cache
+  manifests when their types are admitted. Previously sealed incomplete
+  result offers remain incomplete; loading a codec never rewrites their
+  authority. This does not cover live previews or restored
   history, certify frontend coverage, or enable cleanup.
 - Scoped terminal publication discovery retains original output tokens,
   execution identity and provenance independently of process restart,

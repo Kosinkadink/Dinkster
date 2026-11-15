@@ -1,6 +1,6 @@
 [project]
 name = "dinkster"
-version = "0.0.6"
+version = "0.0.7"
 description = "Dinkster - a clean-slate ComfyUI backend (umbrella dev package + demo CLI)"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,8 +9,8 @@ dependencies = [
     "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
     "comfy-aimdo==0.6.0",
     "comfy-kitchen==0.2.41",
-    "dinkster-api==0.0.6",
-    "dinkster-engine==0.0.6",
+    "dinkster-api==0.0.7",
+    "dinkster-engine==0.0.7",
     "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
     "opencv-contrib-python-headless>=5.0,<5.1",
@@ -19,6 +19,7 @@ dependencies = [
     "pyobjc-framework-libdispatch>=12.2.2; sys_platform == 'darwin'",
     "scipy>=1.11",
     "simpleeval==1.0.8",
+    "yarl>=1.17",
     "zeroconf>=0.147",
     # Image codecs use numpy at call time; dinkster-values stays dependency-free.
     "numpy>=1.26",

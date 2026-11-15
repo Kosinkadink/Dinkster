@@ -111,8 +111,8 @@ def _settings(root: Path) -> dict[str, object] | None:
     document = read_document(path)
     if document.get("format") != "dinkster.project/1":
         raise EnvironmentError("unsupported project format")
-    if document.get("channel") not in ("stable", "main"):
-        raise EnvironmentError("project channel must be stable or main")
+    if document.get("channel") not in ("stable", "nightly"):
+        raise EnvironmentError("project channel must be stable or nightly")
     variant, mirrors, port = document.get("variant"), document.get("mirrors"), document.get("port")
     if not isinstance(variant, str) or not variant:
         raise EnvironmentError("project variant must be a nonempty string")
@@ -513,7 +513,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             local["inference"] = inference
             local["packageIndex"] = package_index
         if developing:
-            from .environment_development import development_selection
+            from .environment_development import development_selection, frontend_development_url
 
             development = development_selection(
                 args.source,
@@ -526,12 +526,17 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 contributor=args.contributor,
             )
             if args.frontend_root is not None:
-                if not args.contributor:
-                    raise EnvironmentError("--frontend-root requires --contributor")
                 frontend = args.frontend_root.resolve()
                 if not (frontend / "index.html").is_file():
-                    raise EnvironmentError("contributor frontend bundle requires index.html")
+                    raise EnvironmentError("development frontend bundle requires index.html")
                 development["frontendRoot"] = str(frontend)
+            if args.frontend_dev is not None:
+                development["frontendDev"] = frontend_development_url(
+                    args.frontend_dev, allow_remote=args.allow_frontend_dev_remote
+                )
+                development["allowFrontendDevRemote"] = args.allow_frontend_dev_remote
+            elif args.allow_frontend_dev_remote:
+                raise EnvironmentError("--allow-frontend-dev-remote requires --frontend-dev")
             for row in development["sources"]:
                 source = Path(row["path"])
                 if store.is_relative_to(source) or root.is_relative_to(source):
@@ -568,6 +573,10 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             "no published engine/base bundle is used",
         ]
         if development is not None:
+            if "frontendDev" in development:
+                plan.append(f"proxy frontend dev server {development['frontendDev']}")
+                if development.get("allowFrontendDevRemote"):
+                    plan.append("explicitly allow a non-loopback frontend dev server")
             plan.extend(
                 [
                     development_description(development),
@@ -1652,10 +1661,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     feed_import.add_argument("--file", type=Path, required=True)
     catalog = commands.add_parser("catalog", help="inspect a channel and intact variant manifests")
     catalog.add_argument("--mirror", action="append", default=[])
-    catalog.add_argument("--channel", choices=("stable", "main"))
+    catalog.add_argument("--channel", choices=("stable", "nightly"))
     tools = commands.add_parser("tools", help="acquire the channel's verified native tools ZIP")
     tools.add_argument("--mirror", action="append", required=True)
-    tools.add_argument("--channel", choices=("stable", "main"), default="main")
+    tools.add_argument("--channel", choices=("stable", "nightly"), default="nightly")
     status = commands.add_parser(
         "status", help="read configured project and observed engine status"
     )
@@ -1719,7 +1728,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         default=[],
         help="import this selected library folder; restart after edits",
     )
-    develop.add_argument("--frontend-root", type=Path, help="contributor editor bundle folder")
+    frontend = develop.add_mutually_exclusive_group()
+    frontend.add_argument("--frontend-root", type=Path, help="development editor bundle folder")
+    frontend.add_argument("--frontend-dev", help="development HTTP(S) frontend dev server origin")
+    develop.add_argument(
+        "--allow-frontend-dev-remote",
+        action="store_true",
+        help="explicitly allow a non-loopback frontend dev server",
+    )
     develop.add_argument("--approve", help="require the source digest from a previous plan")
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
@@ -1737,7 +1753,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         command.add_argument(
             "--package-index", help="simple package index for exact locked third-party wheels"
         )
-        command.add_argument("--channel", choices=("stable", "main"))
+        command.add_argument("--channel", choices=("stable", "nightly"))
         command.add_argument("--variant")
         command.add_argument("--variants", type=Path, help="explicit custom variant definitions")
         command.add_argument("--data", type=Path)

@@ -167,7 +167,7 @@ jobs:
           if-no-files-found: error
       - name: Validate the channel against the finalized release
         env:
-          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'nightly' }}
         run: |
           arguments=()
           for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
@@ -253,9 +253,34 @@ jobs:
         # Environment-generation cases remain nonblocking under issue 867.
         run: GITHUB_ACTIONS=false uv run --locked python -m pytest -q tests/test_environment_generations.py -k development_inference_override -rs
 
+  published:
+    needs: [publish, publish-api, publish-engine, publish-supervisor]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish-api.result == 'success' && needs.publish-engine.result == 'success' && needs.publish-supervisor.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-release
+          path: dist
+      - name: Bind the exact PyPI wheel identities before release identity is frozen
+        run: |
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release --bind-pypi
+          (cd dist && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: published-engine-release
+          path: dist/
+          if-no-files-found: error
+
   release:
-    needs: install
-    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
+    needs: published
+    if: ${{ !cancelled() && needs.published.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
       engine-id: ${{ steps.identity.outputs.engine-id }}
@@ -268,7 +293,7 @@ jobs:
           persist-credentials: true
       - uses: actions/download-artifact@v4
         with:
-          name: engine-release
+          name: published-engine-release
           path: dist
       - uses: astral-sh/setup-uv@v5
         with:
@@ -324,9 +349,20 @@ jobs:
               const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
               object = result.data.object;
             }
-            while (object.type === 'tag') {
-              const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
-              object = result.data.object;
+            if (context.ref === 'refs/heads/main') {
+              if (object.type !== 'tag') throw new Error('Development release tag must be annotated');
+              const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;
+              const provenance = JSON.parse(annotation.message);
+              if (annotation.tag !== tag || provenance.version !== manifest.version ||
+                  provenance.commit !== context.sha || provenance.manifest !== digest) {
+                throw new Error('Development tag annotation differs from the release manifest');
+              }
+              object = annotation.object;
+            } else {
+              while (object.type === 'tag') {
+                const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
+                object = result.data.object;
+              }
             }
             if (object.type !== 'commit' || object.sha !== context.sha) {
               throw new Error('Existing release tag targets a different commit');
@@ -365,12 +401,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Kosinkadink/Dinkster-Environments
-          ref: d525a77a8f4a466450730279c7f2745ff014e45d
+          ref: b2d3e26c994d9da6cf9c3c3e85ee9d9ddae287f8
           path: .release/retention
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: engine-release
+          name: published-engine-release
           path: dist
       - uses: actions/download-artifact@v4
         with:
@@ -388,7 +424,7 @@ jobs:
           path: .release/tools
       - name: Mirror payloads and publish the verified channel last
         env:
-          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'nightly' }}
           GITHUB_TOKEN: ${{ github.token }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -419,26 +455,44 @@ jobs:
           uv run --no-project --python .venv python .release/retention/retention.py \
             --command python -m scripts.publish_environment_channel \
             --recover-engine-mirrors engine-recovery-report.json
-      - name: Retain engine releases after verified channel publication
-        if: github.ref == 'refs/heads/main'
+      - name: Retain engine releases and record the authenticated inventory
         env:
           GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
-        run: uv run --no-project --python .venv python .release/retention/retention.py --scope engine --old-naming --output retention-report.json
+        run: |
+          arguments=()
+          if [ "$STABLE_TAG" = true ]; then arguments+=(--dry-run); fi
+          uv run --no-project --python .venv python .release/retention/retention.py \
+            --scope engine --old-naming --output retention-report.json "${arguments[@]}"
+      - name: List unpinned development wheels after stable publication
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-project --python .venv python .release/retention/pypi_inventory.py \
+            --retention-report retention-report.json --output pypi-cleanup-inventory.json
+          uv run --no-project --python .venv python .release/retention/pypi_cleanup.py \
+            --inventory pypi-cleanup-inventory.json --output pypi-cleanup-report.json \
+            --markdown-output pypi-cleanup-report.md
       - uses: actions/upload-artifact@v4
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         with:
           name: release-retention
-          path: retention-report.json
+          path: |
+            retention-report.json
+            pypi-cleanup-inventory.json
+            pypi-cleanup-report.json
+            pypi-cleanup-report.md
           if-no-files-found: error
 
   publish:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -461,8 +515,8 @@ jobs:
           skip-existing: true
 
   publish-api:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-api
@@ -485,8 +539,8 @@ jobs:
           skip-existing: true
 
   publish-engine:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: install
+    if: ${{ !cancelled() && needs.install.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-engine
@@ -508,24 +562,91 @@ jobs:
           packages-dir: publish/
           skip-existing: true
 
+  supervisor-wheel:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+      - name: Build the independent supervisor wheel with exact source metadata
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          arguments=()
+          if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release \
+            --supervisor-only --output .release/supervisor "${arguments[@]}"
+          uvx twine check --strict .release/supervisor/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-pypi-wheel
+          path: |
+            .release/supervisor/*.whl
+            .release/supervisor/release-provenance.json
+          if-no-files-found: error
+
   publish-supervisor:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: supervisor-wheel
+    if: ${{ !cancelled() && needs.supervisor-wheel.result == 'success' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment:
       name: pypi-dinkster-supervisor
       url: https://pypi.org/project/dinkster-supervisor/
     permissions:
       id-token: write
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: engine-release
+          name: supervisor-pypi-wheel
           path: dist
       - name: Select the supervisor distribution
         run: |
           mkdir publish
           cp dist/dinkster_supervisor-[0-9]*.whl publish/
+      - name: Record independent supervisor development provenance
+        if: github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const manifest = JSON.parse(fs.readFileSync('dist/release-provenance.json', 'utf8'));
+            if (manifest.sourceCommit !== context.sha) throw new Error('Supervisor commit mismatch');
+            const tag = `supervisor-main-${manifest.version}`;
+            let object;
+            try {
+              object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              const annotation = await github.rest.git.createTag({
+                ...context.repo, tag, type: 'commit', object: context.sha, message: JSON.stringify(manifest),
+              });
+              try {
+                await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: annotation.data.sha });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+              object = (await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })).data.object;
+            }
+            if (object.type !== 'tag') throw new Error('Supervisor tag must be annotated');
+            const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;
+            const provenance = JSON.parse(annotation.message);
+            if (annotation.tag !== tag || provenance.version !== manifest.version ||
+                provenance.sourceCommit !== context.sha || provenance.sha256 !== manifest.sha256) {
+              throw new Error('Supervisor tag annotation differs from the wheel provenance');
+            }
+            object = annotation.object;
+            if (object.type !== 'commit' || object.sha !== context.sha) {
+              throw new Error('Supervisor tag targets a different source commit');
+            }
       - name: Publish the release wheels with PyPI trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

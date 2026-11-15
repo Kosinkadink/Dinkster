@@ -225,6 +225,155 @@ def test_managed_generation_persists_folder_grant_across_restart(
         stop_engine(root, "main")
 
 
+@pytest.mark.parametrize("frontend_kind", ["frontendRoot", "frontendDev"])
+def test_managed_development_frontend_survives_restart_and_serves_edits(
+    tmp_path: Path, frontend_kind: str
+) -> None:
+    import asyncio
+    import threading
+
+    import aiohttp
+    from aiohttp import web
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from test_serve import write_shutdown_pack
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    root = tmp_path / "project"
+    generation = root / "generations/1"
+    generation.mkdir(parents=True)
+    manifest = write_shutdown_pack(tmp_path / "pack", 58)
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    lock = Lockfile.of(
+        [LockedPack("shutdown-pack-58", "1.2.3", digest, "dinkster", ("shutdown58",))]
+    )
+    stage_generation_packs(generation, lock, {"shutdown-pack-58": archive})
+    source = generation / "pack-sources/shutdown-pack-58"
+    assert prepare_catalog(
+        source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+    ).ok
+    make_generation(root, fake_serve=False)
+    record = json.loads((generation / "generation.json").read_text())
+    record["inProcessPacks"] = ["shutdown-pack-58"]
+    (generation / "generation.json").write_text(json.dumps(record))
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    page = frontend / "index.html"
+    page.write_text("<html>selected development frontend</html>")
+    loop = asyncio.new_event_loop()
+    disconnected = threading.Event()
+    outside_contacted = threading.Event()
+    thread = threading.Thread(target=loop.run_forever)
+    thread.start()
+
+    async def serve() -> web.AppRunner:
+        async def index(_request: web.Request) -> web.Response:
+            return web.Response(text=page.read_text(), content_type="text/html")
+
+        async def websocket(request: web.Request) -> web.WebSocketResponse:
+            socket = web.WebSocketResponse(
+                protocols=("vite-hmr",) if request.path == "/hmr" else ()
+            )
+            await socket.prepare(request)
+            await socket.send_json({"type": "connected"})
+            async for message in socket:
+                if message.type == aiohttp.WSMsgType.TEXT:
+                    await socket.send_str(f"updated:{message.data}")
+                elif message.type == aiohttp.WSMsgType.BINARY:
+                    await socket.send_bytes(b"preview:" + message.data)
+            disconnected.set()
+            return socket
+
+        async def redirect(_request: web.Request) -> web.Response:
+            raise web.HTTPFound(f"http://localhost:{dev_port}/outside")
+
+        async def path(request: web.Request) -> web.Response:
+            if request.path == "/outside":
+                outside_contacted.set()
+            return web.Response(text=f"approved:{request.path}")
+
+        app = web.Application()
+        app.router.add_get("/", index)
+        app.router.add_get("/hmr", websocket)
+        app.router.add_get("/plain-hmr", websocket)
+        app.router.add_get("/redirect", redirect)
+        app.router.add_get("/{path:.*}", path)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", dev_port).start()
+        return runner
+
+    dev_port = free_port()
+    runner = asyncio.run_coroutine_threadsafe(serve(), loop).result(timeout=10)
+    selection = str(frontend) if frontend_kind == "frontendRoot" else f"http://127.0.0.1:{dev_port}"
+    (generation / "development-sources.json").write_text(
+        json.dumps(
+            {"format": "dinkster.development-sources/1", "sources": [], frontend_kind: selection}
+        )
+    )
+    port = free_port()
+
+    async def exchange(path: str, protocol: str | None) -> None:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as client:
+            async with client.ws_connect(
+                f"http://127.0.0.1:{port}/{path}", protocols=("other", "vite-hmr")
+            ) as socket:
+                assert socket.protocol == protocol
+                assert await socket.receive_json() == {"type": "connected"}
+                await socket.send_str("edited module")
+                assert (await socket.receive()).data == "updated:edited module"
+                await socket.send_bytes(b"frame")
+                assert (await socket.receive()).data == b"preview:frame"
+            async with client.get(f"http://127.0.0.1:{port}/http://192.0.2.1/x") as response:
+                assert await response.text() == "approved:/http://192.0.2.1/x"
+            with pytest.raises(aiohttp.WSServerHandshakeError):
+                await client.ws_connect(f"http://127.0.0.1:{port}/redirect")
+
+    try:
+        for text in ("first selection", "edited frontend after restart"):
+            page.write_text(f"<html>{text}</html>")
+            start_engine(root, 1, "main", port)
+            with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+                assert response.read().decode() == f"<html>{text}</html>"
+            if frontend_kind == "frontendDev":
+                for path, protocol in (("hmr", "vite-hmr"), ("plain-hmr", None)):
+                    disconnected.clear()
+                    asyncio.run(exchange(path, protocol))
+                    assert disconnected.wait(5), "dev-server socket survived client disconnect"
+                assert not outside_contacted.is_set(), "redirect contacted an unapproved origin"
+            stop_engine(root, "main")
+    finally:
+        stop_engine(root, "main")
+        asyncio.run_coroutine_threadsafe(runner.cleanup(), loop).result(timeout=10)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=10)
+        loop.close()
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"frontendDev": "http://192.0.2.1:5173"},
+        {"frontendDev": "http://localhost:5173/path", "allowFrontendDevRemote": True},
+        {"frontendRoot": "/bundle", "frontendDev": "http://localhost:5173"},
+    ],
+)
+def test_development_frontend_refuses_unsafe_saved_selection_before_start(
+    tmp_path: Path, selection: dict[str, object]
+) -> None:
+    root = tmp_path / "project"
+    make_generation(root)
+    (root / "generations/1/development-sources.json").write_text(
+        json.dumps({"format": "dinkster.development-sources/1", "sources": [], **selection})
+    )
+    with pytest.raises(EnvironmentError, match="frontend"):
+        start_engine(root, 1, "main", free_port())
+    assert engine_status(root) == ()
+    assert not (root / "runtime/1").exists()
+
+
 @pytest.mark.parametrize(
     ("redirecting_launcher", "health_body_timeout"),
     [(False, False), (True, False), (False, True)],

@@ -580,11 +580,21 @@ async def _proxy(request: web.Request) -> web.StreamResponse:
 
 
 async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResponse:
-    """Bidirectional WebSocket pump (the /api/events channel). Text and
-    binary frames cross verbatim; either side closing closes both."""
-    server_ws = web.WebSocketResponse(heartbeat=30)
+    """Proxy engine events and frontend development sockets; close both sides together."""
+    protocols = tuple(
+        value.strip()
+        for value in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
+        if value.strip()
+    )
     session = request.app[SESSION_KEY]
     url = link.base_url + str(request.rel_url)
+    try:
+        client_ws = await session.ws_connect(url, protocols=protocols)
+    except aiohttp.ClientError as exc:
+        raise web.HTTPBadGateway(text="engine websocket unavailable") from exc
+    server_ws = web.WebSocketResponse(
+        heartbeat=30, protocols=(client_ws.protocol,) if client_ws.protocol else ()
+    )
 
     async def pump(
         source: web.WebSocketResponse | aiohttp.ClientWebSocketResponse,
@@ -601,8 +611,8 @@ async def _proxy_ws(request: web.Request, link: EngineLink) -> web.WebSocketResp
     sockets = request.app[WEBSOCKETS_KEY]
     sockets.add(server_ws)
     try:
-        await server_ws.prepare(request)
-        async with session.ws_connect(url) as client_ws:
+        async with client_ws:
+            await server_ws.prepare(request)
             up = asyncio.create_task(pump(server_ws, client_ws))
             down = asyncio.create_task(pump(client_ws, server_ws))
             try:

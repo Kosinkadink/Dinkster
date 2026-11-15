@@ -764,7 +764,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         cache.parent.mkdir(parents=True)
         shutil.copyfile(wheel, cache)
     try:
-        channel_path = mirror / "channels/main.json"
+        channel_path = mirror / "channels/nightly.json"
         channel = json.loads(channel_path.read_bytes())
         release = mirror / "engine" / channel["engine"]["release"][7:]
         lock_path = release / "example-1.0-fixture-cpu.pack-lock.json"
@@ -1245,7 +1245,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 root / "project.json",
                 {
                     "format": "dinkster.project/1",
-                    "channel": "main",
+                    "channel": "nightly",
                     "variant": variant,
                     "mirrors": [str(tmp_path / "unavailable-mirror")],
                     "port": 3639,
@@ -1498,7 +1498,7 @@ environment.main()
                 root / "project.json",
                 {
                     "format": "dinkster.project/1",
-                    "channel": "main",
+                    "channel": "nightly",
                     "variant": variant,
                     "mirrors": [str(tmp_path / "unavailable-mirror")],
                     "port": 3639,

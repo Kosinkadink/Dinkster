@@ -16,7 +16,9 @@
   the target variant's published dependency lock and its exact base binding.
   Plans identify skipped newer versions and their unmet minimums. Exact incompatible
   selections refuse with upgrade guidance instead of installing a pack with silently
-  missing nodes.
+  missing nodes. Only verified incompatibility permits an older compatible selection.
+  Missing or corrupt published locks refuse the update with the affected version
+  rather than silently selecting an older cached source.
 - Equivalent requirement spelling and unordered namespace or base replacement
   declarations do not refuse admission. Namespaces must still match their grants,
   replacement names remain unique, and selected wheel identities stay exact.
@@ -176,6 +178,13 @@
 - The default install selection contains all 35 ComfyUI-origin first-party
   packs plus the remote pack. Checkout serving verifies their locked sources
   and isolates every selected pack. The engine carries no draft node packs.
+- Engine manifests can acquire workspace wheels directly from their exact PyPI
+  file URLs, verify the published size and SHA-256, and reuse verified cached
+  bytes offline. Release mirrors remain optional wheel fallback sources.
+- Independent supervisor development wheels and native tools use the supervisor's
+  own next-patch public development version, with the same exact wheel bytes as
+  the engine release at that source commit. Supervisor-only changes can publish
+  that wheel without rebuilding an engine.
 - Official packs retain independent versions when the engine is released;
   changed remote pack dependencies use a new version rather than replacing
   an immutable published artifact.
@@ -372,8 +381,16 @@
   same commit, then moves Stable only after the engine, selected bases, tools
   and frontend bytes have been verified at their public locations. A tools
   failure leaves Stable unchanged and fails publication; missing publication
-  configuration is an error, not a successful skip. Main continues to move on
-  successful engine builds and retains its independently published tools.
+  configuration is an error, not a successful skip. Nightly selects the first
+  successfully published development engine per UTC day and retains its
+  independently published tools. Subsequent engines remain available by exact
+  PyPI version without advancing the channel again that day. The only channel
+  identifiers are stable and nightly; main is not accepted as an alias.
+- Stable publication records an authenticated retention inventory and a read-only
+  PyPI cleanup checklist. Only unpinned development wheels older than each
+  project's previous stable release are listed for manual PyPI web deletion.
+  Unresolved consumer pins or unknown mirror directories refuse the checklist;
+  their retention evidence remains available in the workflow artifact.
 - After a successful same-commit engine release, natural main publication selects
   every declared official pack and library version missing from the public index,
   even when a predecessor never published. Older or newer public versions do not
@@ -843,7 +860,7 @@
   again before application and activation; sealed target checks remain mandatory.
 - A local channel builder accepts completed engine release files and selected
   base manifests, verifies engine payload hashes and base/engine compatibility,
-  and atomically writes the existing stable/main channel format. It preserves
+  and atomically writes the existing stable/nightly channel format. It preserves
   publisher inputs and requires no network. Hosted channel publication and
   published-base selection are not provided by this local command.
 - Hosted publication retries transient mirror upload failures with bounded
@@ -971,6 +988,19 @@ for tests and `python scripts/develop.py stop --yes` to stop its managed editor.
 `run.sh` or `run.ps1` builds the pinned frontend and selects it on the contributor
 generation. The CPU variant is the default; pass `--variant NAME` to setup for
 another host-compatible variant.
+All development generations accept either `--frontend-root` for a built bundle
+or `--frontend-dev` for a running HTTP(S) dev server, retained across restarts.
+Neither frontend option requires `--contributor` or makes a captured engine live.
+Pack selections are optional for captured engines as well as contributor engines;
+an engine-only selection uses no development packs. Git engine inputs stay
+captured, including when a local frontend is selected, and cannot use
+`--contributor` or `--live-engine`.
+The dev server defaults to loopback; another address requires explicit
+`--allow-frontend-dev-remote`. Both the origin and permission are bound to the
+reviewed source approval and disclosed in development status/history. Dev-server
+websockets retain their subprotocol for live reload and close when the client disconnects.
+Local live packs support flat and `src` Python layouts without selecting an
+installed copy instead of the chosen working folder.
 
 Use `--live-engine`, `--live-pack /absolute/pack`, or
 `--live-library /absolute/helper` on both plan and apply commands to run from

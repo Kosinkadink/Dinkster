@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import shutil
@@ -13,6 +14,7 @@ from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .environment_state import EnvironmentError, content_digest
 
@@ -43,6 +45,42 @@ _EXCLUDED = frozenset(
         "dist",
     }
 )
+
+
+def frontend_development_url(value: str, *, allow_remote: bool = False) -> str:
+    """Require an explicit origin and keep remote development servers opt-in."""
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or "?" in value
+            or "#" in value
+            or any(character.isspace() or ord(character) < 32 for character in value)
+            or "\\" in value
+            or port == 0
+        ):
+            raise ValueError
+    except ValueError:
+        raise EnvironmentError(
+            "frontend dev server requires a credential-free HTTP(S) origin"
+        ) from None
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host.lower() == "localhost"
+    if not loopback and not allow_remote:
+        raise EnvironmentError(
+            "non-loopback frontend dev server requires --allow-frontend-dev-remote"
+        )
+    return value.rstrip("/")
 
 
 def _ignored(name: str) -> bool:
@@ -135,11 +173,17 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
 def development_description(selection: dict[str, Any]) -> str:
     live = [row["path"] for row in selection["sources"] if row.get("live")]
     if live:
-        return (
+        description = (
             "development: runs from these folders, changes with them, cannot be restored exactly: "
             + ", ".join(live)
         )
-    return DEVELOPMENT_DESCRIPTION
+    else:
+        description = DEVELOPMENT_DESCRIPTION
+    if selection.get("frontendDev"):
+        description += f"; live frontend dev server: {selection['frontendDev']}"
+        if selection.get("allowFrontendDevRemote"):
+            description += " (non-loopback explicitly allowed)"
+    return description
 
 
 def development_selection(
@@ -154,8 +198,6 @@ def development_selection(
     contributor: bool = False,
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
-    if not packs and not contributor:
-        raise EnvironmentError("development requires at least one explicit --pack-source")
     live_paths: dict[str, set[Path]] = {
         "engine": {source.resolve()} if live_engine or contributor else set(),
         "pack": {path.resolve() for path in live_packs},

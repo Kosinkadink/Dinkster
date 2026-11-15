@@ -168,7 +168,7 @@ def scenario(output: Path, changed_base: bool) -> dict[str, Any]:
     setup = fixture["commands"]["setup"]
     try:
         run(*setup[setup.index("setup") : -1])
-        (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        (mirror / "channels/nightly.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
         run("update", "--yes")
         protected: dict[Path, bytes] = {}
         for name in ("workflows", "models", "outputs", "mounts"):
@@ -182,14 +182,14 @@ def scenario(output: Path, changed_base: bool) -> dict[str, Any]:
         if changed_base:
             with tempfile.TemporaryDirectory(dir=output, prefix="new-base-") as scratch:
                 base = build_base(mirror, Path(scratch), variant, version="2.0")
-            channel = json.loads((mirror / "channels/main.json").read_bytes())
+            channel = json.loads((mirror / "channels/nightly.json").read_bytes())
             channel["base"][variant] = {
                 "id": base["id"],
                 "locations": [
                     {"type": "mirror", "path": f"base/{variant}/{base['id'][7:]}/manifest.json"}
                 ],
             }
-            (mirror / "channels/main.json").write_text(json.dumps(channel))
+            (mirror / "channels/nightly.json").write_text(json.dumps(channel))
         executable_release(mirror, base, "3.0", 73)
         before = allocated(root, store)
         samples = [before]

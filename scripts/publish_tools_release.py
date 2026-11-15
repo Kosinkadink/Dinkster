@@ -68,16 +68,37 @@ def publish(release: Path) -> None:
     if reference.returncode:
         if str(json.loads(reference.stdout).get("status")) != "404":
             reference.check_returncode()
-        # Push the already reachable run commit; the refs API can require workflows authorization.
-        subprocess.run(
-            [
-                "git",
-                "push",
-                "origin",
-                f"{manifest['commit']}:refs/tags/{tag}",
-            ],
+        annotation = subprocess.run(
+            ["gh", "api", "--method", "POST", endpoint + "tags", "--input", "-"],
+            input=json.dumps(
+                {
+                    "tag": tag,
+                    "message": json.dumps(
+                        {
+                            "version": manifest["version"],
+                            "sourceCommit": manifest["commit"],
+                            "manifest": digest,
+                        }
+                    ),
+                    "object": manifest["commit"],
+                    "type": "commit",
+                }
+            ),
+            capture_output=True,
+            text=True,
             check=True,
         )
+        created = subprocess.run(
+            ["gh", "api", "--method", "POST", endpoint + "refs", "--input", "-"],
+            input=json.dumps(
+                {"ref": f"refs/tags/{tag}", "sha": json.loads(annotation.stdout)["sha"]}
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if created.returncode and str(json.loads(created.stdout).get("status")) != "422":
+            created.check_returncode()
         reference = subprocess.run(
             ["gh", "api", endpoint + "ref/tags/" + quote(tag, safe="")],
             capture_output=True,
@@ -85,14 +106,22 @@ def publish(release: Path) -> None:
             check=True,
         )
     target = json.loads(reference.stdout)["object"]
-    while target["type"] == "tag":
-        annotated = subprocess.run(
-            ["gh", "api", endpoint + "tags/" + target["sha"]],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        target = json.loads(annotated.stdout)["object"]
+    if target["type"] != "tag":
+        raise ValueError("tools release tag must be annotated")
+    annotated = subprocess.run(
+        ["gh", "api", endpoint + "tags/" + target["sha"]],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    annotation_data = json.loads(annotated.stdout)
+    if annotation_data["tag"] != tag or json.loads(annotation_data["message"]) != {
+        "version": manifest["version"],
+        "sourceCommit": manifest["commit"],
+        "manifest": digest,
+    }:
+        raise ValueError("tools tag annotation differs from its manifest")
+    target = annotation_data["object"]
     if target["type"] != "commit" or target["sha"] != manifest["commit"]:
         raise ValueError("existing tools release tag targets a different commit")
     existing = subprocess.run(
@@ -192,7 +221,7 @@ def publish(release: Path) -> None:
         if os.environ["GITHUB_REF"].startswith("refs/tags/v"):
             print(f"Published version-tag tools {label}: {digest}; engine publication moves Stable")
             return
-        channel = parse_metadata(read_metadata(public, "channels/main.json"))
+        channel = parse_metadata(read_metadata(public, "channels/nightly.json"))
         Channel.parse(channel)
         reference = tools_reference(
             {
@@ -209,7 +238,7 @@ def publish(release: Path) -> None:
             if previous["label"] != f"{previous_manifest['label']}-{previous['sha256'][:8]}":
                 raise ValueError("published tools manifest identity differs from channel")
             if previous == reference:
-                print(f"Verified main channel tools {label}: {digest}")
+                print(f"Verified Nightly channel tools {label}: {digest}")
                 return
             request = Request(
                 "https://api.github.com/repos/Kosinkadink/Dinkster/compare/"
@@ -224,17 +253,17 @@ def publish(release: Path) -> None:
             if status != "ahead":
                 raise ValueError(f"different tools publication for the same source: {status}")
         channel["tools"] = reference
-        path = work / "main.json"
+        path = work / "nightly.json"
         write_document(path, channel)
         upload(
             client,
             path,
-            "channels/main.json",
+            "channels/nightly.json",
             extra={"ContentType": "application/json", "CacheControl": "no-cache"},
         )
-        if read_metadata(public, "channels/main.json") != path.read_bytes():
+        if read_metadata(public, "channels/nightly.json") != path.read_bytes():
             raise ValueError("public tools channel differs after publication")
-        print(f"Published main channel tools {label}: {digest}")
+        print(f"Published Nightly channel tools {label}: {digest}")
 
 
 if __name__ == "__main__":
