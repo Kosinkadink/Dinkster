@@ -153,6 +153,7 @@ jobs:
           uv run --no-project --python 3.12 python - <<'PY'
           import json, os, subprocess, tempfile, zipfile
           from pathlib import Path
+          from scripts.prepare_windows_python import require_uv_version
           [artifact] = Path('.release/tools').glob('*.zip')
           system = os.environ['TOOLS_OS']
           arch = 'arm64' if system == 'macos' else 'x86_64'
@@ -177,8 +178,7 @@ jobs:
               document = json.loads(result.stdout)
               assert document['current'] is None and document['engines'] == []
               assert not (root / 'absent project').exists()
-              subprocess.run([str(scripts / ('uv.exe' if os.name == 'nt' else 'uv')), '--version'],
-                             cwd=root, env=env, check=True)
+              require_uv_version(str(scripts / ('uv.exe' if os.name == 'nt' else 'uv')))
               if system == 'macos':
                   subprocess.run([str(python), '-I', '-c',
                                   "import platform,sys; assert sys.platform == 'darwin' and platform.machine() == 'arm64'"],

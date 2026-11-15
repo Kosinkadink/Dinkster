@@ -21,6 +21,7 @@ from test_environment_generations import _standalone_tree
 from scripts import build_tools_release
 from scripts.build_environment_tools import build
 from scripts.build_release import sha256
+from scripts.prepare_windows_python import require_uv_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -399,10 +400,7 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
     assert document["current"] is None and document["engines"] == []
     assert not project.exists()
     bundled_uv = scripts / ("uv.exe" if os.name == "nt" else "uv")
-    result = subprocess.run(
-        [str(bundled_uv), "--version"], env=environment, text=True, capture_output=True, check=True
-    )
-    assert result.stdout.startswith("uv 0.11.29")
+    require_uv_version(str(bundled_uv))
     subprocess.run(
         [
             str(python),
