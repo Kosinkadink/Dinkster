@@ -107,7 +107,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
     (release / "release-manifest.json").write_bytes(data)
     channel["engine"]["release"] = "sha256:" + identity
     channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-    (mirror / "channels/main.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_json(channel))
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
         archive.writestr(
@@ -153,7 +153,7 @@ def test_explicit_frontend_version_checks_verified_release_api_without_project_w
         str(root),
         "setup",
         "--channel",
-        "main",
+        "nightly",
         "--mirror",
         str(mirror),
         "--variant",
@@ -536,7 +536,7 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         "--variant",
         "linux-cpu",
         "--channel",
-        "main",
+        "nightly",
         "--port",
         str(fixture["port"]),
         "--catalog-lock",
@@ -1140,7 +1140,7 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
         "--variant",
         "linux-cpu",
         "--channel",
-        "main",
+        "nightly",
         "--port",
         str(fixture["port"]),
         "--catalog-lock",
@@ -1527,7 +1527,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         "--variant",
         "linux-cpu",
         "--channel",
-        "main",
+        "nightly",
         "--port",
         str(fixture["port"]),
         "--yes",
