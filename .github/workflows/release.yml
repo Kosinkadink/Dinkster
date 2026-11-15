@@ -309,12 +309,18 @@ jobs:
               object = result.data.object;
             } catch (error) {
               if (error.status !== 404) throw error;
-              // Git push tags an already reachable commit without introducing workflow changes.
+              const annotation = await github.rest.git.createTag({
+                ...context.repo, tag, type: 'commit', object: context.sha,
+                message: JSON.stringify({ version: manifest.version, commit: context.sha, manifest: digest }),
+              });
+              // Acquire the server-created object before pushing its immutable ref.
               require('child_process').execFileSync('git', [
-                'push', 'origin', `${context.sha}:refs/tags/${tag}`,
+                'fetch', '--no-tags', 'origin', annotation.data.sha,
               ], { stdio: 'inherit' });
-              // A successful non-force push confirms this exact commit without a REST visibility race.
-              object = { type: 'commit', sha: context.sha };
+              require('child_process').execFileSync('git', [
+                'push', 'origin', `${annotation.data.sha}:refs/tags/${tag}`,
+              ], { stdio: 'inherit' });
+              object = { type: 'tag', sha: annotation.data.sha };
             }
             while (object.type === 'tag') {
               const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
