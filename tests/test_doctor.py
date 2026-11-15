@@ -476,6 +476,41 @@ def test_cli_renders_and_exits_by_health(tmp_path: Path, capsys) -> None:
     assert main([]) == 2
 
 
+@pytest.mark.parametrize(
+    ("available", "user_namespaces", "detail", "expected"),
+    [
+        (True, True, "", True),
+        (False, False, "bwrap not found; install bubblewrap", False),
+        (True, False, "unprivileged user namespaces are blocked", False),
+    ],
+)
+def test_cli_pack_sandbox_readiness_without_importing_a_pack(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    available: bool,
+    user_namespaces: bool,
+    detail: str,
+    expected: bool,
+) -> None:
+    from dinkster_workers.sandbox import BubblewrapCapability
+
+    monkeypatch.setattr(
+        "dinkster_workers.doctor.detect_bubblewrap",
+        lambda: BubblewrapCapability(
+            available, "/usr/bin/bwrap" if available else None, user_namespaces, detail
+        ),
+    )
+    assert main(["--sandbox-readiness", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["format"] == "dinkster.sandbox-readiness/1"
+    assert report["available"] is expected
+    assert report["detail"]
+    if not expected:
+        assert detail in report["detail"]
+    assert main(["--sandbox-readiness", "untrusted-pack"]) == 2
+    assert capsys.readouterr().out == ""
+
+
 # -- sandboxed probe (DESIGN M8: publish-probe isolation) ----------------------
 #
 # The jail changes what a hostile import can DO, never what the report
