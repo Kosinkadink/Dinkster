@@ -1,5 +1,5 @@
 from .lower import LoweringProblem, LoweringResult, lower_selectors
-from .migrate import migrate_pure_node_type_replacements
+from .migrate import migrate_node_replacements
 from .model import (
     NODE_ID_FORBIDDEN_CHARS,
     PORTS_NODE_ID,
@@ -51,7 +51,7 @@ __all__ = [
     "graph_to_wire",
     "has_errors",
     "lower_selectors",
-    "migrate_pure_node_type_replacements",
+    "migrate_node_replacements",
     "plan",
     "region_interface",
     "snapshot_graph",

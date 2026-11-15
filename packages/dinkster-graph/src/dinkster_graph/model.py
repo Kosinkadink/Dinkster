@@ -52,6 +52,8 @@ class GraphNode:
     state (the frontend materializes the choice on connect); elaboration
     turns the active variant into concrete inputs. Never derived from solved
     or runtime types (hazard H10)."""
+    schema_signature: str = ""
+    """Recorded source interface for signature-restricted document replacements."""
 
 
 PORTS_NODE_ID = "$region"
@@ -216,6 +218,7 @@ def snapshot_graph(graph: Graph) -> Graph:
                 {fam: tuple(members) for fam, members in node.output_members.items()}
             ),
             slot_variants=MappingProxyType(dict(node.slot_variants)),
+            schema_signature=node.schema_signature,
         )
 
     return Graph(

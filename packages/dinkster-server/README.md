@@ -509,8 +509,12 @@ closing stores. An incomplete census permits accounting but no policy deletion.
 
 `vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
 `adoptedBytes` sums recorded verified adoption sizes. Either is null when its
-state is unavailable. These byte totals are observations, not an atomic
-publication snapshot or evidence that bytes are eligible for deletion.
+state is unavailable. The composed server initializes an empty adoption inventory
+and ownership gate when it creates a new vault, so a vault with no produced
+outputs reports zero adopted bytes. An existing vault with missing or corrupt
+inventory remains unavailable; startup and accounting do not recreate lost state.
+These byte totals are observations, not an atomic publication snapshot or evidence
+that bytes are eligible for deletion.
 When all ownership is known and the integration gate is enabled,
 `reclaimableBytes` measures the remaining eligible produced blobs and their
 sidecars under the same held reference, scratch and vault claims as deletion.

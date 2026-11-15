@@ -88,6 +88,8 @@ def test_input_family_source_template_checks_an_available_predecessor() -> None:
 def test_rule_wire_roundtrip_full() -> None:
     rule = ReplacementRule(
         from_type="old.sampler",
+        from_signature="old-interface",
+        from_version="1.2.3",
         cases=(
             ReplacementCase.build(
                 "new.sampler",
@@ -110,6 +112,12 @@ def test_rule_wire_roundtrip_full() -> None:
     )
     wire = cast("Any", rule_to_wire(rule))
     assert rule_from_wire(wire) == rule
+    assert wire["fromSignature"] == "old-interface"
+    assert wire["fromVersion"] == "1.2.3"
+    for field in ("fromSignature", "fromVersion"):
+        for invalid in (None, "", 3, False):
+            with pytest.raises(ValueError, match=field):
+                rule_from_wire({**wire, field: invalid})
     # optional fields are omitted, never null
     assert "note" not in wire
     assert "when" not in wire["cases"][1]

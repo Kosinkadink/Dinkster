@@ -1351,6 +1351,41 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
             raise InstallError(f"target engine metadata refused: {exc}") from exc
         errors.append(f"target engine metadata refused: {exc}")
         engine = {"version": args.engine_version}
+    artifacts = importlib.import_module("dinkster_supervisor.environment_artifacts")
+    from packaging.markers import default_environment
+    from packaging.utils import parse_wheel_filename
+
+    engine_packages = (
+        artifacts.engine_package_versions(engine, args.variant) if "artifacts" in engine else {}
+    )
+    if args.installed_lock is not None:
+        installed_wheels = args.installed_lock.parent / "installed-wheels.json"
+        if installed_wheels.is_file():
+            try:
+                rows = json.loads(installed_wheels.read_bytes())["wheels"]
+                engine_packages = {
+                    str(parse_wheel_filename(row["filename"])[0]): str(
+                        parse_wheel_filename(row["filename"])[1]
+                    )
+                    for row in rows
+                }
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise InstallError(f"target engine wheel identities cannot be read: {exc}") from exc
+    markers = cast("dict[str, str]", dict(default_environment()))
+    if args.installed_lock is not None:
+        base_path = args.installed_lock.parent / "base-manifest.json"
+        if base_path.is_file():
+            try:
+                base = validate_manifest(base_path.read_bytes(), args.base_id, args.variant)
+                python = cast("str", base["python"])
+                markers.update(
+                    python_full_version=python,
+                    python_version=".".join(python.split(".")[:2]),
+                    implementation_version=python,
+                )
+            except (OSError, ValueError) as exc:
+                raise InstallError(f"target interpreter metadata refused: {exc}") from exc
+    skipped: list[str] = []
     defaults = engine.get("defaultPacks")
     if args.installed_lock is None and (not isinstance(defaults, dict) or not defaults):
         raise InstallError("target engine has no default pack declaration")
@@ -1372,6 +1407,9 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                 selections=tuple(args.add),
                 updates=tuple(args.update) if args.update is not None else None,
                 engine_version=cast("str", engine["version"]),
+                engine_packages=engine_packages,
+                markers=markers,
+                skipped=skipped,
                 variant=args.variant,
                 base_id=args.base_id,
                 selected=select_registry(config, args.registry) if args.registry else None,
@@ -1391,6 +1429,9 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
             select_registry(config, selector),
             cast("dict[str, str]", defaults),
             engine_version=cast("str", engine["version"]),
+            engine_packages=engine_packages,
+            markers=markers,
+            skipped=skipped,
             variant=args.variant,
             base_id=args.base_id,
             index=index,
@@ -1437,9 +1478,11 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
                     for entry in sources.packs
                 },
                 "dependencyLocks": {lock.pack: json.loads(lock.to_json()) for lock in locks},
+                "skippedPackVersions": skipped,
                 "errors": errors,
                 "maximumPackPayloadBytes": sum(payloads.values()),
-                "plan": [
+                "plan": skipped
+                + [
                     (
                         f"select {entry.pack}@{entry.version} from {entry.source} "
                         f"({entry.artifact_digest}) using its published {args.variant} lock"
@@ -1456,6 +1499,10 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
 
 
 def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
+    from dinkster_workers.pack_lock import GenerationPackages
+
+    generation = GenerationPackages.inspect(Path(sys.executable))
+    skipped: list[str] = []
     config = _registry_config(args)
     if args.installed_lock and args.allow_missing:
         raise InstallError("--allow-missing is only valid for fresh pack selection")
@@ -1502,7 +1549,13 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     )
                     fetch = routing_registry_fetcher(config, registry, index=index)
                     selected = resolve_release(
-                        registry, pack, version, engine_version=dinkster_version, index=index
+                        registry,
+                        pack,
+                        version,
+                        engine_version=dinkster_version,
+                        engine_packages=generation.versions,
+                        markers=generation.markers,
+                        index=index,
                     )
                     cached = pack_archive_path(
                         args.artifacts,
@@ -1512,7 +1565,11 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     if not cached.exists():
                         cached.parent.mkdir(parents=True, exist_ok=True)
                         cached.write_bytes(fetch(selected))
-                    entry = registry_source_lock(selected, cached, engine_version=dinkster_version)
+                    entry = registry_source_lock(
+                        selected,
+                        cached,
+                        engine_version=generation.versions.get("dinkster-api", dinkster_version),
+                    )
                     entries.append(entry)
                 lock = Lockfile.of(entries)
             else:
@@ -1521,6 +1578,11 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                     installed,
                     args.artifacts.resolve(),
                     engine_version=dinkster_version,
+                    engine_packages=generation.versions,
+                    markers=generation.markers,
+                    skipped=skipped,
+                    variant=args.variant,
+                    base_id=args.base_id,
                     selected=select_registry(config, args.registry) if args.registry else None,
                     index=index,
                 )
@@ -1575,6 +1637,11 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 minimums if args.minimum else default_pack_minimums(),
                 args.artifacts.resolve(),
                 engine_version=dinkster_version,
+                engine_packages=generation.versions,
+                markers=generation.markers,
+                skipped=skipped,
+                variant=args.variant,
+                base_id=args.base_id,
                 allow_missing=args.allow_missing,
                 index=index,
             )
@@ -1590,6 +1657,7 @@ def _cmd_prepare_registry_sources(args: argparse.Namespace) -> None:
                 "artifacts": str(args.artifacts.resolve()),
                 "packs": [entry.pack for entry in lock.packs],
                 "unavailable": unavailable,
+                "skippedPackVersions": skipped,
             }
         )
     )
@@ -1812,6 +1880,8 @@ def main() -> None:
     )
     sources.add_argument("--catalog-lock", type=Path, required=True)
     sources.add_argument("--artifacts", type=Path, required=True)
+    sources.add_argument("--variant")
+    sources.add_argument("--base-id")
     sources.add_argument(
         "--index-snapshot",
         type=Path,

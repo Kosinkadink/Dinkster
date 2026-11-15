@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,11 +27,15 @@ def publish(release: Path) -> None:
     manifest = validate_tools_manifest(data, digest)
     if (
         os.environ.get("GITHUB_REPOSITORY") != "Kosinkadink/Dinkster"
-        or os.environ.get("GITHUB_REF") != "refs/heads/main"
+        or (
+            os.environ.get("GITHUB_REF") != "refs/heads/main"
+            and re.fullmatch(r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+", os.environ.get("GITHUB_REF", ""))
+            is None
+        )
         or os.environ.get("GITHUB_EVENT_NAME") != "push"
         or os.environ.get("GITHUB_SHA") != manifest["commit"]
     ):
-        raise ValueError("tools publication requires the exact repository main push")
+        raise ValueError("tools publication requires the exact repository main or version-tag push")
     public = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
     label = f"{manifest['label']}-{digest[:8]}"
     prefix, tag = f"tools/{label}", f"tools-{label}"
@@ -184,6 +189,9 @@ def publish(release: Path) -> None:
         )
         if read_metadata(public, "tools/index.json") != index.read_bytes():
             raise ValueError("public tools index differs after publication")
+        if os.environ["GITHUB_REF"].startswith("refs/tags/v"):
+            print(f"Published version-tag tools {label}: {digest}; engine publication moves Stable")
+            return
         channel = parse_metadata(read_metadata(public, "channels/main.json"))
         Channel.parse(channel)
         reference = tools_reference(

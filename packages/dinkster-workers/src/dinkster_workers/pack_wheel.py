@@ -170,7 +170,54 @@ def validate_pack_wheel(archive: zipfile.ZipFile) -> str:
             raise PackArchiveError(f"wheel.hash-mismatch: RECORD differs for {path}")
     if recorded != names:
         raise PackArchiveError("wheel.record: RECORD does not cover every wheel file")
+    _validate_resource_paths(fields, manifest_path, names)
     return manifest_path
+
+
+def _resource_paths(pack: dict[str, object]) -> Iterator[tuple[PurePosixPath, bool]]:
+    declarations: list[tuple[object, bool]] = []
+    for table, key, directory in (
+        ("presentation", "icon", False),
+        ("settings", "schema", False),
+        ("frontend", "assets", True),
+        ("docs", "dir", True),
+    ):
+        fields = pack.get(table)
+        if isinstance(fields, dict):
+            value = cast("dict[str, object]", fields).get(key, "docs" if table == "docs" else None)
+            if value is not None:
+                declarations.append((value, directory))
+    for table in ("blueprints", "templates"):
+        entries = pack.get(table)
+        if isinstance(entries, list):
+            for entry in cast("list[object]", entries):
+                if isinstance(entry, dict) and "file" in entry:
+                    declarations.append((cast("dict[str, object]", entry)["file"], False))
+    for value, directory in declarations:
+        if not isinstance(value, str) or not value:
+            raise PackArchiveError(f"wheel.resource-path: invalid declared resource {value!r}")
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts or any(c in value for c in "\\\0:"):
+            raise PackArchiveError(f"wheel.resource-path: unsafe declared resource {value!r}")
+        yield path, directory
+
+
+def _validate_resource_paths(pack: dict[str, object], manifest_path: str, names: set[str]) -> None:
+    root = PurePosixPath(manifest_path).parent
+    for declared, directory in _resource_paths(pack):
+        expected = (root / declared).as_posix()
+        if (
+            any(name.startswith(expected + "/") for name in names)
+            if directory
+            else expected in names
+        ):
+            continue
+        alternatives = sorted(name for name in names if PurePosixPath(name).name == declared.name)
+        raise PackArchiveError(
+            f"wheel.resource-path: manifest declares {declared.as_posix()!r}; "
+            f"expected archive path {expected!r}; "
+            f"matching archived names: {alternatives[:3]!r}"
+        )
 
 
 def _enforce_limit(actual: int, maximum: int, subject: str) -> None:
@@ -241,6 +288,8 @@ def _collect_entries(manifest: PackManifest) -> list[tuple[str, bytes]]:
     prefix = pack_import_name(manifest.name)
     entries: dict[str, bytes] = {}
     folded_paths: set[str] = set()
+    raw = tomllib.loads(manifest.path.read_text(encoding="utf-8"))["pack"]
+    resources = tuple(_resource_paths(raw))
     for path in root.rglob("*"):
         relative = path.relative_to(root)
         if any(part in _SKIP_DIRS for part in relative.parts):
@@ -256,18 +305,30 @@ def _collect_entries(manifest: PackManifest) -> list[tuple[str, bytes]]:
         if path.suffix in {".so", ".pyd", ".dll", ".dylib"}:
             raise PackArchiveError("wheel.invalid: native code requires a platform-tagged wheel")
         inside = path.relative_to(package) if path.is_relative_to(package) else relative
-        name = unicodedata.normalize("NFC", f"{prefix}/{inside.as_posix()}")
-        if "\\" in name or "\0" in name or ".." in PurePosixPath(name).parts:
-            raise PackArchiveError(f"{path}: unsafe wheel path {name!r}")
-        _enforce_limit(len(name.encode("utf-8")), MAX_PATH_BYTES, f"archive path {name!r}")
-        if name.casefold() in folded_paths:
-            raise PackArchiveError(f"{path}: wheel path {name!r} collides after normalization")
-        folded_paths.add(name.casefold())
+        locations = {inside.as_posix()}
+        # Python imports use the installed package root; manifest resources retain
+        # their declared checkout-relative locations without rewriting the manifest.
+        if any(
+            relative.as_posix() == declared.as_posix()
+            or directory
+            and relative.is_relative_to(declared)
+            for declared, directory in resources
+        ):
+            locations.add(relative.as_posix())
         payload = path.read_bytes()
-        _enforce_limit(len(payload), MAX_FILE_BYTES, f"file {name!r}")
+        _enforce_limit(len(payload), MAX_FILE_BYTES, f"file {relative.as_posix()!r}")
         if inside.as_posix() == MANIFEST_FILENAME:
             _enforce_limit(len(payload), MAX_MANIFEST_BYTES, "pack manifest")
-        entries[name] = payload
+        for location in sorted(locations):
+            name = unicodedata.normalize("NFC", f"{prefix}/{location}")
+            if "\\" in name or "\0" in name or ".." in PurePosixPath(name).parts:
+                raise PackArchiveError(f"{path}: unsafe wheel path {name!r}")
+            _enforce_limit(len(name.encode("utf-8")), MAX_PATH_BYTES, f"archive path {name!r}")
+            if name.casefold() in folded_paths:
+                raise PackArchiveError(f"{path}: wheel path {name!r} collides after normalization")
+            folded_paths.add(name.casefold())
+            entries[name] = payload
+    _validate_resource_paths(raw, f"{prefix}/{MANIFEST_FILENAME}", set(entries))
     return sorted(entries.items())
 
 

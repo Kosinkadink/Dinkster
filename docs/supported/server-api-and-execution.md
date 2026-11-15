@@ -92,6 +92,9 @@
   previously unknown references without changing render provenance or responses.
   Unknown or unreadable derivation references block collection inspection;
   cleanup remains disabled.
+- New composed-server vaults have initialized produced accounting before serving,
+  including zero adopted bytes before the first produced output. Missing or corrupt
+  inventory in existing vaults remains unavailable and is not recreated.
 - Operators can inspect vault/adoption byte observations and held known asset
   references without exposing filesystem paths. Unknown accounting is null,
   with explicit blocked reasons. Cache atoms without exhaustive registered

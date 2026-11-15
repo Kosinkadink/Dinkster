@@ -16,7 +16,14 @@ from dinkster_engine import (
     ExecutionSelection,
     GraphValidationError,
 )
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import (
+    Graph,
+    GraphNode,
+    Link,
+    graph_from_wire,
+    graph_to_wire,
+    migrate_node_replacements,
+)
 from dinkster_protocol import (
     CachedResult,
     SavedArtifact,
@@ -24,18 +31,24 @@ from dinkster_protocol import (
 from dinkster_schema import (
     InputFamilySpec,
     InputSpec,
+    MappingSource,
     MultiComboWidget,
     Node,
     NodeSchema,
     OutputSpec,
+    ReplacementCase,
+    ReplacementPredicate,
+    ReplacementRule,
     SelectorSpec,
     TypeExpr,
+    ValueTransform,
     build_node_types,
     build_schemas,
 )
 from dinkster_values import (
     CORE_BOOLEAN,
     CORE_COMBO,
+    CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
     TypeRegistry,
@@ -111,6 +124,105 @@ def InProcessWorkerFactory(registry: TypeRegistry):
     from dinkster_workers import InProcessWorker
 
     return InProcessWorker(build_node_types([*SCAFFOLD_NODES, ListLength, IntegerPair]), registry)
+
+
+def test_saved_retired_node_executes_with_mapped_values_outputs_and_added_defaults() -> None:
+    class Percent(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            def case(factor: float, when: ReplacementPredicate | None = None) -> ReplacementCase:
+                return ReplacementCase.build(
+                    "test.percent",
+                    when=when,
+                    inputs={
+                        "percentage": MappingSource.from_value(
+                            "fraction", ValueTransform.scale(factor)
+                        )
+                    },
+                    outputs={"value": "result"},
+                )
+
+            return NodeSchema(
+                node_type="test.percent",
+                inputs=(
+                    InputSpec("gain", TypeExpr.concrete(CORE_FLOAT), default=3.0),
+                    InputSpec("percentage", TypeExpr.concrete(CORE_FLOAT)),
+                ),
+                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+                replacements=(
+                    ReplacementRule(
+                        from_type="test.fraction",
+                        from_signature="fraction-v1",
+                        cases=(ReplacementCase.build("test.unavailable"),),
+                    ),
+                    ReplacementRule(
+                        from_type="test.fraction",
+                        from_signature="fraction-v1",
+                        cases=(
+                            case(10, ReplacementPredicate.value_equals("mode", False)),
+                            case(100),
+                        ),
+                    ),
+                    ReplacementRule(
+                        from_type="test.fraction",
+                        from_signature="fraction-v1",
+                        cases=(case(1000),),
+                    ),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, gain: float, percentage: float) -> Mapping[str, object]:
+            return cls.outputs(value=percentage * gain)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    schemas = build_schemas((Percent,))
+    engine = Engine(
+        schemas=schemas,
+        registry=registry,
+        worker=InProcessWorkerFactoryFor((Percent,), registry),
+        cache=MemoryLRUCache(),
+    )
+    saved = {
+        "nodes": {
+            "old": {
+                "nodeType": "test.fraction",
+                "schemaSignature": "fraction-v1",
+                "inputs": {"fraction": 0.37, "mode": 0},
+            },
+            "sink": {
+                "nodeType": "test.percent",
+                "inputs": {
+                    "percentage": {"$link": {"node": "old", "output": "result"}},
+                    "gain": 1.0,
+                },
+            },
+        }
+    }
+    original = graph_from_wire(json.loads(json.dumps(saved)))
+
+    async def scenario() -> None:
+        result = await engine.run(original, ["sink"])
+        assert result.outputs["sink"]["value"].resolve() == 111.0
+        migrated = migrate_node_replacements(original, schemas)
+        reopened = graph_from_wire(json.loads(json.dumps(graph_to_wire(migrated))))
+        assert isinstance(reopened.nodes["old"], GraphNode)
+        assert reopened.nodes["old"].node_type == "test.percent"
+        assert reopened.nodes["old"].inputs == {"percentage": 37.0, "gain": 3.0}
+        assert reopened.nodes["sink"].inputs["percentage"] == Link("old", "value")
+        assert migrate_node_replacements(reopened, schemas) == reopened
+        again = await engine.run(reopened, ["sink"])
+        assert again.outputs["sink"]["value"].resolve() == 111.0
+        assert graph_to_wire(original) == saved
+        for signature in ("", "different-interface"):
+            mismatched = Graph(
+                {"old": GraphNode("test.fraction", {"fraction": 0.37}, schema_signature=signature)}
+            )
+            with pytest.raises(GraphValidationError):
+                await engine.run(mismatched, ["old"])
+
+    asyncio.run(scenario())
 
 
 def image_graph(ratio: float = 0.5) -> Graph:

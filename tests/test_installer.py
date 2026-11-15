@@ -243,14 +243,14 @@ def test_generation_reserved_composition_requires_local_build_or_registry(
         ("relative", "absolute paths"),
         (
             "engine-below",
-            "pack example@1.2.3 declares engine >=0.0.4; engine 0.0.3 is incompatible",
+            "pack example@1.2.3 declares engine >=0.0.7; engine 0.0.6 is incompatible",
         ),
-        ("engine-above", "pack example@1.2.3 declares engine <0.0.3; engine 0.0.3 is incompatible"),
+        ("engine-above", "pack example@1.2.3 declares engine <0.0.6; engine 0.0.6 is incompatible"),
     ],
 )
 def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
     pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
-    engine = {"engine-below": ">=0.0.4", "engine-above": "<0.0.3"}.get(
+    engine = {"engine-below": ">=0.0.7", "engine-above": "<0.0.6"}.get(
         problem or "", ">=0.0.2.dev0,<0.1"
     )
     manifest = pack / "dinkster-pack.toml"
@@ -2089,6 +2089,85 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
         files[good] = json.dumps({"schemaVersion": 2, "name": "demo", "items": [record]}).encode()
         with pytest.raises(InstallError, match="malformed release record"):
             resolve_release(registry, "demo", "1.0.0")
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("inference", "numpy", "platform", "expected"),
+    [
+        ("0.1.2", "2.0", "linux", "1.0"),
+        ("0.1.3", "2.0", "linux", "2.0"),
+        ("0.1.3", "2.1", "linux", "3.0"),
+        ("0.1.3", "2.1", "win32", "4.0"),
+        ("0.1.3rc1", "2.0", "linux", "1.0"),
+        (None, "2.1", "linux", None),
+    ],
+)
+def test_registry_selects_pack_against_engine_provided_packages(
+    inference: str | None, numpy: str, platform: str, expected: str | None
+) -> None:
+    from dinkster.registries import NamedRegistry, resolve_compatible_release, resolve_release
+
+    requirements = {
+        "1.0": ["dinkster-inference>=0.1.2", "private-helper>=99"],
+        "2.0": ["dinkster-inference>=0.1.3"],
+        "3.0": ["dinkster-inference>=0.1.3", "numpy>=2.1"],
+        "4.0": ["dinkster-inference>=0.1.3", "numpy>=2.2; sys_platform == 'linux'"],
+    }
+    rows = [
+        {
+            **_static_release(
+                LockedPack("demo", version, "blake3:" + str(i) * 64, "dinkster", ()), b"wheel"
+            ),
+            "requires": values,
+        }
+        for i, (version, values) in enumerate(requirements.items(), start=1)
+    ]
+    server = _serve_artifacts(_static_indexes(rows), [])
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        packages = {"dinkster-api": "0.5", "numpy": numpy}
+        if inference is not None:
+            packages["dinkster-inference"] = inference
+        skipped: list[str] = []
+        if expected is None:
+            with pytest.raises(InstallError, match="dinkster-inference==absent"):
+                resolve_compatible_release(
+                    registry,
+                    "demo",
+                    "1.0",
+                    "0.5",
+                    skipped=skipped,
+                    engine_packages=packages,
+                    markers={"sys_platform": platform},
+                )
+        else:
+            selected = resolve_compatible_release(
+                registry,
+                "demo",
+                "1.0",
+                "0.5",
+                skipped=skipped,
+                engine_packages=packages,
+                markers={"sys_platform": platform},
+            )
+            assert selected.version == expected
+            assert len(skipped) == 4 - int(expected.split(".")[0])
+            if skipped:
+                assert "demo@4.0 skipped" in skipped[0]
+                assert "engine provides" in skipped[0]
+                assert "upgrade the engine" in skipped[0]
+        if expected != "4.0":
+            with pytest.raises(InstallError, match="upgrade the engine or select an older"):
+                resolve_release(
+                    registry,
+                    "demo",
+                    "4.0",
+                    engine_version="0.5",
+                    engine_packages=packages,
+                    markers={"sys_platform": platform},
+                )
     finally:
         server.shutdown()
 
