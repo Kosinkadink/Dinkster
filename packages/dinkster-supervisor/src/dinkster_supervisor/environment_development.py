@@ -14,7 +14,7 @@ import tomllib
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from .environment_state import EnvironmentError, content_digest
@@ -165,7 +165,9 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
         selected.library_source = [acquire(value) for value in args.library_source]
         if getattr(args, "frontend_source", None) is not None:
             selected.frontend_source = acquire(args.frontend_source)
-            if str(selected.frontend_source.resolve()) not in selected.git_origins:
+            if str(selected.frontend_source.resolve()) not in cast(
+                "dict[str, dict[str, object]]", selected.git_origins
+            ):
                 raise EnvironmentError("--frontend-source requires a public HTTPS Git source")
         if args.inference and "://" in args.inference:
             inference = acquire(args.inference)
@@ -299,8 +301,8 @@ def development_selection(
         schema = re.search(r"(?m)^SCHEMA_WIRE_VERSION = ([0-9]+)$", wire)
         if (
             not isinstance(api, dict)
-            or type(api.get("min")) is not int
-            or type(api.get("max")) is not int
+            or type(cast("dict[str, Any]", api).get("min")) is not int
+            or type(cast("dict[str, Any]", api).get("max")) is not int
             or schema is None
             or not 1 <= api["min"] <= int(schema[1]) <= api["max"]
         ):
