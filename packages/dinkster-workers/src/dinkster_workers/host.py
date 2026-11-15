@@ -3153,6 +3153,15 @@ def main() -> None:
         if index in vram_budgets:
             parser.error(f"duplicate --vram-budget index {index}")
         vram_budgets[index] = nbytes
+    loop_factory = None
+    if any(endpoint.startswith("pipe:") for endpoint in args.endpoint):
+        if args.endpoint != [f"pipe:{index}" for index in range(len(args.endpoint))]:
+            parser.error("pipe endpoints must be consecutive and cannot mix with socket endpoints")
+        from ._pipe_transport import prepare_child_pipes
+        from ._windows_loop import worker_loop
+
+        prepare_child_pipes(len(args.endpoint))
+        loop_factory = worker_loop
     # Launched children inherit the host environment and stderr, so the
     # host's DINKSTER_LOG_LEVEL/DINKSTER_LOG settings apply here without any
     # forwarding machinery (origin names survive the process boundary).
@@ -3198,7 +3207,8 @@ def main() -> None:
                 args.manifest[0],
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
-            )
+            ),
+            loop_factory=loop_factory,
         )
     else:
         asyncio.run(
@@ -3207,7 +3217,8 @@ def main() -> None:
                 args.manifest,
                 shm_threshold=args.shm_threshold,
                 use_shm=not args.no_shm,
-            )
+            ),
+            loop_factory=loop_factory,
         )
 
 

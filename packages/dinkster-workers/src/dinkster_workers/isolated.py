@@ -155,7 +155,9 @@ class IsolatedWorker:
         self._headroom_mirror = headroom_mirror
         self._device_map = device_map
         self._shm_threshold = shm_threshold
-        self._use_shm = use_shm
+        self._use_shm = use_shm = use_shm and getattr(
+            self._launcher, "supports_shared_memory", True
+        )
         self._extra_env = dict(extra_env or {})
         self._start_timeout = start_timeout
         self._transport: TransportChoice = transport
@@ -695,7 +697,9 @@ class GroupIsolatedWorker:
         self._start_timeout = start_timeout
         self._launcher = launcher or SubprocessLauncher()
         self._shm_threshold = shm_threshold
-        self._use_shm = use_shm
+        self._use_shm = use_shm = use_shm and getattr(
+            self._launcher, "supports_shared_memory", True
+        )
         self._transport: TransportChoice = transport
         self._aimdo_init = aimdo_init
         if aimdo_arm not in ("off", "auto", "on"):

@@ -148,6 +148,12 @@ async def connect_endpoint(
     frames start cleanly after it.
     """
     kind, _, rest = endpoint.partition(":")
+    if kind == "pipe":
+        from ._pipe_transport import take_pipe_socket
+
+        if not rest.isdigit():
+            raise TransportError(f"malformed pipe endpoint: {endpoint!r}")
+        return await asyncio.open_connection(sock=take_pipe_socket(int(rest)))
     if kind == "unix":
         if not rest:
             raise TransportError(f"malformed unix endpoint: {endpoint!r}")
