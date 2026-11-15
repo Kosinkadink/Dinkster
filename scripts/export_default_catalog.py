@@ -21,9 +21,12 @@ from verify_release_launch import available_port, stop
 
 def published_supervisor(root: Path) -> Path:
     """Bootstrap the published reader independently of the checkout's channel format."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "dinkster-catalog"}
+    if token := os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         "https://api.github.com/repos/Kosinkadink/Dinkster/releases/latest",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "dinkster-catalog"},
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=120) as response:
         release = json.load(response)
