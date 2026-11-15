@@ -920,6 +920,22 @@
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
 
+### Managed Git inference and helper libraries
+
+Installed release projects accept `dinkster source add URL --library NAME`
+and `source update --library NAME`, with explicit ref, subdirectory and mirror
+selection. Inference uses distribution name `dinkster-inference`. Planning
+discloses the exact Git identity without modifying the project. Confirmed
+selection retains the installed release base, engine and frontend wheels,
+unselected library pins and pack selections. Conflicting dependencies and
+base/engine/frontend package replacement refuse before activation.
+
+Status and history label these generations unpublished and non-reproducible
+and record every library's URL, requested ref, commit, content digest and
+wheel identity. Rollback uses the recorded built bytes even after its branch
+moves. Missing retained local builds refuse recovery instead of resolving or
+rebuilding. `source release` returns to the most recent published generation.
+
 ### Public git refs and mirrors
 
 `dinkster source refs URL` lists advertised refs and tags without installing

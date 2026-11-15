@@ -452,6 +452,237 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
         assert _run(root, "stop", "--yes")[0] == 0
 
 
+def test_managed_git_libraries_retain_release_base_and_exact_rollback(
+    tmp_path: Path, monkeypatch, git_server
+):
+    import pygit2
+    from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user"))
+    fixture = publisher.build(tmp_path / "fixture", "linux-cpu", free_port())
+    root, store = Path(fixture["root"]), Path(fixture["store"])
+    catalog = tmp_path / "empty.lock"
+    catalog.write_text(Lockfile.of([]).record_json())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    code, result = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--data",
+        fixture["store"],
+        "--variant",
+        "linux-cpu",
+        "--channel",
+        "main",
+        "--port",
+        str(fixture["port"]),
+        "--catalog-lock",
+        str(catalog),
+        "--artifacts",
+        str(artifacts),
+        "--yes",
+    )
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    original = Generation.read(root / "generations/1/generation.json")
+    before = {
+        path: content_digest(path)
+        for path in (object_path(store / "bases", original.base)).rglob("*")
+        if path.is_file()
+    }
+    original_wheels = json.loads((root / "generations/1/installed-wheels.json").read_text())[
+        "wheels"
+    ]
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+    commits = []
+    for branch, value in (("library-old", 31), ("library-new", 79), ("library-bad", 101)):
+        tree = pygit2.Index()
+        for folder, name, module, requirements in (
+            ("inference", "dinkster-inference", "dinkster_inference", '["fixture-base==1.0"]'),
+            ("helper", "fixture-helper", "fixture_helper", '["dinkster-inference==9.0"]'),
+            ("bad", "fixture-helper", "fixture_helper", '["fixture-base==999"]'),
+            ("base", "fixture-base", "fixture_base", "[]"),
+        ):
+            for filename, payload in {
+                "pyproject.toml": (
+                    f'[project]\nname="{name}"\nversion="9.0"\ndependencies={requirements}\n'
+                    '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+                ),
+                f"{module}/__init__.py": f"VALUE = {value}\n",
+            }.items():
+                tree.add(
+                    pygit2.IndexEntry(
+                        folder + "/" + filename,
+                        repository.create_blob(payload.encode()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        commits.append(
+            repository.create_commit(
+                "refs/heads/" + branch,
+                signature,
+                signature,
+                branch,
+                tree.write_tree(repository),
+                [],
+            )
+        )
+    repository.free()
+    endpoint = "https://github.com/Kosinkadink/source#subdirectory="
+    try:
+        code, preview = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "inference",
+            "--library",
+            "dinkster-inference",
+            "--ref",
+            "library-old",
+            "--git-mirror",
+            git_server["proxy"],
+            "--plan",
+        )
+        assert code == 0 and preview["status"] == "planned", preview
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        code, refused = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "base",
+            "--library",
+            "--ref",
+            "library-old",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+        )
+        assert code == 1 and "release-base" in refused["error"], refused
+        for folder, name in (("inference", "dinkster-inference"), ("helper", "fixture-helper")):
+            code, result = _run(
+                root,
+                "source",
+                "add",
+                endpoint + folder,
+                "--library",
+                name,
+                "--ref",
+                "library-old",
+                "--git-mirror",
+                git_server["proxy"],
+                "--yes",
+                timeout=180,
+            )
+            assert code == 0, result
+            assert _run(root, "stop", "--yes")[0] == 0
+        first = result["current"]
+        first_root = root / "generations" / str(first)
+        first_manifest = json.loads((first_root / "engine-manifest.json").read_text())
+        code, result = _run(
+            root,
+            "source",
+            "update",
+            "--library",
+            "dinkster-inference",
+            "--ref",
+            "library-new",
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, result
+        current = root / "generations" / str(result["current"])
+        record = Generation.read(current / "generation.json")
+        assert record.base == original.base and record.source == "source"
+        assert record.engine_version == original.engine_version and record.drift(current) == ()
+        for module, expected in (("dinkster_inference", 79), ("fixture_helper", 31)):
+            assert subprocess.check_output(
+                [
+                    str(interpreter(current)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    f"import {module}; print({module}.VALUE)",
+                ],
+                text=True,
+            ).strip() == str(expected)
+        status = _run(root, "status")[1]
+        assert status["published"] is False and status["reproducible"] is False
+        assert (
+            status["sources"]["libraries"]["fixture-helper"]
+            == first_manifest["sources"]["libraries"]["fixture-helper"]
+        )
+        assert status["sources"]["libraries"]["dinkster-inference"]["commit"] == str(commits[1])
+        for wheel in original_wheels:
+            assert wheel in read_document(current / "installed-wheels.json")["wheels"]
+        assert {path: content_digest(path) for path in before} == before
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, refused = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "bad",
+            "--library",
+            "fixture-helper",
+            "--ref",
+            "library-bad",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 1, refused
+        assert _run(root, "status")[1]["current"] == result["current"]
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/library-old"].set_target(commits[1])
+        repository.free()
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        restored_root = root / "generations" / str(restored["current"])
+        assert read_document(restored_root / "engine-manifest.json") == first_manifest
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(restored_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster_inference; print(dinkster_inference.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "31"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        history = _run(root, "history")[1]["history"]
+        assert history[-1]["sources"]["libraries"]["dinkster-inference"]["commit"] == str(
+            commits[0]
+        )
+        code, released = _run(root, "source", "release", "--yes", timeout=180)
+        assert code == 0, released
+        assert "sources" not in _run(root, "status")[1]
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
 def test_source_engine_ref_update_and_exact_commit_rollback(
     tmp_path: Path, monkeypatch, git_server
 ):

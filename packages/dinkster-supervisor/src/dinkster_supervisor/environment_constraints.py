@@ -167,6 +167,10 @@ def installed_wheel_origins(
     if inference is not None:
         for row in cast("list[dict[str, object]]", inference["wheels"]):
             origins[row["filename"], row["size"], row["sha256"]] = row["index"]
+    if engine.get("source") == "git":
+        for row in cast("list[dict[str, object]]", engine["wheels"]):
+            if "registry" in row:
+                origins[row["filename"], row["size"], row["sha256"]] = row["registry"]
     repository = engine.get("repository")
     issuer = f"https://github.com/{repository}" if repository else None
     for row in cast("list[dict[str, object]]", engine.get("artifacts", [])):

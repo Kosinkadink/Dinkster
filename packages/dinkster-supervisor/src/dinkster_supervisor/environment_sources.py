@@ -269,6 +269,296 @@ def select_source_pack(
                 return result
 
 
+def select_source_library(
+    root: Path,
+    *,
+    value: str | None,
+    library: str,
+    ref: str | None,
+    mirror: str | None,
+    package_index: str | None,
+    apply: bool,
+) -> dict[str, Any]:
+    """Replace one shared library while retaining the installed base and all other pins."""
+    from urllib.parse import urlencode
+
+    from .environment_generations import build_generation
+    from .environment_pack_install import current_software
+    from .environment_runtime import require_idle
+    from .environment_state import Journal, read_current, writer_lock
+    from .environment_transactions import (
+        activate,
+        begin_activation,
+        next_generation,
+        recover_activation,
+    )
+    from .git_sources import fetched_git_source, parse_git_source
+
+    root = root.resolve()
+    source, generation, store = current_software(root)
+    catalog = installed_release_catalog(source, "main")
+    manifest = cast("dict[str, Any]", read_document(source / "engine-manifest.json"))
+    sources = copy.deepcopy(cast("dict[str, Any]", manifest.get("sources", {})))
+    libraries = sources.setdefault("libraries", {})
+    if value is None:
+        if not library or library not in libraries:
+            raise EnvironmentError("source library update requires a recorded Git library name")
+        origin = libraries[library]
+        value = (
+            origin["url"]
+            + "#"
+            + urlencode(
+                {
+                    "ref": origin["requestedRef"] or origin["commit"],
+                    "subdirectory": origin["subdirectory"],
+                }
+            )
+        )
+        mirror = mirror or origin.get("gitMirror")
+    url, requested, subdirectory = parse_git_source(cast("str", value))
+    specification = (
+        url
+        + "#"
+        + urlencode(
+            {
+                **({"ref": ref or requested} if ref or requested else {}),
+                "subdirectory": subdirectory,
+            }
+        )
+    )
+    mirror = mirror or os.environ.get("DINKSTER_GIT_MIRROR")
+    software = content_digest(source / "generation.json")
+    settings = (root / "project.json").read_bytes()
+    store_pointer = (root / "store").read_bytes()
+
+    def revalidate() -> None:
+        if (
+            read_current(root) != generation.number
+            or content_digest(source / "generation.json") != software
+            or generation.drift(source)
+            or (root / "project.json").read_bytes() != settings
+            or (root / "store").read_bytes() != store_pointer
+        ):
+            raise EnvironmentError("project changed after source planning; request a new plan")
+
+    with fetched_git_source(specification, mirror=mirror) as (checkout, origin):
+        if (checkout / "dinkster-pack.toml").exists():
+            raise EnvironmentError("Git node packs require --pack, not --library")
+        project = tomllib.loads((checkout / "pyproject.toml").read_text(encoding="utf-8"))
+        name = canonicalize_name(project["project"]["name"])
+        if library and canonicalize_name(library) != name:
+            raise EnvironmentError("selected Git checkout names a different library")
+        protected = set(cast("list[str]", catalog.bases[generation.variant]["replaces"]))
+        protected.add("dinkster-frontend")
+        protected.update(
+            parse_wheel_filename(str(row["name"]))[0]
+            for row in artifact_rows(catalog.engine["artifacts"], "name")
+            if str(row["name"]).endswith(".whl")
+        )
+        if "checkout" in manifest:
+            with recorded_source_checkout(manifest, store) as engine_checkout:
+                for package in manifest["checkout"]["packageRoots"]:
+                    metadata = tomllib.loads(
+                        (engine_checkout / package / "pyproject.toml").read_text(encoding="utf-8")
+                    )
+                    protected.add(canonicalize_name(metadata["project"]["name"]))
+        if name in protected:
+            raise EnvironmentError(
+                "Git libraries must not replace release-base, engine or frontend packages"
+            )
+        files = source_files(checkout)
+        selected = {
+            **origin,
+            "kind": "library",
+            "gitMirror": mirror,
+            "contentDigest": source_identity(files),
+        }
+        libraries[name] = selected
+        result = {
+            "current": generation.number,
+            "sources": sources,
+            "kind": "source",
+            "published": False,
+            "reproducible": False,
+            "status": "planned",
+            "plan": [
+                f"source: unpublished and non-reproducible; Git library {name}",
+                f"repository {origin['url']}; ref {origin['requestedRef']}; "
+                f"commit {origin['commit']}",
+                "keep the installed release base, engine, frontend "
+                "and unselected libraries and packs",
+                "build the selected library and resolve missing dependencies "
+                "against retained exact pins",
+            ],
+        }
+        if not apply:
+            return result
+        with writer_lock(store), writer_lock(root):
+            revalidate()
+            require_idle(root)
+            with tempfile.TemporaryDirectory(dir=store, prefix=".source-library-") as directory:
+                work = Path(directory)
+                captured = work / "checkout"
+                _retain_checkout(checkout, captured, files)
+                run_local_command(
+                    [
+                        "uv",
+                        "build",
+                        "--wheel",
+                        "--no-sources",
+                        "--out-dir",
+                        str(work / "built"),
+                        str(captured),
+                    ],
+                    cwd=captured,
+                )
+                built = tuple((work / "built").glob("*.whl"))
+                if len(built) != 1 or parse_wheel_filename(built[0].name)[0] != name:
+                    raise EnvironmentError(
+                        "selected Git library must build exactly its named wheel"
+                    )
+                base = read_document(source / "base-manifest.json")
+                python = interpreter(object_path(store / "bases", generation.base))
+                compatibility = wheel_compatibility(python)
+                locked = (
+                    "\n".join(
+                        line
+                        for line in (source / "constraints.txt")
+                        .read_text()
+                        .replace("\\\n", "")
+                        .splitlines()
+                        if line.strip()
+                        and canonicalize_name(
+                            Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line)).name
+                        )
+                        != name
+                    )
+                    + "\n"
+                )
+                cached, _ = selected_wheel_requirements(
+                    python,
+                    locked,
+                    sorted({path.parent for path in (store / "wheels").rglob("*.whl")}),
+                    compatibility=compatibility,
+                )
+                pins, inputs, override = (
+                    work / filename for filename in ("pins.txt", "requirements.in", "override.txt")
+                )
+                pins.write_text(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", locked))
+                inputs.write_text(cached + built[0].resolve().as_uri() + "\n")
+                override.write_text(f"{name} @ {built[0].resolve().as_uri()}\n")
+                resolution = resolve_wheels(
+                    inputs,
+                    pins,
+                    work / "pylock.toml",
+                    python=python,
+                    index=package_index
+                    or json.loads(settings).get("packageIndex")
+                    or "https://pypi.org/simple",
+                    source=work,
+                    overrides=override,
+                )
+                wheels = retain_wheels(resolution, python, store, work)
+                installed = {
+                    row["filename"]: row
+                    for row in cast(
+                        "list[dict[str, Any]]",
+                        read_document(source / "installed-wheels.json")["wheels"],
+                    )
+                }
+                retained = {row["filename"]: row for row in manifest.get("wheels", [])}
+                for row in wheels:
+                    previous = installed.get(row["filename"])
+                    if row["name"] == name:
+                        row["registry"] = origin["url"]
+                    elif previous is not None and row["sha256"] == previous["sha256"]:
+                        row["registry"] = previous.get("registry")
+                        if row["filename"] in retained:
+                            row["url"] = retained[row["filename"]]["url"]
+                    else:
+                        row["registry"] = row["url"]
+                selected_wheel_rows(locked, wheels, compatibility)
+                paths = tuple(
+                    object_path(store / "wheels", "sha256:" + row["sha256"]) / row["filename"]
+                    for row in wheels
+                )
+                validate_base_requirements(paths, base)
+                wheel = next(row for row in wheels if row["name"] == name)
+                if wheel["sha256"] != content_digest(built[0])[7:]:
+                    raise EnvironmentError("resolved library differs from the selected Git build")
+                selected["wheel"] = wheel
+                release: dict[str, Any] = {
+                    **manifest,
+                    "source": "git",
+                    "kind": "source",
+                    "published": False,
+                    "reproducible": False,
+                    "publishedRelease": catalog.channel.engine_release,
+                    "publishedManifest": catalog.engine_bytes.decode("utf-8"),
+                    "publishedConstraints": manifest.get(
+                        "publishedConstraints", (source / "constraints.txt").read_text()
+                    ),
+                    "sources": sources,
+                    "wheels": wheels,
+                }
+                # The producer lock is retained in publishedManifest; this selection owns wheels.
+                release.pop("dependencies", None)
+                release_id = source_identity(release)
+                engine_root = object_path(store / "engines", release_id)
+                engine_root.mkdir(parents=True, exist_ok=True)
+                if "checkout" in manifest:
+                    with recorded_source_checkout(manifest, store) as engine_checkout:
+                        _retain_checkout(
+                            engine_checkout, engine_root / "checkout", manifest["checkout"]["files"]
+                        )
+                write_document(engine_root / "release-manifest.json", release)
+                constraints = engine_root / f"constraints-{generation.variant}.txt"
+                constraints.write_text(
+                    "\n".join(
+                        f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
+                        for row in wheels
+                    )
+                    + "\n"
+                )
+                provenance = read_document(source / "artifact-sources.json")
+                if name == "dinkster-inference":
+                    provenance.pop("inference", None)
+                revalidate()
+                target = next_generation(root)
+                journal = begin_activation(root, target, "update")
+                try:
+                    replace(Journal.read(journal), stage="building").write(journal)
+                    build_generation(
+                        root=root,
+                        number=target,
+                        store=store,
+                        base=generation.base,
+                        engine_release=release_id,
+                        engine_version=generation.engine_version,
+                        constraints=constraints,
+                        variant=generation.variant,
+                        worker_protocol=generation.worker_protocol,
+                        source_generation=source,
+                        in_process_packs=generation.in_process_packs,
+                        own_environment_size=sum(
+                            path.stat().st_size
+                            for path in (
+                                object_path(store / "bases", generation.base) / "python"
+                            ).rglob("*")
+                            if path.is_file()
+                        ),
+                        source_kind="source",
+                        artifact_sources=provenance,
+                    )
+                    activate(root, journal, revalidate=revalidate)
+                except Exception as exc:
+                    replace(Journal.read(journal), error=str(exc)).write(journal)
+                    recover_activation(root, journal)
+                    raise
+                result.update(current=target, status="applied", sources=sources)
+                return result
+
+
 def installed_release_catalog(generation: Path, channel_name: str) -> EnvironmentCatalog:
     """Keep source operations on the selected generation's release base and code wheelhouse."""
     record = Generation.read(generation / "generation.json")
@@ -619,6 +909,8 @@ def source_missing_inputs(
                     "locations": list(roots),
                 }
             )
+    if "checkout" not in manifest:
+        return missing
     try:
         checkout = object_path(store / "engines", engine_id) / "checkout"
         if offline and not checkout.is_dir():
@@ -656,8 +948,9 @@ def restore_source_inputs(inputs: Path, store: Path, engine_id: str) -> None:
         )
         fetch_artifact(roots, filename, cached, sha, cast("int", row["size"]))
     engine_root = object_path(store / "engines", engine_id)
-    with recorded_source_checkout(manifest, store) as checkout:
-        _retain_checkout(checkout, engine_root / "checkout", manifest["checkout"]["files"])
+    if "checkout" in manifest:
+        with recorded_source_checkout(manifest, store) as checkout:
+            _retain_checkout(checkout, engine_root / "checkout", manifest["checkout"]["files"])
     write_document(engine_root / "release-manifest.json", manifest)
 
 
@@ -665,6 +958,8 @@ def install_source_editables(generation: Path, store: Path, release_id: str) -> 
     """Install captured workspace code without resolving dependencies a second time."""
     engine_root = object_path(store / "engines", release_id)
     manifest = read_document(generation / "engine-manifest.json")
+    if "checkout" not in manifest:
+        return
     checkout = engine_root / "checkout"
     selected = cast("dict[str, Any]", manifest["checkout"])
     if source_identity(manifest) != release_id or source_files(checkout) != selected["files"]:

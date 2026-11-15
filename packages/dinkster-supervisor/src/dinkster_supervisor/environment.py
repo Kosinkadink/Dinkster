@@ -1812,6 +1812,21 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
         if not entries:
             raise EnvironmentError("project has no recorded release generation")
         return _restore(args, result, cast("int", entries[-1]["id"]))
+    if args.library is not None:
+        from .environment_sources import select_source_library
+
+        result.update(
+            select_source_library(
+                args.root,
+                value=args.url if args.source_action == "add" else None,
+                library=args.library,
+                ref=args.ref,
+                mirror=args.git_mirror,
+                package_index=args.package_index,
+                apply=args.yes,
+            )
+        )
+        return 0
     if args.pack is not None:
         from .environment_sources import select_source_pack
 
@@ -1839,6 +1854,10 @@ def _source_operation(args: argparse.Namespace, result: dict[str, object]) -> in
         ).get("engine-manifest.json"):
             raise EnvironmentError("source update requires an intact selected Git engine")
         source_selection = cast("dict[str, Any]", manifest["sources"])
+        if "engine" not in source_selection:
+            raise EnvironmentError(
+                "source update requires a selected Git engine; select --library or --pack"
+            )
         origin = source_selection["engine"]
         git_mirror = git_mirror or source_selection.get("gitMirror")
         value = (
@@ -1931,13 +1950,20 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     source_refs.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
     source_refs.add_argument("--json", action="store_true", help="emit exactly one result object")
     for action in ("add", "update", "release"):
-        command = source_actions.add_parser(action, help=f"{action} the project's source engine")
+        command = source_actions.add_parser(action, help=f"{action} the project's selected sources")
         if action == "add":
-            command.add_argument("url", help="explicit public HTTPS engine repository URL")
+            command.add_argument("url", help="explicit public HTTPS source repository URL")
         command.set_defaults(approve=None)
         if action != "release":
-            command.add_argument(
+            target = command.add_mutually_exclusive_group()
+            target.add_argument(
                 "--pack", nargs="?", const="", help="select a Git pack; update requires its name"
+            )
+            target.add_argument(
+                "--library",
+                nargs="?",
+                const="",
+                help="select a Git inference/helper library; update requires its distribution name",
             )
             command.add_argument("--ref", help="branch, tag, PR ref or exact commit")
             command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")

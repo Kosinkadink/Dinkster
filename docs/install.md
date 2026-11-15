@@ -377,6 +377,32 @@ Channel updates retain that disclosure and mirror identity while the selected
 pack source and archive digest remain unchanged. Replacing the pack drops its
 old source identity. The local directory `--pack` development loop is unchanged.
 
+### Managed inference and helper sources
+
+Select a shared Python library on an installed release base:
+
+```sh
+dinkster source --root ROOT add https://github.com/OWNER/LIBRARY --library DISTRIBUTION --ref BRANCH --yes
+dinkster source --root ROOT update --library DISTRIBUTION --ref OTHER --yes
+```
+
+Use `--library dinkster-inference` for inference. A repository subdirectory is
+selected with `#subdirectory=PATH`. Omit `--yes` to inspect the Git identity;
+omit `--ref` on update to refresh the recorded ref. These operations build a
+captured library wheel without enabling develop mode or rebuilding the release
+base. Engine and frontend wheels, unselected library pins and pack selections
+remain intact. Missing dependencies resolve against those exact pins. A
+conflicting dependency or attempt to replace a base, engine or frontend
+package refuses before activation. `--git-mirror` and `--package-index` have
+the same meanings as for managed pack sources.
+
+Status and history record each library's original URL, requested ref, exact
+commit, content digest and built wheel identity, and disclose unpublished,
+non-reproducible software. Rollback restores the recorded wheel bytes rather
+than rebuilding from a moving ref. Recovery requires retained local builds;
+missing inputs are reported, not silently rebuilt. `source release --yes`
+restores the most recent published generation.
+
 ### Public git refs and mirrors
 
 `dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists
