@@ -22,7 +22,7 @@ are not supported. See [installation](install.md#apple-silicon-macos).
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums, source archive and native tools; no official pack artifacts or third-party wheel payloads | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api`, `dinkster-engine` and `dinkster-supervisor` wheels, constraints, dependency manifest, checksums and source archive; no official pack artifacts or third-party wheel payloads | Wheels on PyPI; non-Python artifacts and mirror copies on GitHub releases and R2; native tools publish independently |
 | Lock | Dinkster's `uv.lock` pins non-base dependencies; the selected base manifest pins its owned closure; the engine manifest records the exact combined wheel identities per variant | `Kosinkadink/Dinkster` and `Dinkster-Environments` |
 | Variant | One hardware target, published or user-defined | a producer row in `Dinkster-Environments`, or local `variants.toml` |
 | Base bundle | A python-build-standalone interpreter plus the heavy wheels for one variant (torch, torchvision, numpy and their closure), archived and named by content hash, described by a base manifest | published by `Dinkster-Environments` or built locally in the shared store |
@@ -268,9 +268,10 @@ are relative to the configured mirror; an immutable GitHub location is
 verification. The engine id hashes the final release-manifest.json bytes,
 including its trailing newline. New engine manifests carry a readable
 `label: YYYY-MM-DD-<public-version>` and UTC ISO 8601 `builtAt`, not `tag`.
-The label omits the PEP 440 local segment (`+...`); the manifest version and
-wheel filenames retain it. For example, `0.0.3.dev412+g<commit>` uses
-label `2026-11-03-0.0.3.dev412`.
+The manifest version, wheel filenames and label use the same public PEP 440
+version without a local segment. For example, `0.0.8.dev412` uses label
+`2026-11-15-0.0.8.dev412`. The full source commit remains in the manifest,
+annotated development tag and wheel Source URL metadata.
 Publication derives the directory `<label>-<hash8>` and the main prerelease
 tag `main-<label>-<hash8>` after finalizing the bytes. Stable tags stay
 `v<version>`. Old manifests with `tag` and old hash-only paths remain valid;
@@ -1014,38 +1015,33 @@ for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.
 
 Tag releases use `vX.Y.Z` and require engine workspace source versions to
-equal `X.Y.Z`; the supervisor retains its own package version. A main commit uses GitHub release tag
-`main-<YYYY-MM-DD>-<version>-<hash8>` and wheel version
-`<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
-prereleases, never PyPI publications. The frontend bundle stays embedded even
+equal `X.Y.Z`; the supervisor retains its own stable package version. A main
+commit uses GitHub release tag `main-<YYYY-MM-DD>-<version>-<hash8>` and public
+wheel version `<next patch>.dev<reachable commit count>`. Development builds
+publish to PyPI as well as GitHub. The frontend bundle stays embedded even
 when its pinned frontend release is unchanged. A temporary source tree gives
 the engine and API wheels that version and pins workspace dependencies to
-their selected versions without rewriting the checkout or its lock. The
-supervisor wheel and dependencies on it retain its committed package version.
+their selected versions without rewriting the checkout or its lock. Supervisor
+development wheels use their own next-patch version with the same commit count;
+engine and independent tools workflows build identical supervisor wheel bytes.
 Supervisor-only source/version changes, including their lock entry, skip engine
 build and publication; changes to other lock entries still build an engine.
 
 Pull requests changing release machinery run the build and clean-install
-checks without creating a GitHub release or invoking PyPI. Tag publication
-waits for all clean-install checks, attaches the checked assets to GitHub,
-then uploads the three workspace distributions in independent OIDC trusted
-publishing jobs. Each job uploads only its own wheel: `dinkster` uses
-environment `pypi`, `dinkster-api` uses `pypi-dinkster-api`, and
-`dinkster-supervisor` uses `pypi-dinkster-supervisor`. No PyPI API token is stored.
-Before the first upload, the repository owner registers a pending trusted
-publisher on PyPI for each distribution, naming `Kosinkadink/Dinkster`,
-workflow `release.yml` and its project-specific environment above. Repository
-casing must match exactly. Separate environments let PyPI distinguish the
-three pending publishers. A pending publisher does not create the project;
-the first trusted upload creates it. Tag publication
-does not require the project to exist beforehand. Missing or mismatched
-publisher registration fails the upload rather than silently skipping it.
-Subsequent tag uploads skip versions already uploaded.
+checks without creating a GitHub release or invoking PyPI. Main and stable-tag
+publication wait for clean-install checks, then upload `dinkster`, `dinkster-api`,
+`dinkster-engine` and `dinkster-supervisor` in independent OIDC trusted publishing
+jobs. Each job uploads only its own wheel. Their environments are respectively
+`pypi`, `pypi-dinkster-api`, `pypi-dinkster-engine` and `pypi-dinkster-supervisor`.
+No PyPI API token is stored. A missing or mismatched PyPI trusted publisher for
+`Kosinkadink/Dinkster`, workflow `release.yml` and that environment fails the
+upload rather than silently skipping it. Existing versions are not overwritten;
+the exact published filename, size and SHA-256 must match the built wheel before
+the finalized release manifest binds its PyPI URL and reaches GitHub or a channel.
 
-The tag workflow uploads only `dinkster`, `dinkster-api` and
-`dinkster-supervisor` to PyPI with trusted publishing, so `pip install dinkster` and the `stable`
-channel install the same artifacts: the channel fetches them by hash from
-the release, pip resolves the same versions from the index. Every
+`pip install dinkster` and the managed channels use the same wheel artifacts.
+Channels acquire the exact PyPI files by size/hash with verified release-mirror
+fallback; pip resolves those versions from the index. Every
 dependency that comes from another Dinkster repository (`dinkster-inference`
 for `dinkster-native`, `dinkster-token-verifier` for `dinkster-server`) is a
 versioned PyPI release declared like any other dependency, never an archive
@@ -1171,8 +1167,8 @@ Settled:
   from the per-commit bundle `Dinkster-Frontend` publishes.
 - Channels `stable` and `nightly`, both prebuilt by the same workflow;
   `minimumDesktopVersion` in the channel file.
-- Engine wheels published to PyPI by the tag workflow; cross-repository
-  dependencies are versioned PyPI releases.
+- Engine wheels published to PyPI by main and stable-tag workflows;
+  cross-repository dependencies are versioned PyPI releases.
 - Signing workflows run on tag push behind an owner-approved environment;
   a hand-dispatched run needs the same approval.
 - Electron shell updater checks on startup only, installs on the next

@@ -233,7 +233,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     version = development_version(ROOT)
-    assert version.startswith("0.0.7.dev")
+    assert version.startswith("0.0.8.dev")
     assert Version(version).local is None
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
@@ -264,7 +264,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
         supervisor_version = development_version(ROOT, "dinkster-supervisor")
-        assert supervisor_version.startswith("0.0.5.dev")
+        assert supervisor_version.startswith("0.0.6.dev")
         assert Version(supervisor_version).dev == Version(version).dev
         assert f"Requires-Dist: dinkster-supervisor=={supervisor_version}\n" in metadata
         wheel_modules = {

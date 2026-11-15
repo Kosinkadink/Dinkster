@@ -384,6 +384,11 @@
   independently published tools. Subsequent engines remain available by exact
   PyPI version without advancing the channel again that day. The only channel
   identifiers are stable and nightly; main is not accepted as an alias.
+- Stable publication records an authenticated retention inventory and a read-only
+  PyPI cleanup checklist. Only unpinned development wheels older than each
+  project's previous stable release are listed for manual PyPI web deletion.
+  Unresolved consumer pins or unknown mirror directories refuse the checklist;
+  their retention evidence remains available in the workflow artifact.
 - After a successful same-commit engine release, natural main publication selects
   every declared official pack and library version missing from the public index,
   even when a predecessor never published. Older or newer public versions do not
