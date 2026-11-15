@@ -42,7 +42,9 @@
   network or writable-folder grants stay outside the shared worker. Setup, update
   and develop accept `--inference-pack PACK=isolated` to persist a per-pack exclusion;
   `--inference-pack PACK=auto` restores automatic placement. Repair, relocation and
-  software snapshots preserve these exclusions.
+  software snapshots preserve these exclusions. Newly prepared generations retain
+  their selected shared-process membership with the software snapshot; serving
+  reuses that selection rather than choosing a different environment.
 - First-party runtime packs install shared inference, asset and audio codecs in
   their workers. Pack dependencies order composition; isolated workers do not
   share a registry. Family-specific codecs retain their producer's identity,

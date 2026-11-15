@@ -1039,6 +1039,42 @@ def build_generation(
             from .environment_sources import install_source_editables
 
             install_source_editables(destination, store, engine_release)
+        if (destination / "dinkster.lock").is_file():
+            manager = [
+                str(interpreter(destination)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+            ]
+            command = [
+                *manager,
+                "prepare-inference",
+                "--generation",
+                str(destination),
+            ]
+            for pack in in_process_packs:
+                command.extend(["--in-process-pack", pack])
+            for pack in isolated_inference_packs:
+                command.extend(["--isolated-inference-pack", pack])
+            if source_kind == "local":
+                command.append("--local-build")
+            # Exact restore must not add metadata to older engine releases.
+            available = subprocess.run([*manager, "--help"], capture_output=True, text=True)
+            if available.returncode:
+                raise EnvironmentError(
+                    "inference preparation capability check failed: "
+                    + (available.stderr.strip() or available.stdout.strip())
+                )
+            if "prepare-inference" in available.stdout:
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    raise EnvironmentError(
+                        "inference process preparation failed: "
+                        + (result.stderr.strip() or result.stdout.strip())
+                    )
         files = tuple(
             (path.relative_to(destination).as_posix(), content_digest(path))
             for path in sorted(destination.rglob("*"))

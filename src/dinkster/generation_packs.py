@@ -388,13 +388,60 @@ def generation_pack_specs(
     return _group_first_party_packs(generation, specs)
 
 
-def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[PackSpec, ...]:
+def prepare_inference_process(
+    generation: Path,
+    *,
+    in_process_packs: tuple[str, ...] = (),
+    isolated_inference_packs: tuple[str, ...] = (),
+    local_build: bool = False,
+) -> None:
+    """Record process membership while the target is inactive and unsealed."""
+    if (generation / "generation.json").exists():
+        raise CompositionError("inference preparation requires an unsealed generation")
+    specs = list(generation_pack_specs(generation, in_process_packs, local_build=local_build))
+    grouped = _group_first_party_packs(generation, list(specs), isolated=isolated_inference_packs)
+    members = [
+        load_manifest(spec.manifest).name for spec in grouped if spec.worker_group is not None
+    ]
+    python = next((spec.python for spec in grouped if spec.worker_group is not None), None)
+    environment = next(
+        (
+            load_manifest(spec.manifest).name
+            for spec in specs
+            if python is not None and spec.python == python
+        ),
+        None,
+    )
+    (generation / "inference-process.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.inference-process/1",
+                "members": members,
+                "environment": environment,
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="ascii",
+    )
+
+
+def _group_first_party_packs(
+    generation: Path,
+    specs: list[PackSpec],
+    *,
+    isolated: tuple[str, ...] | None = None,
+) -> tuple[PackSpec, ...]:
+    recorded = generation / "inference-process.json"
     record = generation / "generation.json"
-    if not record.is_file():
-        return tuple(specs)
-    isolated = json.loads(record.read_text(encoding="utf-8")).get("isolatedInferencePacks", [])
+    replay = isolated is None and recorded.is_file()
+    if isolated is None:
+        if not record.is_file():
+            return tuple(specs)
+        isolated = json.loads(record.read_text(encoding="utf-8")).get("isolatedInferencePacks", [])
     if (
-        not isinstance(isolated, list)
+        not isinstance(isolated, (list, tuple))
         or any(
             not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
             for pack in isolated
@@ -403,6 +450,39 @@ def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[P
     ):
         raise CompositionError("generation isolatedInferencePacks must contain distinct pack ids")
     excluded = set(isolated)
+    if replay:
+        data = json.loads(recorded.read_text(encoding="utf-8"))
+        names = {load_manifest(spec.manifest).name: index for index, spec in enumerate(specs)}
+        members = data.get("members") if isinstance(data, dict) else None
+        environment = data.get("environment") if isinstance(data, dict) else None
+        if (
+            not isinstance(data, dict)
+            or data.get("format") != "dinkster.inference-process/1"
+            or not isinstance(members, list)
+            or any(not isinstance(name, str) or name not in names for name in members)
+            or len(set(members)) != len(members)
+            or (not members and environment is not None)
+        ):
+            raise CompositionError("invalid recorded inference process membership")
+        if not members:
+            return tuple(specs)
+        if not isinstance(environment, str) or environment not in members:
+            raise CompositionError("recorded inference environment must name a member")
+        indices = tuple(names[name] for name in members)
+        for index in indices:
+            spec = specs[index]
+            manifest = load_manifest(spec.manifest)
+            if (
+                spec.in_process
+                or manifest.name in excluded
+                or spec.asset_vault_write
+                or manifest.sandbox.network
+                or manifest.sandbox.writable_mounts
+            ):
+                raise CompositionError(
+                    f"recorded inference member {manifest.name!r} requires isolated hosting"
+                )
+        return _group_members(specs, indices, names[environment])
     # A shared worker must use one real, already-provisioned environment,
     # not a PYTHONPATH overlay of incompatible private site-packages.
     candidates = [
@@ -446,6 +526,12 @@ def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[P
             )
     if len(members) < 2:
         return tuple(specs)
+    return _group_members(specs, members, primary)
+
+
+def _group_members(
+    specs: list[PackSpec], members: tuple[int, ...], primary: int
+) -> tuple[PackSpec, ...]:
     manifests = tuple(specs[index].manifest for index in members)
     require_catalog = all(specs[index].require_catalog for index in members)
     if not require_catalog:

@@ -1648,6 +1648,15 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
             [["healthy"], [], []] if pack_route == "command" else [["healthy"]] * 3
         )
         assert all(
+            json.loads(row["metadata"]["inference-process.json"])
+            == {
+                "format": "dinkster.inference-process/1",
+                "members": [],
+                "environment": None,
+            }
+            for row in snapshots
+        )
+        assert all(
             json.loads(row["metadata"]["dinkster.lock"])["packs"] == [] for row in snapshots[:2]
         )
         assert Lockfile.from_record_json(snapshots[2]["metadata"]["dinkster.lock"]) == Lockfile.of(

@@ -715,8 +715,9 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
         ("captured", "writable-mounts"),
     ],
 )
+@pytest.mark.parametrize("recorded", [False, True])
 def test_generation_resident_models_cross_packs_without_sharing_unrelated_workers(
-    tmp_path: Path, source_kind: str, restriction: str | None
+    tmp_path: Path, source_kind: str, restriction: str | None, recorded: bool
 ) -> None:
     import json
     import subprocess
@@ -839,6 +840,28 @@ NODES = [*{nodes}, ProcessId]
             interpreter=sys.executable,
         )
         assert report.ok, report.findings
+    if recorded:
+        command = [
+            sys.executable,
+            "-m",
+            "dinkster.manager",
+            "--root",
+            "",
+            "prepare-inference",
+            "--generation",
+            str(generation),
+        ]
+        if restriction == "isolated":
+            command.extend(["--isolated-inference-pack", "dinkster-conditioning"])
+        prepared = subprocess.run(command, capture_output=True, text=True)
+        assert prepared.returncode == 0, prepared.stderr
+        membership = json.loads((generation / "inference-process.json").read_text())
+        assert set(membership["members"]) == (
+            {"dinkster-models", "dinkster-conditioning"} if restriction is None else set()
+        )
+        assert membership["environment"] == (
+            "dinkster-conditioning" if restriction is None else None
+        )
     (generation / "generation.json").write_text(
         json.dumps(
             {

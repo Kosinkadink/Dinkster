@@ -1,3 +1,8 @@
+# Recorded shared inference membership
+
+- Public preparation records the selected first-party members and interpreter before generation sealing. Serving replays that membership; the same resident execution, unrelated isolation, opt-out and grant-refusal controls pass through recorded and existing generation paths (12 cases).
+- Signed public setup/update/install/exact-restore controls preserve the recorded membership in software history (3 cases). Automatic third-party dependency admission and refused-node reasons remain outside this measured behavior.
+
 # Persisted inference pack exclusions
 
 - Setup, update and development accept `--inference-pack PACK=isolated` and `PACK=auto`. Public setup/update/pack-install/exact-restore cases preserve exclusions or explicitly restore automatic placement. Repair and cross-volume relocation preserve exclusions.
