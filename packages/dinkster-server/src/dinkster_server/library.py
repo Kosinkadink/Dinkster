@@ -216,6 +216,9 @@ class ServerLibrary:
     receipts: PublicAcquisitionReceiptStore | None = None
     #: Current trusted declarations, kept separate from advisory provenance.
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
+    acquire_model: (
+        Callable[[AssetNeed, str, Callable[[AssetRef, str], None]], AcquisitionResult] | None
+    ) = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Explicit host configuration, never a client-selected filesystem target.
@@ -1022,7 +1025,7 @@ def acquire_library_asset(
     observation_id = uuid.uuid4().hex
     journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
 
-    def prepare(source: AssetSource, size: int) -> None:
+    def prepare(source: AssetSource, size: int, ref: AssetRef | None = None) -> None:
         origin = {"kind": "unknown"}
         if isinstance(source, RemoteSource):
             url = urlsplit(source.url)
@@ -1033,7 +1036,7 @@ def acquire_library_asset(
         name = need.name.replace("\\", "/").rsplit("/", 1)[-1]
         if not name or name in {".", ".."}:
             name = need.digest.split(":", 1)[1]
-        ref = AssetRef(need.digest, name, size, need.media_type, "")
+        ref = ref or AssetRef(need.digest, name, size, need.media_type, "")
         _write_asset_observation_journal(
             journal,
             {
@@ -1048,6 +1051,7 @@ def acquire_library_asset(
             },
         )
 
+    model_acquire = library.acquire_model
     result = acquire_need(
         need,
         library.vault,
@@ -1061,6 +1065,13 @@ def acquire_library_asset(
         ),
         receipts=library.receipts,
         before_publish=prepare,
+        remote_acquire=(
+            lambda remote_need: model_acquire(
+                remote_need, project, lambda ref, url: prepare(RemoteSource(url), ref.size, ref)
+            )
+        )
+        if model_acquire is not None and need.kind.startswith("model/")
+        else None,
     )
     if result.ok and journal.exists():
         recover_asset_observations(library, journals=(journal,))

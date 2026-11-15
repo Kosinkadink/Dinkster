@@ -656,21 +656,8 @@ class MountTable:
         try:
             if not row.mount.path.is_dir():
                 raise AssetError(f"asset library root is not a directory: {row.mount.path}")
-            library = row.library
-            if library is None:
-                index_path = (
-                    self._index_root / f"{row.mount.id}.json"
-                    if self._index_root is not None
-                    else None
-                )
-                library = LocalAssetLibrary(
-                    row.mount.path,
-                    namespace=f"{MOUNT_NAMESPACE}/{row.mount.id}",
-                    index_path=index_path,
-                    legacy_index_path=(
-                        row.mount.path / INDEX_NAME if index_path is not None else None
-                    ),
-                )
+            with self._lock:
+                library = self._library_for(row)
 
             with self._lock:
                 if self._rows.get(mount_id) is row:
@@ -715,6 +702,28 @@ class MountTable:
             row.scan_started = None
             self.write_snapshot()
         return count
+
+    def _library_for(self, row: _MountRow) -> LocalAssetLibrary:
+        if row.library is None:
+            index_path = (
+                self._index_root / f"{row.mount.id}.json" if self._index_root is not None else None
+            )
+            row.library = LocalAssetLibrary(
+                row.mount.path,
+                namespace=f"{MOUNT_NAMESPACE}/{row.mount.id}",
+                index_path=index_path,
+                legacy_index_path=row.mount.path / INDEX_NAME if index_path is not None else None,
+            )
+        return row.library
+
+    def refresh_publication(self, mount_id: str) -> None:
+        """Expose verified writer records without waiting for the mount's full scan."""
+        with self._lock:
+            row = self._rows.get(mount_id)
+            if row is None:
+                raise MountsError(f"unknown mount: {mount_id!r}")
+            self._library_for(row).refresh_writes()
+        self.write_snapshot()
 
     def entries(self, mount_id: str) -> tuple[AssetEntry, ...]:
         """Entries indexed so far for one mount (empty until scanning starts)."""
@@ -767,9 +776,10 @@ class MountTable:
         return library.list_folder(prefix)
 
     def writable_root(self, mount_id: str) -> Path:
-        """MountWriteAuthority (engine-side): the root of a READY readwrite
-        mount, or a refusal that names why - the same contract workers get
-        from MountSnapshotWriter."""
+        """Require a writable grant; model publication need not await hash enrichment.
+
+        Other saves retain the ready-state gate used by MountSnapshotWriter.
+        """
         with self._lock:
             row = self._rows.get(mount_id)
             if row is None:
@@ -778,7 +788,11 @@ class MountTable:
                 raise AssetError(
                     f"mount {mount_id!r} is granted read-only; saving needs a readwrite mount"
                 )
-            if row.state != "ready":
+            if row.state != "ready" and not (
+                row.kind.startswith("model/")
+                and row.state in {"pending", "scanning"}
+                and row.mount.path.is_dir()
+            ):
                 raise AssetError(
                     f"mount {mount_id!r} is not ready (state {row.state!r}"
                     + (f": {row.error}" if row.error else "")

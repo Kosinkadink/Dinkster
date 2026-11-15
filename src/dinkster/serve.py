@@ -157,6 +157,7 @@ from .generation_api import GenerationModel, GenerationService, add_generation_r
 from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
+from .model_downloads import ModelDownloads, shared_model_mounts
 from .mounts_api import MountService, add_mount_routes
 from .pack_install_api import add_pack_install_routes
 from .reload_api import add_reload_routes, apply_reload
@@ -1663,6 +1664,12 @@ def main(argv: list[str] | None = None) -> None:
                 redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         except MountsError as exc:
             raise SystemExit(str(exc)) from exc
+        if args.allow_mount_changes or args.generation is not None:
+            for mount in shared_model_mounts():
+                if mount_table.get(mount.id) is None:
+                    mount_table.add(mount, source="shared-models")
+                    sandbox_mounts.append(mount)
+                    redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         if mount_table.output_mount is None:
             output_mount = mount_table.get("output")
             if output_mount is not None and output_mount.mode == "readwrite":
@@ -1672,6 +1679,14 @@ def main(argv: list[str] | None = None) -> None:
             mounts_config,
             allow_changes=args.allow_mount_changes,
             restart_for_changes=args.sandbox_packs,
+        )
+        mount_service.projects.initialize(
+            mount_service.mount_ids(),
+            shared_defaults=tuple(
+                mount_id
+                for mount_id in mount_service.mount_ids()
+                if mount_table.source(mount_id) == "shared-models"
+            ),
         )
         # Publish the (initially empty - nothing has scanned yet) snapshot
         # and point THIS process at it: media I/O save nodes run in-process, and
@@ -1983,6 +1998,9 @@ def main(argv: list[str] | None = None) -> None:
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
                 import_mount=import_mount,
+                acquire_model=(
+                    ModelDownloads(mount_service, provenance).acquire if mount_service else None
+                ),
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.

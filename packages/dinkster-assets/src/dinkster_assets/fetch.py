@@ -203,7 +203,7 @@ def _open_pinned_https(
     raise PublicFetchDenied("public HTTPS connection has no approved destination")
 
 
-def _public_https_url(url: str) -> urllib.parse.SplitResult:
+def _public_https_url(url: str, *, allow_query: bool = False) -> urllib.parse.SplitResult:
     if (
         not url
         or url != url.strip()
@@ -221,6 +221,7 @@ def _public_https_url(url: str) -> urllib.parse.SplitResult:
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
+        and not allow_query
         or parsed.fragment
         or parsed.netloc.rsplit("@", 1)[-1].endswith(":")
         or (port is not None and not 1 <= port <= 65535)
@@ -252,6 +253,39 @@ def _content_length(headers: HTTPMessage) -> int | None:
     if size < 0:
         raise PublicFetchDenied("public HTTPS response has an invalid Content-Length")
     return size
+
+
+@contextlib.contextmanager
+def open_model_response(
+    url: str, *, timeout: float = DEFAULT_FETCH_TIMEOUT
+) -> Generator[HTTPSResponse]:
+    """Open a pinned public model transfer, permitting transient signed CDN queries.
+
+    This does not mint credential-free public acquisition evidence: model providers
+    may redirect to signed URLs which must never become durable source records.
+    """
+    current = url
+    seen: set[str] = set()
+    for _redirect in range(MAX_PUBLIC_REDIRECTS + 1):
+        parsed = _public_https_url(current, allow_query=True)
+        if current in seen:
+            raise PublicFetchDenied("model provider redirect loop")
+        seen.add(current)
+        addresses = _globally_routable_addresses(parsed.hostname or "", parsed.port or 443)
+        with _open_pinned_https(
+            current, addresses, {"User-Agent": "dinkster-model-download"}, timeout
+        ) as response:
+            if response.status in (301, 302, 303, 307, 308):
+                locations = response.headers.get_all("Location", [])
+                if len(locations) != 1 or not locations[0]:
+                    raise PublicFetchDenied("model provider redirect has no Location")
+                current = urllib.parse.urljoin(current, locations[0])
+                continue
+            if response.status != 200:
+                raise PublicFetchDenied(f"model provider returned status {response.status}")
+            yield response
+            return
+    raise PublicFetchDenied("model provider redirect limit exceeded")
 
 
 def fetch_public_asset(
