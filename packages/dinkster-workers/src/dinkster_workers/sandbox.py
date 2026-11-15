@@ -328,7 +328,7 @@ def _wsl_host_paths() -> tuple[str, ...]:
         mounts = Path("/proc/mounts").read_text().splitlines()
     except OSError as exc:
         raise SandboxUnavailable("cannot inspect WSL Windows drive mounts") from exc
-    windows_mounts = []
+    windows_mounts: list[str] = []
     for line in mounts:
         fields = line.split()
         if len(fields) >= 4 and (

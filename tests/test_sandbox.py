@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import socket
 import subprocess
 import sys
@@ -140,9 +141,7 @@ class TestBuildBwrapCommand:
         alias = tmp_path / "alias"
         alias.symlink_to(drive, target_is_directory=True)
         read_text = Path.read_text
-        monkeypatch.setattr(
-            sandbox_module.platform, "release", lambda: "6.6.87.2-microsoft-standard-WSL2"
-        )
+        monkeypatch.setattr(platform, "release", lambda: "6.6.87.2-microsoft-standard-WSL2")
         escaped_drive = str(drive).replace(" ", r"\040")
         monkeypatch.setattr(
             Path,
