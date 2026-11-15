@@ -185,9 +185,13 @@ def test_additive_registry_preparation_retains_sources_and_only_fetches_new_lock
         server.shutdown()
 
 
-@pytest.mark.parametrize("mode", ["captured", "live", "contributor"])
+@pytest.mark.parametrize("mode", ["captured", "live", "contributor", "git"])
 def test_development_inference_override_runs_selected_library_but_ordinary_install_refuses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, mode: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    mode: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Developers can run their local inference version without loosening ordinary installs."""
     from dinkster_supervisor.environment_development import (
@@ -229,7 +233,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
         ),
     )
     _wheel(universal_index, "fixture_gpu", "1.0", 43)
-    live = mode != "captured"
+    live = mode in {"live", "contributor"}
     contributor = mode == "contributor"
     monkeypatch.setenv("UV_NO_INDEX", "1")
     monkeypatch.setenv("UV_FIND_LINKS", str(index))
@@ -284,10 +288,62 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
     (validation / "not-engine-source.py").write_text("raise RuntimeError('validation only')\n")
     if os.name != "nt":
         (validation / "dinkster-inference-torch").symlink_to(library, target_is_directory=True)
+    selected_library = library
+    git_origins = None
+    acquisition = server = commit = None
+    if mode == "git":
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+
+        import pygit2
+        from dinkster_supervisor.environment_development import acquired_development_sources
+
+        server = request.getfixturevalue("git_server")
+        repository = pygit2.Repository(server["root"] / "source.git")
+        tree = pygit2.Index()
+        for path in library.rglob("*"):
+            if path.is_file():
+                payload = b"VALUE = 173\n" if path.name == "__init__.py" else path.read_bytes()
+                tree.add(
+                    pygit2.IndexEntry(
+                        path.relative_to(library).as_posix(),
+                        repository.create_blob(payload),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+        commit = str(
+            repository.create_commit(
+                "refs/heads/inference-capture",
+                signature,
+                signature,
+                "inference capture",
+                tree.write_tree(repository),
+                [],
+            )
+        )
+        repository.free()
+        acquisition = ExitStack()
+        request.addfinalizer(acquisition.close)
+        with monkeypatch.context() as no_git:
+            no_git.setenv("PATH", "")
+            acquired = acquisition.enter_context(
+                acquired_development_sources(
+                    SimpleNamespace(
+                        source=source,
+                        pack_source=[pack],
+                        library_source=[],
+                        inference=f"{server['url']}#ref={commit}",
+                    )
+                )
+            )
+        selected_library = acquired.library_source[0]
+        git_origins = acquired.git_origins
     selection["development"] = development_selection(
         source,
         () if contributor else (pack,),
-        (library,),
+        (selected_library,),
+        git_origins=git_origins,
         live_engine=mode == "live",
         live_libraries=(library,) if live else (),
         contributor=contributor,
@@ -307,7 +363,7 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
             [str(python), "-I", "-c", "import dinkster_inference; print(dinkster_inference.VALUE)"],
             text=True,
         )
-        assert output.strip() == "83"
+        assert output.strip() == ("173" if mode == "git" else "83")
         subprocess.run(
             [
                 str(python),
@@ -362,14 +418,89 @@ def test_development_inference_override_runs_selected_library_but_ordinary_insta
             ],
             text=True,
         )
-        assert output.strip() == ("257 149" if live else "83 83")
+        assert output.strip() == ("257 149" if live else "83 173" if mode == "git" else "83 83")
         assert "dinkster-inference==0.1.2.dev3" in constraints.read_text()
         notice = capsys.readouterr().err
         assert "overrides dinkster-inference pin 0.1.1 with local version 0.1.2.dev3" in notice
+        if mode == "captured":
+            _wheel(index, "dinkster_inference", "0.1.3", 97)
+            explicit = {
+                **selection,
+                "inference": {"version": "0.1.3", "requested": "0.1.3", "fallback": False},
+            }
+            selected = prepare_local(engine, explicit, store)
+            selected_python = prepare_engine_interpreter(
+                tmp_path / "selected-generation",
+                store=store,
+                base=selected["base"],
+                constraints=selected["constraints"],
+            )
+            assert (
+                subprocess.check_output(
+                    [
+                        str(selected_python),
+                        "-I",
+                        "-c",
+                        "import dinkster_inference as i; print(i.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "97"
+            )
+            manifest = json.loads(
+                (
+                    object_path(store / "engines", selected["engine_release"])
+                    / "release-manifest.json"
+                ).read_text()
+            )
+            assert manifest["inference"] == explicit["inference"]
+            assert "dinkster-inference==0.1.3" in selected["constraints"].read_text()
         ordinary = {key: value for key, value in selection.items() if key != "development"}
         with pytest.raises(EnvironmentError, match="No solution found"):
             prepare_local(engine, ordinary, store, library_wheels=wheels)
     assert content_digest(source / "uv.lock") == selection["lockDigest"]
+    if mode == "git":
+        from dinkster_supervisor.environment_history import history, prepare_entry, publish_entry
+        from dinkster_supervisor.environment_restore import restore_entry
+        from dinkster_supervisor.environment_state import Journal
+
+        assert acquisition is not None and server is not None and commit is not None
+        root = tmp_path / "recovery-project"
+        build_generation(root=root, number=1, store=store, **inputs)
+        (root / "store").write_text(str(store))
+        (root / "project.json").write_text(json.dumps({"format": "dinkster.project/1"}))
+        set_current(root, 1)
+        first = prepare_entry(root, root / "generations/1", operation="1", reason="setup")
+        publish_entry(root, first)
+        Journal("setup", None, 1, "complete", history_entry=first).write(root / "journal/1.json")
+        acquisition.close()
+        assert not selected_library.exists()
+        (server["root"] / "source.git").rename(server["root"] / "unavailable.git")
+        shutil.rmtree(source)
+        shutil.rmtree(library)
+        shutil.rmtree(index)
+        monkeypatch.delenv("UV_FIND_LINKS")
+        shutil.rmtree(root / "generations/1/python")
+        restored = restore_entry(root, 1, apply=True)
+        assert restored["exact"] is True
+        rebuilt = root / "generations" / str(restored["current"])
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(rebuilt)),
+                    "-I",
+                    "-c",
+                    "import dinkster_inference; print(dinkster_inference.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "173"
+        )
+        assert history(root)[-1]["snapshot"] == first["snapshot"]
+        manifest = json.loads((rebuilt / "engine-manifest.json").read_text())
+        origin = next(row for row in manifest["development"]["sources"] if row["kind"] == "library")
+        assert origin["git"]["commit"] == commit
+        assert origin["git"]["contentDigest"] == origin["contentDigest"]
 
 
 def test_pack_lock_resolution_does_not_expand_wheel_sources(

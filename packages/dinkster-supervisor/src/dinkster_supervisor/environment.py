@@ -514,6 +514,21 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             raise EnvironmentError(
                 "adoption requires one explicit --pack-lock for each recorded pack"
             )
+    inference = None
+    if getattr(args, "inference", None):
+        from .environment_inference import resolve_inference
+
+        if offline:
+            raise EnvironmentError("explicit inference selection requires online release metadata")
+        inference = resolve_inference(args.inference, cast("str | None", package_index))
+        approval = (
+            "sha256:" + hashlib.sha256(json.dumps(inference, sort_keys=True).encode()).hexdigest()
+        )
+        if getattr(args, "inference_approval", None) not in (None, approval):
+            raise EnvironmentError("inference selection changed after planning; request a new plan")
+        result.update(inference=inference, inferenceApproval=approval)
+    elif getattr(args, "inference_approval", None):
+        raise EnvironmentError("--inference-approval requires --inference")
     local = None
     development = None
     catalog = None
@@ -532,6 +547,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         local = local_selection(
             args.source.resolve(), variant, args.variants or DEFAULT_VARIANTS, args.python
         )
+        if inference is not None:
+            local["inference"] = inference
+            local["packageIndex"] = package_index
         if developing:
             from .environment_development import development_selection
 
@@ -666,7 +684,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             "build an offline generation, check health, then activate; retain the previous tree",
         ]
         if custom is None and selection is None:
-            inputs = runtime_inputs(catalog, variant, store)
+            inputs = runtime_inputs(catalog, variant, store, inference=inference)
             missing_bytes = sum(cast("int", row["size"]) for row in inputs if not row["cached"])
             result["runtimeInputs"] = inputs
             result["runtimeDownloadBytes"] = missing_bytes
@@ -700,6 +718,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 "keep the installed release base and pinned frontend; reuse verified locked wheels",
             ]
         )
+    if inference is not None:
+        plan.append(inference["notice"])
     if project_settings is not None and settings is not None:
         plan.append(
             f"change project selection from {settings['channel']}/{settings['variant']} "
@@ -930,6 +950,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     if custom is not None
                     else None,
                     offline=offline,
+                    inference=inference,
                 )
                 if source_engine is not None:
                     from .environment_sources import prepare_source_engine
@@ -1146,6 +1167,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                         "dependencyBase": catalog.bases[dependency_variant],
                         "packageIndex": package_index,
                         "mirrors": list(mirrors),
+                        **({"inference": inference} if inference is not None else {}),
                     }
                     if catalog is not None
                     else None,
@@ -1874,6 +1896,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         "--contributor", action="store_true", help="run the live engine with development tools"
     )
     develop.add_argument("--library-source", action="append", default=[])
+    develop.add_argument(
+        "--inference", help="exact inference version/full commit, or public git URL with ref"
+    )
     develop.add_argument("--live-engine", action="store_true", help="run engine from its folder")
     develop.add_argument(
         "--live-pack",
@@ -1897,9 +1922,14 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     for command in (setup, update):
         command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
         command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
+        command.add_argument("--inference", help="exact inference version or full source commit")
         command.add_argument("--engine-release", help="require this exact published engine digest")
         command.add_argument("--base-id", help="require this exact published base digest")
     for command in (setup, update, develop):
+        command.add_argument(
+            "--inference-approval",
+            help="require the inference selection digest from a previous plan",
+        )
         command.add_argument("--mirror", action="append", default=[])
         command.add_argument(
             "--package-index", help="simple package index for exact locked third-party wheels"

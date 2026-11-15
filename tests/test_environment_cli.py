@@ -2046,7 +2046,7 @@ def test_development_plan_fingerprints_sources_and_refuses_changed_approval(
     assert not store.exists()
 
 
-@pytest.mark.parametrize("git_kind", ["engine", "pack", "library"])
+@pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference"])
 def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch
 ):
@@ -2067,7 +2067,11 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text('[pack]\nname="unpublished-pack"\n')
     library.mkdir()
-    (library / "pyproject.toml").write_text('[project]\nname="unpublished-helper"\n')
+    (library / "pyproject.toml").write_text(
+        '[project]\nname="dinkster-inference"\nversion="0.1.3.dev7"\n'
+        if git_kind == "inference"
+        else '[project]\nname="unpublished-helper"\n'
+    )
     repository = pygit2.Repository(git_server["root"] / "source.git")
     index = pygit2.Index()
     for kind, folder in (("engine", engine), ("pack", pack), ("library", library)):
@@ -2092,16 +2096,17 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     repository.free()
     monkeypatch.setenv("PATH", "")
     arguments = ["develop", "--root", str(tmp_path / "project")]
+    selected_kind = "library" if git_kind == "inference" else git_kind
     for kind, folder, option in (
         ("engine", engine, "--source"),
         ("pack", pack, "--pack-source"),
-        ("library", library, "--library-source"),
+        ("library", library, "--inference" if git_kind == "inference" else "--library-source"),
     ):
         arguments.extend(
             [
                 option,
                 f"{git_server['url']}#ref=development-{git_kind}&subdirectory={kind}"
-                if kind == git_kind
+                if kind == selected_kind
                 else str(folder),
             ]
         )
@@ -2119,7 +2124,9 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     plan = json.loads(capsys.readouterr().out)
     assert main([*arguments, "--approve", plan["sourceApproval"]]) == 0
     repeated = json.loads(capsys.readouterr().out)
-    selected = next(row for row in repeated["development"]["sources"] if row["kind"] == git_kind)
+    selected = next(
+        row for row in repeated["development"]["sources"] if row["kind"] == selected_kind
+    )
     assert selected["git"]["requestedRef"] == f"development-{git_kind}"
     assert selected["git"]["contentDigest"] == selected["contentDigest"]
     changed = [
@@ -2135,6 +2142,196 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
         assert live_code == 0
         assert live_plan["development"]["sources"][0]["live"] is True
     assert not (tmp_path / "project").exists()
+
+
+@pytest.mark.parametrize("operation", ["develop", "setup", "update"])
+def test_inference_requests_report_oldest_containing_release(
+    tmp_path: Path, git_server, capsys, monkeypatch, operation: str
+):
+    """A missing prerelease cannot silently select an unrelated or newer stable release."""
+    import pygit2
+    from dinkster_supervisor import environment_inference
+
+    from dinkster.cli import main
+
+    source = Path(__file__).resolve().parents[1]
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text('[pack]\nname="example"\n')
+    index = tmp_path / "index"
+    index.mkdir()
+    page = index / "dinkster-inference"
+    versions = ["0.1.0", "0.2.0", "0.3.0", "0.3.0.dev4"]
+    page.write_text(
+        "".join(f'<a href="dinkster_inference-{v}-py3-none-any.whl">{v}</a>' for v in versions)
+    )
+    repository = pygit2.init_repository(
+        git_server["root"] / f"inference-{operation}.git", bare=True
+    )
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid")
+    parent = []
+    commits = {}
+    for version in ("0.1.0", "0.2.0.dev3", "0.2.0", "0.3.0", "0.3.0.dev4"):
+        tree = repository.TreeBuilder()
+        tree.insert("version", repository.create_blob(version.encode()), pygit2.GIT_FILEMODE_BLOB)
+        commit = repository.create_commit(
+            "refs/heads/inference-requests", signature, signature, version, tree.write(), parent
+        )
+        repository.create_tag(
+            "v" + version, commit, pygit2.enums.ObjectType.COMMIT, signature, version
+        )
+        commits[version] = str(commit)
+        parent = [commit]
+    repository.set_head("refs/heads/inference-requests")
+    repository.free()
+    monkeypatch.setattr(
+        environment_inference,
+        "INFERENCE_REPOSITORY",
+        git_server["url"].replace("source.git", f"inference-{operation}.git"),
+    )
+    monkeypatch.setenv("PATH", "")
+    arguments = [
+        "develop",
+        "--root",
+        str(tmp_path / "project"),
+        "--source",
+        str(source),
+        "--pack-source",
+        str(pack),
+        "--variant",
+        {"win32": "win-cpu", "darwin": "mac-arm64"}.get(sys.platform, "linux-cpu"),
+        "--python",
+        sys.executable,
+        "--package-index",
+        str(index),
+        "--plan",
+        "--json",
+    ]
+    root = tmp_path / "project"
+    setup_engine_packages: list[dict[str, str]] = []
+    if operation != "develop":
+        mirror = tmp_path / "mirror"
+        _, engine, channel = _mirror(mirror)
+        if operation == "setup":
+            engine["defaultPacks"] = {"fixture-pack": "1.0"}
+            data = _json(engine)
+            identity = hashlib.sha256(data).hexdigest()
+            previous = mirror / channel["engine"]["locations"][0]["path"]
+            release = mirror / "engine" / identity
+            shutil.copytree(previous.parent, release)
+            (release / "release-manifest.json").write_bytes(data)
+            channel["engine"].update(
+                release="sha256:" + identity,
+                locations=[{"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}],
+            )
+            (mirror / "channels/main.json").write_bytes(_json(channel))
+            monkeypatch.setattr(
+                "dinkster.registries.plan_registry_sources",
+                lambda *args, **kwargs: (
+                    setup_engine_packages.append(kwargs["engine_packages"]) or Lockfile.of(()),
+                    (),
+                ),
+            )
+        root = tmp_path / "project"
+        arguments = [
+            operation,
+            "--root",
+            str(root),
+            "--mirror",
+            str(mirror),
+            "--channel",
+            "main",
+            "--variant",
+            "fixture-cpu",
+            "--package-index",
+            str(index),
+            "--plan",
+            "--json",
+        ]
+        if operation == "update":
+            _generation(root, 1)
+            (root / "current").write_text("1\n")
+            (root / "project.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.project/1",
+                        "channel": "main",
+                        "variant": "fixture-cpu",
+                        "mirrors": [str(mirror)],
+                        "packageIndex": str(index),
+                        "port": 58991,
+                    }
+                )
+            )
+    for request in ("0.2.0.dev3", commits["0.2.0.dev3"]):
+        assert main([*arguments, "--inference", request]) == 0
+        plan = json.loads(capsys.readouterr().out)
+        assert plan["inference"]["version"] == "0.2.0"
+        assert plan["inference"]["requestedCommit"] == commits["0.2.0.dev3"]
+        assert plan["inference"]["sourceCommit"] == commits["0.2.0"]
+        assert plan["inference"]["fallback"] is True
+        assert any("oldest containing tagged release 0.2.0" in line for line in plan["plan"])
+        if operation == "setup":
+            assert setup_engine_packages[-1]["dinkster-inference"] == "0.2.0"
+    before = {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+    original_page = page.read_text()
+    changed_page = original_page.replace(
+        '<a href="dinkster_inference-0.2.0-py3-none-any.whl">0.2.0</a>', ""
+    )
+    apply_arguments = [argument for argument in arguments if argument != "--plan"]
+    with monkeypatch.context() as approval_patch:
+        if operation == "setup":
+            resolve = environment_inference.resolve_inference
+
+            def change_after_planning(*args, **kwargs):
+                selected = resolve(*args, **kwargs)
+                page.write_text(changed_page)
+                return selected
+
+            approval_patch.setattr(
+                environment_inference, "resolve_inference", change_after_planning
+            )
+            approval_arguments = []
+        else:
+            page.write_text(changed_page)
+            approval_arguments = (
+                ["--approve", plan["sourceApproval"]]
+                if operation == "develop"
+                else ["--inference-approval", plan["inferenceApproval"]]
+            )
+        assert (
+            main(
+                [
+                    *apply_arguments,
+                    "--inference",
+                    commits["0.2.0.dev3"],
+                    "--yes",
+                    *approval_arguments,
+                ]
+            )
+            == 1
+        )
+        refused = capsys.readouterr()
+        error = refused.err if operation == "setup" else json.loads(refused.out)["error"]
+        assert "changed" in error and "request a new plan" in error
+    assert {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    } == before
+    assert root.exists() == (operation == "update")
+    page.write_text(original_page)
+    assert main([*arguments, "--inference", "0.3.0.dev4"]) == 0
+    assert json.loads(capsys.readouterr().out)["inference"]["version"] == "0.3.0.dev4"
+    page.write_text(page.read_text().replace("0.3.0.dev4", "0.9.0.dev1"))
+    assert main([*arguments, "--inference", commits["0.3.0.dev4"]]) == 1
+    refused = capsys.readouterr()
+    error = refused.err if operation == "setup" else json.loads(refused.out)["error"]
+    assert "no published tagged release contains" in error
+    if operation == "update":
+        assert (root / "current").read_text() == "1\n"
+    else:
+        assert not (tmp_path / "project").exists()
 
 
 @pytest.mark.parametrize("live", [False, True])

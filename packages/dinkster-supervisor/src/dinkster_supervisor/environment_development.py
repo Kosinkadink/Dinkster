@@ -124,6 +124,13 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
         selected.source = acquire(args.source)
         selected.pack_source = [acquire(value) for value in args.pack_source]
         selected.library_source = [acquire(value) for value in args.library_source]
+        if args.inference and "://" in args.inference:
+            inference = acquire(args.inference)
+            project = tomllib.loads((inference / "pyproject.toml").read_text())["project"]
+            if project.get("name", "").replace("_", "-").lower() != "dinkster-inference":
+                raise EnvironmentError("--inference git source must build dinkster-inference")
+            selected.library_source.append(inference)
+            selected.inference = None
         yield selected
 
 

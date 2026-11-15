@@ -561,7 +561,11 @@ def validate_dependency_base(selection: object, base: dict[str, object]) -> None
 
 
 def engine_package_versions(
-    engine: dict[str, object], variant: str, base: dict[str, object] | None = None
+    engine: dict[str, object],
+    variant: str,
+    base: dict[str, object] | None = None,
+    *,
+    inference: dict[str, object] | None = None,
 ) -> dict[str, str]:
     """Describe the target engine's shared packages without inspecting the planning host."""
     versions: dict[str, str] = {}
@@ -588,15 +592,19 @@ def engine_package_versions(
                 for row in cast("list[dict[str, object]]", base["wheels"])
             }
         )
+    if inference is not None:
+        versions["dinkster-inference"] = cast("str", inference["version"])
     return versions
 
 
-def engine_constraints(engine: dict[str, object], variant: str) -> str:
+def engine_constraints(
+    engine: dict[str, object], variant: str, *, inference: dict[str, object] | None = None
+) -> str:
     """Use the same exact variant requirements for native pack builds and user installs."""
     selections = cast("dict[str, object]", engine["dependencies"])
     additions = [
         f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
-        for row in dependency_wheels(selections.get(variant))
+        for row in dependency_wheels(inference or selections.get(variant))
     ]
     for row in artifact_rows(engine["artifacts"], "name"):
         filename = cast("str", row["name"])
@@ -606,14 +614,18 @@ def engine_constraints(engine: dict[str, object], variant: str) -> str:
     return "\n".join(additions) + "\n"
 
 
-class _WheelLinks(HTMLParser):
+class WheelLinks(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.links: list[str] = []
+        self.yanked: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "a":
-            self.links.extend(value for key, value in attrs if key == "href" and value is not None)
+            links = [value for key, value in attrs if key == "href" and value is not None]
+            self.links.extend(links)
+            if any(key == "data-yanked" for key, _ in attrs):
+                self.yanked.update(links)
 
 
 def dependency_source(row: dict[str, object], package_index: str | None) -> str:
@@ -621,7 +633,7 @@ def dependency_source(row: dict[str, object], package_index: str | None) -> str:
         return cast("str", row["url"]).rsplit("/", 1)[0]
     project = cast("str", row["name"])
     page = package_index.rstrip("/") + "/" + project + "/"
-    links = _WheelLinks()
+    links = WheelLinks()
     links.feed(read_metadata(package_index, project).decode("utf-8"))
     matches: set[str] = set()
     for link in links.links:
@@ -637,7 +649,11 @@ def dependency_source(row: dict[str, object], package_index: str | None) -> str:
 
 
 def runtime_inputs(
-    catalog: EnvironmentCatalog, variant: str, store: Path
+    catalog: EnvironmentCatalog,
+    variant: str,
+    store: Path,
+    *,
+    inference: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], ...]:
     """Inspect exact runtime payloads without probing remote sources or writing cache files."""
     if (
@@ -681,9 +697,19 @@ def runtime_inputs(
                 object_path(store / "wheels", "sha256:" + cast("str", row["sha256"])) / name, row
             )
     if catalog.engine.get("dependencies") is not None:
-        selection = cast("dict[str, object]", catalog.engine["dependencies"]).get(variant)
+        selection = (
+            inference
+            if inference is not None and "wheels" in inference
+            else cast("dict[str, object]", catalog.engine["dependencies"]).get(variant)
+        )
         validate_dependency_base(selection, base)
         for row in dependency_wheels(selection):
+            if (
+                inference is not None
+                and row["name"] == "dinkster-inference"
+                and "wheels" not in inference
+            ):
+                continue
             if row["name"] not in owned:
                 record(
                     object_path(store / "wheels", "sha256:" + cast("str", row["sha256"]))
@@ -709,6 +735,7 @@ def acquire(
     base: dict[str, object] | None = None,
     base_sources: tuple[str, ...] | None = None,
     offline: bool = False,
+    inference: dict[str, object] | None = None,
 ) -> Path:
     """Populate verified artifacts and merged requirements under a held store writer lock."""
     if (
@@ -720,7 +747,9 @@ def acquire(
         if base is not None or base_sources is not None:
             raise EnvironmentError("offline runtime acquisition requires a published base")
         missing = [
-            str(row["path"]) for row in runtime_inputs(catalog, variant, store) if not row["cached"]
+            str(row["path"])
+            for row in runtime_inputs(catalog, variant, store, inference=inference)
+            if not row["cached"]
         ]
         if missing:
             raise EnvironmentError(
@@ -747,7 +776,11 @@ def acquire(
     selections = catalog.engine.get("dependencies")
     selected = None
     if selections is not None:
-        selection = cast("dict[str, object]", selections).get(variant)
+        selection = (
+            inference
+            if inference is not None and "wheels" in inference
+            else cast("dict[str, object]", selections).get(variant)
+        )
         validate_dependency_base(selection, published_base)
         selected = dependency_wheels(selection)
     assert base_sources is not None
@@ -790,6 +823,12 @@ def acquire(
     if selected is not None:
         for row in selected:
             name, sha = cast("str", row["filename"]), cast("str", row["sha256"])
+            if (
+                inference is not None
+                and row["name"] == "dinkster-inference"
+                and row["version"] != inference["version"]
+            ):
+                continue
             if row["name"] not in owned:
                 destination = (
                     object_path(
@@ -826,6 +865,46 @@ def acquire(
         nonbase_wheels.append(destination)
     requirements = frontend_requirements(requirements, catalog.engine, catalog.document)
     context = published_base if custom else None
+    if inference is not None:
+        if selected is None:
+            raise EnvironmentError("explicit inference requires a published dependency lock")
+        from .environment_inference import resolve_inference_wheels
+        from .environment_state import interpreter
+
+        if "wheels" not in inference:
+            if offline:
+                raise EnvironmentError(
+                    "offline inference selection requires retained wheel identities"
+                )
+            base_wheels = tuple(
+                object_path(store / "wheels", "sha256:" + cast("str", row["sha256"]))
+                / cast("str", row["filename"])
+                for row in artifact_rows(base["wheels"], "filename")
+            )
+            resolve_inference_wheels(
+                inference,
+                requirements,
+                (*nonbase_wheels, *base_wheels),
+                selected,
+                python=interpreter(object_path(store / "bases", cast("str", base["id"]))),
+                store=store,
+                package_index=package_index,
+            )
+            inference["base"] = published_base["id"]
+        validate_dependency_base(inference, published_base)
+        override_rows = dependency_wheels(inference)
+        if [row["version"] for row in override_rows if row["name"] == "dinkster-inference"] != [
+            inference["version"]
+        ]:
+            raise EnvironmentError("inference wheel selection differs from the requested version")
+        nonbase_wheels.extend(
+            object_path(store / "wheels", "sha256:" + cast("str", row["sha256"]))
+            / cast("str", row["filename"])
+            for row in override_rows
+            if row["name"] not in owned
+        )
+        requirements = engine_constraints(catalog.engine, variant, inference=inference)
+        requirements = frontend_requirements(requirements, catalog.engine, catalog.document)
     if selected is not None or custom:
         validate_base_requirements(tuple(nonbase_wheels), base, published_base=context)
     merged = effective_constraints(

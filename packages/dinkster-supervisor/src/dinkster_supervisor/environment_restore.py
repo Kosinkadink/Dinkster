@@ -263,6 +263,7 @@ def restore_entry(
                         package_index=package_index,
                         base=base if custom else None,
                         base_sources=sources["base"] if custom else None,
+                        inference=cast("dict[str, object] | None", provenance.get("inference")),
                     )
                     if not local
                     else inputs / "constraints.txt"
