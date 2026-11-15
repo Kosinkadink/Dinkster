@@ -3158,8 +3158,9 @@ def main() -> None:
         if args.endpoint != [f"pipe:{index}" for index in range(len(args.endpoint))]:
             parser.error("pipe endpoints must be consecutive and cannot mix with socket endpoints")
         from ._pipe_transport import prepare_child_pipes
-        from ._windows_loop import worker_loop
+        from ._windows_loop import install_worker_loop_policy, worker_loop
 
+        install_worker_loop_policy()
         prepare_child_pipes(len(args.endpoint))
         loop_factory = worker_loop
     # Launched children inherit the host environment and stderr, so the

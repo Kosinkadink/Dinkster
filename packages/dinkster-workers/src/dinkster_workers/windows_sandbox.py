@@ -7,21 +7,25 @@ import contextlib
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from ._pipe_transport import bridge_process
+from ._pipe_transport import bridge_process, pipe_command
+from .egress import EGRESS_PROXY_ENV, EgressProxy
 from .interpreter import module_command
 from .launch import HOST_OWNED_ENVIRONMENT, LaunchSpec
 from .sandbox import (
     SandboxError,
     SandboxPolicy,
     SandboxUnavailable,
-    _interpreter_mounts,
-    _validate_protected_binds,
+    interpreter_mounts,
+    validate_protected_binds,
 )
+from .transport import TOKEN_ENV
 
 MXC_COMMIT = "c66201839d63cae2239db5e92f1f1d6076cf5181"
 MXC_EXECUTABLE_ENV = "DINKSTER_MXC_EXECUTABLE"
@@ -48,7 +52,8 @@ def detect_windows_sandbox() -> WindowsSandboxCapability:
         )
     try:
         metadata = json.loads(executable.with_name("mxc-build.json").read_text(encoding="utf-8"))
-        digest = hashlib.file_digest(executable.open("rb"), "sha256").hexdigest()
+        with executable.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
         if (
             metadata.get("format") != "dinkster.mxc/1"
             or metadata.get("commit") != MXC_COMMIT
@@ -82,37 +87,35 @@ def detect_windows_sandbox() -> WindowsSandboxCapability:
 
 
 def build_windows_policy(
-    spec: LaunchSpec, policy: SandboxPolicy
+    spec: LaunchSpec, policy: SandboxPolicy, *, proxy_url: str | None = None
 ) -> tuple[dict[str, object], list[str]]:
+    proxy_address: str | None = None
     if policy.egress_allowlist:
-        raise SandboxError(
-            "Windows sandbox refuses network grants: MXC proxy mode permits DNS lookups "
-            "outside the origin allowlist (MXC issue 1666). Use the Desktop WSL2 option."
-        )
+        if proxy_url is None:
+            raise SandboxError("Windows network grants require a private per-worker proxy")
+        proxy = urlsplit(proxy_url)
+        if proxy.scheme != "http" or proxy.hostname != "127.0.0.1" or proxy.port is None:
+            raise SandboxError("Windows egress proxy must listen on host loopback")
+        proxy_address = f"http://127.0.0.1:{proxy.port}"
+    elif proxy_url is not None:
+        raise SandboxError("Windows sandbox refuses a proxy without an origin grant")
     if spec.use_shm:
         raise SandboxError("Windows sandbox transports values over pipes, not named shared memory")
-    command = list(spec.command)
-    endpoints: list[str] = []
-    for index, argument in enumerate(command[:-1]):
-        if argument == "--endpoint":
-            endpoints.append(command[index + 1])
-            command[index + 1] = f"pipe:{len(endpoints) - 1}"
-    if not endpoints:
-        raise SandboxError("Windows pack sandbox requires a worker boundary endpoint")
-    interpreter_roots, _ = _interpreter_mounts(spec.python)
+    command, endpoints = pipe_command(spec.command)
+    interpreter_roots, _ = interpreter_mounts(spec.python)
     readonly = [*interpreter_roots, str(spec.pack_root), *policy.ro_binds]
     writable = [str(spec.endpoint_dir), *policy.rw_binds]
     for path in (*readonly, *writable):
         resolved = Path(path).resolve()
         if not Path(path).is_absolute() or resolved == Path(resolved.anchor):
             raise SandboxError(f"sandbox refuses broad or relative path grant {path!r}")
-    _validate_protected_binds(
+    validate_protected_binds(
         readonly,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_ro_exceptions,
         role="read-only",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         writable,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_rw_exceptions,
@@ -133,7 +136,20 @@ def build_windows_policy(
             environment[name] = os.environ[name]
     environment.update(spec.env)
     # These switches belong to the operator, not to ambient or pack environment entries.
-    environment.pop(MXC_EXECUTABLE_ENV, None)
+    for name in (
+        MXC_EXECUTABLE_ENV,
+        TOKEN_ENV,
+        EGRESS_PROXY_ENV,
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+    ):
+        environment.pop(name, None)
+    if proxy_url is not None:
+        environment.update(
+            {EGRESS_PROXY_ENV: proxy_url, "HTTP_PROXY": proxy_url, "HTTPS_PROXY": proxy_url}
+        )
     return {
         "version": "1.0.0",
         "containment": "processcontainer",
@@ -151,8 +167,12 @@ def build_windows_policy(
         },
         "network": {
             "egress": {"default": "deny"},
-            "ingress": {"default": "deny", "hostLoopback": "deny"},
+            "ingress": {
+                "default": "allow" if proxy_address is not None else "deny",
+                "hostLoopback": "allow" if proxy_address is not None else "deny",
+            },
         },
+        **({"runtimeConfig": {"networkProxy": proxy_address}} if proxy_address is not None else {}),
         "ui": {"disable": False, "clipboard": "none", "injection": False},
     }, endpoints
 
@@ -165,15 +185,22 @@ class WindowsProcessLauncher:
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
     async def launch(self, spec: LaunchSpec) -> asyncio.subprocess.Process:
-        configuration, endpoints = build_windows_policy(spec, self.policy)
         capability = await asyncio.to_thread(detect_windows_sandbox)
         if not capability.available or capability.executable is None:
             raise SandboxUnavailable(capability.detail)
         path = spec.endpoint_dir / "mxc-policy.json"
-        with path.open("x", encoding="utf-8") as output:
-            os.chmod(path, 0o600)
-            json.dump(configuration, output)
+        proxy: EgressProxy | None = None
         try:
+            if self.policy.egress_allowlist:
+                proxy = await EgressProxy.start_tcp(
+                    self.policy.egress_allowlist, secrets.token_hex(32)
+                )
+            configuration, endpoints = build_windows_policy(
+                spec, self.policy, proxy_url=proxy.url if proxy is not None else None
+            )
+            with path.open("x", encoding="utf-8") as output:
+                os.chmod(path, 0o600)
+                json.dump(configuration, output)
             process = await asyncio.create_subprocess_exec(
                 capability.executable,
                 str(path),
@@ -182,6 +209,8 @@ class WindowsProcessLauncher:
             )
         except BaseException:
             path.unlink(missing_ok=True)
+            if proxy is not None:
+                await proxy.close()
             raise
 
         async def supervise() -> None:
@@ -198,6 +227,8 @@ class WindowsProcessLauncher:
                 await asyncio.gather(bridge, return_exceptions=True)
                 await exited
                 path.unlink(missing_ok=True)
+                if proxy is not None:
+                    await proxy.close()
 
         task = asyncio.create_task(supervise())
         self._cleanup_tasks.add(task)

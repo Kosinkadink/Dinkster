@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hmac
 import ipaddress
 import json
 import os
@@ -27,6 +29,10 @@ class EgressProxyError(ValueError):
 
 
 class _EgressDenied(EgressProxyError):
+    pass
+
+
+class _ProxyAuthenticationRequired(EgressProxyError):
     pass
 
 
@@ -223,16 +229,37 @@ async def _relay(
 
 
 class EgressProxy:
-    """A Unix-socket HTTP CONNECT proxy scoped to one worker allowlist."""
+    """An HTTP CONNECT proxy scoped to one worker's HTTPS origin allowlist."""
 
-    def __init__(self, socket_path: Path, origins: tuple[str, ...]) -> None:
-        self.socket_path = socket_path
+    def __init__(self, socket_path: Path | None, origins: tuple[str, ...]) -> None:
+        self._socket_path = socket_path
         self.origins = frozenset(normalize_egress_origin(origin) for origin in origins)
         if not self.origins:
             raise EgressProxyError("egress proxy requires at least one allowed origin")
         self._server: asyncio.Server | None = None
         self._clients: set[asyncio.Task[None]] = set()
         self._closing = False
+        self.url: str | None = None
+        self._authorization: str | None = None
+
+    @property
+    def socket_path(self) -> Path:
+        if self._socket_path is None:
+            raise EgressProxyError("TCP proxy has no Unix socket path")
+        return self._socket_path
+
+    @classmethod
+    async def start_tcp(cls, origins: tuple[str, ...], token: str) -> EgressProxy:
+        if len(token) < 32 or not token.isalnum() or not token.isascii():
+            raise EgressProxyError("TCP egress proxy requires a private random token")
+        proxy = cls(None, origins)
+        proxy._authorization = "Basic " + base64.b64encode(f"dinkster:{token}".encode()).decode()
+        proxy._server = await asyncio.start_server(
+            proxy._handle, host="127.0.0.1", port=0, limit=_MAX_HEADER_BYTES
+        )
+        port = proxy._server.sockets[0].getsockname()[1]
+        proxy.url = f"http://dinkster:{token}@127.0.0.1:{port}"
+        return proxy
 
     @classmethod
     async def start(cls, socket_path: Path, origins: tuple[str, ...]) -> EgressProxy:
@@ -277,9 +304,20 @@ class EgressProxy:
             raise EgressProxyError("invalid proxy request line") from exc
         if version not in ("HTTP/1.0", "HTTP/1.1"):
             raise EgressProxyError("unsupported proxy HTTP version")
+        authorization: list[str] = []
         for line in lines[1:]:
-            if line and ":" not in line:
+            if not line:
+                continue
+            if ":" not in line:
                 raise EgressProxyError("invalid proxy request header")
+            name, value = line.split(":", 1)
+            if name.lower() == "proxy-authorization":
+                authorization.append(value.strip())
+        if self._authorization is not None and (
+            len(authorization) != 1
+            or not hmac.compare_digest(authorization[0], self._authorization)
+        ):
+            raise _ProxyAuthenticationRequired("proxy authentication required")
         return method, target, version
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -315,6 +353,8 @@ class EgressProxy:
                 await _relay(reader, writer, remote_reader, remote_writer)
             else:
                 await _try_write_response(writer, 405, "Method Not Allowed")
+        except _ProxyAuthenticationRequired:
+            await _try_write_response(writer, 407, "Proxy Authentication Required")
         except _EgressDenied:
             await _try_write_response(writer, 403, "Forbidden")
         except (EgressProxyError, OSError):
@@ -340,5 +380,6 @@ class EgressProxy:
         for task in clients:
             task.cancel()
         await asyncio.gather(*clients, return_exceptions=True)
-        with suppress(FileNotFoundError):
-            self.socket_path.unlink()
+        if self.url is None:
+            with suppress(FileNotFoundError):
+                self.socket_path.unlink()

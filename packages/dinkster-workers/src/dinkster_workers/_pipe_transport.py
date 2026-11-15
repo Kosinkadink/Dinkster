@@ -19,6 +19,18 @@ _CHUNK = 64 * 1024
 _child_sockets: dict[int, socket.socket] = {}
 
 
+def pipe_command(command: Sequence[str]) -> tuple[list[str], list[str]]:
+    argv = list(command)
+    endpoints: list[str] = []
+    for index, argument in enumerate(argv[:-1]):
+        if argument == "--endpoint":
+            endpoints.append(argv[index + 1])
+            argv[index + 1] = f"pipe:{len(endpoints) - 1}"
+    if not endpoints:
+        raise TransportError("pipe transport requires a worker boundary endpoint")
+    return argv, endpoints
+
+
 def take_pipe_socket(index: int) -> socket.socket:
     try:
         return _child_sockets.pop(index)
@@ -85,7 +97,8 @@ def prepare_child_pipes(count: int) -> None:
     def receive() -> None:
         try:
             while True:
-                index, size = _HEADER.unpack(read_exactly(_HEADER.size))
+                raw_index, raw_size = _HEADER.unpack(read_exactly(_HEADER.size))
+                index, size = int(raw_index), int(raw_size)
                 if index >= count or size > _CHUNK:
                     raise ValueError("invalid worker pipe frame")
                 if size:
@@ -126,7 +139,8 @@ async def bridge_process(
 
     async def receive() -> None:
         while True:
-            index, size = _HEADER.unpack(await incoming.readexactly(_HEADER.size))
+            raw_index, raw_size = _HEADER.unpack(await incoming.readexactly(_HEADER.size))
+            index, size = int(raw_index), int(raw_size)
             if index >= len(writers) or size > _CHUNK:
                 raise TransportError("invalid contained worker pipe frame")
             writer = writers[index]

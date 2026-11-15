@@ -256,6 +256,7 @@ from dinkster_workers.reservations import plan_reservations
 from dinkster_workers.resident_pool import default_pool
 from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
+from dinkster_workers.windows_sandbox import WindowsProcessLauncher
 from packaging.requirements import Requirement
 
 from .composition_error import CompositionError
@@ -2629,7 +2630,7 @@ class ServingComposer:
         spec: PackSpec,
         manifests: Sequence[PackManifest],
         env: Mapping[str, str],
-    ) -> BubblewrapLauncher | None:
+    ) -> BubblewrapLauncher | WindowsProcessLauncher | None:
         base = self._sandbox_policy
         if base is None:
             return None
@@ -2759,8 +2760,6 @@ class ServingComposer:
             )
         )
 
-        if self._sandbox_capability is None:
-            self._sandbox_capability = detect_bubblewrap()
         policy = replace(
             base,
             egress_allowlist=egress_allowlist if network_requesters else (),
@@ -2771,6 +2770,10 @@ class ServingComposer:
             protected_ro_exceptions=tuple(dict.fromkeys(protected_ro_exceptions)),
             protected_rw_exceptions=tuple(dict.fromkeys(protected_rw_exceptions)),
         )
+        if sys.platform == "win32":
+            return WindowsProcessLauncher(policy)
+        if self._sandbox_capability is None:
+            self._sandbox_capability = detect_bubblewrap()
         return BubblewrapLauncher(policy, capability=self._sandbox_capability)
 
     def _catalog_group_worker(

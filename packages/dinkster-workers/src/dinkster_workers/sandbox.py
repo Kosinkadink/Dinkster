@@ -302,7 +302,7 @@ def _absolute_executable(python: str) -> str:
     return os.path.abspath(shutil.which(python) or python)
 
 
-def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
     """Binds and symlinks needed to reproduce an interpreter installation."""
     binds: list[str] = []
     symlinks: list[tuple[str, str]] = []
@@ -384,7 +384,7 @@ def _strictly_inside(path: str, root: str) -> bool:
     return _resolved(path).startswith(_resolved(root) + os.sep)
 
 
-def _validate_protected_binds(
+def validate_protected_binds(
     paths: Iterable[str],
     *,
     protected_roots: tuple[str, ...],
@@ -488,7 +488,7 @@ def build_bwrap_command(
     command.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
     system_binds = _existing(SANDBOX_SYSTEM_PATHS)
-    interpreter_binds, interpreter_symlinks = _interpreter_mounts(spec.python)
+    interpreter_binds, interpreter_symlinks = interpreter_mounts(spec.python)
     interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter")
     interpreter_aliases = _validated(
         tuple(link for _, link in interpreter_symlinks), role="interpreter alias"
@@ -535,19 +535,19 @@ def build_bwrap_command(
         *gpu_ro_binds,
         *policy_ro_binds,
     ]
-    _validate_protected_binds(
+    validate_protected_binds(
         read_only_binds,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_ro_exceptions,
         role="read-only",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         policy_rw_binds,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_rw_exceptions,
         role="writable",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         implicit_rw_binds,
         protected_roots=policy.protected_roots,
         exceptions=(),
@@ -661,7 +661,7 @@ def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]
     .pth files, so this covers dev workspaces and deployed site-packages
     with one rule). Nothing here is writable and nothing outside it is
     visible."""
-    binds, symlinks = _interpreter_mounts(python)
+    binds, symlinks = interpreter_mounts(python)
     mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):

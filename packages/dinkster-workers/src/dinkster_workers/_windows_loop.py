@@ -72,15 +72,28 @@ def unix_socketpair() -> tuple[socket.socket, socket.socket]:
             os.unlink(path)
 
 
-def worker_loop() -> asyncio.AbstractEventLoop:
-    if sys.platform != "win32":
-        return asyncio.new_event_loop()
+if sys.platform == "win32":
 
     class ContainedLoop(asyncio.ProactorEventLoop):
+        _internal_fds: int = 0
+
         def _make_self_pipe(self) -> None:
             self._ssock, self._csock = unix_socketpair()
             self._ssock.setblocking(False)
             self._csock.setblocking(False)
             self._internal_fds += 1
 
-    return ContainedLoop()
+    class ContainedPolicy(asyncio.WindowsProactorEventLoopPolicy):
+        _loop_factory = ContainedLoop
+
+
+def install_worker_loop_policy() -> None:
+    """Pack-owned HTTP threads also create loops; every worker loop must avoid TCP."""
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(ContainedPolicy())
+
+
+def worker_loop() -> asyncio.AbstractEventLoop:
+    if sys.platform == "win32":
+        return ContainedLoop()
+    return asyncio.new_event_loop()
