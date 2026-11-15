@@ -379,8 +379,11 @@
   same commit, then moves Stable only after the engine, selected bases, tools
   and frontend bytes have been verified at their public locations. A tools
   failure leaves Stable unchanged and fails publication; missing publication
-  configuration is an error, not a successful skip. Main continues to move on
-  successful engine builds and retains its independently published tools.
+  configuration is an error, not a successful skip. Nightly selects the first
+  successfully published development engine per UTC day and retains its
+  independently published tools. Subsequent engines remain available by exact
+  PyPI version without advancing the channel again that day. The only channel
+  identifiers are stable and nightly; main is not accepted as an alias.
 - After a successful same-commit engine release, natural main publication selects
   every declared official pack and library version missing from the public index,
   even when a predecessor never published. Older or newer public versions do not
@@ -850,7 +853,7 @@
   again before application and activation; sealed target checks remain mandatory.
 - A local channel builder accepts completed engine release files and selected
   base manifests, verifies engine payload hashes and base/engine compatibility,
-  and atomically writes the existing stable/main channel format. It preserves
+  and atomically writes the existing stable/nightly channel format. It preserves
   publisher inputs and requires no network. Hosted channel publication and
   published-base selection are not provided by this local command.
 - Hosted publication retries transient mirror upload failures with bounded

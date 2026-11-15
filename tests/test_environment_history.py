@@ -1491,7 +1491,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
         code, result = _run(root, *setup[setup.index("setup") : -1], *catalog_flags, timeout=120)
         assert code == 0 and result["current"] == 1, result
         assert _run(root, "stop", "--yes")[0] == 0
-        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
         code, result = _run(root, "update", *catalog_flags, "--yes", timeout=120)
         assert code == 0 and result["current"] == 2, result
         assert _run(root, "stop", "--yes")[0] == 0
@@ -1912,7 +1912,7 @@ def test_missing_base_offers_minimal_compatible_replacements(
             if compatible:
                 replacement_id = base["id"]
         (published.parent / "index.json").write_text(json.dumps(index))
-        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
         code, result = _run(root, "update", "--yes")
         assert code == 0 and result["current"] == 2, result
         expected_engine = snapshot["engine"]
@@ -1929,7 +1929,7 @@ def test_missing_base_offers_minimal_compatible_replacements(
             )
             (published.parent / "index.json").write_text(json.dumps(index))
             executable_release(mirror, base, "3.0", 73)
-            channel_path = mirror / "channels/main.json"
+            channel_path = mirror / "channels/nightly.json"
             channel = json.loads(channel_path.read_bytes())
             expected_engine = {key: channel["engine"][key] for key in ("version", "release")}
             channel["base"][base_record["variant"]] = {
@@ -2284,7 +2284,9 @@ def test_restore_rebuilds_pruned_software_without_changing_user_data(
             directory = root / name
             directory.mkdir(exist_ok=True)
             (directory / "sentinel").write_bytes(name.encode("ascii") + b" private data")
-        shutil.copyfile(fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/main.json")
+        shutil.copyfile(
+            fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/nightly.json"
+        )
         if interrupted_update:
             script = """
 import os, sys
@@ -2416,7 +2418,7 @@ environment.main()
         executable_release(
             mirror, json.loads(Path(fixture["baseManifest"]).read_bytes()), "3.0", 73
         )
-        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/main.json")
+        shutil.copyfile(fixture["updatedChannel"], mirror / "channels/nightly.json")
         shutil.rmtree(mirror / "engine" / old_engine["release"][7:])
         (mirror / "engine/index.json").write_text(
             json.dumps(

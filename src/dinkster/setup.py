@@ -421,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--engine", default="main")
     parser.add_argument("--port", type=int, default=3639)
     parser.add_argument("--gpu", action="append", default=[])
-    parser.add_argument("--channel", choices=("stable", "main"))
+    parser.add_argument("--channel", choices=("stable", "nightly"))
     parser.add_argument("--inference", help="exact inference version or full source commit")
     parser.add_argument(
         "--package-index", help="simple package index for inference and dependencies"

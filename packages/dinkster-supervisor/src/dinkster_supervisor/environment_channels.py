@@ -55,8 +55,8 @@ def write_channel(
     frontend: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Validate all inputs before atomically replacing one local channel document."""
-    if channel not in {"stable", "main"}:
-        raise EnvironmentError("channel must be stable or main")
+    if channel not in {"stable", "nightly"}:
+        raise EnvironmentError("channel must be stable or nightly")
     data = (release / "release-manifest.json").read_bytes()
     engine_id = "sha256:" + hashlib.sha256(data).hexdigest()
     engine = validate_manifest(data, engine_id, None)
@@ -125,7 +125,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", type=Path, required=True)
     parser.add_argument("--base-manifest", type=Path, action="append", required=True)
-    parser.add_argument("--channel", choices=("stable", "main"), required=True)
+    parser.add_argument("--channel", choices=("stable", "nightly"), required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--minimum-desktop-version", required=True)
     parser.add_argument("--frontend", type=Path, help="optional published frontend reference JSON")

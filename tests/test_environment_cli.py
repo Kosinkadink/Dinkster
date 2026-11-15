@@ -93,12 +93,12 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_pat
     mirror = tmp_path / "mirror"
     base, _, channel = _mirror(mirror)
     root = tmp_path / "prospective project"
-    code, result = _run(root, "catalog", "--channel", "main", "--mirror", str(mirror))
+    code, result = _run(root, "catalog", "--channel", "nightly", "--mirror", str(mirror))
     assert code == 0
     assert result["operation"] == "catalog"
     assert result["plan"] == []
     assert result["status"] == "clean"
-    assert result["channel"] == "main"
+    assert result["channel"] == "nightly"
     assert result["channelManifest"] == channel
     assert result["current"] is None
     assert result["variants"][0]["manifest"] == base
@@ -114,7 +114,7 @@ def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     mirror, store, root = tmp_path / "mirror", tmp_path / "store", tmp_path / "project"
     base, engine, _ = _mirror(mirror)
-    acquire(discover((str(mirror),), "main"), "fixture-cpu", store)
+    acquire(discover((str(mirror),), "nightly"), "fixture-cpu", store)
     mirror.rename(tmp_path / "disconnected")
     before = {
         path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()
@@ -123,7 +123,7 @@ def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(
         root,
         "setup",
         "--channel",
-        "main",
+        "nightly",
         "--mirror",
         str(mirror),
         "--variant",
@@ -162,7 +162,7 @@ def test_setup_requires_reviewed_release_before_creating_project_or_store(
     arguments = [
         "setup",
         "--channel",
-        "main",
+        "nightly",
         "--mirror",
         str(mirror),
         "--variant",
@@ -244,7 +244,7 @@ def test_setup_refuses_inputs_changed_during_confirmation_before_creating_state(
                 str(root),
                 "setup",
                 "--channel",
-                "main",
+                "nightly",
                 "--mirror",
                 str(mirror),
                 "--variant",
@@ -299,7 +299,7 @@ def test_setup_defaults_only_apple_silicon_without_mutating_project(
         str(root),
         "setup",
         "--channel",
-        "main",
+        "nightly",
         "--mirror",
         str(mirror),
         "--data",
@@ -340,7 +340,7 @@ def test_setup_names_published_variants_without_resolving_or_creating_project(
         "--variant",
         "absent-platform",
         "--channel",
-        "main",
+        "nightly",
         "--mirror",
         str(mirror),
         "--data",
@@ -441,7 +441,7 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
             "--data",
             str(store),
             "--channel",
-            "main",
+            "nightly",
             "--mirror",
             str(mirror),
             "--port",
@@ -460,7 +460,7 @@ def test_custom_cli_setup_retains_base_on_update_without_definition(
         assert sources["base"] == [str(retained)]
         assert _run(root, "stop", "--yes")[0] == 0
         definitions.unlink()
-        (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        (mirror / "channels/nightly.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
         overrides = ()
         if explicit_sources:
             catalog, archives = tmp_path / "selected.lock", tmp_path / "selected-artifacts"
@@ -532,7 +532,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
     ]
-    (mirror / "channels/main.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_json(channel))
     if operation == "update":
         _generation(root, 1)
         (root / "current").write_bytes(b"1\n")
@@ -540,7 +540,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
             _json(
                 {
                     "format": "dinkster.project/1",
-                    "channel": "main",
+                    "channel": "nightly",
                     "variant": "fixture-cpu",
                     "mirrors": [str(mirror)],
                     "port": 3639,
@@ -554,7 +554,7 @@ def test_incompatible_published_dependency_refuses_before_project_mutation(
         "--mirror",
         str(mirror),
         "--channel",
-        "main",
+        "nightly",
         "--variant",
         "fixture-cpu",
         "--data",
@@ -586,7 +586,7 @@ def test_status_returns_configured_channel_and_variant_without_starting_anything
     root.mkdir()
     settings = {
         "format": "dinkster.project/1",
-        "channel": "main",
+        "channel": "nightly",
         "variant": "win-cpu",
         "port": 3639,
         "mirrors": [str(tmp_path / "mirror")],
@@ -595,7 +595,7 @@ def test_status_returns_configured_channel_and_variant_without_starting_anything
     before = (root / "project.json").read_bytes()
     code, result = _run(root, "status")
     assert code == 0
-    assert result["channel"] == "main"
+    assert result["channel"] == "nightly"
     assert result["variant"] == "win-cpu"
     assert result["engines"] == []
     assert (root / "project.json").read_bytes() == before
@@ -787,7 +787,7 @@ def _runtime_project(root: Path) -> int:
         json.dumps(
             {
                 "format": "dinkster.project/1",
-                "channel": "main",
+                "channel": "nightly",
                 "variant": "linux-cpu",
                 "port": port,
                 "mirrors": [str(root / "mirror")],
@@ -988,7 +988,7 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     code, missing = _run(root, "update", "--plan")
     assert code == 0 and any("feasibility: pending" in line for line in missing["plan"])
     assert snapshot() == before
-    acquired = acquire_sources(discover((str(mirror),), "main"), store)
+    acquired = acquire_sources(discover((str(mirror),), "nightly"), store)
     assert acquired is not None
     lock, artifacts = acquired
     settings["additions"]["packs"] = [{"pack": "first-pack", "version": "9.9.9"}]
@@ -1025,7 +1025,7 @@ def test_workflow_update_prepares_target_registry_inputs_before_journaling(
         settings = json.loads((root / "project.json").read_bytes())
         settings["additions"] = {"packs": [], "assets": []}
         (root / "project.json").write_text(json.dumps(settings))
-        (mirror / "channels/main.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        (mirror / "channels/nightly.json").write_bytes(Path(fixture["updatedChannel"]).read_bytes())
         overrides = ()
         if explicit:
             catalog, artifacts = tmp_path / "selected.lock", tmp_path / "selected-artifacts"
@@ -1259,7 +1259,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         "--package-index",
         package_index,
         "--channel",
-        "main",
+        "nightly",
         "--variant",
         "fixture-cpu",
         "--data",
@@ -1292,7 +1292,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     root.mkdir()
     (root / "queue.json").write_text('{"running": [], "queued": []}')
     failed_store = tmp_path / "failed-store"
-    selected_release = discover((str(mirror),), "main")
+    selected_release = discover((str(mirror),), "nightly")
     engine_wheel = (
         mirror
         / "engine"
@@ -1353,7 +1353,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
             "--mirror",
             str(mirror),
             "--channel",
-            "main",
+            "nightly",
             "--variant",
             "fixture-cpu",
             "--plan",
@@ -1366,7 +1366,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
             "--mirror",
             str(mirror),
             "--channel",
-            "main",
+            "nightly",
             "--variant",
             "fixture-cpu",
             "--data",
@@ -1503,7 +1503,7 @@ environment.main()
             == b"41"
         )
         source_release, payloads = _release_sources(mirror)
-        supplied = acquire_sources(discover((str(mirror),), "main"), store)
+        supplied = acquire_sources(discover((str(mirror),), "nightly"), store)
         assert supplied is not None
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
         state_paths = [root / name for name in ("current", "project.json", "store")]
@@ -1537,11 +1537,13 @@ environment.main()
         assert not list(store.glob(".workflow-*"))
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
-        engine = json.loads((mirror / "channels/main.json").read_bytes())["engine"]["release"][7:]
+        engine = json.loads((mirror / "channels/nightly.json").read_bytes())["engine"]["release"][
+            7:
+        ]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
         before_journals = {path: path.read_bytes() for path in (root / "journal").glob("*.json")}
         before_settings = (root / "project.json").read_bytes()
-        code, refused = _run(root, "update", "--channel", "main", "--yes")
+        code, refused = _run(root, "update", "--channel", "nightly", "--yes")
         assert code == 1 and refused["status"] == "error"
         assert (root / "current").read_text() == "3\n" and not (root / "generations/4").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
@@ -2036,7 +2038,7 @@ def test_inference_requests_report_oldest_containing_release(
                 release="sha256:" + identity,
                 locations=[{"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}],
             )
-            (mirror / "channels/main.json").write_bytes(_json(channel))
+            (mirror / "channels/nightly.json").write_bytes(_json(channel))
             monkeypatch.setattr(
                 "dinkster.registries.plan_registry_sources",
                 lambda *args, **kwargs: (
@@ -2052,7 +2054,7 @@ def test_inference_requests_report_oldest_containing_release(
             "--mirror",
             str(mirror),
             "--channel",
-            "main",
+            "nightly",
             "--variant",
             "fixture-cpu",
             "--package-index",
@@ -2067,7 +2069,7 @@ def test_inference_requests_report_oldest_containing_release(
                 json.dumps(
                     {
                         "format": "dinkster.project/1",
-                        "channel": "main",
+                        "channel": "nightly",
                         "variant": "fixture-cpu",
                         "mirrors": [str(mirror)],
                         "packageIndex": str(index),

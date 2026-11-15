@@ -361,7 +361,7 @@ def test_update_preserves_previous_tree_and_publishes_selected_settings(
         json.dumps(
             {
                 "format": "dinkster.project/1",
-                "channel": "main",
+                "channel": "nightly",
                 "variant": "linux-cpu",
                 "port": free_port(),
                 "mirrors": [str(tmp_path / "mirror")],
@@ -446,7 +446,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
     _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
     if migration:
-        shutil.copyfile(mirror / "channels/main.json", mirror / "channels/stable.json")
+        shutil.copyfile(mirror / "channels/nightly.json", mirror / "channels/stable.json")
     old = _target(root, 1)
     (old / "dinkster.lock").write_text(Lockfile().record_json())
     (root / "store").write_text(str(store) + "\n")
@@ -476,7 +476,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     port = free_port()
     settings = {
         "format": "dinkster.project/1",
-        "channel": "main",
+        "channel": "nightly",
         "variant": "linux-cpu",
         "mirrors": [str(mirror)],
         "port": port,
@@ -645,7 +645,7 @@ def test_interrupted_activation_restores_previous_serving_generation(
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
     previous_settings = (
-        '{"format":"dinkster.project/1","channel":"main","variant":"linux-cpu","custom":42}\r\n'
+        '{"format":"dinkster.project/1","channel":"nightly","variant":"linux-cpu","custom":42}\r\n'
     )
     target_settings = (
         '{"format":"dinkster.project/1","channel":"stable","variant":"win-cpu","custom":42}\n'
@@ -768,23 +768,26 @@ def test_busy_refusal_and_failed_final_revalidation_preserve_current(tmp_path: P
             begin_activation(tmp_path, 2, "update")
         assert not (tmp_path / "journal").exists()
         (tmp_path / "queue.json").write_text(json.dumps({"idle": True}))
-        settings = '{"format":"dinkster.project/1","channel":"main"}\n'
+        settings = '{"format":"dinkster.project/1","channel":"nightly"}\n'
         (tmp_path / "project.json").write_text(settings)
         path = begin_activation(
             tmp_path,
             2,
             "update",
-            project_settings={"previous": settings, "target": settings.replace("main", "stable")},
+            project_settings={
+                "previous": settings,
+                "target": settings.replace("nightly", "stable"),
+            },
         )
         _target(tmp_path, 2)
 
         def changed() -> None:
-            (tmp_path / "project.json").write_text(settings.replace("main", "external"))
+            (tmp_path / "project.json").write_text(settings.replace("nightly", "external"))
             raise EnvironmentError("project changed after confirmation")
 
         with pytest.raises(EnvironmentError, match="project changed"):
             activate(tmp_path, path, revalidate=changed)
-        assert (tmp_path / "project.json").read_text() == settings.replace("main", "external")
+        assert (tmp_path / "project.json").read_text() == settings.replace("nightly", "external")
         assert read_current(tmp_path) == 1
         assert engine_status(tmp_path) == (prior,)
         assert not (tmp_path / "generations/2").exists()

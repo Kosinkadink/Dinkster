@@ -321,8 +321,8 @@ def discover(
     offline: bool = False,
 ) -> EnvironmentCatalog:
     """Read channel and exact manifests without creating project or store files."""
-    if channel_name not in {"stable", "main"}:
-        raise EnvironmentError("channel must be stable or main")
+    if channel_name not in {"stable", "nightly"}:
+        raise EnvironmentError("channel must be stable or nightly")
     document: dict[str, object] | None = None
     channel: Channel | None = None
     cached_channel = False

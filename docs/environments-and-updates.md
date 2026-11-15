@@ -74,7 +74,7 @@ Its native jobs verify extraction and relocation without host tools. Engine
 releases do not contain native tools ZIPs; tools acquisition requires the
 channel's independent `tools` pointer.
 
-`dinkster-env --root /absolute/tools-cache tools --channel main --mirror
+`dinkster-env --root /absolute/tools-cache tools --channel nightly --mirror
 https://releases.dinkster.org --yes --json` downloads the native ZIP selected by
 the channel and returns its verified archive path. Without `--yes`, it only
 plans and creates no cache. A channel tools pointer requires neither engine
@@ -280,12 +280,11 @@ manifests, engine payload hashes, worker protocols and effective constraints
 before atomically replacing one channel file. It does not select base releases
 or publish artifacts itself.
 
-`stable` is written when a `vX.Y.Z` tag's release workflow finishes. `main`
-is written when a push to `main` finishes the same workflow without a
-version: the engine release it names is a prerelease of the next version
-identified by commit. Its development number counts commits since the last
-reachable `v` tag, or the entire history when no such tag exists; release
-checkouts fetch full history and tags. Both channels are served by the same client code path
+`stable` is written when a `vX.Y.Z` tag's release workflow finishes. `nightly`
+names the first successfully published public development engine per UTC day
+from the Git `main` branch. Later builds publish to PyPI without advancing the
+channel again that day. Its development number counts all reachable commits; tags never reset the
+counter. Release checkouts fetch full history and tags. Both channels are served by the same client code path
 and differ only in the channel file. Published-base installs do not resolve on the user's machine:
 base wheels come from the base bundle, Dinkster wheels from the engine
 release, and non-base third-party wheels from their locked package origins
@@ -293,10 +292,9 @@ or a configured package mirror. Every download checks its locked size and hash.
 The base is shared between the channels because it rebuilds only when its
 part of the lock changes.
 
-`main` exists so that people who want the newest code get it through a
-supported path, and so that a bug reported from `main` reproduces on
-`stable` once the tag lands. There is no nightly channel; `main` makes it
-redundant.
+Nightly provides development builds through the same supported install path
+as Stable. The channel identifier is `nightly`; `main` is not a channel alias.
+Git branch names and immutable `main-...` release tags are unchanged.
 
 `minimumDesktopVersion` lets a channel refuse a Desktop shell too old to
 drive the engine it names; the shell updates itself first.
@@ -311,7 +309,7 @@ R2 preflight refuses an existing engine directory with the same hash8 but
 a different full identity; unavailable inventory or ambiguous partial
 directories fail closed. It repeats this check before mirroring payloads.
 R2 inventory credentials are therefore required for release publication.
-The serialized main-channel job compares the published engine commit with the
+The serialized Nightly-channel job compares the published engine commit with the
 candidate through GitHub's compare API, not with the live main head. An absent
 channel or an ancestor engine permits publication; the same commit verifies the
 existing channel bytes without an upload. A descendant or diverged published
@@ -1171,8 +1169,8 @@ Settled:
   `doctor` reports drift and repairs from the store.
 - Frontend pinned by commit in Dinkster and packaged into the engine release
   from the per-commit bundle `Dinkster-Frontend` publishes.
-- Channels `stable` and `main`, both prebuilt by the same workflow; no
-  nightly; `minimumDesktopVersion` in the channel file.
+- Channels `stable` and `nightly`, both prebuilt by the same workflow;
+  `minimumDesktopVersion` in the channel file.
 - Engine wheels published to PyPI by the tag workflow; cross-repository
   dependencies are versioned PyPI releases.
 - Signing workflows run on tag push behind an owner-approved environment;

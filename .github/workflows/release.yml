@@ -167,7 +167,7 @@ jobs:
           if-no-files-found: error
       - name: Validate the channel against the finalized release
         env:
-          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'nightly' }}
         run: |
           arguments=()
           for manifest in .release/bases/*/manifest.json; do arguments+=(--base-manifest "$manifest"); done
@@ -349,9 +349,20 @@ jobs:
               const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
               object = result.data.object;
             }
-            while (object.type === 'tag') {
-              const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
-              object = result.data.object;
+            if (context.ref === 'refs/heads/main') {
+              if (object.type !== 'tag') throw new Error('Development release tag must be annotated');
+              const annotation = (await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha })).data;
+              const provenance = JSON.parse(annotation.message);
+              if (annotation.tag !== tag || provenance.version !== manifest.version ||
+                  provenance.commit !== context.sha || provenance.manifest !== digest) {
+                throw new Error('Development tag annotation differs from the release manifest');
+              }
+              object = annotation.object;
+            } else {
+              while (object.type === 'tag') {
+                const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
+                object = result.data.object;
+              }
             }
             if (object.type !== 'commit' || object.sha !== context.sha) {
               throw new Error('Existing release tag targets a different commit');
@@ -413,7 +424,7 @@ jobs:
           path: .release/tools
       - name: Mirror payloads and publish the verified channel last
         env:
-          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'main' }}
+          CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'nightly' }}
           GITHUB_TOKEN: ${{ github.token }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

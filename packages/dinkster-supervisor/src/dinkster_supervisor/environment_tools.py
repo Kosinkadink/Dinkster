@@ -113,8 +113,8 @@ def acquire_tools(
     mirrors: tuple[str, ...], channel_name: str, destination: Path, *, download: bool
 ) -> dict[str, object]:
     """Resolve native tools independently of engine/base payloads, then verify transport."""
-    if channel_name not in {"main", "stable"}:
-        raise EnvironmentError("channel must be stable or main")
+    if channel_name not in {"nightly", "stable"}:
+        raise EnvironmentError("channel must be stable or nightly")
     architecture = machine().lower()
     architecture = {"amd64": "x86_64", "aarch64": "arm64"}.get(architecture, architecture)
     system = {"win32": "windows", "darwin": "macos", "linux": "linux"}.get(sys.platform)

@@ -97,7 +97,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     channel["engine"]["locations"] = [
         {"type": "mirror", "path": f"engine/{release}/release-manifest.json"}
     ]
-    (mirror / "channels/main.json").write_bytes(_json(channel))
+    (mirror / "channels/nightly.json").write_bytes(_json(channel))
     files: dict[str, bytes] = {}
     releases = []
     for name in defaults:
@@ -155,7 +155,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
     registry_file.write_text(f'[registries.private]\nendpoint = "{endpoint}"\ndefault = true\n')
     try:
         if mode.startswith("offline"):
-            acquire(discover((str(mirror),), "main"), "fixture-cpu", store)
+            acquire(discover((str(mirror),), "nightly"), "fixture-cpu", store)
             registry = NamedRegistry("private", endpoint, default=True)
             plan_registry_sources(
                 RegistryConfig((registry,)),
@@ -195,7 +195,7 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
             "--mirror",
             str(mirror),
             "--channel",
-            "main",
+            "nightly",
             "--variant",
             "fixture-cpu",
             "--registries",
@@ -340,7 +340,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
     fixture = publisher.build(tmp_path / "release", "fixture-cpu", port)
     mirror, root, store = (Path(fixture[key]) for key in ("mirror", "root", "store"))
     monkeypatch.setenv("DINKSTER_HOME", str(root.parent))
-    channel_path = mirror / "channels/main.json"
+    channel_path = mirror / "channels/nightly.json"
     channel = json.loads(channel_path.read_bytes())
     release = mirror / "engine" / channel["engine"]["release"][7:]
     engine = json.loads((release / "release-manifest.json").read_bytes())
@@ -439,7 +439,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
                 plan_registry_sources,
             )
 
-            catalog = discover((str(mirror),), "main")
+            catalog = discover((str(mirror),), "nightly")
             acquire(catalog, "fixture-cpu", store)
             registry = NamedRegistry("fixture", endpoint, default=True)
             _, locks = plan_registry_sources(
@@ -497,7 +497,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
                         "--variant",
                         "fixture-cpu",
                         "--channel",
-                        "main",
+                        "nightly",
                         "--mirror",
                         str(mirror),
                         "--registry",
@@ -531,7 +531,7 @@ def test_setup_yes_builds_the_approved_registry_sources_with_the_supervisor(
                 "--variant",
                 "fixture-cpu",
                 "--channel",
-                "main",
+                "nightly",
                 "--mirror",
                 str(mirror),
                 "--registry",

@@ -54,7 +54,7 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         "release": str(release),
         "label": label,
     }
-    (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
+    (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
     shutil.rmtree(mirror / "engine")
     shutil.rmtree(mirror / "base")
     destination = tmp_path / "acquired"
@@ -96,7 +96,7 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         assert not destination.exists()
     if damage == "missing-pointer":
         del channel["tools"]
-        (mirror / "channels/main.json").write_text(json.dumps(channel), encoding="ascii")
+        (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
     elif damage:
         (release / ("tools-manifest.json" if damage == "manifest" else name)).write_bytes(b"wrong")
     monkeypatch.setattr(sys, "argv", [*arguments, "--yes"])
