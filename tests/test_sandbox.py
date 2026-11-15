@@ -15,6 +15,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import aiohttp
@@ -162,6 +163,58 @@ class TestBuildBwrapCommand:
         grant.symlink_to(root)
         with pytest.raises(SandboxError, match="dissolve the sandbox"):
             build_bwrap_command(make_spec(tmp_path), SandboxPolicy(ro_binds=(str(grant),)))
+
+    @pytest.mark.skipif(os.name != "posix", reason="requires POSIX interpreter symlinks")
+    def test_managed_interpreter_mounts_do_not_expose_the_protected_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        editable = tmp_path / "editable-source"
+        editable.mkdir()
+        monkeypatch.syspath_prepend(str(editable))
+        generation = tmp_path / "generation"
+        runtime = generation / "python"
+        pack = generation / "packs" / "example"
+        for prefix in (runtime, pack):
+            (prefix / "bin").mkdir(parents=True)
+        (runtime / "bin" / "python3").touch()
+        python = pack / "bin" / "python"
+        python.symlink_to(runtime / "bin" / "python3")
+        policy = SandboxPolicy(
+            protected_roots=(str(generation),),
+            protected_ro_exceptions=(str(pack),),
+        )
+        spec = make_spec(tmp_path, python=str(python), pack_root=pack)
+        argv = build_bwrap_command(spec, policy)
+        binds = pairs(argv, "--ro-bind")
+        assert (str(runtime), str(runtime)) in binds
+        assert (str(editable), str(editable)) in binds
+        assert (str(pack), str(pack)) in binds
+        assert (str(generation), str(generation)) not in binds
+        settings = generation / "settings"
+        settings.mkdir()
+        for field in ("ro_binds", "rw_binds"):
+            with pytest.raises(SandboxError, match="protected root"):
+                build_bwrap_command(spec, replace(policy, **{field: (str(settings),)}))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, replace(policy, ro_binds=(str(generation),)))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, replace(policy, rw_binds=(str(runtime),)))
+        secret = runtime / "auth.token"
+        secret.touch()
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(
+                spec, replace(policy, protected_roots=(str(generation), str(secret)))
+            )
+        monkeypatch.setenv("PYTHONPATH", str(settings))
+        monkeypatch.syspath_prepend(str(settings))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(replace(spec, env={"PYTHONPATH": str(settings)}), policy)
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, policy)
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if entry != str(settings)])
+        monkeypatch.syspath_prepend(str(generation))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, policy)
 
     def test_protected_roots_and_read_only_grants_cannot_be_overridden(
         self, tmp_path: Path

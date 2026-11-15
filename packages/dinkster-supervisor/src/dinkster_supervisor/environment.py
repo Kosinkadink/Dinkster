@@ -70,6 +70,7 @@ from .environment_runtime import (
     engine_assignments,
     engine_status,
     require_idle,
+    sandbox_readiness,
     start_engine,
     stop_engine,
     validate_assignment,
@@ -135,6 +136,14 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     current = read_current(root)
     result["current"] = current
+    if args.operation == "doctor" and args.sandbox:
+        if current is None:
+            raise EnvironmentError(
+                "project has no active generation; "
+                "install an engine to check pack sandbox readiness"
+            )
+        result["sandbox"] = sandbox_readiness(root, current)
+        return 0
     if args.operation == "space":
         result["space"] = space_report(root)
         return 0
@@ -1691,6 +1700,7 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
                 if args.frontend_root is not None
                 else None,
                 frontend_dev=args.frontend_dev,
+                sandbox_packs=args.sandbox_packs,
             )
             result["url"] = row["url"]
         else:
@@ -2087,8 +2097,12 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     packs_apply.add_argument("--input", type=Path, required=True)
     packs_apply.add_argument("--approval", required=True)
     doctor = commands.add_parser("doctor", help="report active generation and pack drift")
-    doctor.add_argument(
+    doctor_mode = doctor.add_mutually_exclusive_group()
+    doctor_mode.add_argument(
         "--repair", action="store_true", help="rebuild offline from the local store"
+    )
+    doctor_mode.add_argument(
+        "--sandbox", action="store_true", help="query the selected engine's pack sandbox readiness"
     )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
     setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
@@ -2178,6 +2192,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     start = commands.add_parser("start", help="start the current generation's assigned engine")
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
+    start.add_argument(
+        "--sandbox-packs", action="store_true", help="require OS sandboxing for local pack workers"
+    )
     frontend = start.add_mutually_exclusive_group()
     frontend.add_argument("--frontend-root", type=Path, help="serve a built frontend bundle folder")
     frontend.add_argument(

@@ -1,3 +1,8 @@
+# Published catalog bootstrap authentication
+
+- The focused bootstrap check fails on unchanged main when a token is set; the exporter now authenticates that API request. Absent and empty tokens preserve unauthenticated behavior. Draft, prerelease, invalid-tag and missing-digest refusals remain intact.
+- An authenticated public bootstrap downloaded supervisor 0.0.6 and verified its published SHA-256 and size (265380 bytes). This checks release discovery and wheel integrity, not complete catalog export or packaged Desktop recovery.
+
 # Public Hugging Face model downloads
 
 | Scenario | Host | Result |

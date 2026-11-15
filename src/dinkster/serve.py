@@ -1975,12 +1975,14 @@ def main(argv: list[str] | None = None) -> None:
                 protected_ro_exceptions.append(str(mounts_snapshot.parent))
             for mount in sandbox_mounts:
                 sandbox_ro_binds.append(str(mount.path))
+                protected_ro_exceptions.append(str(mount.path))
                 if mount.mode == "readwrite":
                     sandbox_writable_mounts.append(str(mount.path))
             sandbox_policy = SandboxPolicy(
                 ro_binds=tuple(dict.fromkeys(sandbox_ro_binds)),
                 protected_roots=tuple(dict.fromkeys(protected_roots)),
                 protected_ro_exceptions=tuple(dict.fromkeys(protected_ro_exceptions)),
+                protected_rw_exceptions=tuple(dict.fromkeys(sandbox_writable_mounts)),
             )
 
         schema_reload_requests: asyncio.Queue[str] = asyncio.Queue()
