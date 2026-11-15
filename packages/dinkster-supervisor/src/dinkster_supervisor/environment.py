@@ -37,6 +37,7 @@ from .environment_collection import (
     collection_plan,
     collection_policy,
     collection_preview,
+    generation_maintenance_directory,
     recover_collection,
     recover_store_collection,
     retry_generation_collection,
@@ -1662,8 +1663,15 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not _confirmed(args, plan):
         result["status"] = "planned"
         return 0
-    _recover_pending(root)
-    with writer_lock(root):
+    with ExitStack() as locks:
+        # Maintenance holds the project lock too; finish it before recovery or lifecycle writes.
+        try:
+            locks.enter_context(writer_lock(generation_maintenance_directory(root), wait=True))
+        except (OSError, ValueError):
+            # Unusable maintenance remains a cleanup warning; the project lock still guards writes.
+            pass
+        _recover_pending(root)
+        locks.enter_context(writer_lock(root))
         if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
             raise EnvironmentError("project changed after recovery; retry the operation")
         if (

@@ -2815,6 +2815,52 @@ def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Pa
     assert (tmp_path / "current").read_text() == "1\n"
 
 
+@pytest.mark.parametrize("command", ["start", "stop"])
+def test_runtime_waits_for_automatic_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+    from threading import Event
+
+    from dinkster_supervisor import environment, environment_collection
+
+    _runtime_project(tmp_path)
+    assert _run(tmp_path, "start", "--yes")[0] == 0
+    entered, release = Event(), Event()
+    policy = environment_collection.collection_policy
+
+    def paused_policy(root):
+        entered.set()
+        assert release.wait(10), "cleanup was not released"
+        return policy(root)
+
+    monkeypatch.setattr(environment_collection, "collection_policy", paused_policy)
+    args = environment.argument_parser().parse_args(
+        ["--root", str(tmp_path), command, "--yes", "--json"]
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=2) as threads:
+            cleanup = threads.submit(
+                environment_collection.automatic_generation_collection, tmp_path
+            )
+            try:
+                assert entered.wait(10), "cleanup did not acquire the project"
+                started = threads.submit(environment.run, args)
+                with pytest.raises(FutureTimeout):
+                    started.result(timeout=0.5)
+            finally:
+                release.set()
+            assert cleanup.result(timeout=10)["status"] == "deferred"
+            assert started.result(timeout=10) == 0
+        code, status = _run(tmp_path, "status")
+        assert code == 0, status
+        assert status["engines"][0]["state"] == ("ready" if command == "start" else "stopped")
+    finally:
+        release.set()
+        assert _run(tmp_path, "stop", "--yes")[0] == 0
+
+
 def test_cpu_assignment_masks_inherited_gpu_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -2836,7 +2882,7 @@ def test_runtime_apply_refuses_writer_contention_and_recovers_incomplete_journal
         code, refused = _run(tmp_path, "start", "--yes")
     assert code == 1
     assert "another environment writer" in refused["error"]
-    assert not (tmp_path / "runtime").exists()
+    assert _run(tmp_path, "status")[1]["engines"] == []
     Journal("update", 1, 2, "building").write(tmp_path / "journal/interrupted.json")
     code, recovered = _run(tmp_path, "start", "--yes")
     try:

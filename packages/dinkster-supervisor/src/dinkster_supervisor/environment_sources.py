@@ -1021,6 +1021,9 @@ def prepare_source_engine(
             "format": "dinkster.engine/1",
             "source": "git",
             "version": project["project"]["version"],
+            "capabilities": project.get("tool", {})
+            .get("dinkster", {})
+            .get("engine-capabilities", []),
             "workerProtocol": base["workerProtocol"],
             "lock": lock_digest,
             "publishedRelease": published_release,

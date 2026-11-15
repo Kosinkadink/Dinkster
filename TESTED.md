@@ -1,3 +1,27 @@
+# Production service addresses
+
+- Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
+- Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.
+- Service resolution, CLI and serving integration: 73 tests pass on the managed linux-cpu contributor generation.
+- Extension-kind generation, extension factories, builtin type spelling, Ruff lint/format and Linux/Windows-target Pyright pass.
+- Account/service/CLI/serving integration: 80 passed in 43.14 seconds on the managed linux-cpu contributor generation. Local identity HTTP fixtures cover PKCE/state/issuer checks, consent denial, paginated projects, selected-project mint, OAuth rotation, revocation, redirect refusal, private credentials outside projects and endpoint/install isolation.
+- Full Ruff lint/format and Linux/Windows-target Pyright pass with account source included.
+- Account/service/CLI/serving/composition/sandbox integration: 167 passed in 69.15 seconds. The real engine refreshes its selected install bearer at startup and periodically. A real bubblewrap worker observes atomic bearer replacement while OAuth state stays hidden. Lost OAuth-refresh replies invalidate local state and are never replayed automatically.
+- Both default pack helper commands retain disabled discovery when endpoints are omitted or explicitly empty, and honor explicit custom endpoints: six public CLI cases pass against a real fixture pack. The omitted-endpoint cases fail on the previous helper implementation.
+- These checks do not establish live identity bridge availability or authenticated catalog integration with the remote pack.
+
+# Checkout engine version
+
+- The checkout version guard failed on main (runtime 0.0.7 versus project 0.0.8) and passed after alignment; all eight CLI tests passed on Linux CPU.
+- The same from-scratch Linux CPU setup refused inconsistent registry inputs before alignment and applied successfully afterward, passing health and activating generation 1. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Published Stable 0.0.8 and Nightly 0.0.9.dev1080 wheels have matching runtime and distribution versions.
+
+# Published remote catalog defaults
+
+- Registry default resolution requires remote pack 0.0.7 or newer. The public static registry resolved and delivered 0.0.7 with verified wheel bytes and all six published native install locks.
+- Installer, archive-admission and composition CPU suites: 273 passed, 2 existing skips. Full fast checks passed, including Ruff and Linux/Windows Pyright.
+- Authenticated catalog/policy/cache behavior is covered by the remote pack's local and selected-wheel admission suites. This default selection does not claim deployed identity sign-in or provider/billing acceptance.
+
 # Signed release channels
 
 - CPU contributor setup passed. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.

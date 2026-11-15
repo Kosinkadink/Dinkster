@@ -134,6 +134,7 @@ def local_selection(
         "lockDigest": content_digest(source / "uv.lock"),
         "version": project["project"]["version"],
         "workerProtocol": int(protocol[1]),
+        "capabilities": project.get("tool", {}).get("dinkster", {}).get("engine-capabilities", []),
     }
 
 
@@ -560,6 +561,7 @@ def prepare_local(
             "source": "local",
             "version": selection["version"],
             "workerProtocol": selection["workerProtocol"],
+            "capabilities": selection.get("capabilities", []),
             "lock": selection["lockDigest"],
             "wheels": wheels,
         }
