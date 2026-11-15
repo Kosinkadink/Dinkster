@@ -128,13 +128,14 @@ def fetch_artifact(
     relative_path: str,
     destination: Path,
     sha256: str,
-    size: int,
+    size: int | None,
 ) -> Path:
     """Fetch one verified artifact, trying mirrors in the caller's order.
 
     ``destination.part`` keeps incomplete bytes so a later call can resume an
     interrupted HTTP transfer. The completed destination is only published
-    after its exact size and SHA-256 have been verified.
+    after its SHA-256 and, when supplied, exact size have been verified. A missing
+    size is measured from the verified file, without a separate metadata request.
     """
     _validate_request(mirrors, relative_path, sha256, size)
     destination = Path(destination)
@@ -150,9 +151,9 @@ def fetch_artifact(
             return destination
         destination.unlink()
 
-    if partial.exists() and partial.stat().st_size > size:
+    if partial.exists() and size is not None and partial.stat().st_size > size:
         partial.unlink()
-    if partial.exists() and partial.stat().st_size == size:
+    if partial.exists() and (size is None or partial.stat().st_size == size):
         if _matches(partial, sha256, size):
             partial.replace(destination)
             return destination
@@ -166,20 +167,22 @@ def fetch_artifact(
             return destination
         except (HTTPError, HTTPException, URLError, OSError, ValueError) as exc:
             failures.append(f"{_mirror_label(mirror)}: {_failure_reason(exc)}")
-            if partial.exists() and partial.stat().st_size > size:
+            if partial.exists() and size is not None and partial.stat().st_size > size:
                 partial.unlink()
 
     detail = "; ".join(failures) if failures else "no mirrors configured"
     raise DownloadError(f"artifact {relative_path!r} could not be downloaded: {detail}")
 
 
-def _validate_request(mirrors: tuple[str, ...], relative_path: str, sha256: str, size: int) -> None:
+def _validate_request(
+    mirrors: tuple[str, ...], relative_path: str, sha256: str, size: int | None
+) -> None:
     if not mirrors:
         raise DownloadError("artifact download requires at least one mirror")
     _validate_path(relative_path)
     if not _DIGEST_PATTERN.fullmatch(sha256):
         raise DownloadError("artifact SHA-256 must be 64 lowercase hexadecimal characters")
-    if type(size) is not int or size < 0:
+    if size is not None and (type(size) is not int or size < 0):
         raise DownloadError("artifact size must be a non-negative integer")
 
 
@@ -197,7 +200,7 @@ def _validate_path(relative_path: str) -> None:
 
 
 def _download_from_mirror(
-    mirror: str, relative_path: str, partial: Path, sha256: str, size: int
+    mirror: str, relative_path: str, partial: Path, sha256: str, size: int | None
 ) -> None:
     parsed = urlparse(mirror)
     remote = bool(parsed.scheme and not Path(mirror).is_absolute())
@@ -221,9 +224,9 @@ def _download_from_mirror(
             # Remote refetches instead consume the shared retry budget.
             partial.unlink()
             streamed_digest = stream()
-        if partial.stat().st_size == size and streamed_digest == sha256:
+        if (size is None or partial.stat().st_size == size) and streamed_digest == sha256:
             return
-        if partial.stat().st_size == size:
+        if size is None or partial.stat().st_size == size:
             partial.unlink()
         raise _ArtifactIntegrityError("returned corrupt or short data")
 
@@ -274,13 +277,13 @@ def _retry_remote[T](mirror: str, operation: Callable[[float], T], budget: float
     raise DownloadError(f"{_mirror_label(mirror)}: {'; '.join(failures)}")
 
 
-def _download_local(mirror: Path, relative_path: str, partial: Path, size: int) -> str:
+def _download_local(mirror: Path, relative_path: str, partial: Path, size: int | None) -> str:
     root = mirror.resolve(strict=True)
     source = (root / PurePosixPath(relative_path)).resolve(strict=True)
     if not source.is_relative_to(root) or not source.is_file():
         raise ValueError("artifact is missing")
     offset = partial.stat().st_size if partial.exists() else 0
-    if offset > size:
+    if size is not None and offset > size:
         partial.unlink()
         offset = 0
     with source.open("rb") as stream:
@@ -289,14 +292,15 @@ def _download_local(mirror: Path, relative_path: str, partial: Path, size: int) 
 
 
 def _download_http(
-    mirror: str, relative_path: str, partial: Path, size: int, deadline: float
+    mirror: str, relative_path: str, partial: Path, size: int | None, deadline: float
 ) -> str:
     _validate_remote_url(mirror)
     base = mirror if mirror.endswith("/") else f"{mirror}/"
     url = urljoin(base, quote(relative_path, safe="/"))
     _validate_remote_url(url)
     offset = partial.stat().st_size if partial.exists() else 0
-    if offset > size:
+    # A resolver may supply only a digest; without a total, restart rather than guess a range.
+    if partial.exists() and (size is None or offset > size):
         partial.unlink()
         offset = 0
     headers = {"User-Agent": _USER_AGENT}
@@ -308,6 +312,7 @@ def _download_http(
     ) as response:
         status = response.status
         if offset and status == 206:
+            assert size is not None
             _validate_content_range(response.headers.get("Content-Range"), offset, size)
         elif offset and status == 200:
             partial.unlink(missing_ok=True)
@@ -323,7 +328,7 @@ def _read_http(response: HTTPResponse, maximum: int, deadline: float) -> bytes:
 
 
 def _append_stream(
-    stream: BinaryIO, partial: Path, offset: int, size: int, *, deadline: float | None = None
+    stream: BinaryIO, partial: Path, offset: int, size: int | None, *, deadline: float | None = None
 ) -> str:
     digest = hashlib.sha256()
     if offset:
@@ -339,7 +344,7 @@ def _append_stream(
             else stream.read(ENVIRONMENT_STREAM_CHUNK_BYTES)
         ):
             received += len(chunk)
-            if received > size:
+            if size is not None and received > size:
                 raise _ArtifactIntegrityError("response exceeds expected size")
             output.write(chunk)
             digest.update(chunk)
@@ -352,8 +357,8 @@ def _validate_content_range(value: str | None, offset: int, size: int) -> None:
         raise ValueError("invalid Content-Range for resumed download")
 
 
-def _matches(path: Path, sha256: str, size: int) -> bool:
-    if not path.is_file() or path.stat().st_size != size:
+def _matches(path: Path, sha256: str, size: int | None) -> bool:
+    if not path.is_file() or (size is not None and path.stat().st_size != size):
         return False
     digest = hashlib.sha256()
     with path.open("rb") as source:
