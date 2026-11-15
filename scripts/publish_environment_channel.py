@@ -176,6 +176,54 @@ def upload(client, path: Path, key: str, *, extra: dict[str, str] | None = None)
             time.sleep(delay)
 
 
+def mirror_engine(client, release: Path, work: Path) -> None:
+    engine = json.loads((release / "release-manifest.json").read_bytes())
+    identity = content_digest(release / "release-manifest.json")
+    name, _ = engine_publication_names(engine, identity, "main")
+    public = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
+    check_collision(client, identity)
+    prefix = f"engine/{name}"
+    rows = [
+        *(
+            {
+                "name": name,
+                "size": (release / name).stat().st_size,
+                "sha256": content_digest(release / name)[7:],
+            }
+            for name in ("release-manifest.json", "SHA256SUMS")
+        ),
+        *engine["artifacts"],
+    ]
+    for row in rows:
+        key = f"{prefix}/{row['name']}"
+        try:
+            client.head_object(Bucket=os.environ["R2_BUCKET"], Key=key)
+        except ClientError as error:
+            if error.response["ResponseMetadata"]["HTTPStatusCode"] != 404:
+                raise
+        else:
+            continue
+        upload(client, release / row["name"], key)
+    for row in rows:
+        fetch_artifact(
+            (f"{public}/{prefix}",),
+            row["name"],
+            work / "verified" / row["name"],
+            row["sha256"],
+            row["size"],
+        )
+    index = work / "engine-index.json"
+    write_index(client, index)
+    upload(
+        client,
+        index,
+        "engine/index.json",
+        extra={"ContentType": "application/json", "CacheControl": "no-cache"},
+    )
+    if read_metadata(public, "engine/index.json") != index.read_bytes():
+        raise ValueError("public engine index differs after publication")
+
+
 def publish(
     release: Path,
     bases: list[Path],
@@ -186,7 +234,7 @@ def publish(
 ) -> None:
     engine = json.loads((release / "release-manifest.json").read_bytes())
     identity = content_digest(release / "release-manifest.json")
-    name, tag = engine_publication_names(engine, identity, channel)
+    _, tag = engine_publication_names(engine, identity, channel)
     expected_ref = "refs/heads/main" if channel == "main" else f"refs/tags/{tag}"
     if (
         os.environ.get("GITHUB_REPOSITORY") != "Kosinkadink/Dinkster"
@@ -236,47 +284,7 @@ def publish(
             if read_metadata(public, location) != path.read_bytes():
                 raise ValueError(f"public base manifest differs: {base['variant']}")
         client = object_store()
-        check_collision(client, identity)
-        prefix = f"engine/{name}"
-        rows = [
-            *(
-                {
-                    "name": name,
-                    "size": (release / name).stat().st_size,
-                    "sha256": content_digest(release / name)[7:],
-                }
-                for name in ("release-manifest.json", "SHA256SUMS")
-            ),
-            *engine["artifacts"],
-        ]
-        for row in rows:
-            key = f"{prefix}/{row['name']}"
-            try:
-                client.head_object(Bucket=os.environ["R2_BUCKET"], Key=key)
-            except ClientError as error:
-                if error.response["ResponseMetadata"]["HTTPStatusCode"] != 404:
-                    raise
-            else:
-                continue
-            upload(client, release / row["name"], key)
-        for row in rows:
-            fetch_artifact(
-                (f"{public}/{prefix}",),
-                row["name"],
-                work / "verified" / row["name"],
-                row["sha256"],
-                row["size"],
-            )
-        index = work / "engine-index.json"
-        write_index(client, index)
-        upload(
-            client,
-            index,
-            "engine/index.json",
-            extra={"ContentType": "application/json", "CacheControl": "no-cache"},
-        )
-        if read_metadata(public, "engine/index.json") != index.read_bytes():
-            raise ValueError("public engine index differs after publication")
+        mirror_engine(client, release, work)
         path = work / "channels" / f"{channel}.json"
         if channel == "stable":
             if tools_release is None:
