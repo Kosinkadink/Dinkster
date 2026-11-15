@@ -314,8 +314,8 @@ class Generation:
         if len(set(packs)) != len(packs):
             raise EnvironmentError("inProcessPacks must not repeat a pack")
         source = value.get("source", "published")
-        if source not in ("published", "local"):
-            raise EnvironmentError("generation source must be published or local")
+        if source not in ("published", "local", "source"):
+            raise EnvironmentError("generation source must be published, local or source")
         return cls(
             generation_number(value.get("generation")),
             digest(value.get("base")),
@@ -342,7 +342,12 @@ class Generation:
                 "workerProtocol": self.worker_protocol,
                 "files": dict(self.files),
                 "inProcessPacks": list(self.in_process_packs),
-                **({"source": "local"} if self.source == "local" else {}),
+                **({"source": self.source} if self.source != "published" else {}),
+                **(
+                    {"kind": "source", "published": False, "reproducible": False}
+                    if self.source == "source"
+                    else {}
+                ),
             },
         )
 

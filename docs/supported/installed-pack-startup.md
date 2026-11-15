@@ -1,5 +1,25 @@
 ## Installed pack startup
 
+- An installed release project can explicitly select a public Git engine with
+  `source add`, change or refresh its ref with `source update`, and restore its
+  last published generation with `source release`. Source generations keep the
+  release base and pinned frontend, reuse matching locked wheels, and disclose
+  their URL, requested ref, exact commit and unpublished/non-reproducible status.
+  Rollback reacquires missing checkouts at the recorded commit rather than
+  following a moved branch. Recovery reports unavailable locally built wheels
+  instead of silently rebuilding different bytes. Published pack plans evaluate
+  the selected source generation's API and inference distribution versions,
+  not the planning tool's installed packages.
+
+- `source add URL --pack NAME --ref REF` and `source update --pack NAME`
+  explicitly select or refresh one managed Git pack on the installed engine and
+  release base. Unselected pack source entries and dependency locks remain
+  unchanged. Target engine constraints still apply. Status and history disclose
+  its requested ref, exact commit and unpublished/non-reproducible state;
+  rollback restores recorded source identities rather than following refs.
+  Engine updates retain that provenance and unpublished disclosure for unchanged
+  source/digest selections; replaced packs do not inherit stale Git identities.
+
 - Pack wheels preserve manifest-relative blueprint, template, icon, settings,
   documentation and frontend resource paths, including resources inside Python
   source packages. Missing declared resources refuse build or admission before
@@ -12,8 +32,15 @@
   from local selection overrides and sealed historical provenance.
 
 - Managed environments select the engine's versioned frontend or a channel-selected
-  frontend by its complete SHA-256 and size. Incompatible engine schema API ranges
-  refuse before activation; compatible frontend-only updates retain the engine.
+  frontend by its complete SHA-256 and size. Explicit `--frontend-version VERSION`
+  on setup/update selects a published PyPI frontend wheel and its declared API
+  range instead. JSON plans provide the exact frontend approval for confirmed
+  selection. Incompatible engine schema API ranges refuse before activation;
+  compatible frontend-only updates retain the engine. Without an explicit version,
+  release installation retains its offline published-artifact path.
+- `dinkster-serve --frontend-root PATH` serves a built frontend folder;
+  `--frontend-dev URL` proxies a running development server with websocket reload.
+  Both options are visible in command help and neither builds frontend assets.
 
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
@@ -916,6 +943,59 @@
   proposal-approval contract, appends a source-linked entry with reason `rollback`,
   and leaves project settings and user data unchanged. Planning recovers an
   interrupted publication of a completed activation before selecting that entry.
+
+### Managed Git inference and helper libraries
+
+Installed release projects accept `dinkster source add URL --library NAME`
+and `source update --library NAME`, with explicit ref, subdirectory and mirror
+selection. Inference uses distribution name `dinkster-inference`. Planning
+discloses the exact Git identity without modifying the project. Confirmed
+selection retains the installed release base, engine and frontend wheels,
+unselected library pins and pack selections. Conflicting dependencies and
+base/engine/frontend package replacement refuse before activation.
+
+Status and history label these generations unpublished and non-reproducible
+and record every library's URL, requested ref, commit, content digest and
+wheel identity. Engine source changes and ordinary channel updates retain those
+exact library builds without following their refs. An explicit published inference
+selection replaces only the Git inference selection, retaining other Git libraries.
+Rollback uses the recorded built bytes even after its branch moves. Missing retained
+local builds refuse updates and recovery instead of resolving or rebuilding.
+`source release` returns to the most recent published generation.
+
+Managed Git engine, pack, inference/helper and frontend plans return a
+`sourceApproval` digest. Repeat the same add/update selection with
+`--source-approval DIGEST --yes` to require the reviewed project, Git commit,
+content and acquisition settings. A changed ref, project selection or frontend
+CI bundle refuses before building or activating a generation. The digest does
+not contain temporary checkout paths. Direct `--yes` remains available without
+a prior plan; return-to-release uses the existing history restore contract.
+
+### Managed Git frontend assets
+
+`source add URL --frontend --ref REF` and `source update --frontend` select
+browser assets without replacing the release base or engine. Official frontend
+commits use an unexpired, successful CI bundle verified against GitHub's artifact
+digest and the bundle's commit/hash/size metadata. Public nightly.link transport
+requires no login. Missing CI bundles and forks use a local frozen-lockfile pnpm
+build only when Node and pnpm are installed; missing tools are named, and invalid
+CI bytes refuse without a build fallback. The source API range must include the
+installed engine API. Exact build origin, source identity and retained wheel bytes
+are disclosed as unpublished/non-reproducible and survive updates and rollback.
+Git engine selection preserves the installed schema API declaration for later
+frontend compatibility checks, including when a Git frontend is already selected.
+Explicit published frontend version selection supersedes the Git frontend;
+missing retained builds refuse recovery instead of rebuilding moving sources.
+
+### Public git refs and mirrors
+
+`dinkster source refs URL` lists advertised refs and tags without installing
+source code, creating a project, requiring system git or using the GitHub API.
+Explicit source acquisition supports `DINKSTER_GIT_MIRROR`; `source refs` and
+`develop` also accept `--git-mirror URL`. The setting rewrites only Kosinkadink
+GitHub repositories, keeps the original source identity, appends `.git`, and
+requires HTTPS except for loopback HTTP mirrors. Failed mirror acquisitions
+do not fall back to GitHub. Published release acquisition is unchanged.
 
 ### Development generations from local folders or public git
 

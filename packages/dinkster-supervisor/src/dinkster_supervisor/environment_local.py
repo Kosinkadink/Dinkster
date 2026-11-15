@@ -188,6 +188,7 @@ def retain_wheels(
             [
                 str(python),
                 "-I",
+                "-B",
                 "-c",
                 "import sys,json; print(json.dumps(list(sys.version_info[:2])))",
             ],

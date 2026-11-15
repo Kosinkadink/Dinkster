@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import urlopen
@@ -91,6 +92,1658 @@ runpy.run_module("dinkster_supervisor.environment", run_name="__main__")
     assert document["format"] == "dinkster.environment-result/1"
     assert document["root"] == str(root)
     return result.returncode, document
+
+
+@pytest.mark.parametrize("api", [1, 2, 4, 5])
+def test_explicit_frontend_version_checks_verified_release_api_without_project_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], api: int
+) -> None:
+    from dinkster_supervisor import environment, environment_downloads
+
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _, engine, channel = _mirror(mirror)
+    engine["schemaApi"] = api
+    data = _json(engine) + b"\n"
+    identity = hashlib.sha256(data).hexdigest()
+    old = mirror / "engine" / channel["engine"]["release"][7:]
+    release = mirror / "engine" / identity
+    shutil.copytree(old, release)
+    (release / "release-manifest.json").write_bytes(data)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
+    (mirror / "channels/nightly.json").write_bytes(_json(channel))
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr(
+            "dinkster_frontend/manifest.json",
+            json.dumps(
+                {
+                    "format": "dinkster.frontend/1",
+                    "repository": "Kosinkadink/Dinkster-Frontend",
+                    "version": "0.2.0",
+                    "engineApi": {"min": 2, "max": 4},
+                }
+            ),
+        )
+        archive.writestr("dinkster_frontend/static/index.html", "selected frontend")
+    filename = "dinkster_frontend-0.2.0-py3-none-any.whl"
+    wheel = tmp_path / filename
+    wheel.write_bytes(payload.getvalue())
+    digest = hashlib.sha256(payload.getvalue()).hexdigest()
+    selected = {
+        "filename": filename,
+        "url": "https://files.pythonhosted.org/packages/" + filename,
+        "digests": {"sha256": digest},
+        "size": wheel.stat().st_size,
+    }
+    read, fetch = environment_downloads.read_metadata, environment_downloads.fetch_artifact
+
+    def metadata(location: str, path: str) -> bytes:
+        if location == "https://pypi.org/pypi/dinkster-frontend":
+            assert path == "0.2.0/json"
+            return json.dumps({"urls": [selected]}).encode()
+        return read(location, path)
+
+    def transfer(locations, name, destination, sha, size):
+        assert locations == ("https://files.pythonhosted.org/packages",)
+        return fetch((str(tmp_path),), name, destination, sha, size)
+
+    monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
+    monkeypatch.setattr(environment_downloads, "fetch_artifact", transfer)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    arguments = [
+        "--root",
+        str(root),
+        "setup",
+        "--channel",
+        "nightly",
+        "--mirror",
+        str(mirror),
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--plan",
+        "--json",
+    ]
+
+    def plan(*extra: str) -> tuple[int, dict]:
+        with pytest.raises(SystemExit) as exited:
+            environment.main([*arguments, *extra])
+        assert isinstance(exited.value.code, int)
+        return exited.value.code, json.loads(capsys.readouterr().out)
+
+    code, result = plan("--frontend-version", "0.2.0")
+    if api in {1, 5}:
+        assert code == 1
+        assert "supports engine schema API 2 through 4" in result["error"]
+    else:
+        assert code == 0
+        assert result["frontend"]["sha256"] == digest
+        assert result["frontend"]["engineApi"] == {"min": 2, "max": 4}
+        assert any(filename in row["path"] for row in result["runtimeInputs"])
+        assert any(identity in row["path"] for row in result["runtimeInputs"])
+        assert any("explicit published frontend 0.2.0" in line for line in result["plan"])
+        approval = result["frontendApproval"]
+        assert approval.startswith("sha256:") and len(approval) == 71
+        code, confirmed = plan("--frontend-version", "0.2.0", "--frontend-approval", approval)
+        assert code == 0 and confirmed["frontend"] == result["frontend"]
+        code, refused = plan(
+            "--frontend-version", "0.2.0", "--frontend-approval", "sha256:" + "0" * 64
+        )
+        assert code == 1 and "changed after planning" in refused["error"]
+    wheel.write_bytes(wheel.read_bytes() + b"changed")
+    code, result = plan("--frontend-version", "0.2.0")
+    assert code == 1
+    assert "size" in result["error"] or "digest" in result["error"]
+    code, result = plan()
+    assert code == 0
+    assert "frontend" not in result
+    assert not any(filename in row["path"] for row in result["runtimeInputs"])
+    assert not root.exists() and not store.exists()
+    assert not (tmp_path / "user-data").exists()
+
+
+def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_server
+) -> None:
+    import pygit2
+    from dinkster_registry import LockedPack, build_artifact
+    from dinkster_store import object_entries, pack_archive_path
+    from dinkster_supervisor.environment_state import Generation, interpreter
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.pack_lock import PackLock
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root = Path(fixture["root"])
+    store = Path(fixture["store"])
+    empty = tmp_path / "initial.lock"
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = tmp_path / "retained"
+    retained.mkdir()
+    (retained / "dinkster-pack.toml").write_text(
+        HEALTHY_MANIFEST.replace("healthy", "retained").replace(
+            'requires = ["numpy>=1.26"]', 'version = "1.0"\nengine = ">=0"\nrequires = []'
+        )
+    )
+    (retained / "retained_nodes.py").write_text(HEALTHY_NODES.replace("healthy", "retained"))
+    archive = artifacts / "retained.zip"
+    retained_digest = build_artifact(retained, archive)
+    archive.rename(artifacts / f"{retained_digest[7:]}.zip")
+    retained_entry = LockedPack(
+        "retained-nodes", "1.0", retained_digest, "dinkster", ("retained",), "registry:official"
+    )
+    empty.write_text(Lockfile.of([retained_entry]).record_json())
+    dependency = tmp_path / "retained.pack-lock.json"
+    PackLock("retained-nodes", "fixture-cpu", ">=3.12", (), (), ()).write(dependency)
+    setup = fixture["commands"]["setup"]
+    code, result = _run(
+        root,
+        *setup[setup.index("setup") : -1],
+        "--catalog-lock",
+        str(empty),
+        "--artifacts",
+        str(artifacts),
+        "--pack-lock",
+        str(dependency),
+    )
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    original = Generation.read(root / "generations/1/generation.json")
+    before = {
+        path: content_digest(path)
+        for parent in ("bases", "wheels")
+        for path in (store / parent).rglob("*")
+        if path.is_file() and path.name != ".objects.json"
+    }
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+    commits = []
+    for branch, value in (("managed-pack", 31), ("managed-pack-new", 79)):
+        tree = pygit2.Index()
+        for name, payload in {
+            "dinkster-pack.toml": HEALTHY_MANIFEST.replace(
+                'requires = ["numpy>=1.26"]', 'version = "1.0"\nengine = ">=0"\nrequires = []'
+            ),
+            "healthy_nodes.py": HEALTHY_NODES + f"\nVALUE = {value}\n",
+        }.items():
+            tree.add(
+                pygit2.IndexEntry(
+                    "nodes/" + name,
+                    repository.create_blob(payload.encode()),
+                    pygit2.enums.FileMode.BLOB,
+                )
+            )
+        commits.append(
+            repository.create_commit(
+                "refs/heads/" + branch,
+                signature,
+                signature,
+                branch,
+                tree.write_tree(repository),
+                commits[-1:],
+            )
+        )
+    repository.free()
+    endpoint = "https://github.com/Kosinkadink/source#subdirectory=nodes"
+    index = tmp_path / "index"
+    index.mkdir()
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    tools = tmp_path / "no-git-tools"
+    tools.mkdir()
+    uv = shutil.which("uv")
+    assert uv is not None
+    shutil.copyfile(uv, tools / Path(uv).name)
+    (tools / Path(uv).name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools))
+    assert shutil.which("git") is None
+    request_count = len(git_server["requests"])
+    tunnel_count = len(git_server["tunnels"])
+    try:
+        code, refused = _run(
+            root,
+            "source",
+            "add",
+            endpoint,
+            "--pack",
+            "wrong-pack",
+            "--ref",
+            "managed-pack",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+        )
+        assert code == 1 and "different pack" in refused["error"], refused
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        assert _run(root, "status")[1]["current"] == 1
+        for branch, expected, commit in (
+            ("managed-pack", 31, commits[0]),
+            ("managed-pack-new", 79, commits[1]),
+        ):
+            arguments = (
+                ["add", endpoint, "--pack", "healthy-nodes", "--git-mirror", git_server["proxy"]]
+                if expected == 31
+                else ["update", "--pack", "healthy-nodes"]
+            )
+            selection = ("source", *arguments, "--ref", branch, "--package-index", index.as_uri())
+            code, preview = _run(root, *selection, "--plan")
+            assert code == 0, preview
+            approval = preview["sourceApproval"]
+            code, same = _run(root, *selection, "--source-approval", approval, "--plan")
+            assert code == 0 and same["sourceApproval"] == approval, same
+            code, refused = _run(
+                root,
+                *selection,
+                "--package-index",
+                index.as_uri() + "/changed",
+                "--source-approval",
+                approval,
+                "--yes",
+            )
+            assert code == 1 and "source inputs changed" in refused["error"], refused
+            code, refused = _run(
+                root,
+                *selection,
+                "--ref",
+                "managed-pack-new" if expected == 31 else "managed-pack",
+                "--source-approval",
+                approval,
+                "--yes",
+            )
+            assert code == 1 and "source inputs changed" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == preview["current"]
+            code, result = _run(
+                root, *selection, "--source-approval", approval, "--yes", timeout=180
+            )
+            assert code == 0, result
+            current = root / "generations" / str(result["current"])
+            record = Generation.read(current / "generation.json")
+            assert record.source == "source" and record.engine_release == original.engine_release
+            assert record.base == original.base
+            selected = Lockfile.from_record_json((current / "dinkster.lock").read_text())
+            assert (
+                next(entry for entry in selected.packs if entry.pack == "retained-nodes")
+                == retained_entry
+            )
+            assert (current / "packs/retained-nodes/pack-lock.json").read_bytes() == (
+                root / "generations/1/packs/retained-nodes/pack-lock.json"
+            ).read_bytes()
+            status = _run(root, "status")[1]
+            assert status["sources"]["packs"]["healthy-nodes"]["commit"] == str(commit)
+            assert status["published"] is False and status["reproducible"] is False
+            assert record.drift(current) == ()
+            assert (
+                (current / "pack-sources/healthy-nodes/healthy_nodes.py")
+                .read_text()
+                .endswith(f"VALUE = {expected}\n")
+            )
+            assert subprocess.check_output(
+                [
+                    str(interpreter(current)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import runpy, sys; print(runpy.run_path(sys.argv[1])['VALUE'])",
+                    str(current / "pack-sources/healthy-nodes/healthy_nodes.py"),
+                ],
+                text=True,
+            ).strip() == str(expected)
+            assert {path: content_digest(path) for path in before} == before
+            assert _run(root, "stop", "--yes")[0] == 0
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/managed-pack"].set_target(commits[1])
+        repository.free()
+        first_lock = Lockfile.from_record_json((root / "generations/2/dinkster.lock").read_text())
+        first_digest = next(
+            entry.artifact_digest for entry in first_lock.packs if entry.pack == "healthy-nodes"
+        )
+        archives = [
+            archive
+            for _, engine in object_entries(store / "engines")
+            if (archive := pack_archive_path(engine / "artifacts", first_digest)).is_file()
+        ]
+        assert archives
+        for path in archives:
+            path.unlink()
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        current = root / "generations" / str(restored["current"])
+        assert (
+            (current / "pack-sources/healthy-nodes/healthy_nodes.py")
+            .read_text()
+            .endswith("VALUE = 31\n")
+        )
+        assert _run(root, "status")[1]["sources"]["packs"]["healthy-nodes"]["commit"] == str(
+            commits[0]
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, updated = _run(
+            root,
+            "update",
+            "--catalog-lock",
+            str(current / "dinkster.lock"),
+            "--artifacts",
+            str(object_path(store / "engines", original.engine_release) / "artifacts"),
+            "--pack-lock",
+            str(current / "packs/healthy-nodes/pack-lock.json"),
+            "--pack-lock",
+            str(current / "packs/retained-nodes/pack-lock.json"),
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, updated
+        status = _run(root, "status")[1]
+        assert status["sources"]["packs"]["healthy-nodes"]["commit"] == str(commits[0])
+        assert status["source"] == "source" and status["published"] is False
+        updated_record = Generation.read(
+            root / "generations" / str(updated["current"]) / "generation.json"
+        )
+        assert updated_record.source == "source"
+        code, history = _run(root, "history")
+        assert code == 0, history
+        selected_history = history["history"][-1]
+        assert selected_history["sources"]["packs"]["healthy-nodes"]["commit"] == str(commits[0])
+        assert selected_history["published"] is False
+        assert selected_history["reproducible"] is False
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, released = _run(root, "source", "release", "--yes", timeout=180)
+        assert code == 0, released
+        released_root = root / "generations" / str(released["current"])
+        released_record = Generation.read(released_root / "generation.json")
+        assert released_record.source == "published"
+        assert not (released_root / "pack-sources/healthy-nodes").exists()
+        assert "sources" not in _run(root, "status")[1]
+        assert len(git_server["requests"]) > request_count
+        assert all(
+            path.startswith("/Kosinkadink/source.git/")
+            for path in git_server["requests"][request_count:]
+        )
+        assert len(git_server["tunnels"]) == tunnel_count
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+def test_managed_git_libraries_retain_release_base_and_exact_rollback(
+    tmp_path: Path, monkeypatch, git_server, capsys
+):
+    import pygit2
+    from dinkster_supervisor import environment, environment_frontend_sources, environment_inference
+    from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+    from test_environment_frontend_sources import _artifact as frontend_artifact
+    from test_installer import _serve_artifacts
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+    published_base = {}
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        if document.get("format") == "dinkster.base/1" and "id" in document:
+            published_base.update(document)
+        if document.get("format") == "dinkster.engine/1":
+            document["schemaApi"] = 1
+            fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+            document["dependencies"] = {
+                published_base["variant"]: {
+                    "base": published_base["id"],
+                    "wheels": [
+                        {key: row[key] for key in fields} for row in published_base["wheels"]
+                    ],
+                }
+            }
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user"))
+    fixture = publisher.build(tmp_path / "fixture", "linux-cpu", free_port())
+    root, store = Path(fixture["root"]), Path(fixture["store"])
+    catalog = tmp_path / "empty.lock"
+    catalog.write_text(Lockfile.of([]).record_json())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    code, result = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--data",
+        fixture["store"],
+        "--variant",
+        "linux-cpu",
+        "--channel",
+        "nightly",
+        "--port",
+        str(fixture["port"]),
+        "--catalog-lock",
+        str(catalog),
+        "--artifacts",
+        str(artifacts),
+        "--yes",
+    )
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    original = Generation.read(root / "generations/1/generation.json")
+    before = {
+        path: content_digest(path)
+        for path in (object_path(store / "bases", original.base)).rglob("*")
+        if path.is_file()
+    }
+    original_wheels = json.loads((root / "generations/1/installed-wheels.json").read_text())[
+        "wheels"
+    ]
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+    commits = []
+    for branch, value in (("library-old", 31), ("library-new", 79), ("library-bad", 101)):
+        tree = pygit2.Index()
+        for folder, name, module, requirements in (
+            ("inference", "dinkster-inference", "dinkster_inference", '["fixture-base==1.0"]'),
+            ("helper", "fixture-helper", "fixture_helper", '["dinkster-inference==9.0"]'),
+            ("bad", "fixture-helper", "fixture_helper", '["fixture-base==999"]'),
+            ("base", "fixture-base", "fixture_base", "[]"),
+        ):
+            for filename, payload in {
+                "pyproject.toml": (
+                    f'[project]\nname="{name}"\nversion="9.0"\ndependencies={requirements}\n'
+                    '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+                ),
+                f"{module}/__init__.py": f"VALUE = {value}\n",
+            }.items():
+                tree.add(
+                    pygit2.IndexEntry(
+                        folder + "/" + filename,
+                        repository.create_blob(payload.encode()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        for filename, payload in {
+            "nodes/dinkster-pack.toml": HEALTHY_MANIFEST.replace(
+                'requires = ["numpy>=1.26"]', 'version = "1.0"\nengine = ">=0"\nrequires = []'
+            ),
+            "nodes/healthy_nodes.py": HEALTHY_NODES + f"\nVALUE = {value}\n",
+            "frontend/package.json": '{"version":"0.2.0"}',
+            "frontend/frontend-release.json": '{"engineApi":{"min":1,"max":2}}',
+        }.items():
+            tree.add(
+                pygit2.IndexEntry(
+                    filename, repository.create_blob(payload.encode()), pygit2.enums.FileMode.BLOB
+                )
+            )
+        commits.append(
+            repository.create_commit(
+                "refs/heads/" + branch,
+                signature,
+                signature,
+                branch,
+                tree.write_tree(repository),
+                [],
+            )
+        )
+    repository.free()
+    endpoint = "https://github.com/Kosinkadink/source#subdirectory="
+    try:
+        code, preview = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "inference",
+            "--library",
+            "dinkster-inference",
+            "--ref",
+            "library-old",
+            "--git-mirror",
+            git_server["proxy"],
+            "--plan",
+        )
+        assert code == 0 and preview["status"] == "planned", preview
+        assert sorted(path.name for path in (root / "generations").iterdir()) == ["1"]
+        code, refused = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "base",
+            "--library",
+            "--ref",
+            "library-old",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+        )
+        assert code == 1 and "release-base" in refused["error"], refused
+        for folder, name in (("inference", "dinkster-inference"), ("helper", "fixture-helper")):
+            code, result = _run(
+                root,
+                "source",
+                "add",
+                endpoint + folder,
+                "--library",
+                name,
+                "--ref",
+                "library-old",
+                "--git-mirror",
+                git_server["proxy"],
+                "--yes",
+                timeout=180,
+            )
+            assert code == 0, result
+            assert _run(root, "stop", "--yes")[0] == 0
+        first = result["current"]
+        first_root = root / "generations" / str(first)
+        first_manifest = json.loads((first_root / "engine-manifest.json").read_text())
+        selection = ("source", "update", "--library", "dinkster-inference", "--ref", "library-new")
+        code, preview = _run(root, *selection, "--plan")
+        assert code == 0, preview
+        approval = preview["sourceApproval"]
+        settings_path = root / "project.json"
+        settings = settings_path.read_bytes()
+        changed_settings = json.loads(settings)
+        changed_settings["port"] += 1
+        settings_path.write_text(json.dumps(changed_settings))
+        code, refused = _run(root, *selection, "--source-approval", approval, "--yes")
+        assert code == 1 and "source inputs changed" in refused["error"], refused
+        assert _run(root, "status")[1]["current"] == first
+        settings_path.write_bytes(settings)
+        code, result = _run(root, *selection, "--source-approval", approval, "--yes", timeout=180)
+        assert code == 0, result
+        current = root / "generations" / str(result["current"])
+        record = Generation.read(current / "generation.json")
+        assert record.base == original.base and record.source == "source"
+        assert record.engine_version == original.engine_version and record.drift(current) == ()
+        for module, expected in (("dinkster_inference", 79), ("fixture_helper", 31)):
+            assert subprocess.check_output(
+                [
+                    str(interpreter(current)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    f"import {module}; print({module}.VALUE)",
+                ],
+                text=True,
+            ).strip() == str(expected)
+        status = _run(root, "status")[1]
+        assert status["published"] is False and status["reproducible"] is False
+        assert (
+            status["sources"]["libraries"]["fixture-helper"]
+            == first_manifest["sources"]["libraries"]["fixture-helper"]
+        )
+        assert status["sources"]["libraries"]["dinkster-inference"]["commit"] == str(commits[1])
+        for wheel in original_wheels:
+            assert wheel in read_document(current / "installed-wheels.json")["wheels"]
+        assert {path: content_digest(path) for path in before} == before
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, refused = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "bad",
+            "--library",
+            "fixture-helper",
+            "--ref",
+            "library-bad",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 1, refused
+        assert _run(root, "status")[1]["current"] == result["current"]
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/library-old"].set_target(commits[1])
+        repository.free()
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        restored_root = root / "generations" / str(restored["current"])
+        assert read_document(restored_root / "engine-manifest.json") == first_manifest
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(restored_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster_inference; print(dinkster_inference.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "31"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        history = _run(root, "history")[1]["history"]
+        assert history[-1]["sources"]["libraries"]["dinkster-inference"]["commit"] == str(
+            commits[0]
+        )
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references.create("refs/heads/library-captured", commits[0])
+        repository.free()
+        code, packed = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "nodes",
+            "--pack",
+            "healthy-nodes",
+            "--ref",
+            str(commits[0]),
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, packed
+        assert _run(root, "stop", "--yes")[0] == 0
+        artifact = frontend_artifact(tmp_path, str(commits[0]))
+        monkeypatch.setattr(
+            environment_frontend_sources, "frontend_ci_artifact", lambda _: artifact
+        )
+
+        def fetch(roots, name, destination, sha, size):
+            assert sha == artifact["digest"][7:]
+            destination.write_bytes(artifact["path"].read_bytes())
+
+        monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+        frontend_args = [
+            "--root",
+            str(root),
+            "source",
+            "add",
+            endpoint + "frontend",
+            "--frontend",
+            "--ref",
+            str(commits[0]),
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            "--json",
+        ]
+        frontend_plan = ["--plan" if value == "--yes" else value for value in frontend_args]
+        assert environment.run(environment.argument_parser().parse_args(frontend_plan)) == 0
+        preview = json.loads(capsys.readouterr().out)
+        approval = preview["sourceApproval"]
+        approved = [*frontend_args, "--source-approval", approval]
+        artifact["run"] += 1
+        assert environment.run(environment.argument_parser().parse_args(approved)) == 1
+        refused = json.loads(capsys.readouterr().out)
+        assert "source inputs changed" in refused["error"], refused
+        assert _run(root, "status")[1]["current"] == preview["current"]
+        artifact["run"] -= 1
+        with monkeypatch.context() as missing_bundle:
+            missing_bundle.setattr(
+                environment_frontend_sources, "frontend_ci_artifact", lambda _: None
+            )
+            assert environment.run(environment.argument_parser().parse_args(approved)) == 1
+            refused = json.loads(capsys.readouterr().out)
+            assert "source inputs changed" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == preview["current"]
+        assert environment.run(environment.argument_parser().parse_args(approved)) == 0
+        json.loads(capsys.readouterr().out)
+        all_sources = _run(root, "status")[1]["sources"]
+        assert all_sources["packs"]["healthy-nodes"]["commit"] == str(commits[0])
+        assert all_sources["frontend"]["commit"] == str(commits[0])
+        assert all_sources["libraries"] == first_manifest["sources"]["libraries"]
+        assert _run(root, "stop", "--yes")[0] == 0
+        engine_source = tmp_path / "engine-source"
+        engine_source.mkdir()
+        engine_wheel = next(Path(fixture["mirror"]).glob("engine/*/*.whl"))
+        with zipfile.ZipFile(engine_wheel) as archive:
+            for name in archive.namelist():
+                if name.startswith("dinkster/"):
+                    path = engine_source / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.read(name))
+        (engine_source / "dinkster/__init__.py").write_text('__version__ = "1.1"\nVALUE = 411\n')
+        (engine_source / "pyproject.toml").write_text(
+            '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
+            'dependencies=["fixture-base==1.0"]\n[dependency-groups]\n'
+            'engine-base=["fixture-base==1.0"]\n[build-system]\n'
+            'requires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        )
+        boundary = engine_source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+        boundary.parent.mkdir(parents=True)
+        boundary.write_text(f"PROTOCOL_VERSION = {PROTOCOL_VERSION}\n")
+        with monkeypatch.context() as offline:
+            offline.setenv("UV_NO_INDEX", "1")
+            offline.setenv(
+                "UV_FIND_LINKS", str(object_path(store / "bases", original.base) / "wheels")
+            )
+            locked = subprocess.run(
+                ["uv", "lock", "--offline", "--python", sys.executable],
+                cwd=engine_source,
+                capture_output=True,
+                text=True,
+            )
+            assert locked.returncode == 0, locked.stderr
+        lock = engine_source / "uv.lock"
+        base_wheel = next((object_path(store / "bases", original.base) / "wheels").glob("*.whl"))
+        lock.write_text(
+            lock.read_text().replace(
+                f'path = "{base_wheel.as_posix()}"',
+                f'path = "{base_wheel.as_posix()}", hash = "{content_digest(base_wheel)}"',
+            )
+        )
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        tree = pygit2.Index()
+        for path in engine_source.rglob("*"):
+            if path.is_file():
+                tree.add(
+                    pygit2.IndexEntry(
+                        path.relative_to(engine_source).as_posix(),
+                        repository.create_blob(path.read_bytes()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        engine_commit = repository.create_commit(
+            "refs/heads/library-engine",
+            signature,
+            signature,
+            "engine",
+            tree.write_tree(repository),
+            [],
+        )
+        repository.free()
+        code, combined = _run(
+            root,
+            "source",
+            "add",
+            "https://github.com/Kosinkadink/source",
+            "--ref",
+            "library-engine",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, combined
+        combined_status = _run(root, "status")[1]
+        assert combined_status["sources"]["engine"]["commit"] == str(engine_commit)
+        assert combined_status["sources"]["libraries"] == first_manifest["sources"]["libraries"]
+        for kind in ("packs", "frontend"):
+            assert combined_status["sources"][kind] == all_sources[kind]
+        combined_root = root / "generations" / str(combined["current"])
+        assert (
+            (combined_root / "pack-sources/healthy-nodes/healthy_nodes.py")
+            .read_text()
+            .endswith("VALUE = 31\n")
+        )
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(combined_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; "
+                    "print(files('dinkster_frontend').joinpath('static/index.html').read_text())",
+                ],
+                text=True,
+            ).strip()
+            == "<main>selected frontend</main>"
+        )
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(combined_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster,dinkster_inference,fixture_helper; "
+                    "print(dinkster.VALUE,dinkster_inference.VALUE,fixture_helper.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "411 31 31"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        frontend_plan = ["--root", str(root), "source", "update", "--frontend", "--plan", "--json"]
+        assert environment.run(environment.argument_parser().parse_args(frontend_plan)) == 0
+        assert json.loads(capsys.readouterr().out)["status"] == "planned"
+        requests = len(git_server["requests"])
+        update = (
+            "update",
+            "--catalog-lock",
+            str(combined_root / "dinkster.lock"),
+            "--artifacts",
+            str(
+                object_path(
+                    store / "engines",
+                    Generation.read(combined_root / "generation.json").engine_release,
+                )
+                / "artifacts"
+            ),
+            "--pack-lock",
+            str(combined_root / "packs/healthy-nodes/pack-lock.json"),
+        )
+        code, preview = _run(root, *update, "--plan")
+        assert code == 0, preview
+        assert preview["retainedLibraries"] == {
+            **first_manifest["sources"]["libraries"],
+            "dinkster-frontend": all_sources["frontend"],
+        }
+        code, updated = _run(root, *update, "--yes", timeout=180)
+        assert code == 0, updated
+        assert len(git_server["requests"]) == requests
+        updated_root = root / "generations" / str(updated["current"])
+        assert Generation.read(updated_root / "generation.json").source == "source"
+        updated_sources = _run(root, "status")[1]["sources"]
+        assert updated_sources["libraries"] == first_manifest["sources"]["libraries"]
+        for kind in ("packs", "frontend"):
+            assert updated_sources[kind] == all_sources[kind]
+        assert {path: content_digest(path) for path in before} == before
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(updated_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster_inference,fixture_helper; "
+                    "print(dinkster_inference.VALUE,fixture_helper.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "31 31"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        published = original_wheel(tmp_path, "dinkster_inference", "9.0", 167)
+        incompatible = original_wheel(tmp_path, "dinkster_inference", "9.1", 229)
+        page = "".join(
+            f'<a href="/wheels/{path.name}#sha256={content_digest(path)[7:]}">{path.name}</a>'
+            for path in (published, incompatible)
+        ).encode()
+        index_requests = []
+        index_server = _serve_artifacts(
+            {
+                "/simple/dinkster-inference": page,
+                "/simple/dinkster-inference/": page,
+                **{"/wheels/" + path.name: path.read_bytes() for path in (published, incompatible)},
+            },
+            index_requests,
+        )
+        try:
+            repository = pygit2.Repository(git_server["root"] / "source.git")
+            repository.create_tag(
+                "v9.0", commits[0], pygit2.enums.ObjectType.COMMIT, signature, "9.0"
+            )
+            repository.create_tag(
+                "v9.1", commits[1], pygit2.enums.ObjectType.COMMIT, signature, "9.1"
+            )
+            repository.free()
+            monkeypatch.setattr(environment_inference, "INFERENCE_REPOSITORY", git_server["url"])
+            replacement_args = [
+                "--root",
+                str(root),
+                *update,
+                "--inference",
+                "9.0",
+                "--package-index",
+                f"http://127.0.0.1:{index_server.server_port}/simple",
+                "--yes",
+                "--json",
+            ]
+            refused_args = ["9.1" if value == "9.0" else value for value in replacement_args]
+            assert environment.run(environment.argument_parser().parse_args(refused_args)) == 1
+            refused = json.loads(capsys.readouterr().out)
+            assert refused["status"] == "error"
+            assert "dinkster-inference" in refused["error"] and "9.0" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == updated["current"]
+            code = environment.run(environment.argument_parser().parse_args(replacement_args))
+            replacement = json.loads(capsys.readouterr().out)
+            assert code == 0, replacement
+            selected_sources = _run(root, "status")[1]["sources"]
+            assert selected_sources["libraries"] == {
+                "fixture-helper": first_manifest["sources"]["libraries"]["fixture-helper"]
+            }
+            for kind in ("packs", "frontend"):
+                assert selected_sources[kind] == all_sources[kind]
+            replacement_root = root / "generations" / str(replacement["current"])
+            assert Generation.read(replacement_root / "generation.json").base == original.base
+            assert (
+                subprocess.check_output(
+                    [
+                        str(interpreter(replacement_root)),
+                        "-I",
+                        "-B",
+                        "-c",
+                        "import dinkster_inference,fixture_helper; "
+                        "print(dinkster_inference.VALUE,fixture_helper.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "167 31"
+            )
+            assert index_requests
+            assert {path: content_digest(path) for path in before} == before
+            assert _run(root, "stop", "--yes")[0] == 0
+            code, restored = _run(root, "rollback", "--yes", timeout=180)
+            assert code == 0, restored
+            assert _run(root, "status")[1]["sources"] == updated_sources
+            restored_root = root / "generations" / str(restored["current"])
+            assert (
+                subprocess.check_output(
+                    [
+                        str(interpreter(restored_root)),
+                        "-I",
+                        "-B",
+                        "-c",
+                        "import dinkster_inference,fixture_helper; "
+                        "print(dinkster_inference.VALUE,fixture_helper.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "31 31"
+            )
+            updated = restored
+            update = (
+                "update",
+                "--catalog-lock",
+                str(restored_root / "dinkster.lock"),
+                "--artifacts",
+                str(
+                    object_path(
+                        store / "engines",
+                        Generation.read(restored_root / "generation.json").engine_release,
+                    )
+                    / "artifacts"
+                ),
+                "--pack-lock",
+                str(restored_root / "packs/healthy-nodes/pack-lock.json"),
+            )
+            assert _run(root, "stop", "--yes")[0] == 0
+        finally:
+            index_server.shutdown()
+            index_server.server_close()
+        wheel = first_manifest["sources"]["libraries"]["fixture-helper"]["wheel"]
+        cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
+        payload = cached.read_bytes()
+        cached.unlink()
+        try:
+            code, refused = _run(root, *update, "--yes", timeout=180)
+            assert code == 1 and "retained Git library wheel" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == updated["current"]
+        finally:
+            cached.write_bytes(payload)
+        code, released = _run(root, "source", "release", "--yes", timeout=180)
+        assert code == 0, released
+        assert "sources" not in _run(root, "status")[1]
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
+    tmp_path, monkeypatch, git_server, capsys
+):
+    import pygit2
+    from dinkster_supervisor import (
+        environment,
+        environment_artifacts,
+        environment_downloads,
+        environment_frontend_sources,
+    )
+    from dinkster_supervisor.environment_state import Generation, interpreter
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_environment_frontend_sources import _artifact
+
+    from tests.fixtures.environments import build as publisher
+
+    original_wheel, encode = publisher.wheel, publisher.canonical_json
+    monkeypatch.setattr(
+        publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
+    )
+    monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+
+    def encoded(document):
+        if "workerProtocol" in document:
+            document["workerProtocol"] = PROTOCOL_VERSION
+        if document.get("format") == "dinkster.engine/1":
+            document["schemaApi"] = 1
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", encoded)
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user"))
+    fixture = publisher.build(tmp_path / "fixture", "linux-cpu", free_port())
+    root = Path(fixture["root"])
+    catalog, artifacts = tmp_path / "empty.lock", tmp_path / "artifacts"
+    catalog.write_text(Lockfile.of([]).record_json())
+    artifacts.mkdir()
+    code, result = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--data",
+        fixture["store"],
+        "--variant",
+        "linux-cpu",
+        "--channel",
+        "nightly",
+        "--port",
+        str(fixture["port"]),
+        "--catalog-lock",
+        str(catalog),
+        "--artifacts",
+        str(artifacts),
+        "--yes",
+    )
+    assert code == 0, result
+    assert _run(root, "stop", "--yes")[0] == 0
+    repository = pygit2.Repository(git_server["root"] / "source.git")
+    signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+    tree = pygit2.Index()
+    for name, payload in {
+        "package.json": b'{"version":"0.2.0"}',
+        "frontend-release.json": b'{"engineApi":{"min":1,"max":2}}',
+    }.items():
+        tree.add(
+            pygit2.IndexEntry(name, repository.create_blob(payload), pygit2.enums.FileMode.BLOB)
+        )
+    commit = repository.create_commit(
+        "refs/heads/frontend-ci", signature, signature, "frontend", tree.write_tree(repository), []
+    )
+    tree.add(
+        pygit2.IndexEntry(
+            "selected-ref.txt", repository.create_blob(b"second ref"), pygit2.enums.FileMode.BLOB
+        )
+    )
+    newer = repository.create_commit(
+        "refs/heads/frontend-next",
+        signature,
+        signature,
+        "next",
+        tree.write_tree(repository),
+        [commit],
+    )
+    library = pygit2.Index()
+    for name, payload in {
+        "pyproject.toml": (
+            '[project]\nname="fixture-helper"\nversion="9.0"\n'
+            'dependencies=["fixture-base==1.0"]\n'
+            '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        ),
+        "fixture_helper/__init__.py": "VALUE = 83\n",
+    }.items():
+        library.add(
+            pygit2.IndexEntry(
+                name, repository.create_blob(payload.encode()), pygit2.enums.FileMode.BLOB
+            )
+        )
+    helper = repository.create_commit(
+        "refs/heads/frontend-helper",
+        signature,
+        signature,
+        "helper",
+        library.write_tree(repository),
+        [],
+    )
+    repository.free()
+    artifact = _artifact(tmp_path, str(commit))
+    monkeypatch.setattr(
+        environment_frontend_sources, "frontend_ci_artifact", lambda origin: artifact
+    )
+
+    def fetch(roots, name, destination, sha, size):
+        assert sha == artifact["digest"][7:]
+        destination.write_bytes(artifact["path"].read_bytes())
+
+    monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+    args = [
+        "--root",
+        str(root),
+        "source",
+        "add",
+        "https://github.com/Kosinkadink/source",
+        "--frontend",
+        "--ref",
+        "frontend-ci",
+        "--git-mirror",
+        git_server["proxy"],
+        "--json",
+    ]
+    try:
+        code, combined = _run(
+            root,
+            "source",
+            "add",
+            "https://github.com/Kosinkadink/source",
+            "--library",
+            "fixture-helper",
+            "--ref",
+            "frontend-helper",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, combined
+        assert _run(root, "stop", "--yes")[0] == 0
+        helper_origin = _run(root, "status")[1]["sources"]["libraries"]["fixture-helper"]
+        assert helper_origin["commit"] == str(helper)
+        base = Generation.read(root / "generations/1/generation.json").base
+        base_files = {
+            path: content_digest(path)
+            for path in object_path(Path(fixture["store"]) / "bases", base).rglob("*")
+            if path.is_file()
+        }
+        tools = tmp_path / "frontend-no-git-tools"
+        tools.mkdir()
+        uv = shutil.which("uv")
+        assert uv is not None
+        shutil.copyfile(uv, tools / Path(uv).name)
+        (tools / Path(uv).name).chmod(0o755)
+        monkeypatch.setenv("PATH", str(tools))
+        assert shutil.which("git") is None
+        requests = len(git_server["requests"])
+        tunnels = len(git_server["tunnels"])
+        generations = sorted(path.name for path in (root / "generations").iterdir())
+        assert environment.run(environment.argument_parser().parse_args([*args, "--plan"])) == 0
+        preview = json.loads(capsys.readouterr().out)
+        assert any("CI bundle" in line for line in preview["plan"])
+        assert sorted(path.name for path in (root / "generations").iterdir()) == generations
+        assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 0
+        applied = json.loads(capsys.readouterr().out)
+        selected = _run(root, "status")[1]["sources"]["frontend"]
+        assert selected["commit"] == str(commit) and selected["build"]["kind"] == "ci"
+        current = root / "generations" / str(applied["current"])
+        assert Generation.read(current / "generation.json").source == "source"
+
+        def html(generation):
+            return subprocess.check_output(
+                [
+                    str(interpreter(generation)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    """
+import asyncio
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+from dinkster.frontend import discover_frontend_bundle, install_frontend
+async def serve():
+    app = web.Application()
+    install_frontend(app, bundle=discover_frontend_bundle())
+    async with TestClient(TestServer(app)) as client:
+        response = await client.get("/")
+        assert response.status == 200
+        assert response.content_type == "text/html"
+        print(await response.text())
+asyncio.run(serve())
+""",
+                ],
+                text=True,
+            ).strip()
+
+        assert html(current) == "<main>selected frontend</main>"
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, updated = _run(
+            root,
+            "update",
+            "--catalog-lock",
+            str(catalog),
+            "--artifacts",
+            str(artifacts),
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, updated
+        assert _run(root, "status")[1]["sources"]["frontend"] == selected
+        assert (
+            html(root / "generations" / str(updated["current"])) == "<main>selected frontend</main>"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        assert (
+            html(root / "generations" / str(restored["current"]))
+            == "<main>selected frontend</main>"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        original_artifact = artifact
+        next_assets = tmp_path / "next-assets"
+        next_assets.mkdir()
+        artifact = _artifact(next_assets, str(newer), extra="assets/next-ref.js")
+        update_args = [
+            "--root",
+            str(root),
+            "source",
+            "update",
+            "--frontend",
+            "--ref",
+            "frontend-next",
+            "--yes",
+            "--json",
+        ]
+        assert environment.run(environment.argument_parser().parse_args(update_args)) == 0
+        changed = json.loads(capsys.readouterr().out)
+        status = _run(root, "status")[1]
+        assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
+        newer_origin = status["sources"]["frontend"]
+        assert newer_origin["commit"] == str(newer)
+        assert newer_origin["requestedRef"] == "frontend-next"
+        assert newer_origin["wheel"]["sha256"] != selected["wheel"]["sha256"]
+        changed_root = root / "generations" / str(changed["current"])
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(changed_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; import fixture_helper; "
+                    "print(fixture_helper.VALUE, "
+                    "files('dinkster_frontend').joinpath('static/assets/next-ref.js').read_text())",
+                ],
+                text=True,
+            ).strip()
+            == "83 marker=73"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        before = _run(root, "status")[1]["current"]
+        generations = sorted(path.name for path in (root / "generations").iterdir())
+        assert environment.run(environment.argument_parser().parse_args([*args, "--yes"])) == 1
+        refused = json.loads(capsys.readouterr().out)
+        assert "identity differs" in refused["error"]
+        assert _run(root, "status")[1]["current"] == before
+        assert sorted(path.name for path in (root / "generations").iterdir()) == generations
+        artifact = original_artifact
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/frontend-ci"].set_target(newer)
+        repository.free()
+        code, restored = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, restored
+        status = _run(root, "status")[1]
+        assert status["sources"]["frontend"] == selected
+        assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
+        restored_root = root / "generations" / str(restored["current"])
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(restored_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; "
+                    "print(files('dinkster_frontend').joinpath('static/assets/next-ref.js').is_file())",
+                ],
+                text=True,
+            ).strip()
+            == "False"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        history = _run(root, "history")[1]["history"]
+        exported = history[-1]["snapshot"]
+        manifest = json.loads(exported["metadata"]["engine-manifest.json"])
+        assert exported["source"] == "source"
+        assert manifest["sources"]["frontend"] == selected
+        assert manifest["sources"]["libraries"]["fixture-helper"] == helper_origin
+        wheel = selected["wheel"]
+        store = Path(fixture["store"])
+        cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
+        payload = cached.read_bytes()
+        cached.unlink()
+        try:
+            code, refused = _run(
+                root,
+                "update",
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(artifacts),
+                "--yes",
+                timeout=180,
+            )
+            assert code == 1 and "retained Git library wheel" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == restored["current"]
+            assert _run(root, "status")[1]["sources"] == manifest["sources"]
+        finally:
+            cached.write_bytes(payload)
+        published = original_wheel(tmp_path, "dinkster_frontend", "0.3.0", 0)
+        with zipfile.ZipFile(published, "a") as archive:
+            archive.writestr("dinkster_frontend/__init__.py", "")
+            archive.writestr(
+                "dinkster_frontend/manifest.json",
+                json.dumps(
+                    {
+                        "format": "dinkster.frontend/1",
+                        "repository": "Kosinkadink/Dinkster-Frontend",
+                        "version": "0.3.0",
+                        "engineApi": {"min": 1, "max": 2},
+                    }
+                ),
+            )
+            archive.writestr("dinkster_frontend/static/index.html", "published replacement")
+        published_row = {
+            "filename": published.name,
+            "url": "https://files.pythonhosted.org/packages/" + published.name,
+            "digests": {"sha256": content_digest(published)[7:]},
+            "size": published.stat().st_size,
+        }
+        read = environment_downloads.read_metadata
+        download = environment_downloads.fetch_artifact
+
+        def metadata(location, path):
+            if location == "https://pypi.org/pypi/dinkster-frontend":
+                assert path == "0.3.0/json"
+                return json.dumps({"urls": [published_row]}).encode()
+            return read(location, path)
+
+        def transfer(locations, name, destination, sha, size):
+            if locations == ("https://files.pythonhosted.org/packages",):
+                locations = (str(tmp_path),)
+            return download(locations, name, destination, sha, size)
+
+        monkeypatch.setattr(environment_downloads, "read_metadata", metadata)
+        monkeypatch.setattr(environment_downloads, "fetch_artifact", transfer)
+        monkeypatch.setattr(environment_artifacts, "fetch_artifact", transfer)
+        published_args = [
+            "--root",
+            str(root),
+            "update",
+            "--frontend-version",
+            "0.3.0",
+            "--catalog-lock",
+            str(catalog),
+            "--artifacts",
+            str(artifacts),
+            "--yes",
+            "--json",
+        ]
+        assert environment.run(environment.argument_parser().parse_args(published_args)) == 0
+        replacement = json.loads(capsys.readouterr().out)
+        status = _run(root, "status")[1]
+        assert "frontend" not in status["sources"]
+        assert status["sources"]["libraries"]["fixture-helper"] == helper_origin
+        replacement_root = root / "generations" / str(replacement["current"])
+        assert html(replacement_root) == "published replacement"
+        assert (
+            Generation.read(replacement_root / "generation.json").base
+            == Generation.read(restored_root / "generation.json").base
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, recovered = _run(root, "rollback", "--yes", timeout=180)
+        assert code == 0, recovered
+        assert _run(root, "status")[1]["sources"]["frontend"] == selected
+        assert (
+            html(root / "generations" / str(recovered["current"]))
+            == "<main>selected frontend</main>"
+        )
+        assert {path: content_digest(path) for path in base_files} == base_files
+        assert len(git_server["requests"]) > requests
+        assert all(
+            path.startswith("/Kosinkadink/source.git/")
+            for path in git_server["requests"][requests:]
+        )
+        assert len(git_server["tunnels"]) == tunnels
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
+def test_source_engine_ref_update_and_exact_commit_rollback(
+    tmp_path: Path, monkeypatch, git_server
+):
+    from zipfile import ZipFile
+
+    import pygit2
+    from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+    from test_installer import _serve_artifacts
+
+    from tests.fixtures.environments.build import build
+    from tests.fixtures.environments.build import wheel as build_wheel
+
+    for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(name, str(tmp_path / "user"))
+    fixture = build(tmp_path / "fixture", "linux-cpu", free_port())
+    root = Path(fixture["root"])
+    code, result = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--data",
+        fixture["store"],
+        "--variant",
+        "linux-cpu",
+        "--channel",
+        "nightly",
+        "--port",
+        str(fixture["port"]),
+        "--yes",
+    )
+    assert code == 0, result
+    added = build_wheel(tmp_path, "fixture_new", "1.0", 853)
+    requests = []
+    index_server = _serve_artifacts(
+        {
+            "/simple/fixture-new/": (
+                f'<a href="/wheels/{added.name}#sha256={content_digest(added)[7:]}">'
+                f"{added.name}</a>"
+            ).encode(),
+            "/wheels/" + added.name: added.read_bytes(),
+        },
+        requests,
+    )
+    package_index = f"http://127.0.0.1:{index_server.server_port}/simple"
+    try:
+        assert _run(root, "stop", "--yes")[0] == 0
+        source = tmp_path / "source"
+        source.mkdir()
+        engine_wheel = next(Path(fixture["mirror"]).glob("engine/*/*.whl"))
+        with ZipFile(engine_wheel) as archive:
+            for name in archive.namelist():
+                if name.startswith("dinkster/"):
+                    path = source / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.read(name))
+        manager = source / "dinkster/manager.py"
+        manager.write_text(
+            manager.read_text().replace('version("fixture-engine")', 'version("dinkster")')
+        )
+        (source / "dinkster/__init__.py").write_text("VALUE = 911\n")
+        (source / "pyproject.toml").write_text(
+            '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
+            'dependencies=["fixture-base==1.0","fixture-new==1.0"]\n[dependency-groups]\n'
+            'engine-base=["fixture-base==1.0"]\n[build-system]\n'
+            'requires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        )
+        boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+        boundary.parent.mkdir(parents=True)
+        boundary.write_text("PROTOCOL_VERSION = 11\n")
+        index = tmp_path / "index"
+        index.mkdir()
+        base = read_document(Path(fixture["baseManifest"]))
+        assert isinstance(base["id"], str)
+        base_wheel = next(
+            (object_path(Path(fixture["store"]) / "bases", base["id"]) / "wheels").glob("*.whl")
+        )
+        wheel = index / base_wheel.name
+        shutil.copyfile(base_wheel, wheel)
+        shutil.copyfile(added, index / added.name)
+        monkeypatch.setenv("UV_NO_INDEX", "1")
+        monkeypatch.setenv("UV_FIND_LINKS", str(index))
+        monkeypatch.setenv("UV_OFFLINE", "1")
+        locked = subprocess.run(
+            ["uv", "lock", "--offline", "--python", sys.executable],
+            cwd=source,
+            capture_output=True,
+            text=True,
+        )
+        assert locked.returncode == 0, locked.stderr
+        lock = source / "uv.lock"
+        text = lock.read_text()
+        for path in (wheel, index / added.name):
+            text = text.replace(
+                f'path = "{path.as_posix()}"',
+                f'path = "{path.as_posix()}", hash = "{content_digest(path)}"',
+            )
+        lock.write_text(text)
+        (index / added.name).unlink()
+        wheel.unlink()
+        monkeypatch.delenv("UV_NO_INDEX")
+        monkeypatch.delenv("UV_OFFLINE")
+        monkeypatch.delenv("UV_FIND_LINKS")
+        before = {
+            path: content_digest(path)
+            for parent in ("bases", "wheels")
+            for path in (Path(fixture["store"]) / parent).rglob("*")
+            if path.is_file() and path.name != ".objects.json"
+        }
+        requests.clear()
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        git_index = pygit2.Index()
+        for path in source.rglob("*"):
+            if path.is_file():
+                git_index.add(
+                    pygit2.IndexEntry(
+                        path.relative_to(source).as_posix(),
+                        repository.create_blob(path.read_bytes()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        signature = pygit2.Signature("Fixture", "fixture@example.invalid", 1700000000, 0)
+        commit = repository.create_commit(
+            "refs/heads/engine",
+            signature,
+            signature,
+            "engine",
+            git_index.write_tree(repository),
+            [],
+        )
+        git_index.add(
+            pygit2.IndexEntry(
+                "dinkster/__init__.py",
+                repository.create_blob(b"VALUE = 1229\n"),
+                pygit2.enums.FileMode.BLOB,
+            )
+        )
+        changed = repository.create_commit(
+            "refs/heads/engine-changed",
+            signature,
+            signature,
+            "changed",
+            git_index.write_tree(repository),
+            [commit],
+        )
+        repository.free()
+        tools = tmp_path / "no-git-tools"
+        tools.mkdir()
+        uv = shutil.which("uv")
+        assert uv is not None
+        shutil.copyfile(uv, tools / Path(uv).name)
+        (tools / Path(uv).name).chmod(0o755)
+        monkeypatch.setenv("PATH", str(tools))
+        assert shutil.which("git") is None
+        selection = (
+            "source",
+            "add",
+            "https://github.com/Kosinkadink/source",
+            "--git-mirror",
+            git_server["proxy"],
+            "--ref",
+            "engine",
+            "--package-index",
+            package_index,
+        )
+        code, preview = _run(root, *selection, "--plan")
+        assert code == 0, preview
+        approval = preview["sourceApproval"]
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/engine"].set_target(changed)
+        repository.free()
+        code, refused = _run(root, *selection, "--source-approval", approval, "--yes")
+        assert code == 1 and "source inputs changed" in refused["error"], refused
+        assert _run(root, "status")[1]["current"] == preview["current"]
+        assert not requests
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/engine"].set_target(commit)
+        repository.free()
+        code, result = _run(root, *selection, "--source-approval", approval, "--yes")
+        assert code == 0, json.dumps(result)
+        assert requests and {path for path, _ in requests} == {
+            "/simple/fixture-new/",
+            "/wheels/" + added.name,
+        }
+        assert {path: content_digest(path) for path in before} == before
+        requests.clear()
+        status = _run(root, "status")[1]
+        assert status["source"] == "source"
+        assert status["published"] is False and status["reproducible"] is False
+        assert status["sources"]["engine"]["commit"] == str(commit)
+        assert status["sources"]["engine"]["requestedRef"] == "engine"
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "source", "update", "--ref", "engine-changed", "--yes")
+        assert code == 0, result
+        status = _run(root, "status")[1]
+        assert status["sources"]["engine"]["commit"] == str(changed)
+        assert status["sources"]["engine"]["requestedRef"] == "engine-changed"
+        assert _run(root, "stop", "--yes")[0] == 0
+        original_release = Generation.read(root / "generations/2/generation.json").engine_release
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references["refs/heads/engine"].set_target(changed)
+        repository.free()
+        shutil.rmtree(
+            object_path(Path(fixture["store"]) / "engines", original_release) / "checkout"
+        )
+        code, result = _run(root, "rollback", "--yes")
+        assert code == 0, result
+        assert _run(root, "status")[1]["sources"]["engine"]["commit"] == str(commit)
+        current = result["current"]
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(root / "generations" / str(current))),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster,fixture_new; print(dinkster.VALUE,fixture_new.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "911 853"
+        )
+        assert requests == []
+        assert {path: content_digest(path) for path in before} == before
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "source", "release", "--yes")
+        assert code == 0, result
+        assert (
+            _run(root, "status")[1]["engine"]["release"]
+            == json.loads(Path(fixture["initialChannel"]).read_text())["engine"]["release"]
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        code, result = _run(root, "rollback", "--yes")
+        assert code == 0, result
+        assert _run(root, "status")[1]["source"] == "source"
+    finally:
+        _run(root, "stop", "--yes")
+        index_server.shutdown()
+        index_server.server_close()
 
 
 def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_path: Path):

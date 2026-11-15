@@ -1028,7 +1028,18 @@ uv run dinkster-serve --pack path/to/dinkster-pack.toml   # isolated worker, rep
 
 Each `--pack` runs in its own process and attributes its nodes on
 `/api/nodes`. Add `--watch-packs` for live reload, boundary-cost diagnostics,
-and cache-miss explanations while developing.
+and cache-miss explanations while developing. This directory-based loop is
+unchanged by managed source selection.
+
+To try a committed pack branch in a release project instead, use
+`dinkster source --root ROOT add https://github.com/OWNER/PACK --pack PACK_NAME
+--ref BRANCH --yes`. Select a new ref with `source update --pack PACK_NAME
+--ref OTHER --yes`; omit `--ref` to refresh its recorded branch. This builds a
+new source generation rather than watching your author directory. The installed
+engine, release base and unselected packs remain unchanged; the selected pack
+must satisfy the target engine and dependency constraints. Status and history
+show its unpublished identity and exact commit, and rollback restores the
+previous software selection. See [managed pack sources](install.md#managed-pack-sources).
 
 Install `dinkster-engine` and `pytest` alongside your pack, then use
 `from dinkster_engine.testing import load_pack` in a module- or session-scoped

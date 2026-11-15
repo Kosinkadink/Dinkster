@@ -283,6 +283,134 @@ def test_setup_plan_uses_target_defaults_and_bound_locks_without_acquiring_paylo
         server.server_close()
 
 
+def test_managed_source_registry_plan_uses_target_distribution_versions(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from dinkster_registry import LockedPack, Lockfile, artifact_digest
+    from dinkster_supervisor.environment_development import source_identity
+    from dinkster_workers.pack_lock import PackLock
+    from test_environment_artifacts import _artifact, _json, _mirror
+    from test_installer import _serve_artifacts, _static_indexes, _static_release
+
+    base, _, _ = _mirror(tmp_path / "mirror")
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "base-manifest.json").write_bytes(_json(base))
+    engine = {
+        "format": "dinkster.engine/1",
+        "source": "git",
+        "kind": "source",
+        "version": "0.7",
+        "workerProtocol": base["workerProtocol"],
+        "published": False,
+        "reproducible": False,
+        "wheels": [
+            _artifact("dinkster_api-0.5-py3-none-any.whl", b"api", key="filename"),
+            _artifact("dinkster_inference-0.1.2-py3-none-any.whl", b"inference", key="filename"),
+        ],
+    }
+    identity = source_identity(engine)
+    manifest = target / "engine-manifest.json"
+    manifest.write_bytes(_json(engine))
+    files: dict[str, bytes] = {}
+    releases = []
+    for version, minimum in (("1.0", "0.1.2"), ("2.0", "0.1.3")):
+        entry = LockedPack("example-pack", version, artifact_digest(version.encode()), "acme", ())
+        row = _static_release(entry, version.encode())
+        row["requires"] = [f"dinkster-inference>={minimum}"]
+        payload = PackLock("example-pack", "fixture-cpu", ">=3.12", (), (), ()).to_json().encode()
+        path = "locks/" + artifact_digest(payload).replace(":", "/") + ".json"
+        files["/static/" + path] = payload
+        row["installLocks"] = {
+            "fixture-cpu": {
+                "baseId": base["id"],
+                "artifactDigest": entry.artifact_digest,
+                "digest": artifact_digest(payload),
+                "size": len(payload),
+                "url": path,
+            }
+        }
+        releases.append(row)
+    files.update(_static_indexes(releases))
+    requests: list[tuple[str, str | None]] = []
+    server = _serve_artifacts(files, requests)
+    try:
+        (target / "dinkster.lock").write_text(
+            Lockfile.of(
+                [
+                    LockedPack(
+                        "example-pack",
+                        "1.0",
+                        artifact_digest(b"1.0"),
+                        "acme",
+                        (),
+                        source=f"registry:http://127.0.0.1:{server.server_port}",
+                    )
+                ]
+            ).record_json()
+        )
+        registry = tmp_path / "registries.toml"
+        registry.write_text(
+            f'[registries.private]\nendpoint="http://127.0.0.1:{server.server_port}"\ndefault=true\n'
+        )
+        arguments = [
+            sys.executable,
+            "-m",
+            "dinkster.manager",
+            "--root",
+            str(tmp_path / "project"),
+            "--registries",
+            str(registry),
+            "plan-registry-sources",
+            "--engine-manifest",
+            str(manifest),
+            "--engine-release",
+            identity,
+            "--installed-lock",
+            str(target / "dinkster.lock"),
+            "--variant",
+            "fixture-cpu",
+            "--base-id",
+            base["id"],
+            "--update",
+            "example-pack",
+        ]
+        planned = subprocess.run(arguments, capture_output=True, text=True)
+        assert planned.returncode == 0, planned.stderr
+        result = json.loads(planned.stdout)
+        assert result["sources"]["packs"][0]["version"] == "1.0"
+        assert "dinkster-inference==0.1.2" in result["skippedPackVersions"][0]
+        fresh = arguments.copy()
+        installed = fresh.index("--installed-lock")
+        del fresh[installed : installed + 2]
+        refused = subprocess.run(fresh, capture_output=True, text=True)
+        assert refused.returncode != 0 and "engine manifest digest mismatch" in refused.stderr
+        (target / "installed-wheels.json").write_text(
+            json.dumps(
+                {
+                    "wheels": [
+                        {"filename": "dinkster_api-0.5-py3-none-any.whl"},
+                        {"filename": "dinkster_inference-0.1.3-py3-none-any.whl"},
+                    ]
+                }
+            )
+        )
+        planned = subprocess.run(arguments, capture_output=True, text=True)
+        assert planned.returncode == 0, planned.stderr
+        assert json.loads(planned.stdout)["sources"]["packs"][0]["version"] == "2.0"
+        engine["version"] = "9.0"
+        manifest.write_bytes(_json(engine))
+        refused = subprocess.run(arguments, capture_output=True, text=True)
+        assert (
+            refused.returncode != 0 and "source engine manifest identity mismatch" in refused.stderr
+        )
+        assert all(path.endswith(".json") for path, _ in requests)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 @pytest.mark.parametrize(
     "mode",
     ["online", "offline", "offline-archive", "offline-missing", "offline-corrupt", "offline-lock"],

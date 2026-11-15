@@ -921,7 +921,7 @@ class Installer:
             return True
         return _is_registry_source(entry.source) and self._registry_fetch is not None
 
-    def acquire(self, entry: LockedPack) -> None:
+    def acquire(self, entry: LockedPack, *, git_mirror: str | None = None) -> None:
         """Re-fetch the EXACT bytes a lockfile entry pins, from its
         recorded provenance, into the content-addressed artifact store.
         Idempotent (present bytes are never re-fetched) and
@@ -947,13 +947,14 @@ class Installer:
             from urllib.parse import urlencode
 
             from dinkster_supervisor.environment_state import EnvironmentError
-            from dinkster_supervisor.git_sources import fetched_git_source
+            from dinkster_supervisor.git_sources import fetched_git_source, parse_git_source
 
             try:
-                with fetched_git_source(url + "#" + urlencode({"ref": commit})) as (
-                    checkout,
-                    _origin,
-                ):
+                repository, _ref, subdirectory = parse_git_source(url)
+                specification = (
+                    repository + "#" + urlencode({"ref": commit, "subdirectory": subdirectory})
+                )
+                with fetched_git_source(specification, mirror=git_mirror) as (checkout, _origin):
                     self._acquire_from_tree(entry, checkout, source)
             except EnvironmentError as error:
                 raise InstallError(str(error)) from None

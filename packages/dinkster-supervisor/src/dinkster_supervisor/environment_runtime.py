@@ -110,11 +110,15 @@ def start_engine(
     gpus: tuple[str, ...] = (),
     *,
     activation_journal: Path | None = None,
+    frontend_root: str | None = None,
+    frontend_dev: str | None = None,
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
     with generation_runtime_lock(root):
-        return _start_engine(root, generation, name, port, gpus, activation_journal)
+        return _start_engine(
+            root, generation, name, port, gpus, activation_journal, frontend_root, frontend_dev
+        )
 
 
 def _start_engine(
@@ -124,6 +128,8 @@ def _start_engine(
     port: int,
     gpus: tuple[str, ...],
     activation_journal: Path | None,
+    frontend_root: str | None,
+    frontend_dev: str | None,
 ) -> dict[str, object]:
     validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
@@ -132,11 +138,29 @@ def _start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
+    development = target / "development-sources.json"
+    if frontend_root is None and frontend_dev is None and development.is_file():
+        selection = read_document(development)
+        frontend_root = cast("str | None", selection.get("frontendRoot"))
+        saved_dev = selection.get("frontendDev")
+        if saved_dev is not None:
+            from .environment_development import frontend_development_url
+
+            frontend_dev = frontend_development_url(
+                str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
+            )
+    if frontend_root is not None and frontend_dev is not None:
+        raise EnvironmentError("development frontend folder and dev server are exclusive")
+
     previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
         if existing["state"] == "ready":
             if _assignment(existing) == (generation, port, gpus):
+                if (
+                    frontend_root is not None and frontend_root != previous.get("frontendRoot")
+                ) or (frontend_dev is not None and frontend_dev != previous.get("frontendDev")):
+                    raise EnvironmentError("frontend selection changed; stop the engine first")
                 if existing["pid"] != previous["pid"]:
                     _write_record(root, name, existing)
                 return _public_row(existing)
@@ -159,6 +183,8 @@ def _start_engine(
         "url": url,
         "state": "starting",
         "_processState": lifecycle,
+        **({"frontendRoot": frontend_root} if frontend_root is not None else {}),
+        **({"frontendDev": frontend_dev} if frontend_dev is not None else {}),
     }
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
@@ -194,27 +220,10 @@ def _start_engine(
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
     ]
-    development = target / "development-sources.json"
-    if development.is_file():
-        selection = read_document(development)
-        frontend = selection.get("frontendRoot")
-        frontend_dev = selection.get("frontendDev")
-        if frontend is not None and frontend_dev is not None:
-            raise EnvironmentError("development frontend folder and dev server are exclusive")
-        if frontend is not None:
-            command.extend(["--frontend-root", str(frontend)])
-        if frontend_dev is not None:
-            from .environment_development import frontend_development_url
-
-            command.extend(
-                [
-                    "--frontend-dev",
-                    frontend_development_url(
-                        str(frontend_dev),
-                        allow_remote=selection.get("allowFrontendDevRemote") is True,
-                    ),
-                ]
-            )
+    if frontend_root is not None:
+        command.extend(["--frontend-root", frontend_root])
+    if frontend_dev is not None:
+        command.extend(["--frontend-dev", frontend_dev])
     prepare_process(lifecycle, instance)
     _write_record(root, name, record)
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
