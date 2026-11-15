@@ -313,14 +313,16 @@ jobs:
                 ...context.repo, tag, type: 'commit', object: context.sha,
                 message: JSON.stringify({ version: manifest.version, commit: context.sha, manifest: digest }),
               });
-              // Acquire the server-created object before pushing its immutable ref.
-              require('child_process').execFileSync('git', [
-                'fetch', '--no-tags', 'origin', annotation.data.sha,
-              ], { stdio: 'inherit' });
-              require('child_process').execFileSync('git', [
-                'push', 'origin', `${annotation.data.sha}:refs/tags/${tag}`,
-              ], { stdio: 'inherit' });
-              object = { type: 'tag', sha: annotation.data.sha };
+              try {
+                await github.rest.git.createRef({
+                  ...context.repo, ref: `refs/tags/${tag}`, sha: annotation.data.sha,
+                });
+              } catch (error) {
+                // A concurrent publisher may have created the immutable ref.
+                if (error.status !== 422) throw error;
+              }
+              const result = await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
+              object = result.data.object;
             }
             while (object.type === 'tag') {
               const result = await github.rest.git.getTag({ ...context.repo, tag_sha: object.sha });
