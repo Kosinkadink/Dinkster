@@ -32,6 +32,14 @@ file rather than issuing a separate HEAD request. An already verified retained
 wheel needs no network request. Explicit sizes still enforce byte counts, and
 unknown-size interrupted HTTP downloads restart without guessing a resume range.
 
+## Signed release channels
+
+Stable and Nightly selections require an independently pinned Ed25519 signature
+before use, including local copies and offline channel caches. Third-party HTTPS
+mirrors do not supply their own trust roots. Artifact hashes and sizes remain
+mandatory. See [channel signing](../../docs/channel-signing.md) for key
+provisioning, rotation, lost/leaked-key response and offline trust limits.
+
 ## Signed security feed refresh
 
 The supervisor-owned `dinkster_supervisor.security.host.SecurityHost` reads independently provisioned
