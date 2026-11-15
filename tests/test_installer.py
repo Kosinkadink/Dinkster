@@ -2173,6 +2173,120 @@ def test_registry_selects_pack_against_engine_provided_packages(
 
 
 @pytest.mark.parametrize(
+    ("condition", "expected"),
+    [
+        ("compatible", "2.0"),
+        ("variant", "1.0"),
+        ("base", "1.0"),
+        ("python", "1.0"),
+        ("inference", "1.0"),
+        ("missing", None),
+        ("corrupt", None),
+        ("invalid-json", None),
+    ],
+)
+def test_registry_update_distinguishes_incompatible_and_unavailable_locks(
+    condition: str,
+    expected: str | None,
+) -> None:
+    from dinkster_registry import artifact_digest
+    from dinkster_workers.pack_lock import PackLock
+
+    from dinkster.registries import (
+        NamedRegistry,
+        RegistryConfig,
+        StaticPackIndex,
+        plan_registry_changes,
+    )
+
+    base = "sha256:" + "a" * 64
+    entries, rows = [], []
+    files: dict[str, bytes] = {}
+    for version, digit in (("1.0", "1"), ("2.0", "2")):
+        entry = LockedPack("demo", version, "blake3:" + digit * 64, "dinkster", ())
+        lock = (
+            PackLock(
+                "demo",
+                "fixture-cpu",
+                ">=99" if version == "2.0" and condition == "python" else ">=3.12",
+                ("dinkster-inference>=9",)
+                if version == "2.0" and condition == "inference"
+                else ("private-helper>=" + version,),
+                (),
+                (),
+            )
+            .to_json()
+            .encode()
+        )
+        if version == "2.0" and condition == "invalid-json":
+            lock = b"{"
+        digest = artifact_digest(lock)
+        url = "locks/" + digest.replace(":", "/") + ".json"
+        binding = {
+            "baseId": "sha256:" + "b" * 64 if version == "2.0" and condition == "base" else base,
+            "artifactDigest": entry.artifact_digest,
+            "digest": digest,
+            "size": len(lock),
+            "url": url,
+        }
+        rows.append(
+            {
+                **_static_release(entry, b"wheel"),
+                "installLocks": {}
+                if version == "2.0" and condition == "variant"
+                else {"fixture-cpu": binding},
+            }
+        )
+        entries.append(entry)
+        if version != "2.0" or condition != "missing":
+            files["/static/" + url] = (
+                b"x" * len(lock) if version == "2.0" and condition == "corrupt" else lock
+            )
+    files.update(_static_indexes(rows))
+    server = _serve_artifacts(files, [])
+    try:
+        registry = NamedRegistry(name="", endpoint=f"http://127.0.0.1:{server.server_port}")
+        installed = Lockfile.of((replace(entries[0], source="registry:" + registry.endpoint),))
+        errors: list[str] = []
+        sources, locks = plan_registry_changes(
+            RegistryConfig(),
+            installed,
+            updates=("demo",),
+            engine_version="0.5",
+            variant="fixture-cpu",
+            base_id=base,
+            selected=registry,
+            engine_packages={"dinkster-api": "0.5", "dinkster-inference": "0.1"},
+            markers={"python_full_version": "3.12.1"},
+            errors=errors,
+            index=StaticPackIndex(),
+        )
+        if expected is None:
+            assert sources.packs[0].version == "2.0"
+            assert not locks
+            assert any("demo@2.0 dependency lock" in error for error in errors)
+            with pytest.raises(InstallError, match="demo@2.0 dependency lock"):
+                plan_registry_changes(
+                    RegistryConfig(),
+                    installed,
+                    updates=("demo",),
+                    engine_version="0.5",
+                    variant="fixture-cpu",
+                    base_id=base,
+                    selected=registry,
+                    engine_packages={"dinkster-api": "0.5", "dinkster-inference": "0.1"},
+                    markers={"python_full_version": "3.12.1"},
+                    index=StaticPackIndex(),
+                )
+        else:
+            assert not errors
+            assert sources.packs[0].version == expected
+            assert locks[0].packages[-1].version == expected
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
     ("minimum", "engine", "expected"),
     [
         ("1.0", "0.5", "10.0"),

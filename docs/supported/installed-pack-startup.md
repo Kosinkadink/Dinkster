@@ -16,7 +16,9 @@
   the target variant's published dependency lock and its exact base binding.
   Plans identify skipped newer versions and their unmet minimums. Exact incompatible
   selections refuse with upgrade guidance instead of installing a pack with silently
-  missing nodes.
+  missing nodes. Only verified incompatibility permits an older compatible selection.
+  Missing or corrupt published locks refuse the update with the affected version
+  rather than silently selecting an older cached source.
 - Equivalent requirement spelling and unordered namespace or base replacement
   declarations do not refuse admission. Namespaces must still match their grants,
   replacement names remain unique, and selected wheel identities stay exact.
