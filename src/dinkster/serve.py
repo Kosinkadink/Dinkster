@@ -512,7 +512,7 @@ def _with_remote_config(
     services = resolve_services(
         os.environ.get("DINKSTER_SERVICES", "production"),
         catalog_base=(
-            os.environ.get(_REMOTE_CATALOG_BASE_ENV) if catalog_base is None else catalog_base
+            os.environ.get(_REMOTE_CATALOG_BASE_ENV, "") if catalog_base is None else catalog_base
         ),
         gateway_base=(
             os.environ.get(_REMOTE_GATEWAY_BASE_ENV) if gateway_base is None else gateway_base

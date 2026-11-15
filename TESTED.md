@@ -6,6 +6,7 @@
 - Account/service/CLI/serving integration: 80 passed in 43.14 seconds on the managed linux-cpu contributor generation. Local identity HTTP fixtures cover PKCE/state/issuer checks, consent denial, paginated projects, selected-project mint, OAuth rotation, revocation, redirect refusal, private credentials outside projects and endpoint/install isolation.
 - Full Ruff lint/format and Linux/Windows-target Pyright pass with account source included.
 - Account/service/CLI/serving/composition/sandbox integration: 167 passed in 69.15 seconds. The real engine refreshes its selected install bearer at startup and periodically. A real bubblewrap worker observes atomic bearer replacement while OAuth state stays hidden. Lost OAuth-refresh replies invalidate local state and are never replayed automatically.
+- Both default pack helper commands retain disabled discovery when endpoints are omitted or explicitly empty, and honor explicit custom endpoints: six public CLI cases pass against a real fixture pack. The omitted-endpoint cases fail on the previous helper implementation.
 - These checks do not establish live identity bridge availability or authenticated catalog integration with the remote pack.
 
 # Bundled environment tool compatibility
