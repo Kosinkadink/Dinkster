@@ -456,11 +456,12 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
     tmp_path: Path, monkeypatch, git_server, capsys
 ):
     import pygit2
-    from dinkster_supervisor import environment, environment_frontend_sources
+    from dinkster_supervisor import environment, environment_frontend_sources, environment_inference
     from dinkster_supervisor.environment_state import Generation, interpreter, read_document
     from dinkster_workers.boundary import PROTOCOL_VERSION
     from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
     from test_environment_frontend_sources import _artifact as frontend_artifact
+    from test_installer import _serve_artifacts
 
     from tests.fixtures.environments import build as publisher
 
@@ -469,12 +470,24 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         publisher, "wheel", lambda *args, **kwargs: original_wheel(*args, **kwargs, pack_tools=True)
     )
     monkeypatch.setattr(publisher, "standalone_tree", _workspace_tree)
+    published_base = {}
 
     def encoded(document):
         if "workerProtocol" in document:
             document["workerProtocol"] = PROTOCOL_VERSION
+        if document.get("format") == "dinkster.base/1" and "id" in document:
+            published_base.update(document)
         if document.get("format") == "dinkster.engine/1":
             document["schemaApi"] = 1
+            fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+            document["dependencies"] = {
+                published_base["variant"]: {
+                    "base": published_base["id"],
+                    "wheels": [
+                        {key: row[key] for key in fields} for row in published_base["wheels"]
+                    ],
+                }
+            }
         return encode(document)
 
     monkeypatch.setattr(publisher, "canonical_json", encoded)
@@ -906,6 +919,114 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             == "31 31"
         )
         assert _run(root, "stop", "--yes")[0] == 0
+        published = original_wheel(tmp_path, "dinkster_inference", "9.0", 167)
+        incompatible = original_wheel(tmp_path, "dinkster_inference", "9.1", 229)
+        page = "".join(
+            f'<a href="/wheels/{path.name}#sha256={content_digest(path)[7:]}">{path.name}</a>'
+            for path in (published, incompatible)
+        ).encode()
+        index_requests = []
+        index_server = _serve_artifacts(
+            {
+                "/simple/dinkster-inference": page,
+                "/simple/dinkster-inference/": page,
+                **{"/wheels/" + path.name: path.read_bytes() for path in (published, incompatible)},
+            },
+            index_requests,
+        )
+        try:
+            repository = pygit2.Repository(git_server["root"] / "source.git")
+            repository.create_tag(
+                "v9.0", commits[0], pygit2.enums.ObjectType.COMMIT, signature, "9.0"
+            )
+            repository.create_tag(
+                "v9.1", commits[1], pygit2.enums.ObjectType.COMMIT, signature, "9.1"
+            )
+            repository.free()
+            monkeypatch.setattr(environment_inference, "INFERENCE_REPOSITORY", git_server["url"])
+            replacement_args = [
+                "--root",
+                str(root),
+                *update,
+                "--inference",
+                "9.0",
+                "--package-index",
+                f"http://127.0.0.1:{index_server.server_port}/simple",
+                "--yes",
+                "--json",
+            ]
+            refused_args = ["9.1" if value == "9.0" else value for value in replacement_args]
+            assert environment.run(environment.argument_parser().parse_args(refused_args)) == 1
+            refused = json.loads(capsys.readouterr().out)
+            assert refused["status"] == "error"
+            assert "dinkster-inference" in refused["error"] and "9.0" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == updated["current"]
+            code = environment.run(environment.argument_parser().parse_args(replacement_args))
+            replacement = json.loads(capsys.readouterr().out)
+            assert code == 0, replacement
+            selected_sources = _run(root, "status")[1]["sources"]
+            assert selected_sources["libraries"] == {
+                "fixture-helper": first_manifest["sources"]["libraries"]["fixture-helper"]
+            }
+            for kind in ("packs", "frontend"):
+                assert selected_sources[kind] == all_sources[kind]
+            replacement_root = root / "generations" / str(replacement["current"])
+            assert Generation.read(replacement_root / "generation.json").base == original.base
+            assert (
+                subprocess.check_output(
+                    [
+                        str(interpreter(replacement_root)),
+                        "-I",
+                        "-B",
+                        "-c",
+                        "import dinkster_inference,fixture_helper; "
+                        "print(dinkster_inference.VALUE,fixture_helper.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "167 31"
+            )
+            assert index_requests
+            assert {path: content_digest(path) for path in before} == before
+            assert _run(root, "stop", "--yes")[0] == 0
+            code, restored = _run(root, "rollback", "--yes", timeout=180)
+            assert code == 0, restored
+            assert _run(root, "status")[1]["sources"] == updated_sources
+            restored_root = root / "generations" / str(restored["current"])
+            assert (
+                subprocess.check_output(
+                    [
+                        str(interpreter(restored_root)),
+                        "-I",
+                        "-B",
+                        "-c",
+                        "import dinkster_inference,fixture_helper; "
+                        "print(dinkster_inference.VALUE,fixture_helper.VALUE)",
+                    ],
+                    text=True,
+                ).strip()
+                == "31 31"
+            )
+            updated = restored
+            update = (
+                "update",
+                "--catalog-lock",
+                str(restored_root / "dinkster.lock"),
+                "--artifacts",
+                str(
+                    object_path(
+                        store / "engines",
+                        Generation.read(restored_root / "generation.json").engine_release,
+                    )
+                    / "artifacts"
+                ),
+                "--pack-lock",
+                str(restored_root / "packs/healthy-nodes/pack-lock.json"),
+            )
+            assert _run(root, "stop", "--yes")[0] == 0
+        finally:
+            index_server.shutdown()
+            index_server.server_close()
         wheel = first_manifest["sources"]["libraries"]["fixture-helper"]["wheel"]
         cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
         payload = cached.read_bytes()
@@ -1107,8 +1228,21 @@ def test_managed_git_frontend_uses_verified_ci_assets_and_retains_exact_update(
                     "-I",
                     "-B",
                     "-c",
-                    "from importlib.resources import files; "
-                    "print(files('dinkster_frontend').joinpath('static/index.html').read_text())",
+                    """
+import asyncio
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+from dinkster.frontend import discover_frontend_bundle, install_frontend
+async def serve():
+    app = web.Application()
+    install_frontend(app, bundle=discover_frontend_bundle())
+    async with TestClient(TestServer(app)) as client:
+        response = await client.get("/")
+        assert response.status == 200
+        assert response.content_type == "text/html"
+        print(await response.text())
+asyncio.run(serve())
+""",
                 ],
                 text=True,
             ).strip()
