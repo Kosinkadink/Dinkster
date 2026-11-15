@@ -137,7 +137,7 @@ def local_selection(
     }
 
 
-def _resolve(
+def resolve_wheels(
     requirements: Path,
     constraints: Path,
     output: Path,
@@ -146,6 +146,8 @@ def _resolve(
     index: str,
     source: Path,
     overrides: Path | None = None,
+    package_index: str | None = None,
+    find_links: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     run_local_command(
         [
@@ -167,6 +169,8 @@ def _resolve(
             str(output),
             "--index",
             index,
+            *(["--default-index", package_index] if package_index is not None else []),
+            *[argument for path in find_links for argument in ("--find-links", str(path))],
             "--index-strategy",
             "unsafe-best-match",
             "--no-header",
@@ -216,7 +220,7 @@ def retain_wheels(
         _, filename, url, wheel = min(candidates, key=lambda row: (row[0], row[1]))
         sha = wheel.get("hashes", {}).get("sha256")
         size = wheel.get("size")
-        if sha is None and urlsplit(url).scheme == "https":
+        if sha is None and urlsplit(url).scheme in {"https", "http"}:
             with tempfile.TemporaryDirectory(prefix="dinkster-local-wheel-") as directory:
                 downloaded = Path(directory) / filename
                 with urlopen(url, timeout=60) as response, downloaded.open("wb") as output:
@@ -242,7 +246,7 @@ def retain_wheels(
                 and content_digest(cached) == "sha256:" + sha
             ):
                 size = cached.stat().st_size
-        if sha is not None and size is None and urlsplit(url).scheme == "https":
+        if sha is not None and size is None and urlsplit(url).scheme in {"https", "http"}:
             with urlopen(Request(url, method="HEAD"), timeout=30) as response:
                 size = int(response.headers["Content-Length"])
         source_path = unquote(urlsplit(url).path)
@@ -368,7 +372,7 @@ def prepare_local(
             "\n".join(f"{name}=={packages[name][0]['version']}" for name in selection["packages"])
             + "\n"
         )
-        resolved = _resolve(
+        resolved = resolve_wheels(
             base_requirements,
             pins,
             work / "pylock.base.toml",
@@ -401,6 +405,8 @@ def prepare_local(
             ]
             if len(inference) > 1:
                 raise EnvironmentError("duplicate development library: dinkster-inference")
+            if inference and "inference" in selection:
+                raise EnvironmentError("choose --inference or a local inference library, not both")
             if inference:
                 wheel = inference[0]
                 version = str(parse_wheel_filename(wheel.name)[1])
@@ -429,17 +435,21 @@ def prepare_local(
                             "notice": notice,
                         }
                         print(notice, file=sys.stderr, flush=True)
-                # uv overrides replace dependency requirements, not exported constraints.
-                engine_constraints = (
-                    "\n".join(
-                        line
-                        for line in engine_constraints.replace("\\\n", "").splitlines()
-                        if not re.match(r"(?i)^dinkster[-_.]inference(?:\s|[=<>!~@])", line)
-                    )
-                    + "\n"
-                )
                 overrides = work / "inference-override.txt"
                 overrides.write_text(f"dinkster-inference @ {wheel.resolve().as_uri()}\n")
+        if "inference" in selection:
+            overrides = work / "inference-override.txt"
+            overrides.write_text(f"dinkster-inference=={selection['inference']['version']}\n")
+        if overrides is not None:
+            # uv overrides replace dependency requirements, not exported constraints.
+            engine_constraints = (
+                "\n".join(
+                    line
+                    for line in engine_constraints.replace("\\\n", "").splitlines()
+                    if not re.match(r"(?i)^dinkster[-_.]inference(?:\s|[=<>!~@])", line)
+                )
+                + "\n"
+            )
         effective.write_text(engine_constraints)
         built = work / "built"
         for package in ("dinkster", "dinkster-api", "dinkster-engine", "dinkster-supervisor"):
@@ -454,8 +464,13 @@ def prepare_local(
             )
             + "\n"
             + (engine_constraints if contributor else "")
+            + (
+                f"dinkster-inference=={selection['inference']['version']}\n"
+                if "inference" in selection
+                else ""
+            )
         )
-        engine = _resolve(
+        engine = resolve_wheels(
             engine_requirements,
             effective,
             work / "pylock.engine.toml",
@@ -463,6 +478,7 @@ def prepare_local(
             index=selection["index"],
             source=source,
             overrides=overrides,
+            package_index=selection.get("packageIndex"),
         )
         wheels = retain_wheels(engine, python, store, source)
         prefix = Path(
@@ -564,6 +580,8 @@ def prepare_local(
         }
         if "development" in selection:
             release["development"] = selection["development"]
+        if "inference" in selection:
+            release["inference"] = selection["inference"]
         release_id = (
             "sha256:" + hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
         )

@@ -35,6 +35,7 @@ def wheel(
     *,
     engine: bool = False,
     pack_tools: bool = False,
+    requirements: tuple[str, ...] = (),
 ) -> Path:
     path = directory / f"{name}-{version}-py3-none-any.whl"
     metadata = f"{name}-{version}.dist-info"
@@ -42,7 +43,8 @@ def wheel(
         archive.writestr(f"{name}.py", f"VALUE = {value}\n")
         archive.writestr(
             f"{metadata}/METADATA",
-            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            + "".join(f"Requires-Dist: {requirement}\n" for requirement in requirements),
         )
         archive.writestr(
             f"{metadata}/WHEEL",
@@ -162,7 +164,7 @@ def build_base(mirror: Path, scratch: Path, variant: str, *, version: str = "1.0
                 "version": version,
                 "lockedVersion": version,
                 "index": "https://pypi.org/simple",
-                "url": "https://example.invalid/fixture.whl",
+                "url": "https://example.invalid/" + base_wheel.name,
                 "verification": "lock",
             }
         ],

@@ -592,6 +592,320 @@ def test_acquisition_retains_original_discovery_bytes_without_refetch(
     assert retained.read_bytes() == data
 
 
+@pytest.mark.parametrize(
+    "replacement", ["engine", "incompatible-engine", "base", "incompatible-base"]
+)
+def test_explicit_inference_retains_selected_wheels_for_exact_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, replacement: str
+):
+    """An explicit selection runs the chosen code and recovers without its old pin or index."""
+    from dinkster_supervisor.environment_generations import prepare_engine_interpreter
+    from dinkster_supervisor.environment_restore_plan import missing_inputs
+    from dinkster_supervisor.environment_state import interpreter
+
+    from tests.fixtures.environments.build import build, canonical_json, wheel
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", 58990)
+    mirror, store, packages = Path(fixture["mirror"]), tmp_path / "store", tmp_path / "index"
+    packages.mkdir()
+    selected = wheel(
+        packages, "dinkster_inference", "0.2.0", 83, requirements=("fixture-helper==1.0",)
+    )
+    helper = wheel(packages, "fixture_helper", "1.0", 47)
+    for name, path in (("dinkster-inference", selected), ("fixture-helper", helper)):
+        project = packages / name
+        project.mkdir()
+        (project / "index.html").write_text(f'<a href="../{path.name}">selected</a>')
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(packages))
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        index = f"http://127.0.0.1:{server.server_port}"
+        catalog = discover((str(mirror),), "main")
+        base, engine = cast("dict", catalog.bases["fixture-cpu"]), cast("dict", catalog.engine)
+        channel = cast("dict", catalog.document)
+        previous_engine = mirror / channel["engine"]["locations"][0]["path"]
+        engine_wheel = wheel(
+            previous_engine.parent,
+            "fixture_engine",
+            "1.0",
+            41,
+            engine=True,
+            requirements=("dinkster-inference==0.1.1",),
+        )
+        engine["artifacts"][1] = _artifact(engine_wheel.name, engine_wheel.read_bytes())
+        fields = ("name", "version", "filename", "size", "sha256", "index", "url")
+        old = {
+            "name": "dinkster-inference",
+            "version": "0.1.1",
+            "filename": "dinkster_inference-0.1.1-py3-none-any.whl",
+            "sha256": "a" * 64,
+            "size": 1,
+            "index": index,
+            "url": index + "/dinkster_inference-0.1.1-py3-none-any.whl",
+        }
+        engine["dependencies"] = {
+            "fixture-cpu": {
+                "base": base["id"],
+                "wheels": [{key: base["wheels"][0][key] for key in fields}, old],
+            }
+        }
+        data = _json(engine)
+        identity = "sha256:" + hashlib.sha256(data).hexdigest()
+        previous = mirror / channel["engine"]["locations"][0]["path"]
+        release = mirror / "engine" / identity[7:]
+        shutil.copytree(previous.parent, release)
+        channel["engine"]["release"] = identity
+        channel["engine"]["locations"] = [
+            {"type": "mirror", "path": f"engine/{identity[7:]}/release-manifest.json"}
+        ]
+        (mirror / "channels/main.json").write_bytes(_json(channel))
+        (release / "release-manifest.json").write_bytes(data)
+        catalog = discover((str(mirror),), "main")
+        inference: dict[str, object] = {
+            "version": "0.2.0",
+            "requested": "0.2.0.dev3",
+            "sourceCommit": "b" * 40,
+        }
+        constraints = acquire(
+            catalog, "fixture-cpu", store, package_index=index, inference=inference
+        )
+        original = constraints.read_bytes()
+        assert b"dinkster-inference==0.2.0" in original and b"0.1.1" not in original
+        assert any(
+            row["name"] == "dinkster-inference"
+            for row in cast("list[dict[str, object]]", inference["wheels"])
+        )
+        assert catalog.channel.engine_release == identity
+        python = prepare_engine_interpreter(
+            tmp_path / "generation", store=store, base=base["id"], constraints=constraints
+        )
+        assert (
+            subprocess.check_output(
+                [
+                    str(python),
+                    "-I",
+                    "-c",
+                    "import dinkster_inference, fixture_helper; "
+                    "print(dinkster_inference.VALUE, fixture_helper.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "83 47"
+        )
+        snapshot = {
+            "source": "published",
+            "engine": {"release": identity},
+            "base": {"id": base["id"], "variant": "fixture-cpu"},
+            "metadata": {
+                "engine-manifest.json": data.decode(),
+                "base-manifest.json": json.dumps(base),
+                "constraints.txt": original.decode(),
+                "artifact-sources.json": json.dumps(
+                    {
+                        "engine": list(catalog.engine_sources),
+                        "base": list(catalog.base_sources["fixture-cpu"]),
+                        "channel": channel,
+                        "inference": inference,
+                    }
+                ),
+            },
+        }
+        assert missing_inputs(snapshot, store) == []
+        from dinkster_registry import Lockfile
+        from dinkster_supervisor import environment, environment_inference
+        from test_environment_runtime import free_port
+
+        root = tmp_path / "managed-project"
+        source_lock, archives = tmp_path / "sources.json", tmp_path / "archives"
+        source_lock.write_text(Lockfile.of(()).record_json())
+        archives.mkdir()
+        for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+            monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+        monkeypatch.setattr(
+            environment_inference,
+            "resolve_inference",
+            lambda *args: {
+                "version": "0.2.0",
+                "requested": "0.2.0.dev3",
+                "notice": "selected 0.2.0",
+            },
+        )
+
+        def run(*arguments: str) -> dict:
+            code = environment.run(
+                environment.argument_parser().parse_args(
+                    ["--root", str(root), *arguments, "--json"]
+                )
+            )
+            result = json.loads(capsys.readouterr().out)
+            assert code == 0, result
+            return result
+
+        try:
+            for operation in ("setup", "update"):
+                flags = ["--port", str(free_port())] if operation == "setup" else []
+                run(
+                    operation,
+                    "--yes",
+                    "--mirror",
+                    str(mirror),
+                    "--channel",
+                    "main",
+                    "--variant",
+                    "fixture-cpu",
+                    "--data",
+                    str(store),
+                    "--package-index",
+                    index,
+                    "--inference",
+                    "0.2.0.dev3",
+                    "--catalog-lock",
+                    str(source_lock),
+                    "--artifacts",
+                    str(archives),
+                    *flags,
+                )
+            retained = root / "generations/1/artifact-sources.json"
+            retained_bytes = retained.read_bytes()
+            provenance = json.loads(retained_bytes)
+            assert provenance["inference"]["version"] == "0.2.0"
+            assert (root / "generations/2/constraints.txt").read_bytes() == original
+            server.shutdown()
+            recovered = acquire(catalog, "fixture-cpu", store, offline=True, inference=inference)
+            assert recovered.read_bytes() == original
+            restored = run("restore", "1", "--yes")
+            assert restored["exact"] is True
+            restored_root = root / "generations" / str(restored["current"])
+            assert (restored_root / "constraints.txt").read_bytes() == original
+            assert (restored_root / "artifact-sources.json").read_bytes() == retained_bytes
+            if replacement in {"engine", "incompatible-engine"}:
+                alternative = json.loads(data)
+                alternative["version"] = "2.0"
+                if replacement == "incompatible-engine":
+                    changed_helper = wheel(packages, "fixture_helper", "2.0", 131)
+                    alternative["dependencies"]["fixture-cpu"]["wheels"].append(
+                        {
+                            "name": "fixture-helper",
+                            "version": "2.0",
+                            "filename": changed_helper.name,
+                            "sha256": hashlib.sha256(changed_helper.read_bytes()).hexdigest(),
+                            "size": changed_helper.stat().st_size,
+                            "index": index,
+                            "url": index + "/" + changed_helper.name,
+                        }
+                    )
+                alternative_wheel = wheel(
+                    packages,
+                    "fixture_engine",
+                    "2.0",
+                    101,
+                    engine=True,
+                    requirements=("dinkster-inference==0.1.1",)
+                    + (("fixture-helper==2.0",) if replacement == "incompatible-engine" else ()),
+                )
+                alternative["artifacts"][1] = _artifact(
+                    alternative_wheel.name, alternative_wheel.read_bytes()
+                )
+                alternative_data = _json(alternative)
+                alternative_id = hashlib.sha256(alternative_data).hexdigest()
+                destination = mirror / "engine" / alternative_id
+                shutil.copytree(release, destination)
+                shutil.copyfile(alternative_wheel, destination / alternative_wheel.name)
+                (destination / "release-manifest.json").write_bytes(alternative_data)
+                channel["engine"].update(
+                    version="2.0",
+                    release="sha256:" + alternative_id,
+                    locations=[
+                        {
+                            "type": "mirror",
+                            "path": f"engine/{alternative_id}/release-manifest.json",
+                        }
+                    ],
+                )
+                engine_row = engine["artifacts"][1]
+                (release / engine_row["name"]).unlink()
+                (
+                    object_path(store / "wheels", "sha256:" + engine_row["sha256"])
+                    / engine_row["name"]
+                ).unlink()
+            else:
+                alternative = json.loads(json.dumps(base))
+                alternative["interpreter"]["release"] = "replacement"
+                if replacement == "incompatible-base":
+                    alternative["wheels"][0]["sha256"] = "f" * 64
+                identity_fields = {
+                    key: value
+                    for key, value in alternative.items()
+                    if key not in {"id", "signature"}
+                }
+                identity_fields["archive"] = {"format": "tar+zstd"}
+                alternative_id = hashlib.sha256(canonical_json(identity_fields)).hexdigest()
+                alternative["id"] = "sha256:" + alternative_id
+                published = mirror / channel["base"]["fixture-cpu"]["locations"][0]["path"]
+                destination = published.parent.parent / alternative_id
+                shutil.copytree(published.parent, destination)
+                (destination / "manifest.json").write_bytes(_json(alternative))
+                channel["base"]["fixture-cpu"] = {
+                    "id": alternative["id"],
+                    "locations": [
+                        {
+                            "type": "mirror",
+                            "path": f"base/fixture-cpu/{alternative_id}/manifest.json",
+                        }
+                    ],
+                }
+                shutil.rmtree(published.parent)
+                shutil.rmtree(object_path(store / "bases", base["id"]))
+                shutil.rmtree(object_path(store / "downloads", base["id"]))
+            (mirror / "channels/main.json").write_bytes(_json(channel))
+            proposed = run("restore", "1", "--plan")
+            alternatives = proposed["restorePlan"]["alternatives"]
+            if replacement in {"incompatible-base", "incompatible-engine"}:
+                assert alternatives == []
+            else:
+                assert len(alternatives) == 1, proposed
+                chosen = alternatives[0]
+                chosen_metadata = chosen["snapshot"]["metadata"]
+                assert "dinkster-inference==0.2.0" in chosen_metadata["constraints.txt"]
+                assert "dinkster-inference==0.1.1" not in chosen_metadata["constraints.txt"]
+                receipt = json.loads(chosen_metadata["installed-wheels.json"])["wheels"]
+                assert (
+                    next(row for row in receipt if row["filename"] == selected.name)["registry"]
+                    == index
+                )
+                assert (
+                    json.loads(chosen_metadata["artifact-sources.json"])["inference"]["version"]
+                    == "0.2.0"
+                )
+                rebuilt = run("restore", "1", "--approve", chosen["approval"])
+                rebuilt_root = root / "generations" / str(rebuilt["current"])
+                assert (rebuilt_root / "constraints.txt").read_text() == chosen_metadata[
+                    "constraints.txt"
+                ]
+                assert (
+                    subprocess.check_output(
+                        [
+                            str(interpreter(rebuilt_root)),
+                            "-I",
+                            "-c",
+                            "import dinkster_inference, fixture_helper; "
+                            "print(dinkster_inference.VALUE, fixture_helper.VALUE)",
+                        ],
+                        text=True,
+                    ).strip()
+                    == "83 47"
+                )
+        finally:
+            run("stop", "--yes")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 @pytest.mark.parametrize("source", ["origin", "index"])
 @pytest.mark.parametrize("failure", [None, "hash", "size", "missing", "base-hash", "dependency"])
 def test_locked_dependencies_use_exact_remote_bytes_and_reuse_the_shared_store(
