@@ -42,7 +42,7 @@ from .composition_error import CompositionError
 from .registries import RegistryConfig
 
 if TYPE_CHECKING:
-    from .compose import PackSpec
+    from .pack_spec import PackSpec
 
 
 def _manifest(root: Path, entry: LockedPack) -> PackManifest:
@@ -201,7 +201,7 @@ def generation_pack_specs(
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
-        from .compose import PackSpec
+        from .pack_spec import PackSpec
         from .packs import pack_info_from_manifest
 
         root = generation / "pack-sources" / entry.pack
