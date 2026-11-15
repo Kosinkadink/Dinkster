@@ -77,11 +77,18 @@
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
-- `dinkster-doctor --sandbox` provides a Linux-only, network-isolated import
-  probe jail. It refuses instead of running a requested probe unjailed when
-  bubblewrap is unavailable.
-- Windows and macOS do not currently provide an OS security sandbox for pack
-  workers or doctor probes. Their isolated workers retain the operating
+- macOS supports opt-in OS sandboxing for local isolated packs through
+  `dinkster-serve --sandbox-packs`. Workers can access only granted folders
+  and their private Unix sockets. Direct networking, including loopback,
+  and inspection or signalling of outside processes are denied. GPU access
+  requires a host grant. Sandboxed packs use separate Metal compile caches;
+  when a private cache is unavailable, they compile operations at startup
+  without accessing the user's shared cache.
+- `dinkster-doctor --sandbox` provides a network-isolated import probe jail
+  on Linux and macOS. It refuses instead of running a requested probe
+  unjailed when the platform sandbox is unavailable.
+- Windows does not currently provide an OS security sandbox for pack
+  workers or doctor probes. Its isolated workers retain the operating
   user's filesystem and network authority.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.

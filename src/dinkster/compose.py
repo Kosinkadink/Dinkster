@@ -232,12 +232,15 @@ from dinkster_workers import (
     RemoteWorker,
     RoutingWorker,
     SandboxPolicy,
+    SeatbeltCapability,
+    SeatbeltLauncher,
     ValueStore,
     VisionProvider,
     WorkGroupCoordinator,
     WorkGroupWorkerLane,
     compose_workgroup_configuration,
     detect_bubblewrap,
+    detect_seatbelt,
     egress_origin_from_url,
     load_manifest,
     normalize_egress_origin,
@@ -2356,6 +2359,7 @@ class ServingComposer:
             Path(os.path.abspath(str(pack_scratch_root))) if pack_scratch_root is not None else None
         )
         self._sandbox_capability: BubblewrapCapability | None = None
+        self._seatbelt_capability: SeatbeltCapability | None = None
         self._on_diagnostic = on_diagnostic
         diagnostic_sinks: list[DiagnosticListener] = []
         if dev:
@@ -2626,7 +2630,7 @@ class ServingComposer:
         spec: PackSpec,
         manifests: Sequence[PackManifest],
         env: Mapping[str, str],
-    ) -> BubblewrapLauncher | None:
+    ) -> BubblewrapLauncher | SeatbeltLauncher | None:
         base = self._sandbox_policy
         if base is None:
             return None
@@ -2750,8 +2754,6 @@ class ServingComposer:
             )
         )
 
-        if self._sandbox_capability is None:
-            self._sandbox_capability = detect_bubblewrap()
         policy = replace(
             base,
             egress_allowlist=egress_allowlist if network_requesters else (),
@@ -2762,6 +2764,12 @@ class ServingComposer:
             protected_ro_exceptions=tuple(dict.fromkeys(protected_ro_exceptions)),
             protected_rw_exceptions=tuple(dict.fromkeys(protected_rw_exceptions)),
         )
+        if sys.platform == "darwin":
+            if self._seatbelt_capability is None:
+                self._seatbelt_capability = detect_seatbelt()
+            return SeatbeltLauncher(policy, capability=self._seatbelt_capability)
+        if self._sandbox_capability is None:
+            self._sandbox_capability = detect_bubblewrap()
         return BubblewrapLauncher(policy, capability=self._sandbox_capability)
 
     def _catalog_group_worker(

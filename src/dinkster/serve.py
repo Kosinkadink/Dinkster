@@ -1064,7 +1064,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--sandbox-packs",
         action="store_true",
-        help="run isolated pack workers in a fail-closed Linux bubblewrap jail",
+        help="run isolated pack workers in a fail-closed Linux bubblewrap or macOS Seatbelt jail",
     )
     parser.add_argument(
         "--sandbox-grant-gpu",
