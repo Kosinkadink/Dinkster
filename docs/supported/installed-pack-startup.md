@@ -48,6 +48,9 @@
   `--frontend-dev URL` proxies a running development server with websocket reload.
   Both options are visible in command help and neither builds frontend assets.
 
+- Published-generation restore accepts recorded pack dependency locks with engine
+  API compatibility ranges, with the same engine-range and wheel-integrity checks
+  as source-generation restore.
 - Compatible engine dependency updates retain existing published packs without
   republishing them; declared pack and private-wheel dependency ranges still apply.
 - Registry pack updates select the newest version compatible with the engine API,

@@ -390,9 +390,7 @@ def _pack_missing_inputs(
     in_process = cast("list[str]", snapshot["inProcessPacks"])
     for lock in sorted(locks, key=lambda lock: lock["pack"] not in in_process):
         pack = lock.get("pack")
-        formats = {"dinkster.pack-lock/1"}
-        if snapshot.get("source") in {"local", "source"}:
-            formats.add("dinkster.pack-lock/2")
+        formats = {"dinkster.pack-lock/1", "dinkster.pack-lock/2"}
         if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
         if lock.get("format") == "dinkster.pack-lock/2":
