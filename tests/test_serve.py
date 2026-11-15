@@ -1260,6 +1260,72 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         stop_logged_serve(process, log, pending_error)
 
 
+@pytest.mark.parametrize(
+    ("variable", "arguments", "expected"),
+    [
+        (None, (), "production"),
+        ("qa", (), "qa"),
+        ("qa", ("--services", "production"), "production"),
+        ("invalid", ("--services", "qa"), "qa"),
+        (None, ("--remote-gateway-base", "http://127.0.0.1:9"), "custom"),
+    ],
+)
+def test_serve_reports_process_local_services(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str | None,
+    arguments: tuple[str, ...],
+    expected: str,
+) -> None:
+    from dinkster.services import resolve_services
+
+    if variable is None:
+        monkeypatch.delenv("DINKSTER_SERVICES", raising=False)
+    else:
+        monkeypatch.setenv("DINKSTER_SERVICES", variable)
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("DINKSTER_REMOTE_CATALOG_BASE", raising=False)
+    monkeypatch.delenv("DINKSTER_REMOTE_GATEWAY_BASE", raising=False)
+    monkeypatch.delenv("DINKSTER_ACCOUNT_IDENTITY_BASE", raising=False)
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_command(port, "--no-default-packs", *arguments), tmp_path
+    )
+    pending_error: BaseException | None = None
+
+    async def scenario() -> None:
+        async with aiohttp.ClientSession() as client:
+            async with asyncio.timeout(30):
+                while True:
+                    assert process.poll() is None, log.read_text()
+                    try:
+                        async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                            document = await response.json()
+                        break
+                    except aiohttp.ClientError:
+                        await asyncio.sleep(0.05)
+            services = document["dinkster"]["services"]
+            hosted = resolve_services("qa" if expected == "qa" else "production")
+            gateway = "http://127.0.0.1:9" if expected == "custom" else hosted.gateway_base
+            assert services == {
+                "name": expected,
+                "identityBase": hosted.identity_base,
+                "gatewayBase": gateway,
+            }
+            line = f"Services: {expected}; identity: {hosted.identity_base}; gateway: {gateway}"
+            output = log.read_text()
+            assert line in output
+            assert f"dinkster.serve: {line}" in output
+
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 def test_serve_loads_memory_budgets_from_library_config(tmp_path: Path) -> None:
     (tmp_path / "memory.toml").write_text(
         '[budgets]\nram = "64M"\n"vram:cuda:0" = 33554432\n', "utf-8"

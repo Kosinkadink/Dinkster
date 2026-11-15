@@ -14,8 +14,12 @@
   generation and editing and `dinkster.remote.seedance.video` for Seedance 2.5
   text-to-video and first-frame image-to-video.
 - Engine serving resolves account, catalog, gateway and gateway-audience defaults
-  from one production service-address table. Release channels do not select
-  services, and service selection does not change project metadata. Explicit
+  from one production/QA service-address table. Production is the default for
+  both release channels. `--services qa` or `DINKSTER_SERVICES=qa` selects QA for
+  the process only; the flag takes precedence, and other values refuse startup.
+  Service selection does not change project metadata. The startup log and
+  `/api/nodes` header report `services.name`, `services.identityBase`, and
+  `services.gatewayBase`. Explicit
   `--remote-catalog-base` and `--remote-gateway-base` values (or their
   `DINKSTER_REMOTE_*_BASE` variables) remain custom overrides; an explicitly empty
   catalog base disables discovery. Without a separate gateway override, a custom

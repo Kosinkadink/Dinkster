@@ -1110,6 +1110,7 @@ class ServerState:
         governor: MemoryGovernor | None = None,
         history_limit: int = 256,
         development_description: str | None = None,
+        services: Mapping[str, str] | None = None,
         packs: Mapping[str, PackInfo] | None = None,
         node_packs: Mapping[str, str] | None = None,
         execution_arms: Mapping[str, Sequence[ExecutionArm]] | None = None,
@@ -1149,6 +1150,7 @@ class ServerState:
         self.execution_journal = execution_journal
         self.full_free = full_free
         self.development_description = development_description
+        self.services = dict(services) if services is not None else None
         self.schemas = dict(schemas)
         self.preview_default = validate_preview_mode(preview_default)
         self.preview_animation = validate_preview_animation(preview_animation)
@@ -2477,6 +2479,8 @@ async def handle_nodes(request: web.Request) -> web.Response:
         "nodes": nodes,
         "typeOwners": state.engine.registry.type_owners(),
     }
+    if state.services is not None:
+        cast("dict[str, object]", wire["dinkster"])["services"] = state.services
     if state.development_description is not None:
         cast("dict[str, object]", wire["dinkster"])["development"] = {
             "mode": "development",
@@ -4455,6 +4459,7 @@ def create_app(
     memory_status_interval: float | None = 1.0,
     history_limit: int = 256,
     development_description: str | None = None,
+    services: Mapping[str, str] | None = None,
     packs: Mapping[str, PackInfo] | None = None,
     node_packs: Mapping[str, str] | None = None,
     execution_arms: Mapping[str, Sequence[ExecutionArm]] | None = None,
@@ -4636,6 +4641,7 @@ def create_app(
         governor=governor,
         history_limit=history_limit,
         development_description=development_description,
+        services=services,
         packs=packs,
         node_packs=node_packs,
         execution_arms=execution_arms,
