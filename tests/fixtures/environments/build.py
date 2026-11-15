@@ -17,6 +17,24 @@ import zipfile
 from pathlib import Path
 
 import zstandard
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from dinkster_supervisor.environment_channel_signatures import sign_channel, verify_channel
+
+KEY = (
+    Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed))
+    if (seed := os.environ.get("DINKSTER_TEST_CHANNEL_SEED"))
+    else Ed25519PrivateKey.generate()
+)
+PUBLIC = KEY.public_key().public_bytes_raw()
+KEYS = {"sha256:" + hashlib.sha256(PUBLIC).hexdigest(): PUBLIC}
+
+
+def channel_json(document: dict, channel: str = "nightly") -> bytes:
+    return sign_channel(document, channel, KEY)
+
+
+def read_channel(path: Path, channel: str | None = None) -> dict:
+    return verify_channel(path.read_bytes(), channel or path.stem, keys=KEYS)
 
 
 def canonical_json(value: dict) -> bytes:
@@ -212,6 +230,7 @@ def executable_release(mirror: Path, base: dict, version: str, value: int) -> No
             "commit": "d" * 40,
             "version": version,
             "workerProtocol": 11,
+            "capabilities": ["bound-endpoint/1"],
             "artifacts": [artifact("constraints.txt", constraints), artifact(path.name, payload)],
         }
         data = canonical_json(engine) + b"\n"
@@ -222,13 +241,13 @@ def executable_release(mirror: Path, base: dict, version: str, value: int) -> No
         (directory / "constraints.txt").write_bytes(constraints)
         (directory / path.name).write_bytes(payload)
         channel_path = mirror / "channels/nightly.json"
-        channel = json.loads(channel_path.read_bytes())
+        channel = read_channel(channel_path)
         channel["engine"] = {
             "version": version,
             "release": "sha256:" + release,
             "locations": [{"type": "mirror", "path": f"engine/{release}/release-manifest.json"}],
         }
-        channel_path.write_bytes(canonical_json(channel))
+        channel_path.write_bytes(channel_json(channel))
     finally:
         shutil.rmtree(scratch)
 
@@ -260,22 +279,33 @@ def build(output: Path, variant: str, port: int) -> dict:
         "minimumDesktopVersion": "0.2.0",
         "signature": None,
     }
-    (channels / "nightly.json").write_bytes(canonical_json(channel))
+    (channels / "nightly.json").write_bytes(channel_json(channel))
     executable_release(mirror, base, "1.0", 41)
     initial = (channels / "nightly.json").read_bytes()
     (output / "initial-channel.json").write_bytes(initial)
     executable_release(mirror, base, "2.0", 59)
     (output / "updated-channel.json").write_bytes((channels / "nightly.json").read_bytes())
+    updated = read_channel(channels / "nightly.json")
+    (output / "updated-stable-channel.json").write_bytes(
+        channel_json(dict(updated, channel="stable"), "stable")
+    )
+    selected = read_channel(output / "initial-channel.json", "nightly")
     for name in ("nightly", "stable"):
-        (channels / f"{name}.json").write_bytes(initial)
+        (channels / f"{name}.json").write_bytes(channel_json(dict(selected, channel=name), name))
     root, store = output / "project", output / "store"
-    command = [sys.executable, "-m", "dinkster_supervisor.environment", "--root", str(root)]
+    client = (
+        "from dinkster_supervisor import environment, environment_channel_signatures; "
+        f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}; "
+        "environment.main()"
+    )
+    command = [sys.executable, "-c", client, "--root", str(root)]
     document = {
         "mirror": str(mirror),
         "root": str(root),
         "store": str(store),
         "variant": variant,
         "channel": "nightly",
+        "channelKeys": {key_id: public.hex() for key_id, public in KEYS.items()},
         "port": port,
         "baseManifest": str(mirror / "base" / variant / base["id"][7:] / "manifest.json"),
         "initialChannel": str(output / "initial-channel.json"),
@@ -326,11 +356,13 @@ def main() -> None:
     args = parser.parse_args()
     if args.advance:
         output = args.advance.resolve()
-        data = (output / "updated-channel.json").read_bytes()
-        for name in ("nightly", "stable"):
+        for name, source in (
+            ("nightly", "updated-channel.json"),
+            ("stable", "updated-stable-channel.json"),
+        ):
             destination = output / "mirror/channels" / f"{name}.json"
             temporary = destination.with_suffix(".tmp")
-            temporary.write_bytes(data)
+            temporary.write_bytes((output / source).read_bytes())
             temporary.replace(destination)
         document = json.loads((output / "fixture.json").read_bytes())
     else:

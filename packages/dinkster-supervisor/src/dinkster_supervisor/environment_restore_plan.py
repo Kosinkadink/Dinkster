@@ -67,6 +67,12 @@ def _pack_source_missing(
     if not needed:
         return []
     lock["packs"] = needed
+    provenance = json.loads(_metadata(snapshot).get("artifact-sources.json", "{}"))
+    mirrors = {
+        name: row["gitMirror"]
+        for name, row in provenance.get("packs", {}).items()
+        if row.get("gitMirror")
+    }
     unavailable = {cast("str", row["artifactDigest"]) for row in needed}
     current = read_current(root) if root is not None else None
     if current is not None and root is not None:
@@ -80,6 +86,7 @@ def _pack_source_missing(
                         "-c",
                         ACQUIRE_PACK_SOURCES,
                         str(root),
+                        *(["--git-mirrors", json.dumps(mirrors)] if mirrors else []),
                     ],
                     cwd=directory,
                     env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "DINKSTER_SHARED_STORE": ""},
@@ -162,13 +169,26 @@ def missing_inputs(
     snapshot: dict[str, object], store: Path, *, offline: bool = False
 ) -> list[dict[str, object]]:
     """Prefer verified retained payloads; remote probes never populate the store."""
+    metadata = _metadata(snapshot)
+    source_engine = (
+        parse_metadata(metadata.get("engine-manifest.json", "{}").encode("utf-8")).get("source")
+        == "git"
+    )
+    if source_engine:
+        from .environment_sources import source_missing_inputs
+
+        return [
+            *source_missing_inputs(snapshot, store, offline=offline),
+            *_pack_missing_inputs(snapshot, store, offline=offline),
+            *(_pack_source_missing(snapshot, store, None) if offline else []),
+        ]
     if snapshot.get("source") == "local":
         return [
             *_local_missing_inputs(snapshot, store, offline=offline),
             *_pack_missing_inputs(snapshot, store, offline=offline),
             *(_pack_source_missing(snapshot, store, None) if offline else []),
         ]
-    if snapshot.get("source") != "published":
+    if snapshot.get("source") not in {"published", "source"}:
         raise EnvironmentError("restore planning requires published software inputs")
     metadata = _metadata(snapshot)
     for name in (
@@ -371,7 +391,7 @@ def _pack_missing_inputs(
     for lock in sorted(locks, key=lambda lock: lock["pack"] not in in_process):
         pack = lock.get("pack")
         formats = {"dinkster.pack-lock/1"}
-        if snapshot.get("source") == "local":
+        if snapshot.get("source") in {"local", "source"}:
             formats.add("dinkster.pack-lock/2")
         if not isinstance(pack, str) or lock.get("format") not in formats:
             raise EnvironmentError("snapshot requires named pack dependency locks")
@@ -679,8 +699,8 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
         return []
     publications: list[tuple[dict[str, object], tuple[str, ...], bytes]] = []
     for mirror in mirrors:
-        trusted_metadata(mirror)
         try:
+            trusted_metadata(mirror)
             index: object = json.loads(read_metadata(mirror, "engine/index.json"))
             if not isinstance(index, list):
                 raise EnvironmentError("engine index must be an array")
@@ -807,8 +827,8 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
     )
     publications: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
     for mirror in _sources(provenance, "mirrors"):
-        trusted_metadata(mirror)
         try:
+            trusted_metadata(mirror)
             index: object = json.loads(read_metadata(mirror, f"base/{variant}/index.json"))
             if not isinstance(index, list):
                 raise EnvironmentError("base index must be an array")
@@ -951,7 +971,7 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         candidates.extend(_base_alternatives(snapshot))
     viable: dict[str, dict[str, object]] = {}
     for candidate in candidates:
-        if candidate.get("source") not in {"published", "local"}:
+        if candidate.get("source") not in {"published", "local", "source"}:
             continue
         try:
             development = _metadata(candidate).get("development-sources.json")

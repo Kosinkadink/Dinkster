@@ -21,6 +21,7 @@ from test_environment_generations import _standalone_tree
 from scripts import build_tools_release
 from scripts.build_environment_tools import build
 from scripts.build_release import sha256
+from scripts.prepare_windows_python import require_uv_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,7 +29,17 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize(
     ("damage", "layout"),
     [(None, "fresh"), (None, "collision"), (None, "legacy")]
-    + [(damage, "fresh") for damage in ("manifest", "archive", "missing-pointer")],
+    + [
+        (damage, "fresh")
+        for damage in (
+            "manifest",
+            "archive",
+            "missing-pointer",
+            "unsigned-channel",
+            "tampered-channel",
+            "wrong-channel",
+        )
+    ],
 )
 def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     tools_publication: tuple[Path, dict[str, bytes]],
@@ -38,8 +49,16 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
     damage: str | None,
     layout: str,
 ) -> None:
-    from dinkster_supervisor import environment, environment_tools
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from dinkster_supervisor import environment, environment_channel_signatures, environment_tools
 
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    monkeypatch.setattr(
+        environment_channel_signatures,
+        "CHANNEL_KEYS",
+        {"sha256:" + hashlib.sha256(public).hexdigest(): public},
+    )
     output, payloads = tools_publication
     mirror = tmp_path / "mirror"
     _, _, channel = _mirror(mirror)
@@ -54,7 +73,9 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         "release": str(release),
         "label": label,
     }
-    (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
+    (mirror / "channels/nightly.json").write_bytes(
+        environment_channel_signatures.sign_channel(channel, "nightly", key)
+    )
     shutil.rmtree(mirror / "engine")
     shutil.rmtree(mirror / "base")
     destination = tmp_path / "acquired"
@@ -96,7 +117,19 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
         assert not destination.exists()
     if damage == "missing-pointer":
         del channel["tools"]
-        (mirror / "channels/nightly.json").write_text(json.dumps(channel), encoding="ascii")
+        (mirror / "channels/nightly.json").write_bytes(
+            environment_channel_signatures.sign_channel(channel, "nightly", key)
+        )
+    elif damage in {"unsigned-channel", "tampered-channel", "wrong-channel"}:
+        channel_path = mirror / "channels/nightly.json"
+        if damage == "unsigned-channel":
+            channel_path.write_text(json.dumps(channel), encoding="ascii")
+        elif damage == "tampered-channel":
+            channel_path.write_bytes(channel_path.read_bytes().replace(sha.encode(), b"0" * 64))
+        else:
+            channel_path.write_bytes(
+                environment_channel_signatures.sign_channel(channel, "stable", key)
+            )
     elif damage:
         (release / ("tools-manifest.json" if damage == "manifest" else name)).write_bytes(b"wrong")
     monkeypatch.setattr(sys, "argv", [*arguments, "--yes"])
@@ -119,6 +152,107 @@ def test_tools_cli_acquires_channel_publication_without_engine_payloads(
                 destination / json.loads(data)["label"] / name
             ).read_bytes() == b"previous tools"
         assert not (destination / "project.json").exists()
+
+
+@pytest.mark.parametrize("damage", [None, "unsigned", "tampered"])
+def test_tools_publication_authenticates_and_preserves_channel_selections(
+    tools_publication: tuple[Path, dict[str, bytes]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str | None,
+):
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+    from dinkster_supervisor import environment_channel_signatures
+    from dinkster_supervisor.environment_state import EnvironmentError
+
+    from scripts import publish_tools_release as publisher
+    from tests.fixtures.environments.build import KEY, KEYS, channel_json, read_channel
+
+    output, _ = tools_publication
+    data = (output / "tools-manifest.json").read_bytes()
+    manifest = json.loads(data)
+    digest = hashlib.sha256(data).hexdigest()
+    label = f"{manifest['label']}-{digest[:8]}"
+    tag = f"tools-{label}"
+    mirror = tmp_path / "mirror"
+    _, _, selection = _mirror(mirror)
+    selection["minimumDesktopVersion"] = "0.7.3"
+    channel = mirror / "channels/nightly.json"
+    channel.write_bytes(channel_json(selection))
+    if damage == "unsigned":
+        channel.write_text(json.dumps(selection), encoding="ascii")
+    elif damage == "tampered":
+        channel.write_bytes(channel.read_bytes().replace(b'"0.7.3"', b'"0.7.4"'))
+    before = channel.read_bytes()
+    monkeypatch.setattr(environment_channel_signatures, "CHANNEL_KEYS", KEYS)
+    for name, value in {
+        "GITHUB_REPOSITORY": "Kosinkadink/Dinkster",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": manifest["commit"],
+        "R2_PUBLIC_BASE_URL": str(mirror),
+        "DINKSTER_CHANNEL_SIGNING_KEY": KEY.private_bytes(
+            Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
+        ).decode("ascii"),
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    def github(command, **kwargs):
+        if command[1:3] == ["release", "view"]:
+            result = {
+                "tagName": tag,
+                "targetCommitish": manifest["commit"],
+                "assets": [{"name": p.name, "size": p.stat().st_size} for p in output.iterdir()],
+            }
+        elif "/ref/tags/" in command[-1]:
+            result = {"object": {"type": "tag", "sha": "a" * 40}}
+        else:
+            result = {
+                "tag": tag,
+                "message": json.dumps(
+                    {
+                        "version": manifest["version"],
+                        "sourceCommit": manifest["commit"],
+                        "manifest": digest,
+                    }
+                ),
+                "object": {"type": "commit", "sha": manifest["commit"]},
+            }
+        return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
+
+    fetch = publisher.fetch_artifact
+
+    def fetch_artifact(sources, name, destination, digest, size):
+        if sources[0].startswith("https://github.com/"):
+            sources = (str(output),)
+        return fetch(sources, name, destination, digest, size)
+
+    def upload(client, source, key, **kwargs):
+        destination = mirror / key
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+
+    monkeypatch.setattr(publisher.subprocess, "run", github)
+    monkeypatch.setattr(publisher, "object_store", lambda: None)
+    monkeypatch.setattr(publisher, "check_collision", lambda *args: None)
+    monkeypatch.setattr(publisher, "write_index", lambda client, path, scope: path.write_text("[]"))
+    monkeypatch.setattr(publisher, "fetch_artifact", fetch_artifact)
+    monkeypatch.setattr(publisher, "upload", upload)
+    if damage:
+        with pytest.raises(EnvironmentError):
+            publisher.publish(output)
+        assert channel.read_bytes() == before
+    else:
+        publisher.publish(output)
+        signed = read_channel(channel)
+        assert signed.pop("tools") == {
+            "label": label,
+            "sha256": digest,
+            "manifest": str(mirror / "tools" / label / "tools-manifest.json"),
+            "release": str(mirror / "tools" / label),
+        }
+        selection.pop("signature", None)
+        assert signed == dict(selection, channel="nightly")
 
 
 @pytest.fixture
@@ -266,10 +400,7 @@ def test_tools_archive_runs_from_relocated_path_without_host_tools(
     assert document["current"] is None and document["engines"] == []
     assert not project.exists()
     bundled_uv = scripts / ("uv.exe" if os.name == "nt" else "uv")
-    result = subprocess.run(
-        [str(bundled_uv), "--version"], env=environment, text=True, capture_output=True, check=True
-    )
-    assert result.stdout.startswith("uv 0.11.29")
+    require_uv_version(str(bundled_uv))
     subprocess.run(
         [
             str(python),

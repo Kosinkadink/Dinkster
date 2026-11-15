@@ -386,14 +386,20 @@ def collection_preview(root: Path) -> dict[str, object]:
     return result
 
 
-def retry_generation_collection(root: Path) -> dict[str, object]:
-    """Retry only history-covered generation deletion, never shared-store GC or process stops."""
+def generation_maintenance_directory(root: Path) -> Path:
+    """Use one validated maintenance mutex for collection and engine lifecycle commands."""
     runtime = root / "runtime"
     maintenance = runtime / "maintenance"
     if any(p.is_symlink() or p.is_junction() for p in (runtime, maintenance)):
         raise EnvironmentError("cleanup maintenance directory must not be linked")
     runtime.mkdir(exist_ok=True)
     maintenance.mkdir(exist_ok=True)
+    return maintenance
+
+
+def retry_generation_collection(root: Path) -> dict[str, object]:
+    """Retry only history-covered generation deletion, never shared-store GC or process stops."""
+    maintenance = generation_maintenance_directory(root)
     with ExitStack() as locks:
         result: dict[str, object] = {
             "format": "dinkster.cleanup-attempt/1",

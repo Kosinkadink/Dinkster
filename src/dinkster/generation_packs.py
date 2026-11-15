@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -32,7 +33,8 @@ from dinkster_security.policy import Dependency as SecurityDependency
 from dinkster_store import pack_archive_path
 from dinkster_workers import ManifestError, PackManifest, load_manifest
 from dinkster_workers.accelerator import AcceleratorError, resolve_accelerator
-from dinkster_workers.pack_lock import resolve_pack_lock
+from dinkster_workers.catalog import read_catalog
+from dinkster_workers.pack_lock import PackLock, resolve_pack_lock
 from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
 
@@ -183,6 +185,18 @@ def generation_pack_specs(
             for row in capture["sources"]
             if row["kind"] == "pack" and row.get("live")
         }
+    provenance = generation / "artifact-sources.json"
+    if provenance.is_file():
+        selected_sources.update(
+            row["source"]
+            for name, row in json.loads(provenance.read_text()).get("packs", {}).items()
+            if any(
+                entry.pack == name
+                and entry.source == row["source"]
+                and entry.artifact_digest == row["artifactDigest"]
+                for entry in lock.packs
+            )
+        )
     specs: list[PackSpec] = []
     manifests: dict[str, PackManifest] = {}
     for entry in lock.packs:
@@ -371,6 +385,80 @@ def generation_pack_specs(
                 f"notice {finding.notice.id} revision {finding.notice.revision}, "
                 f"decision {finding.decision}"
             )
+    return _group_first_party_packs(generation, specs)
+
+
+def _group_first_party_packs(generation: Path, specs: list[PackSpec]) -> tuple[PackSpec, ...]:
+    if not (generation / "generation.json").is_file():
+        return tuple(specs)
+    # A shared worker must use one real, already-provisioned environment,
+    # not a PYTHONPATH overlay of incompatible private site-packages.
+    candidates = [
+        index
+        for index, spec in enumerate(specs)
+        if spec.trust_reserved and not spec.in_process and not spec.asset_vault_write
+    ]
+    if len(candidates) < 2:
+        return tuple(specs)
+    dependencies = {
+        index: {
+            package.name: (package.version, frozenset(wheel.sha256 for wheel in package.wheels))
+            for package in PackLock.read(
+                generation / "packs" / load_manifest(specs[index].manifest).name / "pack-lock.json"
+            ).packages
+        }
+        for index in candidates
+    }
+    compatible = {
+        index: tuple(
+            member
+            for member in candidates
+            if dependencies[member].items() <= dependencies[index].items()
+        )
+        for index in candidates
+    }
+    primary = max(candidates, key=lambda index: len(compatible[index]))
+    members = compatible[primary]
+    for index in candidates:
+        if index not in members:
+            logging.getLogger(__name__).warning(
+                "First-party pack %s remains isolated: its locked dependencies are not "
+                "provided by the shared worker environment %s",
+                load_manifest(specs[index].manifest).name,
+                specs[primary].python,
+            )
+    if len(members) < 2:
+        return tuple(specs)
+    manifests = tuple(specs[index].manifest for index in members)
+    require_catalog = all(specs[index].require_catalog for index in members)
+    if not require_catalog:
+        # Live members need a live group announcement, but captured members
+        # still require their admitted catalogs before any group code runs.
+        for index in members:
+            if (
+                specs[index].require_catalog
+                and read_catalog(load_manifest(specs[index].manifest)) is None
+            ):
+                raise CompositionError(
+                    f"{load_manifest(specs[index].manifest).name}: schema catalog is missing "
+                    "or stale; run dinkster-pack prepare-catalogs before serving"
+                )
+    paths = tuple(
+        dict.fromkeys(
+            path for index in members for path in specs[index].env["PYTHONPATH"].split(os.pathsep)
+        )
+    )
+    artifacts = tuple(artifact for index in members for artifact in specs[index].security_artifacts)
+    for index in members:
+        specs[index] = replace(
+            specs[index],
+            python=specs[primary].python,
+            env={"PYTHONPATH": os.pathsep.join(paths)},
+            worker_group="dinkster-first-party",
+            group_manifests=manifests,
+            require_catalog=require_catalog,
+            security_artifacts=artifacts,
+        )
     return tuple(specs)
 
 

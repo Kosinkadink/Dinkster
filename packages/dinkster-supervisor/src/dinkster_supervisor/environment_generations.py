@@ -387,9 +387,13 @@ installer = Installer(
     Path.cwd(), accelerator='cpu', registry_fetch=routing_registry_fetcher(config, selected),
 )
 missing = {}
+mirrors = json.loads(arguments.get('--git-mirrors', '{}'))
 for entry in Lockfile.from_record_json(sys.stdin.read()).packs:
     try:
-        installer.acquire(entry)
+        if mirrors.get(entry.pack):
+            installer.acquire(entry, git_mirror=mirrors[entry.pack])
+        else:
+            installer.acquire(entry)
     except Exception as exc:
         missing[entry.artifact_digest] = str(exc)
 print(json.dumps(missing))
@@ -410,6 +414,15 @@ def restore_pack_sources(
     lock = read_document(catalog_lock)
     if not lock["packs"]:
         return
+    provenance = generation / "artifact-sources.json"
+    mirrors = {
+        name: row["gitMirror"]
+        for name, row in cast(
+            "dict[str, dict[str, object]]",
+            read_document(provenance).get("packs", {}) if provenance.is_file() else {},
+        ).items()
+        if row.get("gitMirror")
+    }
     with tempfile.TemporaryDirectory(prefix="dinkster-pack-restore-") as directory:
         scratch = Path(directory).resolve()
         cache = scratch / "artifacts"
@@ -430,6 +443,7 @@ def restore_pack_sources(
                 "-c",
                 ACQUIRE_PACK_SOURCES,
                 str(project),
+                *(["--git-mirrors", json.dumps(mirrors)] if mirrors else []),
                 *registry_arguments,
             ],
             cwd=scratch,
@@ -897,7 +911,7 @@ def build_generation(
                 + hashlib.sha256(
                     json.dumps(read_document(retained), sort_keys=True).encode()
                 ).hexdigest()
-                if source_kind == "local"
+                if read_document(retained).get("source") in {"local", "git"}
                 else content_digest(retained)
             )
             if manifest_identity != engine_release:
@@ -916,9 +930,11 @@ def build_generation(
             cast("dict[str, object] | None", (artifact_sources or {}).get("inference")),
         )
         write_document(destination / "installed-wheels.json", receipt)
+        if artifact_sources is not None:
+            write_document(destination / "artifact-sources.json", artifact_sources)
         provisioned: set[str] = set()
         if (
-            source_generation is not None
+            (source_generation is not None and (source_generation / "packs").is_dir())
             or pack_locks
             or (in_process_packs and prepare_packs is None)
         ):
@@ -1009,8 +1025,12 @@ def build_generation(
             install_live_sources(
                 destination, read_document(destination / "development-sources.json")
             )
-        if artifact_sources is not None:
-            write_document(destination / "artifact-sources.json", artifact_sources)
+        if (destination / "engine-manifest.json").is_file() and read_document(
+            destination / "engine-manifest.json"
+        ).get("source") == "git":
+            from .environment_sources import install_source_editables
+
+            install_source_editables(destination, store, engine_release)
         files = tuple(
             (path.relative_to(destination).as_posix(), content_digest(path))
             for path in sorted(destination.rglob("*"))

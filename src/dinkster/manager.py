@@ -1345,7 +1345,12 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
 
     errors: list[str] = []
     try:
-        engine = validate_manifest(args.engine_manifest.read_bytes(), args.engine_release, None)
+        engine = validate_manifest(
+            args.engine_manifest.read_bytes(),
+            args.engine_release,
+            None,
+            allow_source=args.installed_lock is not None,
+        )
     except (OSError, ValueError) as exc:
         if not args.collect_errors or args.engine_version is None:
             raise InstallError(f"target engine metadata refused: {exc}") from exc
@@ -1356,7 +1361,9 @@ def _cmd_plan_registry_sources(args: argparse.Namespace) -> None:
     from packaging.utils import parse_wheel_filename
 
     engine_packages = (
-        artifacts.engine_package_versions(engine, args.variant) if "artifacts" in engine else {}
+        artifacts.engine_package_versions(engine, args.variant)
+        if "artifacts" in engine or engine.get("source") == "git"
+        else {}
     )
     if args.installed_lock is not None:
         installed_wheels = args.installed_lock.parent / "installed-wheels.json"

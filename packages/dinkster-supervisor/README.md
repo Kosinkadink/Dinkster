@@ -5,6 +5,20 @@ engine host on an internal port, and proxies HTTP and WebSocket traffic only
 after `GET /api/health` succeeds. Its station process applies the same
 version-independent machinery to multiple configured Dinkster installations.
 
+## Engine endpoint admission
+
+An engine manifest can declare `capabilities = ["bound-endpoint/1"]`. Managed
+launches then pass `--engine-bound-endpoint` to the supervisor. Direct launches
+can supply the same flag only when their engine supports the capability.
+The supervisor passes `--port 0 --bound-endpoint PATH`; the engine holds its
+listener and atomically writes `{"format":"dinkster.bound-endpoint/1","port":N}`
+to that private path. Health probes use only the announced port and the requested
+internal host. The normal startup deadline includes waiting for this announcement.
+
+Engines without the declaration retain fixed `--host/--port` launch support.
+Its bind-close-reuse allocation can lose the port to another process; the
+supervisor logs that limitation. It does not retry allocation or engine startup.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.
@@ -25,6 +39,20 @@ installs TOML file and gives each install its configured public port.
 Dinkster deliberately stays out of the ComfyUI port neighborhood
 (8188/8189/8199) so a Dinkster install never collides with a running
 ComfyUI or comfy-runner allocation.
+
+Contributor wheel acquisition uses the resolver's SHA-256 to verify each selected
+wheel. When resolver metadata omits the size, the downloader measures the verified
+file rather than issuing a separate HEAD request. An already verified retained
+wheel needs no network request. Explicit sizes still enforce byte counts, and
+unknown-size interrupted HTTP downloads restart without guessing a resume range.
+
+## Signed release channels
+
+Stable and Nightly selections require an independently pinned Ed25519 signature
+before use, including local copies and offline channel caches. Third-party HTTPS
+mirrors do not supply their own trust roots. Artifact hashes and sizes remain
+mandatory. See [channel signing](../../docs/channel-signing.md) for key
+provisioning, rotation, lost/leaked-key response and offline trust limits.
 
 ## Signed security feed refresh
 

@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -13,7 +14,7 @@ import tomllib
 from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from .environment_state import EnvironmentError, content_digest
@@ -87,7 +88,7 @@ def _ignored(name: str) -> bool:
     return name in _EXCLUDED or name.endswith((".egg-info", ".pyc", ".pyo"))
 
 
-def _files(root: Path) -> dict[str, str]:
+def source_files(root: Path) -> dict[str, str]:
     if root.is_symlink():
         raise EnvironmentError(f"development source must not be a symlink: {root}")
     if root.is_file():
@@ -111,7 +112,7 @@ def _files(root: Path) -> dict[str, str]:
     return files
 
 
-def _identity(document: object) -> str:
+def source_identity(document: object) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
 
@@ -146,20 +147,27 @@ def acquired_development_sources(args: Any) -> Generator[Any]:
     from .git_sources import fetched_git_source
 
     selected = copy.copy(args)
-    selected.git_origins = {}
+    git_origins: dict[str, dict[str, object]] = {}
+    selected.git_origins = git_origins
     with ExitStack() as stack:
 
         def acquire(value: str | Path) -> Path:
             text = str(value)
             if "://" not in text and not text.startswith("git+"):
                 return Path(value)
-            folder, origin = stack.enter_context(fetched_git_source(text))
-            selected.git_origins[str(folder.resolve())] = origin
+            folder, origin = stack.enter_context(
+                fetched_git_source(text, mirror=getattr(args, "git_mirror", None))
+            )
+            git_origins[str(folder.resolve())] = origin
             return folder
 
         selected.source = acquire(args.source)
         selected.pack_source = [acquire(value) for value in args.pack_source]
         selected.library_source = [acquire(value) for value in args.library_source]
+        if getattr(args, "frontend_source", None) is not None:
+            selected.frontend_source = acquire(args.frontend_source)
+            if str(selected.frontend_source.resolve()) not in git_origins:
+                raise EnvironmentError("--frontend-source requires a public HTTPS Git source")
         if args.inference and "://" in args.inference:
             inference = acquire(args.inference)
             project = tomllib.loads((inference / "pyproject.toml").read_text())["project"]
@@ -196,12 +204,14 @@ def development_selection(
     live_packs: tuple[Path, ...] = (),
     live_libraries: tuple[Path, ...] = (),
     contributor: bool = False,
+    frontend: Path | None = None,
 ) -> dict[str, Any]:
     """Read source identities for a plan without creating a project or cache."""
     live_paths: dict[str, set[Path]] = {
         "engine": {source.resolve()} if live_engine or contributor else set(),
         "pack": {path.resolve() for path in live_packs},
         "library": {path.resolve() for path in live_libraries},
+        "frontend": set(),
     }
     for kind, selected, live in (
         ("pack", packs, live_packs),
@@ -214,15 +224,26 @@ def development_selection(
         if any(not path.is_dir() for path in live):
             raise EnvironmentError(f"live {kind} requires a local folder, not a wheel")
     rows: list[dict[str, Any]] = []
-    for kind, paths in (("engine", (source,)), ("pack", packs), ("library", libraries)):
+    for kind, paths in (
+        ("engine", (source,)),
+        ("pack", packs),
+        ("library", libraries),
+        ("frontend", (frontend,) if frontend is not None else ()),
+    ):
         for path in paths:
             if path.is_symlink():
                 raise EnvironmentError(f"development source must not be a symlink: {path}")
             root = path.resolve()
             if git_origins and str(root) in git_origins and root in live_paths[kind]:
                 raise EnvironmentError(f"live {kind} requires a local folder, not a git source")
-            files = _files(root)
-            required = "dinkster-pack.toml" if kind == "pack" else "pyproject.toml"
+            files = source_files(root)
+            required = (
+                "dinkster-pack.toml"
+                if kind == "pack"
+                else "frontend-release.json"
+                if kind == "frontend"
+                else "pyproject.toml"
+            )
             if not root.is_file() and required not in files:
                 raise EnvironmentError(f"development {kind} requires {root / required}")
             if kind != "library" and root.is_file():
@@ -252,19 +273,46 @@ def development_selection(
                     )
                     if kind == "engine"
                     else ["."],
-                    "contentDigest": _identity(files),
+                    "contentDigest": source_identity(files),
                     "files": files,
                     **(
                         {
                             "commit": git_origins[str(root)]["commit"],
                             "dirty": False,
-                            "git": {**git_origins[str(root)], "contentDigest": _identity(files)},
+                            "git": {
+                                **git_origins[str(root)],
+                                "contentDigest": source_identity(files),
+                            },
                         }
                         if git_origins and str(root) in git_origins
                         else _git_state(root)
                     ),
                 }
             )
+    if frontend is not None:
+        from .environment_frontend_sources import frontend_ci_artifact
+
+        try:
+            api = json.loads((frontend / "frontend-release.json").read_text())["engineApi"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EnvironmentError(f"invalid Git frontend metadata: {exc}") from exc
+        wire = (source / "packages/dinkster-schema/src/dinkster_schema/wire.py").read_text()
+        schema = re.search(r"(?m)^SCHEMA_WIRE_VERSION = ([0-9]+)$", wire)
+        if (
+            not isinstance(api, dict)
+            or type(cast("dict[str, Any]", api).get("min")) is not int
+            or type(cast("dict[str, Any]", api).get("max")) is not int
+            or schema is None
+            or not 1 <= api["min"] <= int(schema[1]) <= api["max"]
+        ):
+            raise EnvironmentError("Git frontend does not support the selected engine schema API")
+        row = rows[-1]
+        artifact = frontend_ci_artifact(row["git"])
+        row["frontendArtifact"] = (
+            {key: artifact[key] for key in ("id", "run", "name", "digest", "size_in_bytes")}
+            if artifact is not None
+            else None
+        )
     return {
         "format": "dinkster.development-sources/1",
         "sources": rows,
@@ -275,7 +323,7 @@ def development_selection(
 def verify_development_sources(selection: dict[str, Any]) -> None:
     """Refuse changed author inputs before any generation is built."""
     for row in selection["sources"]:
-        if _identity(_files(Path(row["path"]))) != row["contentDigest"]:
+        if source_identity(source_files(Path(row["path"]))) != row["contentDigest"]:
             raise EnvironmentError(
                 f"development source changed after planning: {row['path']}; request a new plan"
             )
@@ -289,7 +337,7 @@ def captured_development_sources(
     verify_development_sources(selection)
     with tempfile.TemporaryDirectory(dir=store, prefix=".development-") as directory:
         work = Path(directory)
-        roots: dict[str, list[Path]] = {"engine": [], "pack": [], "library": []}
+        roots: dict[str, list[Path]] = {"engine": [], "pack": [], "library": [], "frontend": []}
         for number, row in enumerate(selection["sources"]):
             source = Path(row["path"])
             target = work / str(number)
@@ -304,7 +352,7 @@ def captured_development_sources(
                     symlinks=True,
                     ignore=lambda _directory, names: [name for name in names if _ignored(name)],
                 )
-            if _identity(_files(target)) != row["contentDigest"]:
+            if source_identity(source_files(target)) != row["contentDigest"]:
                 raise EnvironmentError(f"development source changed during capture: {source}")
             roots[row["kind"]].append(target)
         from .environment_local import run_local_command
@@ -323,6 +371,23 @@ def captured_development_sources(
             if len(wheels) != 1:
                 raise EnvironmentError(f"expected one development library wheel: {source}")
             libraries.append(wheels[0])
+        if roots["frontend"]:
+            from zipfile import BadZipFile
+
+            from .environment_frontend_sources import prepare_frontend_wheel
+
+            row = next(row for row in selection["sources"] if row["kind"] == "frontend")
+            try:
+                wheel, build = prepare_frontend_wheel(
+                    roots["frontend"][0],
+                    row["git"],
+                    work / "frontend-wheel",
+                    row["frontendArtifact"],
+                )
+            except (BadZipFile, KeyError, TypeError) as exc:
+                raise EnvironmentError(f"invalid Git frontend build metadata: {exc}") from exc
+            row["build"] = build
+            libraries.append(wheel)
         yield roots["engine"][0], tuple(roots["pack"]), tuple(libraries)
 
 

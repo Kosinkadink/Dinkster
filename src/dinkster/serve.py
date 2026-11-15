@@ -37,6 +37,7 @@ import math
 import os
 import platform
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -844,8 +845,20 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)
-    parser.add_argument("--frontend-root", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--frontend-dev", default="", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--bound-endpoint",
+        type=Path,
+        help="write the bound-endpoint/1 announcement after acquiring the listener",
+    )
+    parser.add_argument(
+        "--frontend-root", default="", metavar="PATH", help="serve a built frontend bundle folder"
+    )
+    parser.add_argument(
+        "--frontend-dev",
+        default="",
+        metavar="URL",
+        help="proxy a frontend development server, including live-reload websockets",
+    )
     parser.add_argument("--prepare-stale-catalogs", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--allow-host",
@@ -2631,13 +2644,35 @@ def main(argv: list[str] | None = None) -> None:
         print(f"dinkster server on http://{args.host}:{args.port} (diagnostic core{pack_note})")
         return app
 
+    listener = (
+        socket.create_server(
+            (args.host, args.port),
+            family=socket.AF_INET6 if ":" in args.host else socket.AF_INET,
+        )
+        if args.bound_endpoint is not None
+        else None
+    )
     try:
+        if listener is not None:
+            assert args.bound_endpoint is not None
+            args.port = listener.getsockname()[1]
+            pending = args.bound_endpoint.with_suffix(".tmp")
+            pending.write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.bound-endpoint/1",
+                        "port": args.port,
+                    }
+                )
+            )
+            pending.replace(args.bound_endpoint)
         # Upgrade tickets travel in the query string; default aiohttp access
         # logging includes it verbatim in the request target.
         web.run_app(
             build_app(),
-            host=args.host,
-            port=args.port,
+            host=args.host if listener is None else None,
+            port=args.port if listener is None else None,
+            sock=listener,
             print=None,
             access_log=None,
         )
@@ -2645,6 +2680,9 @@ def main(argv: list[str] | None = None) -> None:
         if failure:
             raise SystemExit(f"composition failed: {failure[0]}") from failure[0]
         raise
+    finally:
+        if listener is not None:
+            listener.close()
 
 
 if __name__ == "__main__":

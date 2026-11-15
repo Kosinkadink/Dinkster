@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import os
@@ -28,11 +29,13 @@ SERVE = """
 import argparse
 import json
 import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as BaseServer
+from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', required=True)
 parser.add_argument('--port', type=int, required=True)
+parser.add_argument('--bound-endpoint', type=Path)
 parser.add_argument('--generation', required=True)
 parser.add_argument('--library-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
@@ -63,6 +66,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+class ThreadingHTTPServer(BaseServer):
+    def server_activate(self):
+        super().server_activate()
+        if args.bound_endpoint is not None:
+            pending = args.bound_endpoint.with_suffix('.tmp')
+            pending.write_text(json.dumps({
+                'format': 'dinkster.bound-endpoint/1', 'port': self.server_address[1],
+            }))
+            pending.replace(args.bound_endpoint)
+
 ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 """
 
@@ -76,17 +89,41 @@ def free_port() -> int:
 def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> None:
     generation = root / "generations" / str(number)
     site = _workspace_tree(generation / "python")
+    manifest = json.dumps(
+        {
+            "format": "dinkster.engine/1",
+            "version": "test",
+            "workerProtocol": 1,
+            "commit": "d" * 40,
+            "capabilities": ["bound-endpoint/1"],
+            "artifacts": [
+                {
+                    "name": "constraints.txt",
+                    "size": 5,
+                    "sha256": hashlib.sha256(b"test\n").hexdigest(),
+                }
+            ],
+        }
+    )
+    (generation / "engine-manifest.json").write_text(manifest)
     (generation / "generation.json").write_text(
         json.dumps(
             {
                 "format": "dinkster.generation/1",
                 "generation": number,
                 "base": "sha256:" + "a" * 64,
-                "engine": {"version": "test", "release": "sha256:" + "b" * 64},
+                "engine": {
+                    "version": "test",
+                    "release": "sha256:" + hashlib.sha256(manifest.encode()).hexdigest(),
+                },
                 "constraints": "sha256:" + "c" * 64,
                 "variant": "linux-cpu",
                 "workerProtocol": 1,
-                "files": {"constraints.txt": "sha256:" + "c" * 64},
+                "files": {
+                    "constraints.txt": "sha256:" + "c" * 64,
+                    "engine-manifest.json": "sha256:"
+                    + hashlib.sha256(manifest.encode()).hexdigest(),
+                },
             }
         )
     )
@@ -196,8 +233,15 @@ def test_managed_generation_persists_folder_grant_across_restart(
     granted.mkdir()
     port = free_port()
     url = f"http://127.0.0.1:{port}/api/mounts"
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "index.html").write_text("<title>Explicit frontend</title>")
     try:
-        start_engine(root, 1, "main", port)
+        start_engine(root, 1, "main", port, frontend_root=str(frontend))
+        with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+            assert b"<title>Explicit frontend</title>" in response.read()
+        with pytest.raises(EnvironmentError, match="stop the engine first"):
+            start_engine(root, 1, "main", port, frontend_dev="http://127.0.0.1:5173")
         with urlopen(url, timeout=5) as response:  # noqa: S310
             initial = json.load(response)
         assert initial["mountChangesAllowed"] is True
@@ -226,8 +270,9 @@ def test_managed_generation_persists_folder_grant_across_restart(
 
 
 @pytest.mark.parametrize("frontend_kind", ["frontendRoot", "frontendDev"])
+@pytest.mark.parametrize("explicit_override", [False, True])
 def test_managed_development_frontend_survives_restart_and_serves_edits(
-    tmp_path: Path, frontend_kind: str
+    tmp_path: Path, frontend_kind: str, explicit_override: bool
 ) -> None:
     import asyncio
     import threading
@@ -308,10 +353,17 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
     dev_port = free_port()
     runner = asyncio.run_coroutine_threadsafe(serve(), loop).result(timeout=10)
     selection = str(frontend) if frontend_kind == "frontendRoot" else f"http://127.0.0.1:{dev_port}"
-    (generation / "development-sources.json").write_text(
-        json.dumps(
-            {"format": "dinkster.development-sources/1", "sources": [], frontend_kind: selection}
+    saved_selection = (
+        (
+            {"frontendDev": "http://192.0.2.1:5173"}
+            if frontend_kind == "frontendRoot"
+            else {"frontendRoot": str(tmp_path / "unselected-frontend")}
         )
+        if explicit_override
+        else {frontend_kind: selection}
+    )
+    (generation / "development-sources.json").write_text(
+        json.dumps({"format": "dinkster.development-sources/1", "sources": [], **saved_selection})
     )
     port = free_port()
 
@@ -334,7 +386,20 @@ def test_managed_development_frontend_survives_restart_and_serves_edits(
     try:
         for text in ("first selection", "edited frontend after restart"):
             page.write_text(f"<html>{text}</html>")
-            start_engine(root, 1, "main", port)
+            start_engine(
+                root,
+                1,
+                "main",
+                port,
+                frontend_root=selection
+                if explicit_override and frontend_kind == "frontendRoot"
+                else None,
+                frontend_dev=selection
+                if explicit_override and frontend_kind == "frontendDev"
+                else None,
+            )
+            with pytest.raises(EnvironmentError, match="stop the engine first"):
+                start_engine(root, 1, "main", port, frontend_root=str(tmp_path / "changed"))
             with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
                 assert response.read().decode() == f"<html>{text}</html>"
             if frontend_kind == "frontendDev":

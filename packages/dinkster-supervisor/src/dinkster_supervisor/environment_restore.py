@@ -172,8 +172,17 @@ def restore_entry(
                     "tuple[str, str, str]", (engine_id, base_id, variant)
                 )
                 engine_bytes = (inputs / "engine-manifest.json").read_bytes()
-                local = snapshot.get("source") == "local"
-                if local:
+                source = read_document(inputs / "engine-manifest.json").get("source") == "git"
+                local = snapshot.get("source") == "local" or source
+                if source:
+                    from .environment_sources import restore_source_inputs
+
+                    restore_source_inputs(inputs, store, engine_id)
+                    engine = read_document(inputs / "engine-manifest.json")
+                    base = validate_manifest(
+                        (inputs / "base-manifest.json").read_bytes(), base_id, variant
+                    )
+                elif local:
                     engine = read_document(inputs / "engine-manifest.json")
                     base = read_document(inputs / "base-manifest.json")
                     for document in (base, engine):
@@ -203,7 +212,9 @@ def restore_entry(
                     base = validate_manifest(
                         (inputs / "base-manifest.json").read_bytes(), base_id, variant
                     )
-                provenance = read_document(inputs / "artifact-sources.json") if not local else {}
+                provenance = (
+                    read_document(inputs / "artifact-sources.json") if not local or source else {}
+                )
                 channel_document = provenance.get("channel")
                 if not local and not isinstance(channel_document, dict):
                     raise EnvironmentError("snapshot has no recorded acquisition channel")
@@ -287,7 +298,10 @@ def restore_entry(
                     variant=variant,
                     worker_protocol=protocol,
                     in_process_packs=tuple(cast("list[str]", in_process)),
-                    source_generation=inputs if (inputs / "packs").is_dir() else None,
+                    source_generation=inputs
+                    if (inputs / "packs").is_dir()
+                    or (inputs / "development-sources.json").is_file()
+                    else None,
                     pack_locks=tuple(sorted((inputs / "packs").glob("*/pack-lock.json"))),
                     own_environment_size=sum(
                         path.stat().st_size
@@ -303,8 +317,8 @@ def restore_entry(
                     else None,
                     acquire_pack_wheels=True,
                     acquire_pack_sources=True,
-                    source_kind="local" if local else "published",
-                    artifact_sources=provenance if not local else None,
+                    source_kind=cast("str", snapshot["source"]),
+                    artifact_sources=provenance if not local or source else None,
                 )
             entry = prepare_entry(
                 root,

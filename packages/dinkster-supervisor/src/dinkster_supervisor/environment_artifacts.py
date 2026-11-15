@@ -23,6 +23,7 @@ from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel
 from packaging.version import Version
 
 from .environment_archives import extract_base
+from .environment_channel_signatures import verify_channel
 from .environment_constraints import effective_constraints, validate_base_requirements
 from .environment_downloads import fetch_artifact, read_metadata
 from .environment_frontend import (
@@ -94,7 +95,9 @@ def artifact_rows(value: object, key: str) -> tuple[dict[str, object], ...]:
     return tuple(rows)
 
 
-def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[str, object]:
+def validate_manifest(
+    data: bytes, expected: str, variant: str | None, *, allow_source: bool = False
+) -> dict[str, object]:
     digest(expected)
     document = parse_metadata(data)
     protocol = document.get("workerProtocol")
@@ -103,6 +106,27 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
     if variant is None:
         if document.get("format") != "dinkster.engine/1":
             raise EnvironmentError("unsupported engine manifest format")
+        capabilities = document.get("capabilities", [])
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", capabilities)
+        ):
+            raise EnvironmentError("engine capabilities must be a list of strings")
+        if allow_source and document.get("source") == "git":
+            from .environment_development import source_identity
+
+            if source_identity(document) != expected:
+                raise EnvironmentError("source engine manifest identity mismatch")
+            if (
+                document.get("kind") != "source"
+                or document.get("published") is not False
+                or document.get("reproducible") is not False
+                or not isinstance(document.get("version"), str)
+                or not document["version"]
+            ):
+                raise EnvironmentError("source engine requires explicit unpublished identity")
+            artifact_rows(document.get("wheels"), "filename")
+            select_frontend(document)
+            return document
         if "sha256:" + hashlib.sha256(data).hexdigest() != expected:
             raise EnvironmentError("engine manifest digest mismatch")
         if not isinstance(document.get("version"), str) or not document["version"]:
@@ -202,6 +226,7 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
 
 
 def trusted_metadata(mirror: str) -> None:
+    """Restrict unsigned publication indexes, not signature-bound artifact locations."""
     parsed = urlparse(mirror)
     if not parsed.scheme or Path(mirror).is_absolute():
         return
@@ -235,7 +260,6 @@ def _sources(
         else:
             prefix, filename = location.path.rsplit("/", 1)
             for mirror in mirrors:
-                trusted_metadata(mirror)
                 if urlparse(mirror).scheme and not Path(mirror).is_absolute():
                     root = mirror.rstrip("/") + "/" + prefix
                 else:
@@ -290,6 +314,7 @@ class EnvironmentCatalog:
     engine_bytes: bytes
     mirrors: tuple[str, ...] | None = None
     cached_channel: bool = False
+    channel_envelope: bytes | None = None
 
     def variants(self) -> list[dict[str, object]]:
         return [
@@ -326,10 +351,11 @@ def discover(
     document: dict[str, object] | None = None
     channel: Channel | None = None
     cached_channel = False
+    envelope: bytes | None = None
     for mirror in () if offline else mirrors:
         try:
-            trusted_metadata(mirror)
-            document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
+            envelope = read_metadata(mirror, f"channels/{channel_name}.json")
+            document = verify_channel(envelope, channel_name)
             channel = Channel.parse(document)
             break
         except (OSError, ValueError, HTTPException):
@@ -337,7 +363,8 @@ def discover(
     if channel is None and store is not None:
         cached = _channel_cache(store, mirrors, channel_name)
         try:
-            document = parse_metadata(read_metadata(str(cached.parent), cached.name))
+            envelope = read_metadata(str(cached.parent), cached.name)
+            document = verify_channel(envelope, channel_name)
             channel = Channel.parse(document)
             cached_channel = True
         except (OSError, ValueError, HTTPException):
@@ -393,6 +420,7 @@ def discover(
         engine_bytes,
         mirrors,
         cached_channel,
+        envelope,
     )
 
 
@@ -574,8 +602,9 @@ def engine_package_versions(
                 for row in dependency_wheels(selections.get(variant))
             }
         )
-    for row in artifact_rows(engine["artifacts"], "name"):
-        filename = cast("str", row["name"])
+    key = "filename" if engine.get("source") == "git" else "name"
+    for row in artifact_rows(engine["wheels"] if key == "filename" else engine["artifacts"], key):
+        filename = cast("str", row[key])
         if filename.endswith(".whl"):
             name, version, _, _ = parse_wheel_filename(filename)
             versions[name] = str(version)
@@ -925,10 +954,10 @@ def acquire(
             store / "metadata" / f"{cast('str', retained_base['id'])[7:]}.json",
             json.dumps(retained_base, sort_keys=True, ensure_ascii=True) + "\n",
         )
-    if catalog.mirrors is not None:
+    if catalog.mirrors is not None and catalog.channel_envelope is not None:
+        verify_channel(catalog.channel_envelope, catalog.channel_name)
         atomic_write(
-            _channel_cache(store, catalog.mirrors, catalog.channel_name),
-            json.dumps(catalog.document, sort_keys=True, ensure_ascii=True) + "\n",
+            _channel_cache(store, catalog.mirrors, catalog.channel_name), catalog.channel_envelope
         )
     return constraints
 

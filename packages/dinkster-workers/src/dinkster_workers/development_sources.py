@@ -12,7 +12,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from dinkster_registry import LockedPack, Lockfile, artifact_digest
+from dinkster_registry import LockedPack, Lockfile, artifact_digest, build_artifact
 from dinkster_schema import canonical_claim
 from dinkster_store import object_path, pack_archive_path, pack_label
 from packaging.specifiers import SpecifierSet
@@ -72,7 +72,11 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             store / "wheels", "sha256:" + row["sha256"]
         )
         / row["filename"]
-        for row in engine["wheels"]
+        for row in (
+            engine["wheels"]
+            if "wheels" in engine
+            else json.loads((generation / "installed-wheels.json").read_text())["wheels"]
+        )
     }
     constraints = artifacts / "development-constraints.txt"
     constraints.write_text(
@@ -98,8 +102,12 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
             raise ProvisionError(f"{manifest.name}: declared engine requirement is incompatible")
         if any(entry.pack == manifest.name for entry in entries):
             raise ProvisionError(f"duplicate development pack: {manifest.name}")
-        wheel = artifacts / wheel_filename(manifest)
-        build_pack_archive(source, wheel)
+        origin = inputs.get("origins", {}).get(str(source))
+        wheel = artifacts / (f"{manifest.name}.zip" if origin else wheel_filename(manifest))
+        if origin:
+            build_artifact(source, wheel)
+        else:
+            build_pack_archive(source, wheel)
         payload = wheel.read_bytes()
         identity = artifact_digest(payload)
         retained = pack_archive_path(
@@ -146,13 +154,25 @@ def build_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
                 identity,
                 manifest.publisher,
                 tuple(canonical_claim(claim) for claim in manifest.namespaces),
-                source="local-build:" + inputs["packPaths"][number],
+                source=origin["source"] if origin else "local-build:" + inputs["packPaths"][number],
             )
         )
+    selected_names = {entry.pack for entry in entries}
+    sources = {
+        entry.pack: {
+            **origin,
+            "artifactDigest": entry.artifact_digest,
+        }
+        for entry, path in zip(entries, inputs["packs"], strict=True)
+        if (origin := inputs.get("origins", {}).get(path)) is not None
+    }
+    if inputs.get("installedLock"):
+        installed = Lockfile.from_record_json(Path(inputs["installedLock"]).read_text())
+        entries.extend(entry for entry in installed.packs if entry.pack not in selected_names)
     (artifacts / "development-packs.lock").write_text(
         Lockfile.of(entries).record_json(), encoding="utf-8"
     )
-    return {"locks": locks, "builtWheels": built_wheels}
+    return {"locks": locks, "builtWheels": built_wheels, "sources": sources}
 
 
 if __name__ == "__main__":

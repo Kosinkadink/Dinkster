@@ -317,6 +317,149 @@ not mutate existing generations. Selecting a rebuilt variant uses the normal
 confirmed update and rollback journal; retained published and custom
 generations can both be reactivated without rebuilding them.
 
+### Frontend selection
+
+Managed `dinkster setup` and `dinkster update` accept `--frontend-version VERSION`
+to select an exact published `dinkster-frontend` release instead of the channel
+pin. This explicit online operation reads the permanent PyPI wheel, verifies
+its size and SHA-256, and checks its declared engine API range before acquiring
+or activating a generation. Plans disclose the selected version, hash and API
+range. JSON plans expose `frontendApproval`; repeat it with
+`--frontend-approval DIGEST --yes` to require the reviewed wheel identity.
+The generation retains the selection for exact rollback and export.
+Without this option, the engine/channel frontend pin remains authoritative.
+Release installation does not contact PyPI implicitly.
+
+`dinkster-serve --frontend-root PATH` serves an already-built frontend bundle.
+`dinkster-serve --frontend-dev URL` proxies a running frontend development
+server, including websocket live reload. Neither flag builds a frontend or
+changes the managed generation's package selection.
+
+### Managed engine sources
+
+On an installed release project, `dinkster source --root ROOT add
+https://github.com/Kosinkadink/Dinkster --ref BRANCH --yes` selects an explicit
+Git engine without enabling develop mode. Omit `--yes` to inspect the plan.
+The generation keeps the installed release base and pinned frontend package,
+reuses matching locked wheel bytes, and resolves missing checkout dependencies
+from PyPI or `--package-index URL`. Workspace packages run editable from the
+captured checkout. An incompatible worker protocol or base dependency refuses
+before activation.
+
+`dinkster source --root ROOT update --ref OTHER --yes` selects another ref;
+omit `--ref` to fetch the previously selected ref again. Status and history
+label source generations unpublished and non-reproducible and record the
+original URL, requested ref and exact commit. Rollback uses the recorded commit,
+not the current branch tip. Recovery requires retained locally built wheel
+bytes; unavailable inputs are reported rather than replaced by a new build.
+`dinkster source --root ROOT release --yes` restores the most recent recorded
+published generation. Ordinary release setup remains unchanged and does not
+fetch Git sources implicitly.
+
+For engine, pack, library and frontend add/update commands, `--plan --json`
+returns `sourceApproval`. Repeat the same selection with
+`--source-approval sha256:DIGEST_FROM_PLAN --yes` to bind confirmation to the
+reviewed project state, exact Git content, mirror/package-index settings and
+frontend CI bundle (or local-build fallback). Changed inputs require a new plan;
+temporary checkout paths do not invalidate an unchanged selection. The same flag
+is accepted by `update --engine-source URL`. Direct `--yes` remains an explicit
+opt-in without a prior plan; `source release` retains history restore semantics.
+
+### Managed pack sources
+
+Select a single pack without replacing the installed engine or other packs:
+
+```sh
+dinkster source --root ROOT add https://github.com/OWNER/PACK --pack PACK_NAME --ref BRANCH --yes
+dinkster source --root ROOT update --pack PACK_NAME --ref OTHER --yes
+```
+
+Omit `--ref` on update to refresh that pack's recorded ref. Omit `--yes` to
+inspect its source identity without changing the project. `--git-mirror` and
+`--package-index` apply to the explicit source and its dependencies. The pack
+must declare a compatible engine range and version. Its dependencies resolve
+against the installed generation's constraints; incompatible requirements
+refuse before activation. Unselected source entries and dependency locks remain
+unchanged. The generation retains its release base, engine and pinned frontend.
+Status and history disclose the pack URL, requested ref, exact commit and
+unpublished/non-reproducible status. Rollback uses the retained source archive
+or verifies an archive reacquired at the recorded commit, never a moved ref.
+Channel updates retain that disclosure and mirror identity while the selected
+pack source and archive digest remain unchanged. Replacing the pack drops its
+old source identity. The local directory `--pack` development loop is unchanged.
+
+### Managed inference and helper sources
+
+Select a shared Python library on an installed release base:
+
+```sh
+dinkster source --root ROOT add https://github.com/OWNER/LIBRARY --library DISTRIBUTION --ref BRANCH --yes
+dinkster source --root ROOT update --library DISTRIBUTION --ref OTHER --yes
+```
+
+Use `--library dinkster-inference` for inference. A repository subdirectory is
+selected with `#subdirectory=PATH`. Omit `--yes` to inspect the Git identity;
+omit `--ref` on update to refresh the recorded ref. These operations build a
+captured library wheel without enabling develop mode or rebuilding the release
+base. Engine and frontend wheels, unselected library pins and pack selections
+remain intact. Missing dependencies resolve against those exact pins. A
+conflicting dependency or attempt to replace a base, engine or frontend
+package refuses before activation. `--git-mirror` and `--package-index` have
+the same meanings as for managed pack sources.
+
+Status and history record each library's original URL, requested ref, exact
+commit, content digest and built wheel identity, and disclose unpublished,
+non-reproducible software. Rollback restores the recorded wheel bytes rather
+than rebuilding from a moving ref. Recovery requires retained local builds;
+missing inputs are reported, not silently rebuilt. `source release --yes`
+restores the most recent published generation.
+
+### Managed Git frontend assets
+
+```bash
+dinkster source --root ROOT add https://github.com/Kosinkadink/Dinkster-Frontend --frontend --ref BRANCH --plan
+dinkster source --root ROOT add https://github.com/Kosinkadink/Dinkster-Frontend --frontend --ref BRANCH --yes
+dinkster source --root ROOT update --frontend --ref OTHER --yes
+```
+
+An official frontend commit uses its unexpired bundle from a successful frontend
+CI run. Discovery uses the public GitHub API; the public nightly.link transport
+needs no GitHub login. The GitHub artifact digest, inner bundle hash/size,
+package version and exact commit are verified before packaging browser assets.
+A corrupt or mismatched artifact refuses rather than falling back to a build.
+If no eligible bundle exists, or the source is a fork, local building requires
+both Node and pnpm on PATH. Missing tools are named explicitly. Local builds run
+`pnpm install --frozen-lockfile` and `pnpm --filter @dinkster/app build` in the
+captured checkout, so source selection executes that repository's build scripts.
+The selected checkout's frontend API range must include the installed engine API.
+
+The release base, engine, other libraries and pack selections remain unchanged.
+Status/history record frontend URL/ref/commit, captured source digest, CI or local
+build origin and exact wheel bytes; the generation is unpublished and
+non-reproducible. Ordinary updates retain those bytes, not a moving frontend ref.
+An explicit `--frontend-version` replaces the Git frontend with that published
+selection. Recovery requires retained built bytes and never silently rebuilds;
+`source release` returns to the most recent published generation. Unselected
+release installs do not discover CI artifacts or require Node, pnpm or Git.
+
+### Public git refs and mirrors
+
+`dinkster source refs https://github.com/Kosinkadink/Dinkster --json` lists
+branches, tags and other advertised refs through bundled libgit2, without a
+system git executable or GitHub API access. It does not install or execute
+repository code or create a project.
+
+Set `DINKSTER_GIT_MIRROR=https://your-mirror.example` to rewrite explicit
+`https://github.com/Kosinkadink/REPOSITORY` acquisitions to
+`https://your-mirror.example/Kosinkadink/REPOSITORY.git`. The `.git` suffix is
+always present. Other owners and hosts are not rewritten. `source refs` and
+`develop` also accept `--git-mirror URL`, which overrides the environment
+setting. Original source URLs, requested refs and exact commits remain the
+recorded identities; a mirror changes transport, not provenance. Mirrors
+require credential-free HTTPS; loopback HTTP is allowed for local mirrors.
+There is no fallback to GitHub when a selected mirror fails. This setting
+does not change published release mirrors or enable git sources implicitly.
+
 ### Development packs from local folders
 
 The standalone local/git path is development-only. `dinkster pack --root ROOT
@@ -361,10 +504,16 @@ require isolated hosting. Live generations change with their author folders and
 cannot be restored exactly; capture without live marks for exact recovery.
 Local packs support both flat and `src` Python layouts.
 
-Contributor projects may select a built frontend with
-`--contributor --frontend-root /absolute/bundle` (requires `index.html`) or a
-running frontend server with `--contributor --frontend-dev http://localhost:5173`.
-These options are exclusive and persist across stop/start. HTTP and websocket
+Development projects may select a built frontend with
+`--frontend-root /absolute/bundle` (requires `index.html`), a running frontend
+server with `--frontend-dev http://localhost:5173`, or a captured Git frontend
+with `--frontend-source https://github.com/Kosinkadink/Dinkster-Frontend.git#ref=COMMIT`.
+Git frontend selection reuses verified exact-commit CI assets when available,
+otherwise Node and pnpm are required to build the selected checkout. The frontend
+must support the selected engine schema API. The source and CI artifact selection
+are included in the source approval; built wheels remain available for exact
+recovery without another Git fetch or frontend build.
+These options are exclusive, need no contributor/live engine, and persist across stop/start. HTTP and websocket
 requests are proxied for live reload. Dev servers must use a loopback address
 unless `--allow-frontend-dev-remote` is explicitly selected. The origin and remote
 permission are part of the reviewed source approval; changing either requires a
