@@ -1,3 +1,9 @@
+# Published pack rollback
+
+- Published snapshot restore with compatibility-range pack locks failed on unchanged main for isolated and shared in-process packs. The repaired six-case CLI regression passes, including incompatible-engine refusal without mutation.
+- The complete environment history suite passed: 23 tests on Linux CPU. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Public pack lock bytes were verified against registry size/digest and reconstructed installed metadata matched the sealed Linux/Windows generation hashes. Packaged Desktop rollback after tools publication remains unverified.
+
 # Published catalog bootstrap authentication
 
 - The focused bootstrap check fails on unchanged main when a token is set; the exporter now authenticates that API request. Absent and empty tokens preserve unauthenticated behavior. Draft, prerelease, invalid-tag and missing-digest refusals remain intact.
