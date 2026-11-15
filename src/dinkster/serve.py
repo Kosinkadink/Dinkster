@@ -40,6 +40,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -1763,6 +1764,31 @@ def main(argv: list[str] | None = None) -> None:
             account.token_path.parent.chmod(0o700)
         args.remote_auth_token_file = str(account.token_path)
     token_directory = account.token_path.parent if account is not None else None
+    external_token_source: Path | None = None
+    external_token_directory: tempfile.TemporaryDirectory[str] | None = None
+    if args.remote_auth_token_file and account is None and args.sandbox_packs:
+        external_token_source = Path(args.remote_auth_token_file).expanduser().absolute()
+        external_token_directory = tempfile.TemporaryDirectory(prefix="dinkster-gateway-bearer-")
+        token_directory = Path(external_token_directory.name)
+        args.remote_auth_token_file = str(token_directory / "access-token")
+
+    def sync_external_token() -> None:
+        assert external_token_source is not None
+        target = Path(args.remote_auth_token_file)
+        pending = target.with_suffix(".tmp")
+        try:
+            bearer = external_token_source.read_bytes()
+            if target.is_file() and target.read_bytes() == bearer:
+                return
+            pending.write_bytes(bearer)
+            pending.chmod(0o600)
+            pending.replace(target)
+        except OSError:
+            # Never keep a retired bearer when the selected source becomes unavailable.
+            target.unlink(missing_ok=True)
+        finally:
+            pending.unlink(missing_ok=True)
+
     default_pack_failures: dict[str, Exception] = {}
     specs: list[PackSpec | str] = []
     live_pack_names: set[str] = set()
@@ -1919,7 +1945,8 @@ def main(argv: list[str] | None = None) -> None:
                 args.auth,
                 args.federated_assets_cursor_key,
                 args.advertise_assets_token_file,
-                args.remote_auth_token_file,
+                args.remote_auth_token_file if token_directory is None else None,
+                external_token_source,
                 *(remote.token_file for remote in remote_specs),
             )
             protected_roots.extend(str(Path(path)) for path in secret_paths if path)
@@ -2411,10 +2438,18 @@ def main(argv: list[str] | None = None) -> None:
                     await asyncio.sleep(30)
                     await refresh_account()
 
+            async def monitor_external_token() -> None:
+                while True:
+                    await asyncio.sleep(1)
+                    sync_external_token()
+
             async def drive() -> None:
                 if account is not None:
                     await refresh_account()
                     drive_tasks.append(asyncio.create_task(monitor_account()))
+                elif external_token_source is not None:
+                    sync_external_token()
+                    drive_tasks.append(asyncio.create_task(monitor_external_token()))
 
                 async def publish_delta(delta: PackDelta) -> int:
                     validation = await state.prepare_replace(
@@ -2733,6 +2768,8 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         if listener is not None:
             listener.close()
+        if external_token_directory is not None:
+            external_token_directory.cleanup()
 
 
 if __name__ == "__main__":

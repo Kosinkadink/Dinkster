@@ -36,5 +36,8 @@
   root; direct serving accepts `--account-root` (`DINKSTER_ACCOUNT_ROOT`) and
   `--account-identity-base` (`DINKSTER_ACCOUNT_IDENTITY_BASE`) for custom services.
   Sandboxed account-backed workers see token replacements without access to
-  the OAuth session. A failed or ambiguous OAuth refresh requires sign-in again;
+  the OAuth session. Explicit token-file replacement and removal also reach
+  sandboxed workers without a restart, exposing neighboring files, or falling
+  back to the account; the source is checked every second.
+  A failed or ambiguous OAuth refresh requires sign-in again;
   no refresh exchange is automatically replayed.

@@ -1,5 +1,6 @@
 # Production service addresses
 
+- Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
 - Production service resolution, explicit custom catalog/job endpoints and empty-catalog disabling: 2 tests pass.
 - Service resolution, CLI and serving integration: 73 tests pass on the managed linux-cpu contributor generation.
 - Extension-kind generation, extension factories, builtin type spelling, Ruff lint/format and Linux/Windows-target Pyright pass.
