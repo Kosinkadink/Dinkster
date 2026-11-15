@@ -29,6 +29,10 @@ from dinkster_supervisor.environment_state import (
     set_current,
 )
 
+from tests.fixtures.environments.build import channel_json, read_channel
+
+pytestmark = pytest.mark.usefixtures("signed_channels")
+
 
 def _wheel(
     directory: Path, name: str, version: str, value: int, *, metadata_headers: str = ""
@@ -765,7 +769,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         shutil.copyfile(wheel, cache)
     try:
         channel_path = mirror / "channels/nightly.json"
-        channel = json.loads(channel_path.read_bytes())
+        channel = read_channel(channel_path)
         release = mirror / "engine" / channel["engine"]["release"][7:]
         lock_path = release / "example-1.0-fixture-cpu.pack-lock.json"
         PackLock(
@@ -798,7 +802,7 @@ def test_public_setup_acquires_pack_wheel_absent_from_release(
         release.rename(release.parent / identity)
         channel["engine"]["release"] = "sha256:" + identity
         channel["engine"]["locations"][0]["path"] = f"engine/{identity}/release-manifest.json"
-        channel_path.write_bytes(publisher.canonical_json(channel))
+        channel_path.write_bytes(channel_json(channel))
         # Windows setup took 24s and was still starting at 30s; allow composite-work margin.
         code, result = _run(
             root,

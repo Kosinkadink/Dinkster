@@ -406,6 +406,15 @@ def _trace_nested_commands(directory: Path) -> None:
 
 def _main() -> None:
     mode, location, module, *arguments = sys.argv[1:]
+    if mode == "supervisor" and (public_hex := os.environ.get("DINKSTER_TEST_CHANNEL_PUBLIC_KEY")):
+        import hashlib
+
+        from dinkster_supervisor import environment_channel_signatures
+
+        public = bytes.fromhex(public_hex)
+        environment_channel_signatures.CHANNEL_KEYS = {
+            "sha256:" + hashlib.sha256(public).hexdigest(): public
+        }
     if mode == "supervisor":
         trace_path = Path(location) / "child.stack"
         _trace_nested_commands(Path(location))
