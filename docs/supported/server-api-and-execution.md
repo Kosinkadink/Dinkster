@@ -249,6 +249,9 @@
   mount hashing. Bindings remain explicitly unverified and omit content
   hashes until a scan verifies the same file revision. Missing names return
   `409 assets-missing`; submission does not hash or download model bytes.
+  Digest-backed public model download plans include `destination` when the host
+  has a writable model folder for the project. Without one, the plan is not
+  fetchable. Downloading still requires consent to each exact digest.
   Native and translated model loaders accept these local bindings; translated
   loaders retain category-root confinement and reject shadowed file names.
 - Inbound authentication with operator-managed static Bearer credentials,
