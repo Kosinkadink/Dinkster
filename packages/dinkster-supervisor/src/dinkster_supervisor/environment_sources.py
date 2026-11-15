@@ -282,7 +282,7 @@ def select_source_library(
     """Replace one shared library while retaining the installed base and all other pins."""
     from urllib.parse import urlencode
 
-    from .environment_generations import build_generation
+    from .environment_generations import build_generation, restore_pack_sources
     from .environment_pack_install import current_software
     from .environment_runtime import require_idle
     from .environment_state import Journal, read_current, writer_lock
@@ -417,48 +417,15 @@ def select_source_library(
                     raise EnvironmentError(
                         "selected Git library must build exactly its named wheel"
                     )
-                base = read_document(source / "base-manifest.json")
-                python = interpreter(object_path(store / "bases", generation.base))
-                compatibility = wheel_compatibility(python)
-                locked = (
-                    "\n".join(
-                        line
-                        for line in (source / "constraints.txt")
-                        .read_text()
-                        .replace("\\\n", "")
-                        .splitlines()
-                        if line.strip()
-                        and canonicalize_name(
-                            Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line)).name
-                        )
-                        != name
-                    )
-                    + "\n"
-                )
-                cached, _ = selected_wheel_requirements(
-                    python,
-                    locked,
-                    sorted({path.parent for path in (store / "wheels").rglob("*.whl")}),
-                    compatibility=compatibility,
-                )
-                pins, inputs, override = (
-                    work / filename for filename in ("pins.txt", "requirements.in", "override.txt")
-                )
-                pins.write_text(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", locked))
-                inputs.write_text(cached + built[0].resolve().as_uri() + "\n")
-                override.write_text(f"{name} @ {built[0].resolve().as_uri()}\n")
-                resolution = resolve_wheels(
-                    inputs,
-                    pins,
-                    work / "pylock.toml",
-                    python=python,
-                    index=package_index
+                wheels = resolve_library_wheels(
+                    source / "constraints.txt",
+                    built,
+                    base=read_document(source / "base-manifest.json"),
+                    store=store,
+                    package_index=package_index
                     or json.loads(settings).get("packageIndex")
                     or "https://pypi.org/simple",
-                    source=work,
-                    overrides=override,
                 )
-                wheels = retain_wheels(resolution, python, store, work)
                 installed = {
                     row["filename"]: row
                     for row in cast(
@@ -477,12 +444,6 @@ def select_source_library(
                             row["url"] = retained[row["filename"]]["url"]
                     else:
                         row["registry"] = row["url"]
-                selected_wheel_rows(locked, wheels, compatibility)
-                paths = tuple(
-                    object_path(store / "wheels", "sha256:" + row["sha256"]) / row["filename"]
-                    for row in wheels
-                )
-                validate_base_requirements(paths, base)
                 wheel = next(row for row in wheels if row["name"] == name)
                 if wheel["sha256"] != content_digest(built[0])[7:]:
                     raise EnvironmentError("resolved library differs from the selected Git build")
@@ -523,6 +484,15 @@ def select_source_library(
                 provenance = read_document(source / "artifact-sources.json")
                 if name == "dinkster-inference":
                     provenance.pop("inference", None)
+                artifacts = work / "artifacts"
+                artifacts.mkdir()
+                restore_pack_sources(
+                    source,
+                    catalog_lock=source / "dinkster.lock",
+                    artifacts=artifacts,
+                    project=root,
+                    store=store,
+                )
                 revalidate()
                 target = next_generation(root)
                 journal = begin_activation(root, target, "update")
@@ -547,6 +517,8 @@ def select_source_library(
                             ).rglob("*")
                             if path.is_file()
                         ),
+                        catalog_lock=source / "dinkster.lock",
+                        artifacts=artifacts,
                         source_kind="source",
                         artifact_sources=provenance,
                     )
@@ -557,6 +529,185 @@ def select_source_library(
                     raise
                 result.update(current=target, status="applied", sources=sources)
                 return result
+
+
+def resolve_library_wheels(
+    constraints: Path,
+    libraries: tuple[Path, ...],
+    *,
+    base: dict[str, Any],
+    store: Path,
+    package_index: str,
+) -> list[dict[str, Any]]:
+    """Replace selected pins with exact local wheels while fixing every unselected byte."""
+    selected = {parse_wheel_filename(path.name)[0]: path for path in libraries}
+    if len(selected) != len(libraries):
+        raise EnvironmentError("duplicate selected source library")
+    if selected.keys() & set(base["replaces"]):
+        raise EnvironmentError("Git libraries must not replace release-base packages")
+    python = interpreter(object_path(store / "bases", base["id"]))
+    compatibility = wheel_compatibility(python)
+    locked = (
+        "\n".join(
+            line
+            for line in constraints.read_text(encoding="utf-8").replace("\\\n", "").splitlines()
+            if line.strip()
+            and canonicalize_name(
+                Requirement(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", line)).name
+            )
+            not in selected
+        )
+        + "\n"
+    )
+    cached, _ = selected_wheel_requirements(
+        python,
+        locked,
+        sorted({path.parent for path in (store / "wheels").rglob("*.whl")}),
+        compatibility=compatibility,
+    )
+    with tempfile.TemporaryDirectory(dir=store, prefix=".library-wheels-") as directory:
+        work = Path(directory)
+        pins, inputs, override = (
+            work / filename for filename in ("pins.txt", "requirements.in", "override.txt")
+        )
+        pins.write_text(re.sub(r"\s+--hash=sha256:[0-9a-f]{64}", "", locked), encoding="utf-8")
+        inputs.write_text(
+            cached + "\n".join(path.resolve().as_uri() for path in libraries) + "\n",
+            encoding="utf-8",
+        )
+        override.write_text(
+            "\n".join(f"{name} @ {path.resolve().as_uri()}" for name, path in selected.items())
+            + "\n",
+            encoding="utf-8",
+        )
+        resolution = resolve_wheels(
+            inputs,
+            pins,
+            work / "pylock.toml",
+            python=python,
+            index=package_index,
+            source=work,
+            overrides=override,
+        )
+        wheels = retain_wheels(resolution, python, store, work)
+    selected_wheel_rows(locked, wheels, compatibility)
+    for name, path in selected.items():
+        if not any(
+            row["name"] == name and row["sha256"] == content_digest(path)[7:] for row in wheels
+        ):
+            raise EnvironmentError("resolved library differs from the retained Git build")
+    validate_base_requirements(
+        tuple(
+            object_path(store / "wheels", "sha256:" + row["sha256"]) / row["filename"]
+            for row in wheels
+        ),
+        base,
+    )
+    return wheels
+
+
+def retained_source_libraries(
+    generation: Path, store: Path, *, replace_inference: bool = False
+) -> dict[str, Any]:
+    """Read selected Git library identities without consulting moving refs or rebuilding."""
+    record = Generation.read(generation / "generation.json")
+    path = generation / "engine-manifest.json"
+    if not path.is_file():
+        return {}
+    if content_digest(path) != dict(record.files).get(path.name):
+        raise EnvironmentError("retained source identities differ from generation")
+    manifest = read_document(path)
+    sources = cast("dict[str, Any]", manifest.get("sources", {}))
+    libraries = copy.deepcopy(cast("dict[str, Any]", sources.get("libraries", {})))
+    if replace_inference:
+        libraries.pop("dinkster-inference", None)
+    for origin in libraries.values():
+        row = origin["wheel"]
+        wheel = object_path(store / "wheels", "sha256:" + row["sha256"]) / row["filename"]
+        if (
+            wheel.is_symlink()
+            or not wheel.is_file()
+            or wheel.stat().st_size != row["size"]
+            or content_digest(wheel) != "sha256:" + row["sha256"]
+        ):
+            raise EnvironmentError(
+                f"retained Git library wheel missing or corrupt: {row['filename']}"
+            )
+    return libraries
+
+
+def prepare_retained_libraries(
+    libraries: dict[str, Any],
+    *,
+    constraints: Path,
+    catalog: EnvironmentCatalog,
+    base_id: str,
+    variant: str,
+    store: Path,
+    package_index: str,
+    engine: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Apply retained Git library builds to the target release before pack planning."""
+    if engine is None:
+        manifest = copy.deepcopy(cast("dict[str, Any]", catalog.engine))
+    else:
+        manifest = cast(
+            "dict[str, Any]",
+            read_document(
+                object_path(store / "engines", engine["engine_release"]) / "release-manifest.json"
+            ),
+        )
+    paths = tuple(
+        object_path(store / "wheels", "sha256:" + origin["wheel"]["sha256"])
+        / origin["wheel"]["filename"]
+        for origin in libraries.values()
+    )
+    base = read_document(object_path(store / "bases", base_id) / "manifest.json")
+    wheels = resolve_library_wheels(
+        constraints, paths, base=base, store=store, package_index=package_index
+    )
+    retained = {row["filename"]: row for row in manifest.get("wheels", [])}
+    for row in wheels:
+        if row["name"] in libraries:
+            row.update(libraries[row["name"]]["wheel"])
+        elif row["filename"] in retained and retained[row["filename"]]["sha256"] == row["sha256"]:
+            row.update(retained[row["filename"]])
+    original = copy.deepcopy(manifest)
+    manifest.update(
+        source="git",
+        kind="source",
+        published=False,
+        reproducible=False,
+        publishedRelease=catalog.channel.engine_release,
+        publishedManifest=catalog.engine_bytes.decode("utf-8"),
+        publishedConstraints=manifest.get(
+            "publishedConstraints", constraints.read_text(encoding="utf-8")
+        ),
+        sources={**manifest.get("sources", {}), "libraries": libraries},
+        wheels=wheels,
+    )
+    manifest.pop("dependencies", None)
+    identity = source_identity(manifest)
+    target = object_path(store / "engines", identity)
+    target.mkdir(parents=True, exist_ok=True)
+    if "checkout" in original:
+        with recorded_source_checkout(original, store) as checkout:
+            _retain_checkout(checkout, target / "checkout", original["checkout"]["files"])
+    write_document(target / "release-manifest.json", manifest)
+    selected = target / f"constraints-{variant}.txt"
+    selected.write_text(
+        "\n".join(
+            f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}" for row in wheels
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "engine_release": identity,
+        "engine_version": manifest["version"],
+        "constraints": selected,
+        "source_kind": "source",
+    }
 
 
 def installed_release_catalog(generation: Path, channel_name: str) -> EnvironmentCatalog:

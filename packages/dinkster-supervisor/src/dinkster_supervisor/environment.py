@@ -555,6 +555,13 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         result.update(inference=inference, inferenceApproval=approval)
     elif getattr(args, "inference_approval", None):
         raise EnvironmentError("--inference-approval requires --inference")
+    retained_libraries: dict[str, Any] = {}
+    if previous_root is not None and not developing and not getattr(args, "from_scratch", False):
+        from .environment_sources import retained_source_libraries
+
+        retained_libraries = retained_source_libraries(
+            previous_root, store, replace_inference=inference is not None
+        )
     local = None
     development = None
     catalog = None
@@ -735,6 +742,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 f"runtime input {row['path']}: sha256:{row['sha256']} "
                 f"({row['size']} bytes; {'cached' if row['cached'] else 'not cached'})"
                 for row in inputs
+            )
+        if retained_libraries:
+            result["retainedLibraries"] = retained_libraries
+            plan.append("retain selected unpublished Git library builds; do not follow their refs")
+            plan.extend(
+                f"library {name}: commit {origin['commit']}; "
+                f"wheel sha256:{origin['wheel']['sha256']}"
+                for name, origin in retained_libraries.items()
             )
         if catalog.cached_channel:
             plan.append("use the last acquired channel selection; release metadata is unavailable")
@@ -1016,6 +1031,25 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "gitMirror": args.git_mirror,
                         },
                         package_index=cast("str", package_index or "https://pypi.org/simple"),
+                        library_wheels=tuple(
+                            object_path(store / "wheels", "sha256:" + origin["wheel"]["sha256"])
+                            / origin["wheel"]["filename"]
+                            for origin in retained_libraries.values()
+                        ),
+                    )
+                    published_constraints = source_inputs["constraints"]
+                if retained_libraries:
+                    from .environment_sources import prepare_retained_libraries
+
+                    source_inputs = prepare_retained_libraries(
+                        retained_libraries,
+                        constraints=published_constraints,
+                        catalog=catalog,
+                        base_id=base_id,
+                        variant=variant,
+                        store=store,
+                        package_index=cast("str", package_index or "https://pypi.org/simple"),
+                        engine=source_inputs,
                     )
                     published_constraints = source_inputs["constraints"]
 

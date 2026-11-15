@@ -932,9 +932,12 @@ base/engine/frontend package replacement refuse before activation.
 
 Status and history label these generations unpublished and non-reproducible
 and record every library's URL, requested ref, commit, content digest and
-wheel identity. Rollback uses the recorded built bytes even after its branch
-moves. Missing retained local builds refuse recovery instead of resolving or
-rebuilding. `source release` returns to the most recent published generation.
+wheel identity. Engine source changes and ordinary channel updates retain those
+exact library builds without following their refs. An explicit published inference
+selection replaces only the Git inference selection, retaining other Git libraries.
+Rollback uses the recorded built bytes even after its branch moves. Missing retained
+local builds refuse updates and recovery instead of resolving or rebuilding.
+`source release` returns to the most recent published generation.
 
 ### Public git refs and mirrors
 

@@ -676,6 +676,136 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         assert history[-1]["sources"]["libraries"]["dinkster-inference"]["commit"] == str(
             commits[0]
         )
+        engine_source = tmp_path / "engine-source"
+        engine_source.mkdir()
+        engine_wheel = next(Path(fixture["mirror"]).glob("engine/*/*.whl"))
+        with zipfile.ZipFile(engine_wheel) as archive:
+            for name in archive.namelist():
+                if name.startswith("dinkster/"):
+                    path = engine_source / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.read(name))
+        (engine_source / "dinkster/__init__.py").write_text('__version__ = "1.1"\nVALUE = 411\n')
+        (engine_source / "pyproject.toml").write_text(
+            '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
+            'dependencies=["fixture-base==1.0"]\n[dependency-groups]\n'
+            'engine-base=["fixture-base==1.0"]\n[build-system]\n'
+            'requires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+        )
+        boundary = engine_source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+        boundary.parent.mkdir(parents=True)
+        boundary.write_text(f"PROTOCOL_VERSION = {PROTOCOL_VERSION}\n")
+        with monkeypatch.context() as offline:
+            offline.setenv("UV_NO_INDEX", "1")
+            offline.setenv(
+                "UV_FIND_LINKS", str(object_path(store / "bases", original.base) / "wheels")
+            )
+            locked = subprocess.run(
+                ["uv", "lock", "--offline", "--python", sys.executable],
+                cwd=engine_source,
+                capture_output=True,
+                text=True,
+            )
+            assert locked.returncode == 0, locked.stderr
+        lock = engine_source / "uv.lock"
+        base_wheel = next((object_path(store / "bases", original.base) / "wheels").glob("*.whl"))
+        lock.write_text(
+            lock.read_text().replace(
+                f'path = "{base_wheel.as_posix()}"',
+                f'path = "{base_wheel.as_posix()}", hash = "{content_digest(base_wheel)}"',
+            )
+        )
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        tree = pygit2.Index()
+        for path in engine_source.rglob("*"):
+            if path.is_file():
+                tree.add(
+                    pygit2.IndexEntry(
+                        path.relative_to(engine_source).as_posix(),
+                        repository.create_blob(path.read_bytes()),
+                        pygit2.enums.FileMode.BLOB,
+                    )
+                )
+        engine_commit = repository.create_commit(
+            "refs/heads/library-engine",
+            signature,
+            signature,
+            "engine",
+            tree.write_tree(repository),
+            [],
+        )
+        repository.free()
+        code, combined = _run(
+            root,
+            "source",
+            "add",
+            "https://github.com/Kosinkadink/source",
+            "--ref",
+            "library-engine",
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, combined
+        combined_status = _run(root, "status")[1]
+        assert combined_status["sources"]["engine"]["commit"] == str(engine_commit)
+        assert combined_status["sources"]["libraries"] == first_manifest["sources"]["libraries"]
+        combined_root = root / "generations" / str(combined["current"])
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(combined_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster,dinkster_inference,fixture_helper; "
+                    "print(dinkster.VALUE,dinkster_inference.VALUE,fixture_helper.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "411 31 31"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        requests = len(git_server["requests"])
+        update = ("update", "--catalog-lock", str(catalog), "--artifacts", str(artifacts))
+        code, preview = _run(root, *update, "--plan")
+        assert code == 0, preview
+        assert preview["retainedLibraries"] == first_manifest["sources"]["libraries"]
+        code, updated = _run(root, *update, "--yes", timeout=180)
+        assert code == 0, updated
+        assert len(git_server["requests"]) == requests
+        updated_root = root / "generations" / str(updated["current"])
+        assert Generation.read(updated_root / "generation.json").source == "source"
+        assert (
+            _run(root, "status")[1]["sources"]["libraries"]
+            == first_manifest["sources"]["libraries"]
+        )
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(updated_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import dinkster_inference,fixture_helper; "
+                    "print(dinkster_inference.VALUE,fixture_helper.VALUE)",
+                ],
+                text=True,
+            ).strip()
+            == "31 31"
+        )
+        assert _run(root, "stop", "--yes")[0] == 0
+        wheel = first_manifest["sources"]["libraries"]["fixture-helper"]["wheel"]
+        cached = object_path(store / "wheels", "sha256:" + wheel["sha256"]) / wheel["filename"]
+        payload = cached.read_bytes()
+        cached.unlink()
+        try:
+            code, refused = _run(root, *update, "--yes", timeout=180)
+            assert code == 1 and "retained Git library wheel" in refused["error"], refused
+            assert _run(root, "status")[1]["current"] == updated["current"]
+        finally:
+            cached.write_bytes(payload)
         code, released = _run(root, "source", "release", "--yes", timeout=180)
         assert code == 0, released
         assert "sources" not in _run(root, "status")[1]
