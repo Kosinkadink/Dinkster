@@ -35,7 +35,6 @@ import json
 import math
 import os
 import shutil
-import sys
 import tempfile
 import urllib.parse
 import urllib.request
@@ -1038,6 +1037,8 @@ class PackSpec:
     manifest: Path | str
     python: str | None = None
     env: Mapping[str, str] = field(default_factory=dict, repr=False)
+    remote_token_directory: Path | None = None
+    """Dedicated gateway-only directory, bound instead of a replaceable token inode."""
     aimdo: str = "off"
     vram_budgets: Mapping[str, int] = field(default_factory=dict)
     reserve_vram: int | None = None
@@ -1396,6 +1397,7 @@ def _worker_group_contract(spec: PackSpec, worker_env: Mapping[str, str]) -> tup
         spec.comfy_args,
         spec.start_timeout,
         spec.asset_vault_write,
+        spec.remote_token_directory,
         tuple(Path(path) for path in spec.group_manifests),
     )
 
@@ -2651,8 +2653,6 @@ class ServingComposer:
             protected_rw_exceptions.append(str(scratch))
         ro_binds.extend(str(manifest.root) for manifest in manifests)
         protected_ro_exceptions.extend(str(manifest.root) for manifest in manifests)
-        python = Path(spec.python or sys.executable).absolute()
-        protected_ro_exceptions.append(str(python.parent.parent))
         for name in _SANDBOX_RO_PATH_ENV:
             if value := effective_env.get(name):
                 if name == "DINKSTER_MOUNTS_SNAPSHOT" and any(
@@ -2660,6 +2660,12 @@ class ServingComposer:
                     for bound in ro_binds
                 ):
                     continue
+                if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE" and spec.remote_token_directory:
+                    if Path(value).parent != spec.remote_token_directory:
+                        raise CompositionError(
+                            "remote bearer must be inside its dedicated directory"
+                        )
+                    value = str(spec.remote_token_directory)
                 ro_binds.append(value)
                 if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE":
                     protected_ro_exceptions.append(value)

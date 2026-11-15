@@ -22,7 +22,7 @@ from dinkster_supervisor.environment_runtime import (
     start_engine,
     stop_engine,
 )
-from dinkster_supervisor.environment_state import EnvironmentError
+from dinkster_supervisor.environment_state import EnvironmentError, interpreter
 from test_environment_generations import _workspace_tree
 
 SERVE = """
@@ -40,6 +40,7 @@ parser.add_argument('--generation', required=True)
 parser.add_argument('--library-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
+parser.add_argument('--sandbox-packs', action='store_true')
 args = parser.parse_args()
 
 class Handler(BaseHTTPRequestHandler):
@@ -51,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.load(source)
         elif self.path == '/api/cuda':
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
+        elif self.path == '/api/sandbox':
+            body = {'sandboxPacks': args.sandbox_packs}
         elif self.path == '/api/generation':
             body = {'generation': args.generation}
         else:
@@ -198,7 +201,10 @@ def test_start_failure_preserves_exit_code_and_current_output(
 
 @pytest.mark.parametrize("host_contamination", [False, True])
 def test_managed_generation_persists_folder_grant_across_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_contamination: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host_contamination: bool,
+    shared_model_folders: dict[str, Path],
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
@@ -245,7 +251,12 @@ def test_managed_generation_persists_folder_grant_across_restart(
         with urlopen(url, timeout=5) as response:  # noqa: S310
             initial = json.load(response)
         assert initial["mountChangesAllowed"] is True
-        assert {row["id"] for row in initial["mounts"]} == {"imports", "output"}
+        rows = {row["id"]: row for row in initial["mounts"]}
+        assert set(rows) == {"imports", "output", *shared_model_folders}
+        for mount_id, path in shared_model_folders.items():
+            assert rows[mount_id]["path"] == str(path)
+            assert rows[mount_id]["mode"] == "readwrite"
+            assert rows[mount_id]["source"] == "shared-models"
         assert initial["outputMount"] == "output"
         request = Request(
             url,
@@ -261,6 +272,12 @@ def test_managed_generation_persists_folder_grant_across_restart(
         with urlopen(url, timeout=5) as response:  # noqa: S310
             listing = json.load(response)
         assert listing["mountChangesAllowed"] is True
+        assert {row["id"] for row in listing["mounts"]} == {
+            "imports",
+            "output",
+            "chosen",
+            *shared_model_folders,
+        }
         selected = next(row for row in listing["mounts"] if row["id"] == "chosen")
         assert selected["path"] == str(granted)
         assert selected["mode"] == "read"
@@ -509,6 +526,78 @@ def test_start_status_idempotence_and_stop(
     assert engine_status(tmp_path)[0]["state"] == "stopped"
 
 
+@pytest.mark.parametrize("available", [False, True])
+def test_doctor_sandbox_uses_selected_generation_readiness(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], available: bool
+) -> None:
+    from dinkster_supervisor.environment import main
+
+    make_generation(tmp_path)
+    site = Path(
+        subprocess.check_output(
+            [
+                str(interpreter(tmp_path / "generations/1")),
+                "-I",
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+    )
+    workers = site / "dinkster_workers"
+    workers.mkdir()
+    (workers / "__init__.py").write_text("")
+    report = {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": available,
+        "detail": "selected engine prerequisite",
+    }
+    (workers / "doctor.py").write_text(f"import json; print(json.dumps({report!r}))\n")
+    with pytest.raises(SystemExit) as exit:
+        main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"])
+    assert exit.value.code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["sandbox"] == report
+    assert engine_status(tmp_path) == ()
+    (workers / "doctor.py").write_text("raise RuntimeError('unsupported probe')\n")
+    with pytest.raises(SystemExit) as exit:
+        main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"])
+    assert exit.value.code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["sandbox"]["available"] is False
+    assert "Update or repair" in result["sandbox"]["detail"]
+
+
+def test_sandbox_selection_reaches_engine_and_cannot_reuse_an_unsandboxed_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_generation(tmp_path)
+    monkeypatch.setattr(
+        "dinkster_supervisor.environment_runtime.sandbox_readiness",
+        lambda *_: {"available": True, "detail": "available"},
+    )
+    port = free_port()
+    try:
+        for sandboxed in (False, True):
+            start_engine(tmp_path, 1, "main", port, sandbox_packs=sandboxed)
+            with urlopen(f"http://127.0.0.1:{port}/api/sandbox") as response:  # noqa: S310
+                assert json.loads(response.read()) == {"sandboxPacks": sandboxed}
+            with pytest.raises(EnvironmentError, match="sandbox selection changed"):
+                start_engine(tmp_path, 1, "main", port, sandbox_packs=not sandboxed)
+            binding = engine_assignments(tmp_path, 1)[0]
+            assert binding["sandboxPacks"] is sandboxed
+            stop_engine(tmp_path, "main")
+        monkeypatch.setattr(
+            "dinkster_supervisor.environment_runtime.sandbox_readiness",
+            lambda *_: {"available": False, "detail": "install bubblewrap"},
+        )
+        with pytest.raises(EnvironmentError, match="install bubblewrap"):
+            start_engine(tmp_path, 1, "main", port, sandbox_packs=True)
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
+    finally:
+        stop_engine(tmp_path, "main")
+
+
 def test_start_engine_uses_generation_built_from_a_virtual_environment(tmp_path: Path) -> None:
     launcher = tmp_path / "launcher"
     venv.EnvBuilder(with_pip=False, symlinks=os.name != "nt").create(launcher)
@@ -740,7 +829,13 @@ def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path
         try:
             assert engine_status(tmp_path) == (first,)
             assert engine_assignments(tmp_path, 2) == [
-                {"name": "main", "port": second_port, "gpus": ["GPU-aB12"], "running": True}
+                {
+                    "name": "main",
+                    "port": second_port,
+                    "gpus": ["GPU-aB12"],
+                    "running": True,
+                    "sandboxPacks": False,
+                }
             ]
             require_idle(tmp_path)
             (tmp_path / "current").write_text("2\n")
@@ -748,7 +843,13 @@ def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path
             stop_engine(tmp_path, "main", generation=1)
             assert engine_status(tmp_path) == (second,)
             assert engine_assignments(tmp_path, 1) == [
-                {"name": "main", "port": first_port, "gpus": [], "running": False}
+                {
+                    "name": "main",
+                    "port": first_port,
+                    "gpus": [],
+                    "running": False,
+                    "sandboxPacks": False,
+                }
             ]
         finally:
             stop_engine(tmp_path, "main", generation=2)

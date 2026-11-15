@@ -89,28 +89,36 @@ and `dinkster[supervisor]` extras. The default `dinkster` install selects both.
 
 ## Generate a first image
 
-The launcher does not download model weights. Download the SD 1.5 checkpoint
-`v1-5-pruned-emaonly-fp16.safetensors` into a dedicated models folder, then add
-that folder to `~/.dinkster/library/mounts.toml`:
+Select the official `dinkster-models`, `dinkster-conditioning`,
+`dinkster-latent`, `dinkster-sampling`, and `dinkster-image` packs through
+[development setup](install.md#development-packs-from-local-folders) before
+opening this workflow. The launcher alone selects no packs.
 
-```toml
-[mounts.models]
-path = "/absolute/path/to/models"
-mode = "read"
-priority = 0
-```
+Save [the SD 1.5 quickstart workflow](quickstart-sd15.json), open it in the
+editor, and select **Run**. If the exact checkpoint is already in a configured
+model folder, Dinkster uses it. Otherwise the missing-assets dialog asks for
+consent to acquire `v1-5-pruned-emaonly-fp16.safetensors` from its pinned public
+Hugging Face source. Review the source, the roughly 2.13 GB size, and the
+download folder when displayed, then choose **Acquire selected and retry**.
+Nothing downloads merely from opening the workflow or starting the engine.
 
-On Windows, use a TOML path such as `C:/Users/name/Models`. Keep the existing
-`[settings]` and `[mounts.output]` sections that the source launcher created. See
-[installation](install.md#model-folders) for the full format.
+The default shared download folder is `~/Dinkster/Models/checkpoints`
+(`%USERPROFILE%\\Dinkster\\Models\\checkpoints` on Windows), not the project
+library. The provider filename is preserved. After verification, submission
+retries automatically. The existing consent view remains busy until acquisition
+and retry finish; it does not show byte progress. **Dismiss** closes that view,
+not the active operation.
+
+To use existing ComfyUI model folders or change the shared download location,
+see [model folders](install.md#model-folders).
 
 The run scripts select the execution interpreter automatically, including
 during pack-catalog preparation. No ComfyUI checkout or server is required.
 CPU and Apple Silicon model sampling remains subject to the
 [supported host boundaries](supported/cpu-and-apple-silicon-hosts.md).
 
-Workflow templates are disabled by default. Build an SD 1.5 workflow
-on the empty canvas:
+Workflow templates remain disabled by default; the linked JSON opens directly.
+To build the same graph manually on the empty canvas:
 
 1. Load the checkpoint with `Load Checkpoint`.
 2. Enter positive and negative text in the two `CLIP Text Encode` nodes.

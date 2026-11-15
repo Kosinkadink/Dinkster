@@ -67,7 +67,13 @@ from .pack_wheel import (
     pack_import_name,
     pack_source_directory,
 )
-from .sandbox import ProbeJail, SandboxError, detect_probe_jail, probe_environment
+from .sandbox import (
+    ProbeJail,
+    SandboxError,
+    detect_bubblewrap,
+    detect_probe_jail,
+    probe_environment,
+)
 
 Severity = Literal["error", "warning", "info"]
 
@@ -1459,6 +1465,27 @@ def render_text(report: DoctorReport) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     as_json = "--json" in args
+    if "--sandbox-readiness" in args:
+        if any(arg not in {"--sandbox-readiness", "--json"} for arg in args):
+            print(
+                "dinkster-doctor: --sandbox-readiness takes no pack or other options",
+                file=sys.stderr,
+            )
+            return 2
+        capability = detect_bubblewrap()
+        available = (
+            capability.available and capability.bwrap is not None and capability.user_namespaces
+        )
+        detail = capability.detail
+        if capability.available and not capability.user_namespaces:
+            detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
+        report = {
+            "format": "dinkster.sandbox-readiness/1",
+            "available": available,
+            "detail": "Pack sandboxing is available" if available else detail,
+        }
+        print(json.dumps(report) if as_json else report["detail"])
+        return 0
     sandboxed = "--sandbox" in args
     args = [a for a in args if a not in ("--json", "--sandbox")]
     interpreter: str | None = None

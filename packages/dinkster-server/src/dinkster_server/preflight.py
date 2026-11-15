@@ -339,13 +339,12 @@ def asset_preflight(
                 continue
             required[digest] = cast(str, dependency["resourceId"])
             pending.append(digest)
-    catalog = library.pack_assets
     plan: list[dict[str, object]] = []
     for digest in sorted(required):
         if library.asset_available(digest):
             continue
         name = required[digest]
-        declared = catalog.need_for(digest) if catalog is not None else None
+        declared = library.asset_need(digest)
         sources: list[AssetSource] = list(declared.sources) if declared else []
         for url in hinted_sources.get(digest, ()):
             if not any(
@@ -375,9 +374,9 @@ def asset_preflight(
                 detail = result.detail
             if result is not None and result.ok:
                 continue
-            plan.append(_plan_entry(library, digest, name, need, "failed", detail))
+            plan.append(_plan_entry(library, digest, name, need, "failed", detail, project))
             continue
-        plan.append(_plan_entry(library, digest, name, need, "missing", ""))
+        plan.append(_plan_entry(library, digest, name, need, "missing", "", project))
     return plan
 
 
@@ -388,6 +387,7 @@ def _plan_entry(
     need: AssetNeed,
     status: str,
     detail: str,
+    project: str,
 ) -> dict[str, object]:
     urls = [source.url for source in need.sources if isinstance(source, RemoteSource)]
     if library.provenance is not None:
@@ -404,6 +404,18 @@ def _plan_entry(
     }
     if need.kind:
         entry["kind"] = need.kind
+    if (
+        need.kind.startswith("model/")
+        and urls
+        and not packaged
+        and library.model_destination is not None
+    ):
+        destination = library.model_destination(need, project)
+        if destination is not None:
+            entry["destination"] = destination
+        else:
+            entry["fetchable"] = False
+            entry["detail"] = "Select a writable model folder first"
     if need.size >= 0:
         entry["size"] = need.size
     if need.metadata:
