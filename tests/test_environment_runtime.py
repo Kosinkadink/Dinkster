@@ -225,6 +225,72 @@ def test_managed_generation_persists_folder_grant_across_restart(
         stop_engine(root, "main")
 
 
+@pytest.mark.parametrize("frontend_kind", ["frontendRoot", "frontendDev"])
+def test_managed_development_frontend_survives_restart_and_serves_edits(
+    tmp_path: Path, frontend_kind: str
+) -> None:
+    import functools
+    import threading
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+    from test_serve import write_shutdown_pack
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    root = tmp_path / "project"
+    generation = root / "generations/1"
+    generation.mkdir(parents=True)
+    manifest = write_shutdown_pack(tmp_path / "pack", 58)
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    lock = Lockfile.of(
+        [LockedPack("shutdown-pack-58", "1.2.3", digest, "dinkster", ("shutdown58",))]
+    )
+    stage_generation_packs(generation, lock, {"shutdown-pack-58": archive})
+    source = generation / "pack-sources/shutdown-pack-58"
+    assert prepare_catalog(
+        source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)}
+    ).ok
+    make_generation(root, fake_serve=False)
+    record = json.loads((generation / "generation.json").read_text())
+    record["inProcessPacks"] = ["shutdown-pack-58"]
+    (generation / "generation.json").write_text(json.dumps(record))
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    page = frontend / "index.html"
+    page.write_text("<html>selected development frontend</html>")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(SimpleHTTPRequestHandler, directory=str(frontend))
+    )
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    selection = (
+        str(frontend)
+        if frontend_kind == "frontendRoot"
+        else f"http://127.0.0.1:{server.server_port}"
+    )
+    (generation / "development-sources.json").write_text(
+        json.dumps(
+            {"format": "dinkster.development-sources/1", "sources": [], frontend_kind: selection}
+        )
+    )
+    port = free_port()
+    try:
+        for text in ("first selection", "edited frontend after restart"):
+            page.write_text(f"<html>{text}</html>")
+            start_engine(root, 1, "main", port)
+            with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+                assert response.read().decode() == f"<html>{text}</html>"
+            stop_engine(root, "main")
+    finally:
+        stop_engine(root, "main")
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
 @pytest.mark.parametrize(
     ("redirecting_launcher", "health_body_timeout"),
     [(False, False), (True, False), (False, True)],

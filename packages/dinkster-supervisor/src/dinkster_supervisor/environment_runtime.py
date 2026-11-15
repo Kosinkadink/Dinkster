@@ -147,7 +147,6 @@ def _start_engine(
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
-    prepare_process(lifecycle, instance)
     url = f"http://127.0.0.1:{port}"
     record: dict[str, object] = {
         "name": name,
@@ -161,7 +160,6 @@ def _start_engine(
         "state": "starting",
         "_processState": lifecycle,
     }
-    _write_record(root, name, record)
     environment = dict(os.environ)
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
     command = [
@@ -198,9 +196,27 @@ def _start_engine(
     ]
     development = target / "development-sources.json"
     if development.is_file():
-        frontend = read_document(development).get("frontendRoot")
+        selection = read_document(development)
+        frontend = selection.get("frontendRoot")
+        frontend_dev = selection.get("frontendDev")
+        if frontend is not None and frontend_dev is not None:
+            raise EnvironmentError("development frontend folder and dev server are exclusive")
         if frontend is not None:
             command.extend(["--frontend-root", str(frontend)])
+        if frontend_dev is not None:
+            from .environment_development import frontend_development_url
+
+            command.extend(
+                [
+                    "--frontend-dev",
+                    frontend_development_url(
+                        str(frontend_dev),
+                        allow_remote=selection.get("allowFrontendDevRemote") is True,
+                    ),
+                ]
+            )
+    prepare_process(lifecycle, instance)
+    _write_record(root, name, record)
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
         log_offset = log.tell()
