@@ -3580,7 +3580,7 @@ def test_development_frontend_plan_reviews_origin_and_remote_opt_in(
     assert not store.exists()
 
 
-@pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference"])
+@pytest.mark.parametrize("git_kind", ["engine", "pack", "library", "inference", "frontend"])
 def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     tmp_path: Path, git_server, git_kind: str, capsys, monkeypatch
 ):
@@ -3606,9 +3606,21 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
         if git_kind == "inference"
         else '[project]\nname="unpublished-helper"\n'
     )
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text('{"version":"0.2.0"}')
+    (frontend / "frontend-release.json").write_text('{"engineApi":{"min":1,"max":2}}')
+    schema = engine / "packages/dinkster-schema/src/dinkster_schema/wire.py"
+    schema.parent.mkdir(parents=True)
+    schema.write_text("SCHEMA_WIRE_VERSION = 1\n")
     repository = pygit2.Repository(git_server["root"] / "source.git")
     index = pygit2.Index()
-    for kind, folder in (("engine", engine), ("pack", pack), ("library", library)):
+    for kind, folder in (
+        ("engine", engine),
+        ("pack", pack),
+        ("library", library),
+        ("frontend", frontend),
+    ):
         for path in folder.rglob("*"):
             if path.is_file():
                 index.add(
@@ -3644,6 +3656,13 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
                 else str(folder),
             ]
         )
+    if git_kind == "frontend":
+        arguments.extend(
+            [
+                "--frontend-source",
+                f"{git_server['url']}#ref=development-frontend&subdirectory=frontend",
+            ]
+        )
     arguments.extend(
         [
             "--variant",
@@ -3668,9 +3687,32 @@ def test_development_git_plan_mixes_sources_and_keeps_approval_across_fetches(
     ]
     assert main([*changed, "--approve", plan["sourceApproval"]]) == 1
     assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+    if git_kind == "frontend":
+        assert selected["live"] is False
+        assert selected["frontendArtifact"] is None
+        artifact = {
+            "id": 17,
+            "run": 23,
+            "name": "dinkster-frontend-" + "a" * 64,
+            "digest": "sha256:" + "b" * 64,
+            "size_in_bytes": 103,
+        }
+        monkeypatch.setattr(
+            "dinkster_supervisor.environment_frontend_sources.frontend_ci_artifact",
+            lambda origin: artifact,
+        )
+        assert main([*arguments, "--approve", plan["sourceApproval"]]) == 1
+        assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+        assert main(arguments) == 0
+        ci_plan = json.loads(capsys.readouterr().out)
+        artifact["id"] = 19
+        assert main([*arguments, "--approve", ci_plan["sourceApproval"]]) == 1
+        assert "changed from the approved plan" in json.loads(capsys.readouterr().out)["error"]
+        schema.write_text("SCHEMA_WIRE_VERSION = 3\n")
+        assert main(arguments) == 1
+        assert "schema API" in json.loads(capsys.readouterr().out)["error"]
+        schema.write_text("SCHEMA_WIRE_VERSION = 1\n")
     if git_kind == "engine":
-        frontend = tmp_path / "frontend"
-        frontend.mkdir()
         (frontend / "index.html").write_text("<title>Selected frontend</title>")
         previous_approval = plan["sourceApproval"]
         for extra, field, expected in (

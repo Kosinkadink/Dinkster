@@ -504,10 +504,16 @@ require isolated hosting. Live generations change with their author folders and
 cannot be restored exactly; capture without live marks for exact recovery.
 Local packs support both flat and `src` Python layouts.
 
-Contributor projects may select a built frontend with
-`--contributor --frontend-root /absolute/bundle` (requires `index.html`) or a
-running frontend server with `--contributor --frontend-dev http://localhost:5173`.
-These options are exclusive and persist across stop/start. HTTP and websocket
+Development projects may select a built frontend with
+`--frontend-root /absolute/bundle` (requires `index.html`), a running frontend
+server with `--frontend-dev http://localhost:5173`, or a captured Git frontend
+with `--frontend-source https://github.com/Kosinkadink/Dinkster-Frontend.git#ref=COMMIT`.
+Git frontend selection reuses verified exact-commit CI assets when available,
+otherwise Node and pnpm are required to build the selected checkout. The frontend
+must support the selected engine schema API. The source and CI artifact selection
+are included in the source approval; built wheels remain available for exact
+recovery without another Git fetch or frontend build.
+These options are exclusive, need no contributor/live engine, and persist across stop/start. HTTP and websocket
 requests are proxied for live reload. Dev servers must use a loopback address
 unless `--allow-frontend-dev-remote` is explicitly selected. The origin and remote
 permission are part of the reviewed source approval; changing either requires a

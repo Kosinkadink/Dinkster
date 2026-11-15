@@ -601,6 +601,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 live_packs=tuple(args.live_pack),
                 live_libraries=tuple(args.live_library),
                 contributor=args.contributor,
+                frontend=args.frontend_source,
             )
             if args.frontend_root is not None:
                 frontend = args.frontend_root.resolve()
@@ -650,6 +651,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             "no published engine/base bundle is used",
         ]
         if development is not None:
+            for row in development["sources"]:
+                if row["kind"] == "frontend":
+                    artifact = row["frontendArtifact"]
+                    plan.append(
+                        f"use verified frontend CI artifact {artifact['id']} ({artifact['digest']})"
+                        if artifact is not None
+                        else "build selected Git frontend locally; requires Node and pnpm"
+                    )
             if "frontendDev" in development:
                 plan.append(f"proxy frontend dev server {development['frontendDev']}")
                 if development.get("allowFrontendDevRemote"):
@@ -2115,6 +2124,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         help="import this selected library folder; restart after edits",
     )
     frontend = develop.add_mutually_exclusive_group()
+    frontend.add_argument(
+        "--frontend-source", help="capture a public HTTPS Git frontend URL and ref"
+    )
     frontend.add_argument("--frontend-root", type=Path, help="development editor bundle folder")
     frontend.add_argument("--frontend-dev", help="development HTTP(S) frontend dev server origin")
     develop.add_argument(
