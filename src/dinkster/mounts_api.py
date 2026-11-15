@@ -64,6 +64,7 @@ from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
 from dinkster_server.library import LIBRARY_KEY, run_owned_thread
 
+from .model_settings import ModelSettings
 from .project_folders import ProjectFolders
 
 __all__ = ["MountService", "add_mount_routes"]
@@ -94,7 +95,9 @@ class MountService:
         *,
         allow_changes: bool = False,
         restart_for_changes: bool = False,
+        shared_models: bool = False,
     ) -> None:
+        self.shared_models = shared_models
         self.table = table
         self.allow_changes = allow_changes
         self.restart_for_changes = restart_for_changes
@@ -147,8 +150,19 @@ class MountService:
         )
         return {"restartRequired": changed, "pendingRemovals": removed}
 
+    def model_modes(self) -> dict[str, str]:
+        if not self.shared_models:
+            return {}
+        return {
+            mount_id: mode
+            for mount_id, mode in ModelSettings.load().folder_modes().items()
+            if self.settings_table.source(mount_id) == "shared-models"
+        }
+
     def project_response(self, project: str) -> dict[str, object]:
-        order = self.projects.ordered(project, self.mount_ids(settings=True))
+        order = self.projects.ordered(
+            project, self.mount_ids(settings=True), modes=self.model_modes()
+        )
         rows = {str(row["id"]): row for row in self.settings_descriptors()}
         selected = self.projects.output(project, self.settings_table.output_mount)
         return {
@@ -161,7 +175,7 @@ class MountService:
         }
 
     def project_context(self, project: str) -> AssetFolderContext:
-        order = self.projects.ordered(project, self.mount_ids())
+        order = self.projects.ordered(project, self.mount_ids(), modes=self.model_modes())
         output = self.projects.output(project, self.table.output_mount)
         return AssetFolderContext(order, output if output in order else None)
 
@@ -764,7 +778,13 @@ async def handle_project_update(request: web.Request) -> web.Response:
         if output is None and service.project_response(project)["outputMount"] is not None:
             return _json_error(409, "select a replacement output folder for the project")
         service.projects.update(
-            project, body["mounts"], available=service.mount_ids(settings=True), output=output
+            project,
+            body["mounts"],
+            available=service.mount_ids(settings=True),
+            output=output,
+            required=tuple(
+                mount_id for mount_id, mode in service.model_modes().items() if mode == "always-on"
+            ),
         )
     except MountsError as exc:
         return _json_error(400, str(exc))

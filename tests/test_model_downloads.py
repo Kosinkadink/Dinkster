@@ -325,3 +325,138 @@ def test_huggingface_refuses_unverified_provider_metadata(
     monkeypatch.setattr(huggingface, "open_model_response", respond)
     with pytest.raises(AssetError):
         select_huggingface_file("https://huggingface.co/acme/model/resolve/main/model.safetensors")
+
+
+def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountTable
+    from dinkster_values.asset_folders import use_asset_folders
+
+    from dinkster.model_settings import ModelSettings
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    settings = tmp_path / "settings"
+    settings.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(settings))
+    document = {
+        "version": 1,
+        "downloadLocation": "common",
+        "locations": [
+            {
+                "id": name,
+                "path": str(tmp_path / name),
+                "mode": "readwrite" if name == "common" else "read",
+                "visibility": mode,
+            }
+            for name, mode in (
+                ("required", "always-on"),
+                ("common", "default-on"),
+                ("private", "opt-in"),
+            )
+        ],
+    }
+    path = settings / "model-settings.json"
+    path.write_text(json.dumps(document))
+    model_settings = ModelSettings.load()
+    table = MountTable()
+    for mount in model_settings.prepare():
+        table.add(mount, source="shared-models")
+    private = tmp_path / "private" / "checkpoints"
+    private.mkdir(parents=True)
+    payload = b"opt-in checkpoint, intentionally not indexed"
+    (private / "private.safetensors").write_bytes(payload)
+    service = MountService(
+        table, tmp_path / "library" / "mounts.toml", allow_changes=True, shared_models=True
+    )
+    categories = (
+        "checkpoint",
+        "lora",
+        "vae",
+        "text-encoder",
+        "diffusion",
+        "controlnet",
+        "upscale",
+        "upscaler",
+        "embedding",
+        "clip-vision",
+        "clip",
+    )
+    required = tuple(f"required-{category}" for category in categories)
+    common = tuple(f"common-{category}" for category in categories)
+    optional = tuple(f"private-{category}" for category in categories)
+    for project in ("first", "second"):
+        assert set(service.project_context(project).mounts) == set(required + common)
+        with use_asset_folders(service.project_context(project)):
+            assert table.bind_name("private.safetensors", "model/checkpoint") is None
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            # An always-on location cannot be silently disabled by the old folder editor.
+            response = await client.put(
+                "/api/mounts/projects/first", json={"mounts": list(common), "outputMount": None}
+            )
+            assert response.status == 400
+            assert "always-on" in (await response.json())["error"]
+            chosen = list(required + optional)
+            response = await client.put(
+                "/api/mounts/projects/first", json={"mounts": chosen, "outputMount": None}
+            )
+            assert response.status == 200
+            assert [row["id"] for row in (await response.json())["mounts"]] == chosen
+            assert set(service.project_context("second").mounts) == set(required + common)
+            with use_asset_folders(service.project_context("first")):
+                ref = table.bind_name("private.safetensors", "model/checkpoint")
+                assert ref is not None and ref.read_bytes() == payload
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+    restarted = MountService(
+        table, tmp_path / "library" / "mounts.toml", allow_changes=True, shared_models=True
+    )
+    assert restarted.project_context("first").mounts == required + optional
+    assert set(restarted.project_context("second").mounts) == set(required + common)
+    # Shared mode edits take effect in both running project libraries, not only on restart.
+    document["locations"][1]["visibility"] = "always-on"
+    document["locations"][2]["visibility"] = "default-on"
+    path.write_text(json.dumps(document))
+    for owner in (service, restarted):
+        assert set(owner.project_context("first").mounts) == set(required + common + optional)
+        assert set(owner.project_context("second").mounts) == set(required + common + optional)
+    assert (private / "private.safetensors").read_bytes() == payload
+
+
+@pytest.mark.parametrize("invalid", ["visibility", "duplicate-path"])
+def test_invalid_model_folder_modes_leave_existing_bytes_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    from dinkster_assets import MountsError
+
+    from dinkster.model_downloads import shared_model_mounts
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    (existing / "keep.bin").write_bytes(b"do not change")
+    rows = [
+        {"id": "first", "path": str(existing), "mode": "readwrite", "visibility": "default-on"},
+        {
+            "id": "second",
+            "path": str(existing if invalid == "duplicate-path" else tmp_path / "uncreated"),
+            "mode": "readwrite",
+            "visibility": "hidden" if invalid == "visibility" else "opt-in",
+        },
+    ]
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps({"version": 1, "downloadLocation": "first", "locations": rows})
+    )
+    with pytest.raises(MountsError):
+        shared_model_mounts()
+    assert sorted(path.name for path in existing.iterdir()) == ["keep.bin"]
+    assert (existing / "keep.bin").read_bytes() == b"do not change"
+    assert not (tmp_path / "uncreated").exists()

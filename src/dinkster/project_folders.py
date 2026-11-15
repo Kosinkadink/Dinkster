@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from dinkster_assets import MountsError
@@ -65,15 +66,31 @@ class ProjectFolders:
             raise MountsError("mount ids must be unique")
         return list(raw)
 
-    def ordered(self, project: str, available: tuple[str, ...]) -> tuple[str, ...]:
+    def ordered(
+        self,
+        project: str,
+        available: tuple[str, ...],
+        *,
+        modes: Mapping[str, str] | None = None,
+    ) -> tuple[str, ...]:
         self.validate_project(project)
+        modes = modes or {}
         known = set(available)
+        selected = self._projects.get(project, ())
         excluded = set(self._excluded.get(project, ()))
+        defaults = (
+            mount_id for mount_id in available if modes.get(mount_id) in {"always-on", "default-on"}
+        )
         return tuple(
             dict.fromkeys(
                 mount_id
-                for mount_id in (*self._projects.get(project, ()), *self._shared)
-                if mount_id in known and mount_id not in excluded
+                for mount_id in (*selected, *self._shared, *defaults)
+                if mount_id in known
+                and (
+                    modes.get(mount_id) == "always-on"
+                    or mount_id not in excluded
+                    and (modes.get(mount_id) != "opt-in" or mount_id in selected)
+                )
             )
         )
 
@@ -112,10 +129,18 @@ class ProjectFolders:
         self._initialized = True
 
     def update(
-        self, project: str, mounts: object, *, available: tuple[str, ...], output: str | None
+        self,
+        project: str,
+        mounts: object,
+        *,
+        available: tuple[str, ...],
+        output: str | None,
+        required: tuple[str, ...] = (),
     ) -> None:
         self.validate_project(project)
         ordered = self._mount_ids(mounts)
+        if set(required) - set(ordered):
+            raise MountsError("always-on model folders cannot be disabled for a project")
         if set(ordered) - set(available):
             raise MountsError("project refers to an unknown mount")
         if output is not None and output not in ordered:

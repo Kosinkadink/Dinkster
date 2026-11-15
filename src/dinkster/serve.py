@@ -1727,6 +1727,7 @@ def main(argv: list[str] | None = None) -> None:
             mounts_config,
             allow_changes=args.allow_mount_changes,
             restart_for_changes=args.sandbox_packs,
+            shared_models=args.allow_mount_changes or args.generation is not None,
         )
         mount_service.projects.initialize(
             mount_service.mount_ids(),

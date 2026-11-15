@@ -238,6 +238,12 @@
   redirecting the output to another folder.
   With fixed pack sandboxes, folder grant edits persist as restart-required
   changes without altering live worker authority or restarting the server.
+- Shared model locations accept `always-on`, `default-on` and `opt-in`
+  visibility in `model-settings.json`. Omitted visibility is `default-on`.
+  Project folder lists and filename selection honor those defaults and saved
+  project choices. An always-on model location cannot be disabled through
+  project folder updates. Changing the shared mode updates project selection
+  without deleting model files or changing read-only filesystem grants.
 - Jobs retain their project's folder preferences in both in-process and
   isolated execution. Name and directory selections follow that order;
   saved digest references retain their identity independently of folder order.
