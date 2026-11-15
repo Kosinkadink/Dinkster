@@ -549,9 +549,16 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         gpus: tuple[str, ...] = (),
         *,
         activation_journal: Path | None = None,
+        sandbox_packs: bool = False,
     ) -> dict[str, object]:
         result = original_start(
-            root, generation, name, port, gpus, activation_journal=activation_journal
+            root,
+            generation,
+            name,
+            port,
+            gpus,
+            activation_journal=activation_journal,
+            sandbox_packs=sandbox_packs,
         )
         if generation != 2:
             return result

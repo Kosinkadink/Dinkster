@@ -40,6 +40,7 @@ parser.add_argument('--generation', required=True)
 parser.add_argument('--library-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
+parser.add_argument('--sandbox-packs', action='store_true')
 args = parser.parse_args()
 
 class Handler(BaseHTTPRequestHandler):
@@ -51,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.load(source)
         elif self.path == '/api/cuda':
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
+        elif self.path == '/api/sandbox':
+            body = {'sandboxPacks': args.sandbox_packs}
         elif self.path == '/api/generation':
             body = {'generation': args.generation}
         else:
@@ -507,6 +510,64 @@ def test_start_status_idempotence_and_stop(
     finally:
         stop_engine(tmp_path, "main")
     assert engine_status(tmp_path)[0]["state"] == "stopped"
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_doctor_sandbox_uses_selected_generation_readiness(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], available: bool
+) -> None:
+    from dinkster_supervisor.environment import main
+
+    make_generation(tmp_path)
+    site = _workspace_tree(tmp_path / "generations/1/python")
+    workers = site / "dinkster_workers"
+    workers.mkdir()
+    (workers / "__init__.py").write_text("")
+    report = {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": available,
+        "detail": "selected engine prerequisite",
+    }
+    (workers / "doctor.py").write_text(f"import json; print(json.dumps({report!r}))\n")
+    assert main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["sandbox"] == report
+    assert engine_status(tmp_path) == ()
+    (workers / "doctor.py").write_text("raise RuntimeError('unsupported probe')\n")
+    assert main(["--root", str(tmp_path), "doctor", "--sandbox", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["sandbox"]["available"] is False
+    assert "Update or repair" in result["sandbox"]["detail"]
+
+
+def test_sandbox_selection_reaches_engine_and_cannot_reuse_an_unsandboxed_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_generation(tmp_path)
+    monkeypatch.setattr(
+        "dinkster_supervisor.environment_runtime.sandbox_readiness",
+        lambda *_: {"available": True, "detail": "available"},
+    )
+    port = free_port()
+    try:
+        for sandboxed in (False, True):
+            start_engine(tmp_path, 1, "main", port, sandbox_packs=sandboxed)
+            with urlopen(f"http://127.0.0.1:{port}/api/sandbox") as response:  # noqa: S310
+                assert json.loads(response.read()) == {"sandboxPacks": sandboxed}
+            with pytest.raises(EnvironmentError, match="sandbox selection changed"):
+                start_engine(tmp_path, 1, "main", port, sandbox_packs=not sandboxed)
+            binding = engine_assignments(tmp_path, 1)[0]
+            assert binding["sandboxPacks"] is sandboxed
+            stop_engine(tmp_path, "main")
+        monkeypatch.setattr(
+            "dinkster_supervisor.environment_runtime.sandbox_readiness",
+            lambda *_: {"available": False, "detail": "install bubblewrap"},
+        )
+        with pytest.raises(EnvironmentError, match="install bubblewrap"):
+            start_engine(tmp_path, 1, "main", port, sandbox_packs=True)
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
+    finally:
+        stop_engine(tmp_path, "main")
 
 
 def test_start_engine_uses_generation_built_from_a_virtual_environment(tmp_path: Path) -> None:
