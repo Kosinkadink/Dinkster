@@ -485,7 +485,9 @@ def publish(
                         document.pop("nightlyDate", None)
                     write_document(path, document)
                     if published_bytes == path.read_bytes():
-                        client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
+                        client.delete_object(
+                            Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
+                        )
                         print(f"Verified Nightly channel for engine {identity}")
                         return
                     candidate = parse_metadata(path.read_bytes())
@@ -510,7 +512,9 @@ def publish(
                     ):
                         raise ValueError("published Nightly date must be YYYY-MM-DD")
                     if previous_date >= publication_date:
-                        client.delete_object(Bucket=os.environ["R2_BUCKET"], Key="channels/main.json")
+                        client.delete_object(
+                            Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
+                        )
                         print(f"Nightly channel already advanced on {previous_date}")
                         return
         selected_frontend = select_frontend(engine, parse_metadata(path.read_bytes()))
