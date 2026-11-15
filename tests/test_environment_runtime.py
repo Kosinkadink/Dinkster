@@ -119,7 +119,11 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
                 "constraints": "sha256:" + "c" * 64,
                 "variant": "linux-cpu",
                 "workerProtocol": 1,
-                "files": {"constraints.txt": "sha256:" + "c" * 64},
+                "files": {
+                    "constraints.txt": "sha256:" + "c" * 64,
+                    "engine-manifest.json": "sha256:"
+                    + hashlib.sha256(manifest.encode()).hexdigest(),
+                },
             }
         )
     )
