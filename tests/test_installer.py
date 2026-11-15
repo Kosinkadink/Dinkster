@@ -1566,9 +1566,17 @@ def _serve_artifacts(
             if callable(blob):
                 blob = blob()
             self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/octet-stream" if self.path.endswith(".whl") else "text/html",
+            )
             self.send_header("Content-Length", str(len(blob)))
             self.end_headers()
-            self.wfile.write(blob)
+            if self.command != "HEAD":
+                self.wfile.write(blob)
+
+        def do_HEAD(self) -> None:
+            self.respond()
 
         def do_GET(self) -> None:
             self.respond()

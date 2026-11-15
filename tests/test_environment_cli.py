@@ -453,11 +453,14 @@ def test_managed_git_pack_replaces_only_selected_sources_and_rolls_back_exactly(
 
 
 def test_managed_git_libraries_retain_release_base_and_exact_rollback(
-    tmp_path: Path, monkeypatch, git_server
+    tmp_path: Path, monkeypatch, git_server, capsys
 ):
     import pygit2
+    from dinkster_supervisor import environment, environment_frontend_sources
     from dinkster_supervisor.environment_state import Generation, interpreter, read_document
     from dinkster_workers.boundary import PROTOCOL_VERSION
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+    from test_environment_frontend_sources import _artifact as frontend_artifact
 
     from tests.fixtures.environments import build as publisher
 
@@ -470,6 +473,8 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
     def encoded(document):
         if "workerProtocol" in document:
             document["workerProtocol"] = PROTOCOL_VERSION
+        if document.get("format") == "dinkster.engine/1":
+            document["schemaApi"] = 1
         return encode(document)
 
     monkeypatch.setattr(publisher, "canonical_json", encoded)
@@ -536,6 +541,19 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
                         pygit2.enums.FileMode.BLOB,
                     )
                 )
+        for filename, payload in {
+            "nodes/dinkster-pack.toml": HEALTHY_MANIFEST.replace(
+                'requires = ["numpy>=1.26"]', 'version = "1.0"\nengine = ">=0"\nrequires = []'
+            ),
+            "nodes/healthy_nodes.py": HEALTHY_NODES + f"\nVALUE = {value}\n",
+            "frontend/package.json": '{"version":"0.2.0"}',
+            "frontend/frontend-release.json": '{"engineApi":{"min":1,"max":2}}',
+        }.items():
+            tree.add(
+                pygit2.IndexEntry(
+                    filename, repository.create_blob(payload.encode()), pygit2.enums.FileMode.BLOB
+                )
+            )
         commits.append(
             repository.create_commit(
                 "refs/heads/" + branch,
@@ -676,6 +694,56 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         assert history[-1]["sources"]["libraries"]["dinkster-inference"]["commit"] == str(
             commits[0]
         )
+        repository = pygit2.Repository(git_server["root"] / "source.git")
+        repository.references.create("refs/heads/library-captured", commits[0])
+        repository.free()
+        code, packed = _run(
+            root,
+            "source",
+            "add",
+            endpoint + "nodes",
+            "--pack",
+            "healthy-nodes",
+            "--ref",
+            str(commits[0]),
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            timeout=180,
+        )
+        assert code == 0, packed
+        assert _run(root, "stop", "--yes")[0] == 0
+        artifact = frontend_artifact(tmp_path, str(commits[0]))
+        monkeypatch.setattr(
+            environment_frontend_sources, "frontend_ci_artifact", lambda _: artifact
+        )
+
+        def fetch(roots, name, destination, sha, size):
+            assert sha == artifact["digest"][7:]
+            destination.write_bytes(artifact["path"].read_bytes())
+
+        monkeypatch.setattr(environment_frontend_sources, "fetch_artifact", fetch)
+        frontend_args = [
+            "--root",
+            str(root),
+            "source",
+            "add",
+            endpoint + "frontend",
+            "--frontend",
+            "--ref",
+            str(commits[0]),
+            "--git-mirror",
+            git_server["proxy"],
+            "--yes",
+            "--json",
+        ]
+        assert environment.run(environment.argument_parser().parse_args(frontend_args)) == 0
+        json.loads(capsys.readouterr().out)
+        all_sources = _run(root, "status")[1]["sources"]
+        assert all_sources["packs"]["healthy-nodes"]["commit"] == str(commits[0])
+        assert all_sources["frontend"]["commit"] == str(commits[0])
+        assert all_sources["libraries"] == first_manifest["sources"]["libraries"]
+        assert _run(root, "stop", "--yes")[0] == 0
         engine_source = tmp_path / "engine-source"
         engine_source.mkdir()
         engine_wheel = next(Path(fixture["mirror"]).glob("engine/*/*.whl"))
@@ -751,7 +819,28 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
         combined_status = _run(root, "status")[1]
         assert combined_status["sources"]["engine"]["commit"] == str(engine_commit)
         assert combined_status["sources"]["libraries"] == first_manifest["sources"]["libraries"]
+        for kind in ("packs", "frontend"):
+            assert combined_status["sources"][kind] == all_sources[kind]
         combined_root = root / "generations" / str(combined["current"])
+        assert (
+            (combined_root / "pack-sources/healthy-nodes/healthy_nodes.py")
+            .read_text()
+            .endswith("VALUE = 31\n")
+        )
+        assert (
+            subprocess.check_output(
+                [
+                    str(interpreter(combined_root)),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "from importlib.resources import files; "
+                    "print(files('dinkster_frontend').joinpath('static/index.html').read_text())",
+                ],
+                text=True,
+            ).strip()
+            == "<main>selected frontend</main>"
+        )
         assert (
             subprocess.check_output(
                 [
@@ -767,20 +856,41 @@ def test_managed_git_libraries_retain_release_base_and_exact_rollback(
             == "411 31 31"
         )
         assert _run(root, "stop", "--yes")[0] == 0
+        frontend_plan = ["--root", str(root), "source", "update", "--frontend", "--plan", "--json"]
+        assert environment.run(environment.argument_parser().parse_args(frontend_plan)) == 0
+        assert json.loads(capsys.readouterr().out)["status"] == "planned"
         requests = len(git_server["requests"])
-        update = ("update", "--catalog-lock", str(catalog), "--artifacts", str(artifacts))
+        update = (
+            "update",
+            "--catalog-lock",
+            str(combined_root / "dinkster.lock"),
+            "--artifacts",
+            str(
+                object_path(
+                    store / "engines",
+                    Generation.read(combined_root / "generation.json").engine_release,
+                )
+                / "artifacts"
+            ),
+            "--pack-lock",
+            str(combined_root / "packs/healthy-nodes/pack-lock.json"),
+        )
         code, preview = _run(root, *update, "--plan")
         assert code == 0, preview
-        assert preview["retainedLibraries"] == first_manifest["sources"]["libraries"]
+        assert preview["retainedLibraries"] == {
+            **first_manifest["sources"]["libraries"],
+            "dinkster-frontend": all_sources["frontend"],
+        }
         code, updated = _run(root, *update, "--yes", timeout=180)
         assert code == 0, updated
         assert len(git_server["requests"]) == requests
         updated_root = root / "generations" / str(updated["current"])
         assert Generation.read(updated_root / "generation.json").source == "source"
-        assert (
-            _run(root, "status")[1]["sources"]["libraries"]
-            == first_manifest["sources"]["libraries"]
-        )
+        updated_sources = _run(root, "status")[1]["sources"]
+        assert updated_sources["libraries"] == first_manifest["sources"]["libraries"]
+        for kind in ("packs", "frontend"):
+            assert updated_sources[kind] == all_sources[kind]
+        assert {path: content_digest(path) for path in before} == before
         assert (
             subprocess.check_output(
                 [
@@ -1215,8 +1325,10 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
 
     import pygit2
     from dinkster_supervisor.environment_state import Generation, interpreter, read_document
+    from test_installer import _serve_artifacts
 
     from tests.fixtures.environments.build import build
+    from tests.fixtures.environments.build import wheel as build_wheel
 
     for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(name, str(tmp_path / "user"))
@@ -1238,6 +1350,19 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         "--yes",
     )
     assert code == 0, result
+    added = build_wheel(tmp_path, "fixture_new", "1.0", 853)
+    requests = []
+    index_server = _serve_artifacts(
+        {
+            "/simple/fixture-new/": (
+                f'<a href="/wheels/{added.name}#sha256={content_digest(added)[7:]}">'
+                f"{added.name}</a>"
+            ).encode(),
+            "/wheels/" + added.name: added.read_bytes(),
+        },
+        requests,
+    )
+    package_index = f"http://127.0.0.1:{index_server.server_port}/simple"
     try:
         assert _run(root, "stop", "--yes")[0] == 0
         source = tmp_path / "source"
@@ -1256,7 +1381,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         (source / "dinkster/__init__.py").write_text("VALUE = 911\n")
         (source / "pyproject.toml").write_text(
             '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
-            'dependencies=["fixture-base==1.0"]\n[dependency-groups]\n'
+            'dependencies=["fixture-base==1.0","fixture-new==1.0"]\n[dependency-groups]\n'
             'engine-base=["fixture-base==1.0"]\n[build-system]\n'
             'requires=["hatchling"]\nbuild-backend="hatchling.build"\n'
         )
@@ -1272,6 +1397,7 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         )
         wheel = index / base_wheel.name
         shutil.copyfile(base_wheel, wheel)
+        shutil.copyfile(added, index / added.name)
         monkeypatch.setenv("UV_NO_INDEX", "1")
         monkeypatch.setenv("UV_FIND_LINKS", str(index))
         monkeypatch.setenv("UV_OFFLINE", "1")
@@ -1283,12 +1409,25 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         )
         assert locked.returncode == 0, locked.stderr
         lock = source / "uv.lock"
-        lock.write_text(
-            lock.read_text().replace(
-                f'path = "{wheel.as_posix()}"',
-                f'path = "{wheel.as_posix()}", hash = "{content_digest(wheel)}"',
+        text = lock.read_text()
+        for path in (wheel, index / added.name):
+            text = text.replace(
+                f'path = "{path.as_posix()}"',
+                f'path = "{path.as_posix()}", hash = "{content_digest(path)}"',
             )
-        )
+        lock.write_text(text)
+        (index / added.name).unlink()
+        wheel.unlink()
+        monkeypatch.delenv("UV_NO_INDEX")
+        monkeypatch.delenv("UV_OFFLINE")
+        monkeypatch.delenv("UV_FIND_LINKS")
+        before = {
+            path: content_digest(path)
+            for parent in ("bases", "wheels")
+            for path in (Path(fixture["store"]) / parent).rglob("*")
+            if path.is_file() and path.name != ".objects.json"
+        }
+        requests.clear()
         repository = pygit2.Repository(git_server["root"] / "source.git")
         git_index = pygit2.Index()
         for path in source.rglob("*"):
@@ -1342,9 +1481,17 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
             git_server["proxy"],
             "--ref",
             "engine",
+            "--package-index",
+            package_index,
             "--yes",
         )
-        assert code == 0, result
+        assert code == 0, json.dumps(result)
+        assert requests and {path for path, _ in requests} == {
+            "/simple/fixture-new/",
+            "/wheels/" + added.name,
+        }
+        assert {path: content_digest(path) for path in before} == before
+        requests.clear()
         status = _run(root, "status")[1]
         assert status["source"] == "source"
         assert status["published"] is False and status["reproducible"] is False
@@ -1375,12 +1522,14 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
                     "-I",
                     "-B",
                     "-c",
-                    "import dinkster; print(dinkster.VALUE)",
+                    "import dinkster,fixture_new; print(dinkster.VALUE,fixture_new.VALUE)",
                 ],
                 text=True,
             ).strip()
-            == "911"
+            == "911 853"
         )
+        assert requests == []
+        assert {path: content_digest(path) for path in before} == before
         assert _run(root, "stop", "--yes")[0] == 0
         code, result = _run(root, "source", "release", "--yes")
         assert code == 0, result
@@ -1394,6 +1543,8 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         assert _run(root, "status")[1]["source"] == "source"
     finally:
         _run(root, "stop", "--yes")
+        index_server.shutdown()
+        index_server.server_close()
 
 
 def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(tmp_path: Path):

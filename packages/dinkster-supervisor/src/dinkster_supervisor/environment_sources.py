@@ -989,9 +989,11 @@ def prepare_source_engine(
             "sources": sources,
             "wheels": wheels,
         }
+        if "schemaApi" in published:
+            release["schemaApi"] = published["schemaApi"]
         frontend_reference = select_frontend(published, sources.get("channel"))
         if frontend_reference is not None:
-            release.update(frontend=frontend_reference, schemaApi=published["schemaApi"])
+            release["frontend"] = frontend_reference
         release_id = (
             "sha256:" + hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
         )

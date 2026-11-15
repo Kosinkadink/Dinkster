@@ -952,6 +952,8 @@ build only when Node and pnpm are installed; missing tools are named, and invali
 CI bytes refuse without a build fallback. The source API range must include the
 installed engine API. Exact build origin, source identity and retained wheel bytes
 are disclosed as unpublished/non-reproducible and survive updates and rollback.
+Git engine selection preserves the installed schema API declaration for later
+frontend compatibility checks, including when a Git frontend is already selected.
 Explicit published frontend version selection supersedes the Git frontend;
 missing retained builds refuse recovery instead of rebuilding moving sources.
 
