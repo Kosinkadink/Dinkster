@@ -11,9 +11,9 @@
 
 # Production and QA service addresses
 
+- Public registry readback confirms all 36 pinned default versions are active, including remote 0.0.9 with six platform locks. Its downloaded wheel passes SHA-256 and artifact-digest checks; serving with those bytes exposes a remote node for both matching environments and disables it with named diagnostics for both mismatch directions. These local gateway checks do not certify hosted sign-in or fresh published-channel installs.
 - Real sandboxed remote workers receive process-local partner mode and fake outcome while preserving bearer rotation/logout and hiding private credentials; all four default-pack/explicit-generation and external-token/account-token cases pass. Without forwarding, both default-pack workers report missing values.
 - QA routing and custom endpoint reporting: 34 targeted CLI/account/services/serving/composition checks pass on Linux CPU. Existing doctor/catalog-preparation controls retain disabled discovery when no endpoint is supplied; normal serving defaults to production.
-- Real engine serving with the current isolated remote pack exposes nodes for matching production/QA documents and hides them in both mismatch directions. Local gateway fixtures are not hosted sign-in or provider acceptance.
 - Stable/Nightly project-channel fixtures preserve every project/generation file byte-for-byte across QA then default-production restarts. Actual published fresh Stable/Nightly installation acceptance remains separate.
 
 - Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
