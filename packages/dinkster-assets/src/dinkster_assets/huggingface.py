@@ -38,8 +38,9 @@ class HuggingFaceFile:
         writer: AssetWriter,
         target: SaveTarget,
         *,
-        digest: str,
+        digest: str | None = None,
         before_publish: Callable[[AssetRef], None] | None = None,
+        progress: Callable[[str, int], None] | None = None,
     ) -> AssetRef:
         with open_model_response(self.url) as response:
             return writer.save_model_stream(
@@ -49,6 +50,7 @@ class HuggingFaceFile:
                 size=self.size,
                 digest=digest,
                 before_publish=before_publish,
+                progress=progress,
             )
 
 

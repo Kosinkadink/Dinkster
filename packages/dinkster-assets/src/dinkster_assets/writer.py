@@ -49,6 +49,7 @@ from .integrity import digest_file_with_record, verification_record_for_publicat
 from .library import INDEX_NAME, append_write_record, load_write_records
 from .model import AssetRef
 from .mounts import MOUNT_NAMESPACE
+from .revision import open_local_file, windows_file_revision
 from .save_target import SaveTarget, coerce_save_target
 
 __all__ = ["AssetWriter", "MountSnapshotWriter", "MountWriteAuthority"]
@@ -280,13 +281,15 @@ class AssetWriter:
         *,
         sha256: str,
         size: int,
-        digest: str,
+        digest: str | None = None,
         before_publish: Callable[[AssetRef], None] | None = None,
+        progress: Callable[[str, int], None] | None = None,
     ) -> AssetRef:
         """Verify a provider stream and publish its filename without overwriting bytes."""
         if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
             raise AssetError("model download requires a full SHA-256")
-        require_digest(digest)
+        if digest is not None:
+            require_digest(digest)
         parsed = self._validated_named_target(target, size)
         root, folder = self._writable_folder(parsed)
         with self._directory_claim(folder):
@@ -298,8 +301,9 @@ class AssetWriter:
                 limit=size,
                 expected_root=root,
                 expected_sha256=sha256,
-                expected_digest=digest,
+                expected_digest=digest or "",
                 before_publish=before_publish,
+                progress=progress,
             )
         return ref
 
@@ -384,6 +388,97 @@ class AssetWriter:
                 )
                 refs[name] = ref
         return refs
+
+    def reuse_model(
+        self,
+        target: SaveTarget,
+        *,
+        sha256: str,
+        size: int,
+        digest: str | None = None,
+        before_publish: Callable[[AssetRef], None],
+        progress: Callable[[str, int], None] | None = None,
+    ) -> AssetRef | None:
+        """Verify existing category files without opening a provider transfer."""
+        if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+            raise AssetError("model reuse requires a full SHA-256")
+        if digest is not None:
+            require_digest(digest)
+        parsed = self._validated_named_target(target, size)
+        root, _ = self._writable_folder(parsed)
+        root = root.resolve()
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
+        if os.name != "nt":
+            fields += ("st_ctime_ns",)
+        for folder, subfolders, names in os.walk(root, followlinks=False):
+            subfolders[:] = [name for name in subfolders if not name.startswith(".dinkster-")]
+            for name in names:
+                if progress is not None:
+                    progress("checking-existing", 0)
+                path = Path(folder) / name
+                if name.startswith(".dinkster-") or path.is_symlink():
+                    continue
+                relative = path.relative_to(root).as_posix()
+                candidate = SaveTarget(parsed.mount, relative)
+                try:
+                    self._require_contained(root, path, candidate)
+                    initial = path.stat()
+                    if not stat.S_ISREG(initial.st_mode) or initial.st_size != size:
+                        continue
+                    with open_local_file(path) as handle:
+                        before = os.fstat(handle.fileno())
+                        revision = windows_file_revision(handle.fileno()) if os.name == "nt" else 0
+                        provider_hash = hashlib.sha256()
+                        content_hash = new_hasher()
+                        received = 0
+                        while chunk := handle.read(8 * MEBIBYTE):
+                            received += len(chunk)
+                            if received > size:
+                                break
+                            provider_hash.update(chunk)
+                            content_hash.update(chunk)
+                            if progress is not None:
+                                progress("checking-existing", received)
+                        after = os.fstat(handle.fileno())
+                    current = path.stat()
+                except (AssetError, OSError):
+                    continue
+                actual_digest = DIGEST_PREFIX + content_hash.hexdigest()
+                if (
+                    received != size
+                    or provider_hash.hexdigest() != sha256
+                    or (digest is not None and actual_digest != digest)
+                    or any(
+                        getattr(initial, field) != getattr(before, field)
+                        or getattr(before, field) != getattr(after, field)
+                        or getattr(after, field) != getattr(current, field)
+                        for field in fields
+                    )
+                ):
+                    continue
+                ref = AssetRef(
+                    actual_digest,
+                    name,
+                    size,
+                    "application/octet-stream",
+                    f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
+                )
+                before_publish(ref)
+                self._writable_folder(candidate, expected_root=root)
+                self._require_contained(root, path, candidate)
+                published = path.stat()
+                if any(
+                    getattr(current, field) != getattr(published, field) for field in fields
+                ) or (os.name == "nt" and windows_file_revision(path) != revision):
+                    raise AssetError("existing model changed before reuse")
+                record = verification_record_for_publication(actual_digest, after, published)
+                append_write_record(
+                    root, relative, actual_digest, size, published.st_mtime_ns, record
+                )
+                if progress is not None:
+                    progress("reusing", size)
+                return ref
+        return None
 
     def recover_named_asset(self, ref: AssetRef) -> Path | None:
         """Verify a journaled publication under current authority without creating bytes."""
@@ -520,6 +615,7 @@ class AssetWriter:
         before_publish: Callable[[AssetRef], None] | None = None,
         expected_sha256: str = "",
         expected_digest: str = "",
+        progress: Callable[[str, int], None] | None = None,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed, expected_root=expected_root)
         stem = parsed.stem if stem is None else stem
@@ -541,6 +637,8 @@ class AssetWriter:
             provider_hasher = hashlib.sha256() if expected_sha256 else None
             size = 0
             with tmp.open("xb") as output:
+                if progress is not None:
+                    progress("downloading", size)
                 while chunk := source.read(8 * MEBIBYTE):
                     size += len(chunk)
                     if size > limit:
@@ -549,6 +647,10 @@ class AssetWriter:
                     if provider_hasher is not None:
                         provider_hasher.update(chunk)
                     output.write(chunk)
+                    if progress is not None:
+                        progress("downloading", size)
+                if progress is not None:
+                    progress("verifying", size)
                 output.flush()
                 os.fsync(output.fileno())
                 verified_stat = os.fstat(output.fileno())
@@ -561,7 +663,7 @@ class AssetWriter:
             if provider_hasher is not None:
                 if size != limit or provider_hasher.hexdigest() != expected_sha256:
                     raise AssetError("model download size or SHA-256 did not verify")
-                if digest != expected_digest:
+                if expected_digest and digest != expected_digest:
                     raise AssetError("model download does not match its declared digest")
             if prefer_exact_name or expected_sha256:
                 self._writable_folder(parsed, expected_root=root)
@@ -581,6 +683,8 @@ class AssetWriter:
                     raise AssetError("import mount changed its root before publication")
                 self._require_contained(root, final, parsed)
 
+            if progress is not None:
+                progress("checking-existing", size)
             final, used_counter = self._claim_and_land(
                 folder,
                 stem,
@@ -603,6 +707,8 @@ class AssetWriter:
             existing_digest, record = digest_file_with_record(final)
             if existing_digest != digest:
                 raise AssetError("existing model changed before reuse")
+            if progress is not None:
+                progress("reusing", size)
         else:
             record = verification_record_for_publication(digest, verified_stat, stat)
         relative = final.relative_to(root).as_posix()

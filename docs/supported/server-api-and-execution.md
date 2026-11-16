@@ -271,6 +271,45 @@
   mount hashing. Bindings remain explicitly unverified and omit content
   hashes until a scan verifies the same file revision. Missing names return
   `409 assets-missing`; submission does not hash or download model bytes.
+  Missing bare model names include category-matched source leads declared in
+  official workflow templates, including nested graphs. Equivalent download
+  URLs are deduplicated and conflicting sources remain ambiguous. These leads
+  are advisory and non-fetchable, without a fabricated content digest; local
+  selections and explicit hashes take precedence. Unknown names and unsupported
+  categories have no inferred source. Filename-only references to disabled shared
+  model locations report `Folder not enabled for this project` without remote
+  source suggestions, even before hashing.
+  Operators with asset-read authority can POST `name`, `kind`, `project` and
+  `scope` to `/api/models/downloads/plan`. A unique declared public Hugging Face
+  candidate resolves to an immutable revision, provider SHA-256, exact size,
+  reported license and physical destination. This metadata-only route never
+  transfers model bytes or manufactures a BLAKE3 identity. Local files take
+  precedence; disabled folders, missing writable destinations and ambiguous or
+  absent declarations return distinct states. Plans expire after 15 minutes.
+  POST `/api/models/downloads/start` takes only `planId` and `consent: true`,
+  with optional `scope` query. It requires operator, asset-write and job-submit
+  authority. It uses the server's immutable selection, never client-supplied
+  provider metadata, and repeated starts of one unexpired plan return one job.
+  GET `/api/models/downloads` and `/api/models/downloads/{jobId}` require the
+  owning operator's scoped asset-read and job-read authority. They expose byte
+  counts, transfer/verification/publication/indexing state, verified result and
+  actual path, `reused` and a rename notice. Before transferring, jobs check
+  same-size files under the selected category root, including unindexed files
+  with different names. Reuse requires provider SHA-256 and computed BLAKE3
+  verification, plus any workflow digest, and retains the existing path without
+  creating another model file. A reused file is not reported as renamed.
+  If index refresh fails after verified
+  publication, the completed result retains the file and reports `indexingPending`.
+  DELETE on a job additionally requires asset-write and job-cancel
+  authority; cancellation before publication removes temporary bytes without
+  altering existing models. Publication already started cannot be cancelled.
+  Transfers verify provider size/SHA-256 and compute BLAKE3 in the same stream.
+  Destination grants and project membership are rechecked before publication.
+  Four transfers may run concurrently, at most one per physical category root.
+  Plans and job records are bounded to 64 each; completed records expire after
+  one hour. Jobs are in-memory, not a durable queue or resumable download.
+  The list response includes an engine-instance id; after restart, old jobs
+  are unavailable and clients must request a new plan and explicit consent.
   Digest-backed public model download plans include `destination` when the host
   has a writable model folder for the project. Without one, the plan is not
   fetchable. Downloading still requires consent to each exact digest.

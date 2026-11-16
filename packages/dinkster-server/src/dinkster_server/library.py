@@ -222,6 +222,8 @@ class ServerLibrary:
         Callable[[AssetNeed, str, Callable[[AssetRef, str], None]], AcquisitionResult] | None
     ) = None
     model_destination: Callable[[AssetNeed, str], str | None] | None = None
+    model_sources_for_name: Callable[[str, str], Sequence[str]] | None = None
+    disabled_model_name_locations: Callable[[str, str], tuple[str, ...]] | None = None
     disabled_model_locations: Callable[[str, str], tuple[str, ...]] | None = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None

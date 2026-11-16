@@ -1,3 +1,13 @@
+# Declared model-source planning and owned jobs
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public declared-source plan, explicit consent, reconnect, byte progress, cancellation and fresh retry | X570 Linux CPU, Python 3.14.10 | [Real API receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/997#issuecomment-6915676351): immutable HF RealESRGAN_x4plus selection, 66857836 verified bytes in the named upscale_models file, independent SHA-256/BLAKE3 and source provenance. Reconnect found the same active job; cancellation left no partial or final file; explicit retry completed. |
+
+- Targeted model-download, asset/preflight, mount, writer, acquisition and public-receipt tests passed: 270 cases, including ownership, scoped capabilities, stale destination grants, asymmetric collisions, corrupt equal-size bytes and post-publication index failure.
+- Jobs are in-memory. Reconnect rediscovers an active job; server restart requires a new plan and explicit start, not byte-range resume or a durable queue.
+- These backend API checks do not establish frontend integration, cross-category reuse after restart, gated providers, individual hiding, inference from the upscaler or parent model-download acceptance.
+
 # Windows engine dependency preflight
 
 - Both Windows validation job families use the contributor-generation action to check installed kitchen and aimdo modules and versions against the checkout's declared requirements, printing actual and required versions before refusing a mismatch.
