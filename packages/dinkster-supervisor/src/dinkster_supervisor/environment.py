@@ -2404,6 +2404,12 @@ def run(args: argparse.Namespace) -> int:
             code = _runtime(args, result)
         else:
             code = _query(args, result)
+        if code == 0 and result["status"] == "applied" and result["current"] is not None:
+            admission = (
+                args.root / "generations" / str(result["current"]) / "inference-process.json"
+            )
+            if admission.is_file():
+                result["inferenceAdmission"] = read_document(admission)
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))
@@ -2447,6 +2453,13 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps(result, sort_keys=True, ensure_ascii=True))
     else:
         print(f"{result['operation']}: {result['status']}")
+        if "inferenceAdmission" in result:
+            admission = cast("dict[str, object]", result["inferenceAdmission"])
+            members = cast("list[str]", admission["members"])
+            print("Shared inference members: " + (", ".join(members) or "none"))
+            refusals = cast("dict[str, dict[str, object]]", admission.get("refusals", {}))
+            for refusal in refusals.values():
+                print(refusal["reason"])
         if "sourceDescription" in result:
             print(result["sourceDescription"])
         if "sourceApproval" in result:

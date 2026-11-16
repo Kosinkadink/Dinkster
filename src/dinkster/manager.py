@@ -467,6 +467,10 @@ def _apply_managed_pack_plan(args: argparse.Namespace, document: dict[str, objec
                 raise InstallError("pack plan is stale; request a new plan")
             applied = operations.apply_pack_install(root, retained, result["approval"])
             print(f"activated generation {applied['current']}")
+            if admission := applied.get("inferenceAdmission"):
+                print("Shared inference members: " + (", ".join(admission["members"]) or "none"))
+                for refusal in admission.get("refusals", {}).values():
+                    print(refusal["reason"])
     except (OSError, ValueError) as exc:
         raise InstallError(str(exc)) from exc
 

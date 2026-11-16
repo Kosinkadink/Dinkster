@@ -32,7 +32,9 @@
   and refuses network or writable-folder requests. Refused packs keep their
   isolated environments; affected nodes disclose the recorded reason and refuse
   submission, while plain-value nodes remain available. The per-pack inference
-  isolation switch overrides automatic selection.
+  isolation switch overrides automatic selection. Successful install and activation
+  summaries list shared members and exact admission refusals; JSON results include
+  the recorded admission decision.
 
 - Pack wheels preserve manifest-relative blueprint, template, icon, settings,
   documentation and frontend resource paths, including resources inside Python

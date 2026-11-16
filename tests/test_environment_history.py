@@ -1613,7 +1613,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 run_cli("--root", str(root), "apply", str(tampered))
             assert "stale" in capsys.readouterr().err
             run_cli("--root", str(root), "apply", str(review))
-            assert "activated generation 3" in capsys.readouterr().out
+            output = capsys.readouterr().out
+            assert "activated generation 3" in output
+            assert "Shared inference members: healthy" in output
         else:
             progress = tmp_path / "progress.json"
             code, planned = _run(
@@ -1655,6 +1657,9 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 timeout=120,
             )
             assert code == 0 and result["current"] == 3, result
+            assert result["inferenceAdmission"] == json.loads(
+                (root / "generations/3/inference-process.json").read_text()
+            )
         code, listed = _run(root, "history")
         assert code == 0, listed
         records = listed["history"]
