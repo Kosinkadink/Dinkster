@@ -186,7 +186,7 @@ jobs:
         if: matrix.run_checks
       - run: python scripts/develop.py run -- dinkster-isolated
         if: matrix.run_checks
-      - name: Export the published default catalog
+      - name: Export the checkout's published default pack catalog
         if: matrix.os == 'linux' && matrix.run_checks
         run: python scripts/develop.py run -- python scripts/export_default_catalog.py "$RUNNER_TEMP/default-catalog.json"
       - uses: actions/checkout@v4

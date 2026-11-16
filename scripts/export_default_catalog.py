@@ -1,58 +1,20 @@
-"""Export a sealed default generation's live catalog for frontend decoding."""
+"""Export a sealed checkout generation's published pack catalog for frontend decoding."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from importlib.metadata import version
 from pathlib import Path
-from urllib.parse import quote
 
-from dinkster_supervisor.environment_downloads import fetch_artifact
 from verify_release_launch import available_port, stop
-
-
-def published_supervisor(root: Path) -> Path:
-    """Bootstrap the published reader independently of the checkout's channel format."""
-    request = urllib.request.Request(
-        "https://api.github.com/repos/Kosinkadink/Dinkster/releases/latest",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "dinkster-catalog"},
-    )
-    with urllib.request.urlopen(request, timeout=120) as response:
-        release = json.load(response)
-    tag = release["tag_name"]
-    if (
-        release["draft"]
-        or release["prerelease"]
-        or re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) is None
-    ):
-        raise ValueError("catalog bootstrap requires a published Stable version tag")
-    [asset] = [
-        row
-        for row in release["assets"]
-        if re.fullmatch(
-            r"dinkster_supervisor-[0-9]+\.[0-9]+\.[0-9]+-py3-none-any\.whl", row["name"]
-        )
-    ]
-    digest = asset.get("digest", "")
-    if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-        raise ValueError("published supervisor requires a GitHub SHA-256 asset digest")
-    wheel = root / asset["name"]
-    fetch_artifact(
-        ("https://github.com/Kosinkadink/Dinkster/releases/download/" + quote(tag, safe=""),),
-        wheel.name,
-        wheel,
-        digest[7:],
-        asset["size"],
-    )
-    return wheel
 
 
 def export_catalog(output: Path) -> None:
@@ -64,20 +26,9 @@ def export_catalog(output: Path) -> None:
             "DINKSTER_REMOTE_CATALOG_BASE": "",
             "DINKSTER_REMOTE_GATEWAY_BASE": "",
         }
-        wheel = published_supervisor(root)
-        # Published engines and their supervisors must agree on the management protocol.
-        management = [
-            "uv",
-            "run",
-            "--no-project",
-            "--python",
-            sys.executable,
-            "--with",
-            str(wheel),
-            "python",
-            "-m",
-            "dinkster_supervisor.environment",
-        ]
+        # Catalogs must be prepared by the runtime that reads them. A source engine
+        # still selects published default packs, without reusing Stable's old schemas.
+        management = [sys.executable, "-m", "dinkster_supervisor.environment"]
         management_environment = {
             key: value
             for key, value in environment.items()
@@ -98,12 +49,15 @@ def export_catalog(output: Path) -> None:
                 "--root",
                 str(project),
                 "setup",
-                "--mirror",
-                "https://releases.dinkster.org",
-                "--channel",
-                "stable",
+                "--from-scratch",
+                "--source",
+                str(Path(__file__).resolve().parents[1]),
                 "--variant",
                 "linux-cpu",
+                "--python",
+                sys.executable,
+                "--inference",
+                version("dinkster-inference"),
                 "--data",
                 str(root / "store"),
                 "--port",
