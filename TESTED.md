@@ -2,6 +2,7 @@
 
 - CPU checks cover shared location edits, category and full-layout roots, read-only-only configurations, always-on/default-on/opt-in modes, grouped project switches, revision refusal, and live/fixed grants without deleting files.
 - Explicit digest preflight refuses disabled folders even after an enabled duplicate disappears without a rescan or its catalog digest changes during resolution. Identical enabled verified bytes and internal assets remain usable. Category layout edits preserve complete project enable/disable decisions across restart without enabling similarly named independent config grants.
+- API regression cases cover removal, category-layout edits and visibility edits before and after restart. Fixed sandboxes retain enabled and disabled project authority, Browse results and explicit-digest refusal until restart; live servers apply saved settings immediately.
 - Model-download/mount/acquisition tests cover these boundaries. Composed Desktop acceptance and independent whole-unit verification are not established by these local checks.
 
 # Restore inherited pack dependencies

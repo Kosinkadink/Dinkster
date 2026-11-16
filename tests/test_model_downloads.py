@@ -662,6 +662,111 @@ def test_model_group_refresh_preserves_similarly_named_config_grants(
 
 
 @pytest.mark.parametrize("sandboxed", [False, True])
+@pytest.mark.parametrize("change", ["remove", "layout", "visibility"])
+def test_model_settings_preserve_fixed_project_authority_until_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool, change: str
+) -> None:
+    from dinkster_assets import MountTable
+    from dinkster_assets.provenance import ProvenanceStore
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "keep.safetensors").write_bytes(b"keep the original model")
+    location = {
+        "id": "studio",
+        "path": str(root),
+        "kind": "model/checkpoint",
+        "mode": "read",
+        "visibility": "default-on",
+    }
+    settings = {"version": 1, "downloadLocation": None, "locations": [location]}
+    (tmp_path / "model-settings.json").write_text(json.dumps(settings))
+
+    def start() -> MountService:
+        table = MountTable()
+        for mount in shared_model_mounts():
+            table.add(mount, source="shared-models")
+            if mount.path.is_dir():
+                table.scan(mount.id)
+        return MountService(
+            table,
+            tmp_path / "mounts.toml",
+            allow_changes=True,
+            restart_for_changes=sandboxed,
+            shared_models=True,
+        )
+
+    service = start()
+    service.refresh_models()
+    service.update_project("enabled", ["studio-checkpoint"], None)
+    service.update_project("disabled", [], None)
+    before = {
+        project: service.project_context(project).mounts for project in ("enabled", "disabled")
+    }
+    if change == "remove":
+        settings["locations"] = []
+    elif change == "layout":
+        del location["kind"]
+    else:
+        location["visibility"] = "always-on"
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            current = await (await client.get("/api/models/settings")).json()
+            response = await client.put(
+                "/api/models/settings", json={"settings": settings, "revision": current["revision"]}
+            )
+            assert response.status == 200
+            saved = await response.json()
+            assert saved["settings"] == settings
+            assert saved["restartRequired"] is sandboxed
+            if change != "remove":
+                assert saved["locations"][0]["active"] is (not sandboxed)
+            for project in before:
+                active = service.project_context(project).mounts
+                if sandboxed:
+                    assert active == before[project]
+                elif change == "remove":
+                    assert active == ()
+                elif change == "visibility":
+                    assert active == ("studio-checkpoint",)
+            if sandboxed:
+                downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
+                digest = digest_bytes(b"keep the original model")
+                assert downloads.disabled_locations(digest, "enabled") == ()
+                assert downloads.disabled_locations(digest, "disabled") == ("studio",)
+            if change != "layout":
+                for project, expected in (("enabled", 200), ("disabled", 403)):
+                    response = await client.get(
+                        f"/api/mounts/studio-checkpoint/entries?project={project}"
+                    )
+                    assert response.status == (
+                        expected if sandboxed else 404 if change == "remove" else 200
+                    )
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+    restarted = start()
+    if change == "remove":
+        assert restarted.project_context("enabled").mounts == ()
+    elif change == "visibility":
+        assert restarted.project_context("disabled").mounts == ("studio-checkpoint",)
+    else:
+        assert len(restarted.project_context("enabled").mounts) > 1
+        assert restarted.project_context("disabled").mounts == ()
+    assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
+
+
+@pytest.mark.parametrize("sandboxed", [False, True])
 def test_model_management_shares_locations_without_deleting_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool
 ) -> None:

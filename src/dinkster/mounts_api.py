@@ -102,6 +102,7 @@ class MountService:
     ) -> None:
         self.shared_models = shared_models
         self._model_settings: ModelSettings | None = None
+        self._live_model_settings = ModelSettings.load() if shared_models else None
         self._model_lock = RLock()
         self.table = table
         self.allow_changes = allow_changes
@@ -155,6 +156,7 @@ class MountService:
                 for mount_id in set(self.mount_ids()) | set(self.mount_ids(settings=True))
             )
             or self.table.output_mount != self.settings_table.output_mount
+            or self.model_modes() != self.model_modes(settings=True)
         )
         return {"restartRequired": changed, "pendingRemovals": removed}
 
@@ -198,32 +200,43 @@ class MountService:
                         self.table.add(mount, source="shared-models")
                         added.append(mount_id)
                 changed = tuple(added)
+                self._live_model_settings = settings
                 self.refresh_resolution_store()
+            live_settings = self._live_model_settings
+            assert live_settings is not None
             self.projects.initialize(
-                self.mount_ids(settings=True),
-                shared_defaults=tuple(desired),
+                self.mount_ids(),
+                shared_defaults=tuple(mount.id for mount in live_settings.mounts()),
                 groups=tuple(
                     tuple(
                         mount.id
                         for mount in replace(location, kind="").mounts(0)
-                        if candidate.get(mount.id) is None
-                        or candidate.source(mount.id) == "shared-models"
+                        if self.table.get(mount.id) is None
+                        or self.table.source(mount.id) == "shared-models"
                     )
-                    for location in settings.locations
+                    for location in live_settings.locations
                 ),
             )
             self._model_settings = settings
             return changed
 
-    def model_modes(self) -> dict[str, str]:
-        if not self.shared_models:
+    def model_settings(self, *, settings: bool = False) -> ModelSettings | None:
+        return (
+            (self._model_settings or self._live_model_settings)
+            if settings
+            else self._live_model_settings
+        )
+
+    def model_modes(self, *, settings: bool = False) -> dict[str, str]:
+        document = self.model_settings(settings=settings)
+        if document is None:
             return {}
-        modes = ModelSettings.load().folder_modes()
+        modes = document.folder_modes()
+        table = self.settings_table if settings else self.table
         return {
             mount_id: modes.get(mount_id, "disabled")
-            for mount_id in set(self.mount_ids()) | set(self.mount_ids(settings=True))
-            if self.table.source(mount_id) == "shared-models"
-            or self.settings_table.source(mount_id) == "shared-models"
+            for mount_id in self.mount_ids(settings=settings)
+            if table.source(mount_id) == "shared-models"
         }
 
     def update_project(self, project: str, mounts: object, output: str | None) -> None:
@@ -235,7 +248,9 @@ class MountService:
                 available=self.mount_ids(settings=True),
                 output=output,
                 required=tuple(
-                    mount_id for mount_id, mode in self.model_modes().items() if mode == "always-on"
+                    mount_id
+                    for mount_id, mode in self.model_modes(settings=True).items()
+                    if mode == "always-on"
                 ),
                 groups=tuple(
                     tuple(mount.id for mount in location.mounts(0))
@@ -248,7 +263,7 @@ class MountService:
     def project_response(self, project: str) -> dict[str, object]:
         self.refresh_models()
         order = self.projects.ordered(
-            project, self.mount_ids(settings=True), modes=self.model_modes()
+            project, self.mount_ids(settings=True), modes=self.model_modes(settings=True)
         )
         rows = {str(row["id"]): row for row in self.settings_descriptors()}
         selected = self.projects.output(project, self.settings_table.output_mount)

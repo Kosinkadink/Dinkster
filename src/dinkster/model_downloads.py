@@ -71,7 +71,9 @@ class ModelDownloads:
                         pass
         if not matches:
             return ()
-        settings = ModelSettings.load()
+        settings = self.mounts.model_settings()
+        if settings is None:
+            return ()
         return tuple(
             location.id
             for location in settings.locations

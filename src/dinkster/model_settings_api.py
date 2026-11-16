@@ -36,9 +36,11 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 service.scan_soon(app, mount_id)
         settings = ModelSettings.load()
         selected = service.projects.ordered(
-            project, service.mount_ids(settings=True), modes=service.model_modes()
+            project, service.mount_ids(settings=True), modes=service.model_modes(settings=True)
         )
         document = settings.to_wire()
+        live_modes = service.model_modes()
+        saved_modes = service.model_modes(settings=True)
         for row, location in zip(
             cast("list[dict[str, object]]", document["locations"]), settings.locations, strict=True
         ):
@@ -48,6 +50,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             row["active"] = all(
                 service.table.get(mount.id) is not None
                 and service.table.get(mount.id) == service.settings_table.get(mount.id)
+                and live_modes.get(mount.id) == saved_modes.get(mount.id)
                 for mount in mounts
             )
         return web.json_response(
@@ -137,7 +140,9 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 return web.json_response({"error": "unknown model location"}, status=404)
             selected = list(
                 service.projects.ordered(
-                    project, service.mount_ids(settings=True), modes=service.model_modes()
+                    project,
+                    service.mount_ids(settings=True),
+                    modes=service.model_modes(settings=True),
                 )
             )
             ids = {mount.id for mount in location.mounts(0)}

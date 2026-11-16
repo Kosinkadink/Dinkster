@@ -249,7 +249,9 @@
   ComfyUI-layout root or one existing category directory. Read-only-only
   configurations have no download default. Per-project location switches
   include all category mounts together. Removing a location leaves its files
-  on disk; fixed-sandbox grant edits remain restart-required. Mount Browse,
+  on disk. With fixed sandboxes, saved grant and visibility edits remain
+  restart-required; live project selection and disabled-folder preflight keep
+  the running grants' settings until restart. Mount Browse,
   folder listing and search require the folder to be enabled for the requested
   project; disabled folders return `folder-not-enabled` without file entries.
   Explicit digest references found only in disabled shared model folders return
