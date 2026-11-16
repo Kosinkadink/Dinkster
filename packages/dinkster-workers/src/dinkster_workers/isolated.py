@@ -165,7 +165,7 @@ class IsolatedWorker:
         self._session = BoundarySession(
             registry,
             role="isolated worker",
-            pack=self._manifest.name,
+            pack=self._manifest.execution_id,
             codec=ValueCodec(registry, shm_threshold=shm_threshold, use_shm=use_shm),
             on_diagnostic=on_diagnostic,
             reservations=reservations,
@@ -675,6 +675,7 @@ class GroupIsolatedWorker:
         manifest_paths: Sequence[Path | str],
         registry: TypeRegistry,
         *,
+        parts: Sequence[str | None] = (),
         python: str | None = None,
         extra_env: Mapping[str, str] | None = None,
         start_timeout: float = 60.0,
@@ -700,9 +701,15 @@ class GroupIsolatedWorker:
         if not name or not manifest_paths:
             raise ValueError("worker group requires a name and at least one manifest")
         self.name = name
-        self._manifests = tuple(load_manifest(path) for path in manifest_paths)
-        if len({m.name for m in self._manifests}) != len(self._manifests):
-            raise ValueError(f"worker group {name!r} contains duplicate pack names")
+        selectors = tuple(parts) if parts else (None,) * len(manifest_paths)
+        if len(selectors) != len(manifest_paths):
+            raise ValueError(f"worker group {name!r} requires one selector per manifest")
+        self._manifests = tuple(
+            load_manifest(path, part=part)
+            for path, part in zip(manifest_paths, selectors, strict=True)
+        )
+        if len({m.execution_id for m in self._manifests}) != len(self._manifests):
+            raise ValueError(f"worker group {name!r} contains duplicate pack execution parts")
         self._python = python or sys.executable
         self._extra_env = dict(extra_env or {})
         self._start_timeout = start_timeout
@@ -727,7 +734,7 @@ class GroupIsolatedWorker:
             BoundarySession(
                 registry,
                 role="isolated worker",
-                pack=m.name,
+                pack=m.execution_id,
                 codec=ValueCodec(registry, shm_threshold=shm_threshold, use_shm=use_shm),
                 on_diagnostic=on_diagnostic,
                 reservations=reservations,
@@ -780,9 +787,18 @@ class GroupIsolatedWorker:
                         endpoint_dir, transport=self._transport, token=token
                     )
                 )
-            command = [self._python, "-m", "dinkster_workers.host"]
+            command = [self._python, "-m", "dinkster_workers.host", "--group"]
             for listener, manifest in zip(self._listeners, self._manifests, strict=True):
-                command.extend(("--endpoint", listener.endpoint, "--manifest", str(manifest.path)))
+                command.extend(
+                    (
+                        "--endpoint",
+                        listener.endpoint,
+                        "--manifest",
+                        str(manifest.path),
+                        "--part",
+                        manifest.part or "",
+                    )
+                )
             command.extend(
                 (
                     "--shm-threshold",

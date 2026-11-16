@@ -1,3 +1,12 @@
+# Multipart generation placement
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| One publication with two resident parts and one plain-value part | X570 Linux CPU, Python 3.14.10 | Generation preparation admits both compatible resident parts to the owner's shared process and runs the plain sibling separately. Asymmetric values and child PIDs survive reload. A named dependency conflict, network request or pack opt-out keeps both resident parts isolated, preserves the plain sibling and returns exact refusals before queueing. Partial recorded admission is rejected. |
+
+- Generation, installer, sandbox, composition, reload, dispatch and security-notice controls: 525 passed. Selected-part sandbox controls retain parent-pack grant authorization and identify denied parts.
+- These source-engine controls do not establish published installation or model acceptance.
+
 # CPU sandbox shared groups
 
 | Scenario | Host | Result |

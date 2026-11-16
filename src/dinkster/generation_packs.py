@@ -445,14 +445,31 @@ def generation_pack_specs(
                 f"notice {finding.notice.id} revision {finding.notice.revision}, "
                 f"decision {finding.decision}"
             )
-    return _group_first_party_packs(generation, specs)
+    expanded: list[PackSpec] = []
+    for spec in specs:
+        manifest = load_manifest(spec.manifest, part=spec.part)
+        for execution in (manifest, *manifest.parts):
+            python = venv_python(generation / "packs" / execution.execution_id)
+            if not spec.in_process and not python.is_file():
+                raise CompositionError(
+                    f"generation part {execution.execution_id!r} interpreter is missing: {python}"
+                )
+            expanded.append(
+                replace(
+                    spec,
+                    part=execution.part,
+                    python=None if spec.in_process else str(python),
+                )
+            )
+    return _group_first_party_packs(generation, expanded)
 
 
 def _resident_nodes(specs: Sequence[PackSpec]) -> dict[str, tuple[str, ...]]:
     catalogs = {
-        manifest.name: catalog
+        manifest.execution_id: catalog
         for spec in specs
-        if (catalog := read_catalog(manifest := load_manifest(spec.manifest))) is not None
+        if (catalog := read_catalog(manifest := load_manifest(spec.manifest, part=spec.part)))
+        is not None
     }
     resident_types = frozenset(
         tid for catalog in catalogs.values() for tid in catalog.resident_types
@@ -494,6 +511,24 @@ def prepare_inference_process(
     if (generation / "generation.json").exists():
         raise CompositionError("inference preparation requires an unsealed generation")
     specs = list(generation_pack_specs(generation, in_process_packs, local_build=local_build))
+    for spec in specs:
+        manifest = load_manifest(spec.manifest, part=spec.part)
+        if not spec.trust_reserved and read_catalog(manifest) is None:
+            if spec.require_catalog:
+                raise CompositionError(
+                    f"{manifest.execution_id}: admission requires a current schema catalog"
+                )
+            from dinkster_workers.doctor import prepare_catalog
+
+            report = prepare_catalog(
+                spec.manifest, part=spec.part, interpreter=spec.python, environment=spec.env
+            )
+            if not report.ok:
+                raise CompositionError(
+                    f"{manifest.execution_id}: admission catalog preparation failed: "
+                    f"{report.findings}"
+                )
+    resident_nodes = _resident_nodes(specs)
     grouped = _group_first_party_packs(
         generation,
         list(specs),
@@ -501,49 +536,42 @@ def prepare_inference_process(
         resolve_dependencies=wheel_store is not None,
     )
     members = [
-        load_manifest(spec.manifest).name for spec in grouped if spec.worker_group is not None
+        load_manifest(spec.manifest, part=spec.part).execution_id
+        for spec in grouped
+        if spec.worker_group is not None
     ]
-    for spec in specs:
-        manifest = load_manifest(spec.manifest)
-        if not spec.trust_reserved and read_catalog(manifest) is None:
-            if spec.require_catalog:
-                raise CompositionError(
-                    f"{manifest.name}: admission requires a current schema catalog"
-                )
-            from dinkster_workers.doctor import prepare_catalog
-
-            report = prepare_catalog(spec.manifest, interpreter=spec.python, environment=spec.env)
-            if not report.ok:
-                raise CompositionError(
-                    f"{manifest.name}: admission catalog preparation failed: {report.findings}"
-                )
-    resident_nodes = _resident_nodes(specs)
     refusals: dict[str, str] = {}
     selected_plan = None
     if wheel_store is not None:
         parent_python = generation / (
             "python/python.exe" if os.name == "nt" else "python/bin/python3"
         )
+        candidates: dict[str, list[tuple[PackSpec, PackManifest]]] = {}
         for spec in specs:
-            manifest = load_manifest(spec.manifest)
-            name = manifest.name
-            if name in members or not resident_nodes.get(name):
-                continue
+            manifest = load_manifest(spec.manifest, part=spec.part)
+            if manifest.execution_id not in members and resident_nodes.get(manifest.execution_id):
+                candidates.setdefault(manifest.name, []).append((spec, manifest))
+        for pack, selections in candidates.items():
             reason = None
-            if name in isolated_inference_packs:
-                reason = "kept isolated by the per-pack inference switch"
-            elif spec.in_process:
-                reason = "selected for in-process hosting, not the shared inference process"
-            elif spec.asset_vault_write:
-                reason = "requests asset-vault write authority"
-            elif manifest.sandbox.network:
-                reason = "requests pack.sandbox.network"
-            elif manifest.sandbox.writable_mounts:
-                reason = "requests pack.sandbox.writable-mounts"
+            names = [manifest.execution_id for _, manifest in selections]
+            for spec, manifest in selections:
+                if pack in isolated_inference_packs:
+                    reason = "kept isolated by the per-pack inference switch"
+                elif spec.in_process:
+                    reason = "selected for in-process hosting, not the shared inference process"
+                elif spec.asset_vault_write:
+                    reason = "requests asset-vault write authority"
+                elif manifest.sandbox.network:
+                    reason = "requests pack.sandbox.network"
+                elif manifest.sandbox.writable_mounts:
+                    reason = "requests pack.sandbox.writable-mounts"
+                if reason is not None:
+                    reason = f"{manifest.execution_id!r}: {reason}"
+                    break
             if reason is None:
                 locks = tuple(
                     PackLock.read(generation / "packs" / member / "pack-lock.json")
-                    for member in (*members, name)
+                    for member in (*members, *names)
                 )
                 try:
                     candidate_plan = plan_inference(
@@ -559,16 +587,22 @@ def prepare_inference_process(
                     )
                     candidate_plan.require_layering()
                 except ProvisionError as exc:
-                    reason = str(exc)
+                    requirements = "; ".join(
+                        f"{lock.execution_id!r}: {', '.join(lock.requirements) or '(none)'}"
+                        for lock in locks
+                        if lock.pack == pack
+                    )
+                    reason = f"{requirements}; {exc}"
                 else:
                     selected_plan = candidate_plan
-                    members.append(name)
+                    members.extend(names)
             if reason is not None:
-                refusals[name] = f"Pack {name!r} is not admitted to shared inference: {reason}"
+                for name in names:
+                    refusals[name] = f"Pack {name!r} is not admitted to shared inference: {reason}"
     python = next((spec.python for spec in grouped if spec.worker_group is not None), None)
     environment = next(
         (
-            load_manifest(spec.manifest).name
+            load_manifest(spec.manifest, part=spec.part).execution_id
             for spec in specs
             if python is not None and spec.python == python
         ),
@@ -754,7 +788,10 @@ def _group_first_party_packs(
     excluded = set(isolated)
     if replay:
         data = json.loads(recorded.read_text(encoding="utf-8"))
-        names = {load_manifest(spec.manifest).name: index for index, spec in enumerate(specs)}
+        names = {
+            load_manifest(spec.manifest, part=spec.part).execution_id: index
+            for index, spec in enumerate(specs)
+        }
         members = data.get("members") if isinstance(data, dict) else None
         environment = data.get("environment") if isinstance(data, dict) else None
         if (
@@ -786,6 +823,17 @@ def _group_first_party_packs(
                 specs[index],
                 node_unavailability=dict.fromkeys(refusal["nodes"], refusal["reason"]),
             )
+        admitted_packs = {name.partition("~")[0] for name in members}
+        if admitted_packs.intersection(name.partition("~")[0] for name in refusals):
+            raise CompositionError("recorded inference membership partially admits a refused pack")
+        resident_nodes = _resident_nodes(specs)
+        for name, index in names.items():
+            manifest = load_manifest(specs[index].manifest, part=specs[index].part)
+            if manifest.name in admitted_packs and resident_nodes.get(name) and name not in members:
+                raise CompositionError(
+                    f"recorded inference membership partially admits pack {manifest.name!r}: "
+                    f"missing part {name!r}"
+                )
         if not members:
             return tuple(specs)
         dedicated = data["format"] == "dinkster.inference-process/2"
@@ -803,7 +851,7 @@ def _group_first_party_packs(
         indices = tuple(names[name] for name in members)
         for index in indices:
             spec = specs[index]
-            manifest = load_manifest(spec.manifest)
+            manifest = load_manifest(spec.manifest, part=spec.part)
             if (
                 spec.in_process
                 or manifest.name in excluded
@@ -812,7 +860,7 @@ def _group_first_party_packs(
                 or manifest.sandbox.writable_mounts
             ):
                 raise CompositionError(
-                    f"recorded inference member {manifest.name!r} requires isolated hosting"
+                    f"recorded inference member {manifest.execution_id!r} requires isolated hosting"
                 )
         return _group_members(specs, indices, python)
     # A shared worker must use one real, already-provisioned environment,
@@ -821,11 +869,13 @@ def _group_first_party_packs(
         index
         for index, spec in enumerate(specs)
         if spec.trust_reserved
+        and spec.part is None
+        and not load_manifest(spec.manifest).parts
         and not spec.in_process
         and not spec.asset_vault_write
-        and load_manifest(spec.manifest).name not in excluded
-        and not load_manifest(spec.manifest).sandbox.network
-        and not load_manifest(spec.manifest).sandbox.writable_mounts
+        and load_manifest(spec.manifest, part=spec.part).name not in excluded
+        and not load_manifest(spec.manifest, part=spec.part).sandbox.network
+        and not load_manifest(spec.manifest, part=spec.part).sandbox.writable_mounts
     ]
     if resolve_dependencies and candidates:
         return _group_members(specs, tuple(candidates), specs[candidates[0]].python)
@@ -874,10 +924,12 @@ def _group_members(
         for index in members:
             if (
                 specs[index].require_catalog
-                and read_catalog(load_manifest(specs[index].manifest)) is None
+                and read_catalog(load_manifest(specs[index].manifest, part=specs[index].part))
+                is None
             ):
                 raise CompositionError(
-                    f"{load_manifest(specs[index].manifest).name}: schema catalog is missing "
+                    f"{load_manifest(specs[index].manifest, part=specs[index].part).execution_id}: "
+                    "schema catalog is missing "
                     "or stale; run dinkster-pack prepare-catalogs before serving"
                 )
     paths = tuple(
@@ -893,6 +945,7 @@ def _group_members(
             env={"PYTHONPATH": os.pathsep.join(paths)},
             worker_group="dinkster-first-party",
             group_manifests=manifests,
+            group_parts=tuple(specs[member].part for member in members),
             require_catalog=require_catalog,
             security_artifacts=artifacts,
         )

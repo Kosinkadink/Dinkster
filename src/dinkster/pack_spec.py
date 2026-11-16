@@ -89,6 +89,8 @@ class PackSpec:
     """Host-only H2 process group name, absent for a solo worker."""
     group_manifests: tuple[Path, ...] = ()
     """All manifests in worker_group, supplied by generation topology."""
+    group_parts: tuple[str | None, ...] = ()
+    """Execution selector per group manifest; omitted selects all main entries."""
     in_process: bool = False
     """Host-only H3 placement; pack code loads in the serving process."""
     optional_execution: tuple[str, ...] = ()

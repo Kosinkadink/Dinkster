@@ -37,6 +37,14 @@
   The node catalog publishes process affinity for pre-run diagnostics.
   Host-declared unavailable nodes retain their exact refusal in the catalog
   and are refused at submit before any job is queued.
+- Installed generations compose every declared part of one pack. Admitted
+  resident-value parts share the inference process while plain-value parts can
+  run separately. If any resident part conflicts, requests incompatible authority
+  or is excluded by the per-pack switch, all resident parts stay isolated with
+  exact part-specific refusals; plain-value siblings remain usable. Reload
+  preserves placement and separate node/type owners while the catalog retains
+  one parent-pack attribution. Shared namespace claims do not permit two parts
+  to own the same node or concrete type.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
@@ -52,7 +60,8 @@
   dinkster-inference or comfy-aimdo versions. Different compatible publication
   pins do not require separate workers. These packs can pass resident MODEL,
   CLIP and VAE values without putting them in the engine process. Third-party
-  packs retain separate workers, even when they depend on inference. Explicit
+  resident-value parts are admitted automatically when their requirements and
+  authority fit that environment; refusals preserve isolated workers. Explicit
   in-process selections remain unchanged. Existing generations keep their
   recorded shared environment and membership. The remote pack
   remains separate because it requires an asset-vault write grant. Packs requesting

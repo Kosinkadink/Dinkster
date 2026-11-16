@@ -342,7 +342,7 @@ class TypeRegistry:
             if type_id in self._types:
                 continue
             owner = other.owner_of(type_id)
-            if (held := self.owner_of(type_id)) is not None and held != owner:
+            if (held := self._conflicting_type_owner(type_id, owner)) is not None:
                 raise ValueError(f"type {type_id!r} is owned by {held!r}, not {owner!r}")
             if owner is not None and owner in other._claims:
                 self.claim_types(owner, other._claims[owner])
@@ -370,7 +370,7 @@ class TypeRegistry:
         """Reserve type ids or namespaces before publishing a pack's codecs."""
         for claim in claims:
             for holder, held_claims in self._claims.items():
-                if holder == owner:
+                if holder.partition("~")[0] == owner.partition("~")[0]:
                     continue
                 for held in held_claims:
                     if claims_conflict(held, claim):
@@ -379,7 +379,9 @@ class TypeRegistry:
                             f"{held!r} owned by {holder!r}"
                         )
             for type_id, holder in self._owners.items():
-                if holder != owner and claims_conflict(type_id, claim):
+                if holder.partition("~")[0] != owner.partition("~")[0] and claims_conflict(
+                    type_id, claim
+                ):
                     raise ValueError(
                         f"type claim {claim!r} overlaps {type_id!r} owned by {holder!r}"
                     )
@@ -414,6 +416,17 @@ class TypeRegistry:
             None,
         )
 
+    def _conflicting_type_owner(self, type_id: TypeId, owner: str | None) -> str | None:
+        held = self._owners.get(type_id)
+        if held is not None:
+            return held if held != owner else None
+        claimed = self.owner_of(type_id)
+        if claimed is not None and (
+            owner is None or claimed.partition("~")[0] != owner.partition("~")[0]
+        ):
+            return claimed
+        return None
+
     def type_owners(self) -> dict[TypeId, str]:
         """Return registered atom owners for registry discovery."""
         return dict(self._owners)
@@ -432,7 +445,7 @@ class TypeRegistry:
                 continue
             if not any(type_id == claim or claim_covers(claim, type_id) for claim in claims):
                 raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
-            if (held := self.owner_of(type_id)) is not None and held != owner:
+            if (held := self._conflicting_type_owner(type_id, owner)) is not None:
                 raise ValueError(f"type {type_id!r} is owned by {held!r}, not {owner!r}")
         self.claim_types(owner, claims)
         self._owners.update(
@@ -503,7 +516,7 @@ class TypeRegistry:
         owner = self._registering_pack or self.owner_of(type_id)
         builtin = type_id in BUILTIN_TYPE_IDS
         if self._registering_pack is not None and not self._allow_bare:
-            if not claim_covers(self._registering_pack, type_id):
+            if not claim_covers(self._registering_pack.partition("~")[0], type_id):
                 raise ValueError(f"{owner}: type {type_id!r} must be prefixed by its pack name")
         if (
             self._registering_pack is not None
@@ -516,8 +529,8 @@ class TypeRegistry:
             raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
         if builtin:
             owner = "core"
-        held_owner = self.owner_of(type_id)
-        if owner is not None and held_owner is not None and held_owner != owner:
+        held_owner = self._conflicting_type_owner(type_id, owner)
+        if held_owner is not None:
             raise ValueError(f"type {type_id!r} is owned by {held_owner!r}, not {owner!r}")
         spec = TypeSpec(
             type_id=type_id,

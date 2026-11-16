@@ -708,8 +708,9 @@ class TestDetection:
 class TestLiveJail:
     @pytest.mark.parametrize("sandbox,granted", [(False, False), (True, False), (True, True)])
     @pytest.mark.parametrize("catalog", [False, True])
+    @pytest.mark.parametrize("parts", [False, True])
     def test_cpu_group_survives_ungranted_gpu_member(
-        self, tmp_path: Path, sandbox: bool, granted: bool, catalog: bool
+        self, tmp_path: Path, sandbox: bool, granted: bool, catalog: bool, parts: bool
     ) -> None:
         from dinkster_workers.doctor import prepare_catalog
 
@@ -728,8 +729,15 @@ class TestLiveJail:
             manifest = root / "dinkster-pack.toml"
             manifest.write_text(
                 f'[pack]\nname="{name}"\npublisher="dinkster"\nnamespaces=["{module}"]\n'
-                f"[pack.sandbox]\ngpu={str(gpu).lower()}\n"
-                f'[pack.entry]\nnodes="{module}:NODES"\n',
+                f"[pack.sandbox]\ngpu={str(not gpu if parts else gpu).lower()}\n"
+                f'[pack.entry]\nnodes="{module}:NODES"\n'
+                + (
+                    '[[pack.parts]]\nname="selected"\n'
+                    f"[pack.parts.sandbox]\ngpu={str(gpu).lower()}\n"
+                    f'[pack.parts.entry]\nnodes="{module}:NODES"\n'
+                    if parts
+                    else ""
+                ),
                 encoding="ascii",
             )
             (root / f"{module}.py").write_text(
@@ -752,14 +760,17 @@ class TestLiveJail:
                 encoding="ascii",
             )
             manifests.append(manifest)
+        part = "selected" if parts else None
         if catalog:
             for manifest in manifests:
-                assert prepare_catalog(manifest).ok
+                assert prepare_catalog(manifest, part=part).ok
         specs = tuple(
             PackSpec(
                 manifest,
+                part=part,
                 worker_group="inference",
                 group_manifests=tuple(manifests),
+                group_parts=(part,) * len(manifests),
                 require_catalog=catalog,
             )
             for manifest in manifests
@@ -774,19 +785,27 @@ class TestLiveJail:
             )
             try:
                 if sandbox:
-                    with pytest.raises(
-                        CompositionError, match="does not contain selected manifest"
-                    ):
+                    with pytest.raises(CompositionError, match="not a member of worker group"):
                         await composer.add_pack(
-                            replace(specs[0], group_manifests=tuple(manifests[1:]))
+                            replace(
+                                specs[0],
+                                group_manifests=tuple(manifests[1:]),
+                                group_parts=(part,) * (len(manifests) - 1),
+                            )
                         )
                 if granted or not sandbox:
                     await composer.add_pack(specs[2])
                 else:
-                    with pytest.raises(CompositionError, match="not granted for: gpu-only$"):
+                    with pytest.raises(
+                        CompositionError,
+                        match=f"not granted for: gpu-only{'~selected' if parts else ''}$",
+                    ):
                         await composer.add_pack(specs[2])
                 if sandbox:
-                    with pytest.raises(CompositionError, match="not granted for: gpu-denied$"):
+                    with pytest.raises(
+                        CompositionError,
+                        match=f"not granted for: gpu-denied{'~selected' if parts else ''}$",
+                    ):
                         await composer.add_pack(specs[3])
                 else:
                     await composer.add_pack(specs[3])
@@ -815,7 +834,7 @@ class TestLiveJail:
                         assert all((report[key] != host[key]) == sandbox for key in host)
                         if sandbox and not granted:
                             assert report["gpu_device"] is False
-                    await composer.reload_pack("cpu-one", specs[0])
+                    await composer.reload_pack("cpu-one~selected" if parts else "cpu-one", specs[0])
             finally:
                 await composer.close()
 
