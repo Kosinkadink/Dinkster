@@ -90,7 +90,8 @@ if sys.platform == "win32":
 def install_worker_loop_policy() -> None:
     """Pack-owned HTTP threads also create loops; every worker loop must avoid TCP."""
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(ContainedPolicy())
+        # Pack libraries call asyncio.run() without accepting a loop factory.
+        asyncio.set_event_loop_policy(ContainedPolicy())  # pyright: ignore[reportDeprecated]
 
 
 def worker_loop() -> asyncio.AbstractEventLoop:

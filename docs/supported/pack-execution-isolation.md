@@ -93,9 +93,18 @@
 - `dinkster-doctor --sandbox` provides a Linux-only, network-isolated import
   probe jail. It refuses instead of running a requested probe unjailed when
   bubblewrap is unavailable.
-- Windows and macOS do not currently provide an OS security sandbox for pack
-  workers or doctor probes. Their isolated workers retain the operating
-  user's filesystem and network authority.
+- Windows 11 supports opt-in native pack sandboxing when its process-isolation
+  API and Desktop's source-built MXC executor are available. Windows 10 and
+  unsupported Windows 11 builds refuse a requested native sandbox and explain
+  the WSL2 alternative. Worker values travel over inherited pipes, not named
+  shared memory. The worker gets an explicit environment and no host loopback
+  access without an origin grant. Granted HTTPS origins use an authenticated
+  proxy; DNS lookups remain possible in that mode. Windows system paths and
+  GPU drivers retain the platform's baseline app-container access; the native
+  sandbox does not enforce Linux's GPU-denial or process/file-size limits.
+- macOS does not currently provide an OS security sandbox for pack workers.
+  Windows and macOS doctor import-probe jails remain unavailable; readiness
+  reporting is separate from executing a pack probe.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.
 - Boundary workers with configured pack scratch keep produced asset bytes

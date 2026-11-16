@@ -22,7 +22,7 @@ from .sandbox import (
     SandboxError,
     SandboxPolicy,
     SandboxUnavailable,
-    interpreter_mounts,
+    import_surface_mounts,
     validate_protected_binds,
 )
 from .transport import TOKEN_ENV
@@ -102,7 +102,7 @@ def build_windows_policy(
     if spec.use_shm:
         raise SandboxError("Windows sandbox transports values over pipes, not named shared memory")
     command, endpoints = pipe_command(spec.command)
-    interpreter_roots, _ = interpreter_mounts(spec.python)
+    interpreter_roots, _ = import_surface_mounts(spec.python)
     readonly = [*interpreter_roots, str(spec.pack_root), *policy.ro_binds]
     writable = [str(spec.endpoint_dir), *policy.rw_binds]
     for path in (*readonly, *writable):

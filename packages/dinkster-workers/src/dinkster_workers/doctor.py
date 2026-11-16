@@ -1466,13 +1466,19 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        capability = detect_bubblewrap()
-        available = (
-            capability.available and capability.bwrap is not None and capability.user_namespaces
-        )
-        detail = capability.detail
-        if capability.available and not capability.user_namespaces:
-            detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
+        if sys.platform == "win32":
+            from .windows_sandbox import detect_windows_sandbox
+
+            windows = detect_windows_sandbox()
+            available, detail = windows.available, windows.detail
+        else:
+            capability = detect_bubblewrap()
+            available = (
+                capability.available and capability.bwrap is not None and capability.user_namespaces
+            )
+            detail = capability.detail
+            if capability.available and not capability.user_namespaces:
+                detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
         report = {
             "format": "dinkster.sandbox-readiness/1",
             "available": available,

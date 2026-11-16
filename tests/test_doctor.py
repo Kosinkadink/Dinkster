@@ -494,6 +494,7 @@ def test_cli_pack_sandbox_readiness_without_importing_a_pack(
 ) -> None:
     from dinkster_workers.sandbox import BubblewrapCapability
 
+    monkeypatch.setattr("dinkster_workers.doctor.sys.platform", "linux")
     monkeypatch.setattr(
         "dinkster_workers.doctor.detect_bubblewrap",
         lambda: BubblewrapCapability(
@@ -509,6 +510,28 @@ def test_cli_pack_sandbox_readiness_without_importing_a_pack(
         assert detail in report["detail"]
     assert main(["--sandbox-readiness", "untrusted-pack"]) == 2
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_cli_native_windows_sandbox_readiness(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], available: bool
+) -> None:
+    from dinkster_workers.windows_sandbox import WindowsSandboxCapability
+
+    monkeypatch.setattr("dinkster_workers.doctor.sys.platform", "win32")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(available, None, "Windows isolation prerequisite detail"),
+    )
+    assert main(["--sandbox-readiness", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": available,
+        "detail": "Pack sandboxing is available"
+        if available
+        else "Windows isolation prerequisite detail",
+    }
 
 
 # -- sandboxed probe (DESIGN M8: publish-probe isolation) ----------------------

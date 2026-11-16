@@ -488,7 +488,7 @@ def build_bwrap_command(
     command.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
     system_binds = _existing(SANDBOX_SYSTEM_PATHS)
-    interpreter_binds, interpreter_symlinks = _import_surface_mounts(spec.python)
+    interpreter_binds, interpreter_symlinks = import_surface_mounts(spec.python)
     interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter imports")
     interpreter_aliases = _validated(
         tuple(link for _, link in interpreter_symlinks), role="interpreter alias"
@@ -659,7 +659,7 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     }
 
 
-def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+def import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
     """Read-only interpreter prefixes and installed import roots for children.
 
     Editable installs add source roots through .pth files. The working directory
@@ -711,7 +711,7 @@ def build_probe_bwrap_command(
 
     for path in _existing(SANDBOX_SYSTEM_PATHS):
         command.extend(["--ro-bind", path, path])
-    import_binds, interpreter_symlinks = _import_surface_mounts(python)
+    import_binds, interpreter_symlinks = import_surface_mounts(python)
     for path in import_binds:
         command.extend(["--ro-bind", path, path])
     for target, link in interpreter_symlinks:

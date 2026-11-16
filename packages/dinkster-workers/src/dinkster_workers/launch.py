@@ -26,7 +26,7 @@ from typing import Protocol
 from .interpreter import module_command
 
 HOST_OWNED_ENVIRONMENT: frozenset[str] = frozenset(
-    {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH"}
+    {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH", "DINKSTER_MXC_EXECUTABLE"}
 )
 
 
