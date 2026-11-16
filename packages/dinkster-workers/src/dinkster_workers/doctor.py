@@ -1490,9 +1490,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         if sys.platform == "win32":
-            from .windows_sandbox import detect_windows_sandbox
+            from .windows_sandbox import check_windows_sandbox
 
-            windows = detect_windows_sandbox()
+            windows = check_windows_sandbox()
             available, detail = windows.available, windows.detail
         elif sys.platform == "darwin":
             from .seatbelt import detect_seatbelt

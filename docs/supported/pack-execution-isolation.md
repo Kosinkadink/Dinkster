@@ -127,7 +127,13 @@
 - `dinkster-doctor --sandbox-readiness --json` reports whether full pack
   sandboxing is available and explains missing prerequisites without importing
   pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
-  for that report. An engine without the probe cannot enable sandboxing.
+  for that report. On native Windows, availability also requires the selected
+  engine interpreter to exchange wakeup bytes inside a real no-network container.
+  A refused wakeup reports the operation, selected socket path and byte length,
+  contained temp/profile values and policy profile entry before managed startup.
+  The API prerequisite alone does not establish availability; unavailable
+  containment never silently falls back to an unsandboxed start.
+  An engine without the probe cannot enable sandboxing.
 - `dinkster-doctor --sandbox` provides a network-isolated import probe jail
   on Linux and macOS. It refuses instead of running a requested probe
   unjailed when the platform sandbox is unavailable.
