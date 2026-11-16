@@ -526,6 +526,45 @@ def test_start_status_idempotence_and_stop(
     assert engine_status(tmp_path)[0]["state"] == "stopped"
 
 
+def test_managed_engine_survives_launcher_session_exit(tmp_path: Path) -> None:
+    make_generation(tmp_path)
+    port = free_port()
+    command = [
+        sys.executable,
+        "-c",
+        "import json,sys; from pathlib import Path; "
+        "from dinkster_supervisor.environment_runtime import start_engine; "
+        "print(json.dumps(start_engine(Path(sys.argv[1]), 1, 'main', int(sys.argv[2]))))",
+        str(tmp_path),
+        str(port),
+    ]
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=os.name != "nt",
+    ) as launcher:
+        output, error = launcher.communicate(timeout=30)
+        assert launcher.returncode == 0, error
+    row = json.loads(output)
+    try:
+        if os.name != "nt":
+            # Reproduce a terminal/WSL launcher ending its session after returning readiness.
+            try:
+                os.killpg(launcher.pid, signal.SIGHUP)
+            except ProcessLookupError:
+                pass
+        for _ in range(5):
+            assert engine_status(tmp_path) == (row,)
+            with urlopen(row["url"] + "/api/health", timeout=5) as response:  # noqa: S310
+                assert json.loads(response.read()) == {"ok": True}
+            time.sleep(0.05)
+    finally:
+        stop_engine(tmp_path, "main")
+    assert engine_status(tmp_path)[0]["state"] == "stopped"
+
+
 @pytest.mark.parametrize("available", [False, True])
 def test_doctor_sandbox_uses_selected_generation_readiness(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], available: bool
