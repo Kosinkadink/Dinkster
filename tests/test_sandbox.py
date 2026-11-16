@@ -716,6 +716,11 @@ class TestLiveJail:
 
         from dinkster.compose import CompositionError, PackSpec, ServingComposer
 
+        generation = tmp_path / "generations" / "2"
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        (extra / "sandbox_group_helper.py").write_text("MARK = 17\n", encoding="ascii")
+        denied_path = str(generation / "pack-sources" / "gpu-denied")
         manifests = []
         for name, gpu in (
             ("cpu-one", False),
@@ -723,8 +728,8 @@ class TestLiveJail:
             ("gpu-only", True),
             ("gpu-denied", True),
         ):
-            root = tmp_path / name
-            root.mkdir()
+            root = generation / "pack-sources" / name
+            root.mkdir(parents=True)
             module = name.replace("-", "_")
             manifest = root / "dinkster-pack.toml"
             manifest.write_text(
@@ -753,7 +758,10 @@ class TestLiveJail:
                 "        report = {key: os.readlink('/proc/self/ns/' + key) "
                 "for key in ('user', 'pid', 'net')}\n"
                 "        report['process'] = os.getpid()\n"
+                "        from sandbox_group_helper import MARK\n"
+                "        report['helper'] = MARK\n"
                 "        report['gpu_device'] = os.path.exists('/dev/nvidiactl')\n"
+                f"        report['denied_pack'] = os.path.exists({denied_path!r})\n"
                 f"        report['value'] = '{name}: Pack sandbox | 966'\n"
                 "        return cls.outputs(report=json.dumps(report))\n"
                 "NODES=(Probe,)\n",
@@ -768,6 +776,11 @@ class TestLiveJail:
             PackSpec(
                 manifest,
                 part=part,
+                env={
+                    "PYTHONPATH": os.pathsep.join(
+                        [str(extra), *(str(path.parent) for path in manifests)]
+                    )
+                },
                 worker_group="inference",
                 group_manifests=tuple(manifests),
                 group_parts=(part,) * len(manifests),
@@ -779,7 +792,9 @@ class TestLiveJail:
 
         async def scenario() -> None:
             composer = ServingComposer(
-                sandbox_policy=SandboxPolicy() if sandbox else None,
+                sandbox_policy=(
+                    SandboxPolicy(protected_roots=(str(generation),)) if sandbox else None
+                ),
                 sandbox_gpu_grants=("gpu-only",) if granted else (),
                 worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
             )
@@ -832,6 +847,8 @@ class TestLiveJail:
                         assert reports[2]["value"] == "gpu-only: Pack sandbox | 966"
                     for report in reports:
                         assert all((report[key] != host[key]) == sandbox for key in host)
+                        assert report["helper"] == 17
+                        assert report["denied_pack"] is not sandbox
                         if sandbox and not granted:
                             assert report["gpu_device"] is False
                     await composer.reload_pack("cpu-one~selected" if parts else "cpu-one", specs[0])
@@ -839,6 +856,37 @@ class TestLiveJail:
                 await composer.close()
 
         run_scenario(scenario())
+        if sandbox:
+            from dinkster_engine import ExecutionError
+
+            private = generation / "private"
+            private.mkdir()
+
+            async def refuse_unrelated_path() -> None:
+                composer = ServingComposer(
+                    sandbox_policy=SandboxPolicy(protected_roots=(str(generation),)),
+                    worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+                )
+                try:
+                    with pytest.raises(
+                        (SandboxError, ExecutionError), match="private.*overlaps protected root"
+                    ):
+                        await composer.add_pack(
+                            replace(
+                                specs[0],
+                                env={
+                                    "PYTHONPATH": specs[0].env["PYTHONPATH"]
+                                    + os.pathsep
+                                    + str(private)
+                                },
+                            )
+                        )
+                        engine = composer.composition.make_engine(lambda _event: None)
+                        await engine.run(Graph(nodes={"n": GraphNode("cpu_one.echo", {})}), ["n"])
+                finally:
+                    await composer.close()
+
+            run_scenario(refuse_unrelated_path())
 
     def test_kernel_interfaces_are_denied_but_dataloader_and_shared_memory_work(
         self, tmp_path: Path

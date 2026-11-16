@@ -1,3 +1,12 @@
+# Protected generation CPU groups
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Filtered CPU group with merged generation import paths | X570 Linux CPU, Python 3.14.10 | Eight live/cold sandbox controls fail before repair on excluded pack roots under the protected generation. After repair, main and named selections execute and reload; excluded paths are absent, unrelated helper imports survive, individual GPU denials and explicit grants remain, and an unrelated private generation path still refuses. |
+
+- Sandbox, composition, reload and generation environment controls: 222 passed. The same twelve group controls passed after repair, including four unsandboxed controls.
+- This source-engine regression does not replace the still-unaccepted published Desktop sandbox-on text cell.
+
 # Multipart generation placement
 
 | Scenario | Host | Result |
