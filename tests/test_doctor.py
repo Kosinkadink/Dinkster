@@ -512,6 +512,43 @@ def test_cli_pack_sandbox_readiness_without_importing_a_pack(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize("available", [False, True])
+def test_cli_native_windows_sandbox_readiness(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], available: bool
+) -> None:
+    from dinkster_workers.windows_sandbox import WindowsSandboxCapability
+
+    monkeypatch.setattr("dinkster_workers.doctor.sys.platform", "win32")
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(available, None, "Windows isolation prerequisite detail"),
+    )
+    assert main(["--sandbox-readiness", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "format": "dinkster.sandbox-readiness/1",
+        "available": available,
+        "detail": "Windows isolation prerequisite detail",
+    }
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("mxc_key", ["DINKSTER_MXC_EXECUTABLE", "dinkster_mxc_executable"])
+def test_import_probe_never_exposes_host_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool, mxc_key: str
+) -> None:
+    monkeypatch.setenv(mxc_key, "/host/executor")
+    source = (
+        HEALTHY_NODES
+        + "\nimport os\n"
+        + "assert not any(key.upper() == 'DINKSTER_MXC_EXECUTABLE' for key in os.environ)\n"
+    )
+    manifest = write_pack(tmp_path / "host-only", HEALTHY_MANIFEST, "healthy_nodes", source)
+    environment = {mxc_key: "/explicit/executor"} if explicit else None
+    report = diagnose(manifest, environment=environment)
+    assert report.ok, render_text(report)
+
+
 @pytest.mark.parametrize(
     "available,executable,detail,expected",
     [
@@ -605,13 +642,17 @@ class TestLiveJailedProbe:
             HEALTHY_NODES
             + "\nimport os\n"
             + "expected = {'DINKSTER_EXPLICIT_SENTINEL': 'delivered'}\n"
-            + "assert dict(os.environ) == expected, repr(dict(os.environ))\n"
+            + "assert dict(os.environ) == expected\n"
         )
         manifest = write_pack(tmp_path / "explicit", HEALTHY_MANIFEST, "healthy_nodes", source)
         report = diagnose(
             manifest,
             probe_jail=detect_probe_jail(),
-            environment={"DINKSTER_EXPLICIT_SENTINEL": "delivered"},
+            environment={
+                "DINKSTER_EXPLICIT_SENTINEL": "delivered",
+                "DINKSTER_MXC_EXECUTABLE": "/explicit/executor",
+                "dinkster_mxc_executable": "/case-variant/executor",
+            },
         )
         assert report.ok, render_text(report)
 

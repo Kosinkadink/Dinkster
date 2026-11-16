@@ -23,13 +23,13 @@ from .sandbox import (
     SandboxPolicy,
     SandboxUnavailable,
     _absolute_executable,  # pyright: ignore[reportPrivateUsage]
-    _import_surface_mounts,  # pyright: ignore[reportPrivateUsage]
-    _interpreter_mounts,  # pyright: ignore[reportPrivateUsage]
     _launch_environment,  # pyright: ignore[reportPrivateUsage]
     _next_symlink_step,  # pyright: ignore[reportPrivateUsage]
     _paths_overlap,  # pyright: ignore[reportPrivateUsage]
-    _validate_protected_binds,  # pyright: ignore[reportPrivateUsage]
     _validated,  # pyright: ignore[reportPrivateUsage]
+    import_surface_mounts,
+    interpreter_mounts,
+    validate_protected_binds,
 )
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
@@ -53,7 +53,6 @@ _FORBIDDEN_ROOTS = frozenset(
         "/usr",
         "/Applications",
         "/private/var/folders",
-        str(Path.home().resolve()),
     }
 )
 
@@ -70,7 +69,7 @@ def _quote(value: str) -> str:
 
 
 def _checked(paths: tuple[str, ...], *, role: str) -> list[str]:
-    forbidden = set(_FORBIDDEN_ROOTS)
+    forbidden = {*_FORBIDDEN_ROOTS, str(Path.home().resolve())}
     shared_metal: list[str] = []
     if sys.platform == "darwin":
         for key in (65536, 65537, 65538):
@@ -102,9 +101,9 @@ def build_seatbelt_profile(
     probe: bool = False,
 ) -> str:
     """Generate the same filesystem and process boundary for workers and doctor."""
-    interpreter, aliases = _interpreter_mounts(spec.python, system_paths=SYSTEM_READ_PATHS)
+    interpreter, aliases = interpreter_mounts(spec.python, system_paths=SYSTEM_READ_PATHS)
     if probe:
-        interpreter, aliases = _import_surface_mounts(spec.python, system_paths=SYSTEM_READ_PATHS)
+        interpreter, aliases = import_surface_mounts(spec.python, system_paths=SYSTEM_READ_PATHS)
     pythonpath = spec.env.get("PYTHONPATH", "")
     if not pythonpath and "PYTHONPATH" in policy.env_passthrough:
         pythonpath = os.environ.get("PYTHONPATH", "")
@@ -120,19 +119,19 @@ def build_seatbelt_profile(
     if cache is not None:
         implicit_writes += _checked((str(cache),), role="Metal cache")
     endpoint = _checked((str(spec.endpoint_dir),), role="endpoint")[0]
-    _validate_protected_binds(
+    validate_protected_binds(
         reads,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_ro_exceptions,
         role="read-only",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         writes,
         protected_roots=policy.protected_roots,
         exceptions=policy.protected_rw_exceptions,
         role="writable",
     )
-    _validate_protected_binds(
+    validate_protected_binds(
         [endpoint, *implicit_writes],
         protected_roots=policy.protected_roots,
         exceptions=(),

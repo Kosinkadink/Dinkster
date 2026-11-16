@@ -953,7 +953,11 @@ def _run_probe(
                 text=True,
                 errors="replace",
                 timeout=_PROBE_TIMEOUT_S,
-                env=None if environment is None else {**os.environ, **environment},
+                env={
+                    name: value
+                    for name, value in {**os.environ, **(environment or {})}.items()
+                    if name.upper() != "DINKSTER_MXC_EXECUTABLE"
+                },
             )
         elif isinstance(probe_jail, SeatbeltProbeJail):
             proc = probe_jail.run(
@@ -1472,12 +1476,17 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        if sys.platform == "darwin":
+        if sys.platform == "win32":
+            from .windows_sandbox import detect_windows_sandbox
+
+            windows = detect_windows_sandbox()
+            available, detail = windows.available, windows.detail
+        elif sys.platform == "darwin":
             from .seatbelt import detect_seatbelt
 
             seatbelt = detect_seatbelt()
             available = seatbelt.available and seatbelt.sandbox_exec is not None
-            detail = seatbelt.detail
+            detail = "Pack sandboxing is available" if available else seatbelt.detail
         else:
             capability = detect_bubblewrap()
             available = (
@@ -1486,10 +1495,12 @@ def main(argv: list[str] | None = None) -> int:
             detail = capability.detail
             if capability.available and not capability.user_namespaces:
                 detail = "pack sandbox requires bubblewrap user and PID namespaces; " + detail
+            if available:
+                detail = "Pack sandboxing is available"
         report = {
             "format": "dinkster.sandbox-readiness/1",
             "available": available,
-            "detail": "Pack sandboxing is available" if available else detail,
+            "detail": detail,
         }
         print(json.dumps(report) if as_json else report["detail"])
         return 0
