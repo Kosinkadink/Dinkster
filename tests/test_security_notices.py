@@ -34,6 +34,72 @@ NOTICE = "5b2fa364-f808-4dd2-b58e-e02187f9a2cc"
 VERIFIED_AT = datetime(2026, 11, 10, 12, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("placement", ["isolated", "shared", "main-in-process"])
+def test_security_inventory_includes_private_execution_parts_without_sharing_them(
+    tmp_path: Path, placement: str
+) -> None:
+    from dinkster_security.inventory import generation_dependencies
+
+    generation = tmp_path / "generation"
+    files = {}
+    rows = [
+        ("installed-wheels.json", "rootlib", "1.0", "a"),
+        ("packs/multipart/installed-wheels.json", "mainlib", "2.0", "b"),
+        ("packs/multipart~face/installed-wheels.json", "partlib", "3.0", "c"),
+        ("packs/other/installed-wheels.json", None, None, None),
+    ]
+    if placement == "shared":
+        rows.append(("inference/shared-inference/installed-wheels.json", "partlib", "4.0", "d"))
+    for name, library, version, digest in rows:
+        path = generation / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.installed-wheels/1",
+                    "wheels": [
+                        {
+                            "filename": f"{library}-{version}-py3-none-any.whl",
+                            "size": 7,
+                            "sha256": digest * 64,
+                            "registry": REGISTRY,
+                        }
+                    ]
+                    if digest is not None
+                    else [],
+                    "inherited": [],
+                }
+            )
+        )
+        files[name] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    if placement == "shared":
+        process = generation / "inference-process.json"
+        process.write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.inference-process/2",
+                    "environment": "inference/shared-inference",
+                    "members": ["multipart~face"],
+                }
+            )
+        )
+        files[process.name] = "sha256:" + hashlib.sha256(process.read_bytes()).hexdigest()
+    hosting = ("multipart",) if placement == "main-in-process" else ()
+    result = generation_dependencies(generation, files, ("multipart", "other"), hosting)
+    assert set(result) == {"multipart", "other"}
+    assert {(item.name, item.version) for item in result["multipart"]} == {
+        ("rootlib", "1.0"),
+        ("mainlib", "2.0"),
+        ("partlib", "4.0" if placement == "shared" else "3.0"),
+    }
+    assert {(item.name, item.version) for item in result["other"]} == (
+        {("rootlib", "1.0"), ("mainlib", "2.0")} if hosting else {("rootlib", "1.0")}
+    )
+    del files["packs/multipart~face/installed-wheels.json"]
+    with pytest.raises(SecurityError, match="requires sealed provenance"):
+        generation_dependencies(generation, files, ("multipart", "other"), hosting)
+
+
 @pytest.mark.parametrize("affected_version", ["1.0", "2.0", "3.0", "4.0"])
 def test_shared_inference_security_inventory_uses_its_own_sealed_closure(
     tmp_path: Path, affected_version: str

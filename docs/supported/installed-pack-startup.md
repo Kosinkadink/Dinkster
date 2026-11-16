@@ -361,6 +361,13 @@
   and refuses the complete selection when any bound part lock is unavailable,
   invalid or incompatible. This metadata support alone does not provide
   multipart runtime installation.
+- Captured multipart generation loading requires exactly one dependency lock
+  for the main entry and every declared part, refusing omitted, undeclared or
+  substituted selectors before catalog preparation or execution. Source-only
+  acquisition does not require provisioned dependency environments.
+- Security inventory attributes every part's sealed dependency receipt to its
+  single parent release. Private part libraries do not become shared libraries
+  of unrelated packs; shared inference uses its effective sealed closure.
 - An explicitly selected execution part can prepare its own catalog and run
   through isolated or in-process composition without importing the main entry.
   Reload preserves the selector, and nodes retain the parent pack attribution.
