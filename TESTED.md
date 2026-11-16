@@ -1,3 +1,9 @@
+# Restore inherited pack dependencies
+
+- Unchanged main rejects a compatible generation-provided 1.0 library when a pack's publication lock pins 0.9. The repaired six-case restore CLI regression passes for isolated and shared in-process packs, including incompatible engine-API refusal.
+- Declared and private-wheel transitive upper bounds, recorded Windows/Linux markers, optional extras, and shared direct-URL refusal are covered without changing project or wheel-store bytes.
+- These targeted Linux CPU source checks do not establish packaged Windows/Linux Desktop recovery or publication readiness.
+
 # Stable recovery release versions
 
 - Engine/API/workspace 0.0.9 and supervisor 0.0.7 pass isolated Linux CPU contributor setup, generated checks, Ruff format/lint and Linux/Windows Pyright.

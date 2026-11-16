@@ -1796,7 +1796,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         },
     )
     assert _run(root, "stop", "--yes")[0] == 0
-    source = wheel(tmp_path, "required_extra", "1.0", 73)
+    source = wheel(tmp_path, "required_extra", "1.0", 73, requirements=("fixture-base>=1,<2",))
     payload = source.read_bytes()
     sha = hashlib.sha256(payload).hexdigest()
     required = LockedWheel(source.name, len(payload), sha, source.as_uri())
@@ -1812,10 +1812,10 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         "example",
         Generation.read(generation / "generation.json").variant,
         ">=3.12",
-        (),
+        ("fixture-base>=1,<2",),
         (),
         (
-            LockedDistribution("fixture-base", "1.0", ()),
+            LockedDistribution("fixture-base", "0.9", ()),
             LockedDistribution("required-extra", "1.0", (incompatible, required)),
         ),
         engine=engine_requirement,
@@ -1855,11 +1855,12 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     assert unavailable["restorePlan"]["missing"] == [
         {
             "kind": "pack dependency",
-            "identity": "zzz" if in_process else "example",
+            "identity": name,
             "artifact": source.name,
             "sha256": sha,
             "locations": [source.as_uri()],
         }
+        for name in (["zzz", "example"] if in_process else ["example"])
     ]
     assert {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -1875,6 +1876,58 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         assert planned["restorePlan"]["exact"] is exact
         assert (root / "current").read_text() == "1\n"
         assert (root / "history/00000000000000000002.json").read_bytes() == preserved
+
+    if not in_process and engine_requirement == ">=0":
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+
+        for direct, transitive, platform, allowed in (
+            ((), "fixture-base>=1,<2", "win32", True),
+            (("fixture-base<1",), "fixture-base>=1,<2", "win32", False),
+            ((), "fixture-base<1", "win32", False),
+            ((), 'fixture-base<1; sys_platform == "win32"', "win32", False),
+            ((), 'fixture-base<1; sys_platform == "win32"', "linux", True),
+            (("required-extra[gpu]",), 'fixture-base<1; extra == "gpu"', "win32", False),
+            (("required-extra",), 'fixture-base<1; extra == "gpu"', "win32", True),
+            (("fixture-base @ https://example.org/base.whl",), "fixture-base>=1", "win32", False),
+        ):
+            candidate = json.loads(json.dumps(entry["snapshot"]))
+            candidate["host"]["markers"]["sys_platform"] = platform
+            source = wheel(tmp_path, "required_extra", "1.0", 73, requirements=(transitive,))
+            payload = source.read_bytes()
+            candidate_lock = replace(
+                PackLock.read(path),
+                requirements=direct,
+                packages=(
+                    LockedDistribution("fixture-base", "0.9", ()),
+                    LockedDistribution(
+                        "required-extra",
+                        "1.0",
+                        (
+                            LockedWheel(
+                                source.name,
+                                len(payload),
+                                hashlib.sha256(payload).hexdigest(),
+                                source.as_uri(),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            candidate["metadata"]["packs/example/pack-lock.json"] = candidate_lock.to_json()
+            before_store = {
+                item.relative_to(store).as_posix(): item.read_bytes()
+                for item in store.rglob("*")
+                if item.is_file()
+            }
+            missing = missing_inputs(candidate, store)
+            assert (not missing) is allowed, (direct, transitive, platform, missing)
+            if not allowed:
+                assert any("does not satisfy" in item.get("error", "") for item in missing)
+            assert {
+                item.relative_to(store).as_posix(): item.read_bytes()
+                for item in store.rglob("*")
+                if item.is_file()
+            } == before_store
 
     journal = next((root / "journal").glob("*.json"))
     replace(Journal.read(journal), history_entry=None).write(journal)
