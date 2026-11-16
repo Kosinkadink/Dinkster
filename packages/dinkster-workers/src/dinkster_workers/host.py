@@ -3162,6 +3162,13 @@ def main() -> None:
 
         install_worker_loop_policy()
         prepare_child_pipes(len(args.endpoint))
+        # MXC injects its credential-free runtime proxy after the explicit environment.
+        # Restore the host-owned authenticated URL before any pack is imported.
+        from .egress import EGRESS_PROXY_ENV
+
+        if proxy := os.environ.get(EGRESS_PROXY_ENV):
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
         loop_factory = worker_loop
     # Launched children inherit the host environment and stderr, so the
     # host's DINKSTER_LOG_LEVEL/DINKSTER_LOG settings apply here without any

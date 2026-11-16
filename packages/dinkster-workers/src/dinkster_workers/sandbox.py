@@ -313,7 +313,9 @@ def interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
         if key in seen:
             break
         seen.add(key)
-        prefix = python_path.parent.parent
+        prefix = python_path.parent
+        if python_path.suffix.lower() != ".exe" or prefix.name.lower() in {"scripts", "bin"}:
+            prefix = prefix.parent
         prefix_step = _next_symlink_step(prefix)
         if prefix_step is None:
             binds.append(str(prefix))

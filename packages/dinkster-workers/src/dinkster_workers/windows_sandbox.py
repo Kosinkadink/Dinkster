@@ -23,6 +23,7 @@ from .sandbox import (
     SandboxPolicy,
     SandboxUnavailable,
     import_surface_mounts,
+    interpreter_mounts,
     validate_protected_binds,
 )
 from .transport import TOKEN_ENV
@@ -112,7 +113,7 @@ def build_windows_policy(
     validate_protected_binds(
         readonly,
         protected_roots=policy.protected_roots,
-        exceptions=policy.protected_ro_exceptions,
+        exceptions=(*policy.protected_ro_exceptions, *interpreter_mounts(spec.python)[0]),
         role="read-only",
     )
     validate_protected_binds(
@@ -219,16 +220,28 @@ class WindowsProcessLauncher:
             try:
                 await asyncio.wait({bridge, exited}, return_when=asyncio.FIRST_COMPLETED)
             finally:
-                if process.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.terminate()
-                    await process.wait()
                 bridge.cancel()
                 await asyncio.gather(bridge, return_exceptions=True)
-                await exited
-                path.unlink(missing_ok=True)
-                if proxy is not None:
-                    await proxy.close()
+
+                async def drain_output() -> None:
+                    assert process.stdout is not None
+                    while await process.stdout.read(64 * 1024):
+                        pass
+
+                # A rejected frame can leave stdout paused; reap only while it is drained.
+                drained = asyncio.create_task(drain_output())
+                try:
+                    if process.returncode is None:
+                        with contextlib.suppress(ProcessLookupError):
+                            process.terminate()
+                    await exited
+                    await drained
+                finally:
+                    drained.cancel()
+                    await asyncio.gather(drained, return_exceptions=True)
+                    path.unlink(missing_ok=True)
+                    if proxy is not None:
+                        await proxy.close()
 
         task = asyncio.create_task(supervise())
         self._cleanup_tasks.add(task)

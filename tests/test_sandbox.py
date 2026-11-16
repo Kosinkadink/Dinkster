@@ -99,6 +99,86 @@ def test_windows_policy_keeps_environment_and_network_grants_explicit(
     assert proxy_mode["network"]["ingress"] == {"default": "allow", "hostLoopback": "allow"}
 
 
+@pytest.mark.parametrize("layout", ["python/python.exe", "venv/Scripts/python.exe"])
+def test_windows_policy_only_exposes_interpreter_inside_protected_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str
+) -> None:
+    from dinkster_workers.windows_sandbox import build_windows_policy
+
+    generation = tmp_path / "generation"
+    python = generation / layout
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"test-interpreter")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    spec = make_spec(
+        tmp_path,
+        python=str(python),
+        use_shm=False,
+        command=(str(python), "-m", "dinkster_workers.host", "--endpoint", "tcp:127.0.0.1:1234"),
+    )
+    policy = SandboxPolicy(protected_roots=(str(generation),))
+    config, _ = build_windows_policy(spec, policy)
+    paths = json.loads(json.dumps(config))["filesystem"]["readonlyPaths"]
+    prefix = python.parent.parent if python.parent.name == "Scripts" else python.parent
+    assert str(prefix) in paths
+    assert str(generation) not in paths
+    with pytest.raises(SandboxError, match="protected root"):
+        build_windows_policy(spec, replace(policy, ro_binds=(str(generation),)))
+
+
+def test_windows_launcher_reaps_worker_after_invalid_frame_and_output_flood(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers.transport import BoundaryListener
+    from dinkster_workers.windows_sandbox import WindowsProcessLauncher, WindowsSandboxCapability
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(
+        "dinkster_workers.windows_sandbox.detect_windows_sandbox",
+        lambda: WindowsSandboxCapability(True, sys.executable, "test backend"),
+    )
+    spawn = asyncio.create_subprocess_exec
+
+    async def backend(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        return await spawn(
+            sys.executable,
+            "-c",
+            "import sys,struct,time; sys.stdout.buffer.write(struct.pack('!II',999,1)); "
+            "sys.stdout.buffer.write(b'x' * (5 * 1024 * 1024)); "
+            "sys.stdout.buffer.flush(); time.sleep(30)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+        )
+
+    monkeypatch.setattr("dinkster_workers.windows_sandbox.asyncio.create_subprocess_exec", backend)
+
+    async def scenario() -> None:
+        listener = await BoundaryListener.create(tmp_path, transport="tcp")
+        spec = make_spec(
+            tmp_path,
+            use_shm=False,
+            env=listener.child_env,
+            command=(
+                sys.executable,
+                "-m",
+                "dinkster_workers.host",
+                "--endpoint",
+                listener.endpoint,
+            ),
+        )
+        try:
+            process = await WindowsProcessLauncher().launch(spec)
+            assert await asyncio.wait_for(process.wait(), 5) != 0
+        finally:
+            if listener.connected.done() and not listener.connected.cancelled():
+                _, writer = listener.connected.result()
+                writer.close()
+                await writer.wait_closed()
+            await listener.close()
+
+    run_scenario(scenario(), timeout=10)
+
+
 def test_windows_readiness_refuses_tampered_or_routed_executors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

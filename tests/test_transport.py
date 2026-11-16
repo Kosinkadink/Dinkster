@@ -69,11 +69,18 @@ def test_pipe_worker_large_values_and_cancellation(
             (tmp_path / "isopack_nodes.py").write_text(
                 (TESTS_DIR / "isopack_nodes.py").read_text()
                 + '\nprint("pack stdout must not corrupt pipe frames", flush=True)\n'
+                + 'assert os.environ["HTTPS_PROXY"] == os.environ["DINKSTER_EGRESS_PROXY"]\n'
+                + 'assert os.environ["HTTP_PROXY"] == os.environ["DINKSTER_EGRESS_PROXY"]\n'
             )
             owner = GroupIsolatedWorker(
                 "pipe-test",
                 [manifest, DEV_MANIFEST],
                 registry,
+                extra_env={
+                    "DINKSTER_EGRESS_PROXY": "http://dinkster:unit-test@127.0.0.1:12345",
+                    "HTTP_PROXY": "http://127.0.0.1:12345",
+                    "HTTPS_PROXY": "http://127.0.0.1:12345",
+                },
                 launcher=launcher,
                 transport="tcp",
                 shm_threshold=1,
