@@ -83,6 +83,9 @@
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
+- WSL2 Linux pack sandboxes support GPU grants through the WSL GPU device
+  and read-only driver libraries. Windows drive mounts and WSL interop paths
+  cannot be granted to pack workers; copy models and packs to the WSL disk.
 - `dinkster-env start --sandbox-packs` requests the same isolation for a managed
   local engine. Changing the selection requires stopping the engine first;
   environment updates, recovery and moves preserve the selection.

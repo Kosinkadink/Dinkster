@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -296,6 +297,58 @@ def pairs(argv: list[str], flag: str) -> list[tuple[str, str]]:
 
 
 class TestBuildBwrapCommand:
+    def test_wsl_gpu_grant(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        exists = os.path.exists
+        isdir = os.path.isdir
+        glob = Path.glob
+        monkeypatch.setattr(os.path, "exists", lambda p: p == "/dev/dxg" or exists(p))
+        monkeypatch.setattr(os.path, "isdir", lambda p: p == "/usr/lib/wsl" or isdir(p))
+        monkeypatch.setattr(
+            Path,
+            "glob",
+            lambda p, pattern: (
+                iter((Path("/dev/dxg"),))
+                if p == Path("/dev") and pattern == "dxg"
+                else glob(p, pattern)
+            ),
+        )
+        spec = make_spec(tmp_path)
+        granted = build_bwrap_command(spec, SandboxPolicy(gpu=True))
+        assert ("/dev/dxg", "/dev/dxg") in pairs(granted, "--dev-bind")
+        assert ("/usr/lib/wsl", "/usr/lib/wsl") in pairs(granted, "--ro-bind")
+        denied = build_bwrap_command(spec, SandboxPolicy())
+        assert ("/dev/dxg", "/dev/dxg") not in pairs(denied, "--dev-bind")
+        assert ("/usr/lib/wsl", "/usr/lib/wsl") not in pairs(denied, "--ro-bind")
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="requires Linux WSL mount semantics")
+    def test_wsl_refuses_windows_drives_and_interop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        drive = tmp_path / "Windows drive"
+        drive.mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(drive, target_is_directory=True)
+        read_text = Path.read_text
+        monkeypatch.setattr(platform, "release", lambda: "6.6.87.2-microsoft-standard-WSL2")
+        escaped_drive = str(drive).replace(" ", r"\040")
+        monkeypatch.setattr(
+            Path,
+            "read_text",
+            lambda p, *a, **kw: (
+                (f"C: {escaped_drive} 9p rw,aname=drvfs;path=C: 0 0\n/dev/sdc / ext4 rw 0 0\n")
+                if p == Path("/proc/mounts")
+                else read_text(p, *a, **kw)
+            ),
+        )
+        spec = make_spec(tmp_path)
+        for path in (str(drive), str(alias / "models"), "/run/WSL/123_interop", "/init"):
+            for grant in (SandboxPolicy(ro_binds=(path,)), SandboxPolicy(rw_binds=(path,))):
+                with pytest.raises(SandboxError, match="Windows drive or WSL interop"):
+                    build_bwrap_command(spec, grant)
+            with pytest.raises(SandboxError, match="Windows drive or WSL interop"):
+                build_bwrap_command(make_spec(tmp_path, env={"PYTHONPATH": path}), SandboxPolicy())
+        build_bwrap_command(spec, SandboxPolicy(ro_binds=(str(tmp_path / "pack"),)))
+
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
     def test_pythonpath_cannot_dissolve_the_jail(self, tmp_path: Path) -> None:
         spec = make_spec(tmp_path, env={"PYTHONPATH": "/", "DINKSTER_BOUNDARY_TOKEN": "s"})
