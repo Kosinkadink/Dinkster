@@ -397,7 +397,7 @@ def generation_maintenance_directory(root: Path) -> Path:
     return maintenance
 
 
-def retry_generation_collection(root: Path) -> dict[str, object]:
+def retry_generation_collection(root: Path, *, automatic: bool = False) -> dict[str, object]:
     """Retry only history-covered generation deletion, never shared-store GC or process stops."""
     maintenance = generation_maintenance_directory(root)
     with ExitStack() as locks:
@@ -414,7 +414,10 @@ def retry_generation_collection(root: Path) -> dict[str, object]:
             return result
         acquiring = True
         try:
-            with writer_lock(root), generation_runtime_lock(root):
+            with (
+                writer_lock(root, operation="maintenance" if automatic else None),
+                generation_runtime_lock(root),
+            ):
                 acquiring = False
                 if not collection_policy(root)["automatic"]:
                     result["status"] = "disabled"
@@ -478,7 +481,7 @@ def automatic_generation_collection(root: Path) -> dict[str, object]:
     """Maintenance failure must not invalidate a successful activation or engine lifecycle."""
     result: dict[str, object]
     try:
-        result = retry_generation_collection(root)
+        result = retry_generation_collection(root, automatic=True)
     except (OSError, ValueError) as exc:
         result = {"status": "deferred", "warnings": [str(exc)]}
     for warning in cast("list[str]", result.get("warnings", [])):

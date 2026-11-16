@@ -780,8 +780,11 @@
   hourly collection, retrying busy locks sooner. Acknowledged stops attempt
   collection after durably recording the stopped engine assignment.
   Confirmed start and stop wait for generation-only maintenance before taking
-  the project writer lock; a competing explicit environment writer still refuses
-  the operation. Planning and status remain read-only.
+  the project writer lock. Generation changes wait up to 30 seconds when automatic
+  maintenance holds that project's writer lock, without replaying the operation;
+  a competing explicit writer is still refused. Busy errors identify the holder's
+  operation, PID and acquisition time; a maintenance timeout explains the wait.
+  Planning and status remain read-only.
   Cleanup failures remain warnings rather than invalidating a successful
   update. Legacy trees without provable coverage still defer; Desktop controls
   are separate.
