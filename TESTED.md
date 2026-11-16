@@ -2,6 +2,7 @@
 
 - Reusing compatible closures checks inherited runtime requirements against private child overrides. Protected lock entries retain the actual parent versions rather than different publication pins.
 - Both public dependency-planning regression cases fail before the repair. The complete pack environment file passes 60 tests after it, including compatible reuse and conflicting inherited constraints.
+- Complete existing Linux CPU suite: 4050 passed, 14 skipped. Contributor setup reused already retained wheel objects through a validation-only cache-seeding hook; normal digest/size checks, assertions and deadlines were unchanged. Ruff and Linux/Windows Pyright pass.
 
 # Shared inference API restore identity
 
