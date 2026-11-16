@@ -7,11 +7,13 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .environment_downloads import fetch_artifact
@@ -27,8 +29,21 @@ def _github_json(path: str) -> dict[str, Any]:
         "https://api.github.com/" + path,
         headers={"Accept": "application/vnd.github+json", "User-Agent": "dinkster-env"},
     )
-    with urlopen(request, timeout=30) as response:
-        payload = response.read(ENVIRONMENT_METADATA_LIMIT_BYTES + 1)
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = response.read(ENVIRONMENT_METADATA_LIMIT_BYTES + 1)
+    except HTTPError as exc:
+        hint = (
+            "; GitHub may require GITHUB_TOKEN when its anonymous rate limit is exhausted"
+            if exc.code in {403, 429}
+            else ""
+        )
+        raise EnvironmentError(
+            f"frontend CI metadata request failed: {request.full_url}: HTTP {exc.code}{hint}"
+        ) from exc
     if len(payload) > ENVIRONMENT_METADATA_LIMIT_BYTES:
         raise EnvironmentError("frontend CI metadata exceeds eight MiB")
     return json.loads(payload)

@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from collections.abc import Callable
 from http.client import HTTPException
 from pathlib import Path
-from typing import cast
 
 from dinkster_assets import (
     AssetError,
@@ -16,7 +12,6 @@ from dinkster_assets import (
     AssetRef,
     AssetWriter,
     MountDef,
-    MountsError,
     RemoteSource,
     SaveTarget,
 )
@@ -25,6 +20,7 @@ from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
 from dinkster_assets.vault import AssetPublicationError
 
+from .model_settings import ModelSettings
 from .mounts_api import MountService
 
 QUICKSTART_CHECKPOINT = AssetNeed(
@@ -44,110 +40,45 @@ QUICKSTART_CHECKPOINT = AssetNeed(
     },
 )
 
-MODEL_FOLDERS = {
-    "model/checkpoint": "checkpoints",
-    "model/lora": "loras",
-    "model/vae": "vae",
-    "model/text-encoder": "text_encoders",
-    "model/diffusion": "diffusion_models",
-    "model/controlnet": "controlnet",
-    "model/upscale": "upscale_models",
-    "model/upscaler": "upscale_models",
-    "model/embedding": "embeddings",
-    "model/clip-vision": "clip_vision",
-}
-
 
 def shared_model_mounts() -> tuple[MountDef, ...]:
     """Load model locations independently of the currently selected project library."""
-    home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
-    settings = home / "model-settings.json"
-    if not settings.exists():
-        home.mkdir(parents=True, exist_ok=True)
-        default = {
-            "version": 1,
-            "downloadLocation": "models",
-            "locations": [
-                {
-                    "id": "models",
-                    "path": str(Path.home() / "Dinkster" / "Models"),
-                    "mode": "readwrite",
-                }
-            ],
-        }
-        descriptor, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=home)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-                json.dump(default, output, indent=2)
-                output.flush()
-                os.fsync(output.fileno())
-            try:
-                os.link(temporary, settings)
-            except FileExistsError:
-                pass
-        finally:
-            Path(temporary).unlink(missing_ok=True)
-    try:
-        raw: object = json.loads(settings.read_text("utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError("expected model settings object")
-        data = cast("dict[str, object]", raw)
-        locations = data.get("locations")
-        if data.get("version") != 1 or not isinstance(locations, list):
-            raise ValueError("expected version 1 model locations")
-        download_location = data.get("downloadLocation")
-        if not isinstance(download_location, str):
-            raise ValueError("expected a default download location id")
-        mounts: list[MountDef] = []
-        writable: set[str] = set()
-        for index, item in enumerate(cast("list[object]", locations)):
-            if not isinstance(item, dict):
-                raise ValueError("expected model location object")
-            row = cast("dict[str, object]", item)
-            location, root, mode = row["id"], row["path"], row["mode"]
-            if not all(isinstance(value, str) for value in (location, root, mode)):
-                raise ValueError("model location fields must be strings")
-            root = Path(cast("str", root)).expanduser()
-            if not root.is_absolute():
-                raise ValueError("model location path must be absolute")
-            priority = 0 if location == download_location else 2 * (index + 1)
-            if mode == "readwrite":
-                writable.add(cast("str", location))
-            for kind, folder in MODEL_FOLDERS.items():
-                mounts.append(
-                    MountDef(
-                        f"{location}-{kind.split('/')[1]}",
-                        root / folder,
-                        cast("str", mode),
-                        priority=priority,
-                        kind=kind,
-                    )
-                )
-            mounts.append(
-                MountDef(
-                    f"{location}-clip",
-                    root / "clip",
-                    cast("str", mode),
-                    priority=priority + 1,
-                    kind="model/text-encoder",
-                )
-            )
-        if len({mount.id for mount in mounts}) != len(mounts):
-            raise ValueError("duplicate model location ids")
-        if download_location not in writable:
-            raise ValueError("default download location must name a writable model location")
-        for mount in mounts:
-            if mount.mode == "readwrite":
-                mount.path.mkdir(parents=True, exist_ok=True)
-        return tuple(mounts)
-    except (OSError, ValueError, KeyError, MountsError) as exc:
-        raise MountsError(f"cannot load shared model settings: {exc}") from exc
+    return ModelSettings.load().prepare()
 
 
 class ModelDownloads:
     def __init__(self, mounts: MountService, provenance: ProvenanceStore) -> None:
         self.mounts = mounts
         self.provenance = provenance
+
+    def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
+        enabled = self.mounts.project_context(project).mounts
+        matches: set[str] = set()
+        for mount in self.mounts.table.ready_snapshot():
+            for ref in mount.refs:
+                if ref.digest != digest:
+                    continue
+                if mount.mount_id not in enabled:
+                    matches.add(mount.mount_id)
+                else:
+                    try:
+                        resolved = self.mounts.table.ref(ref.virtual_path)
+                        if resolved.digest != digest:
+                            continue
+                        with resolved.open():
+                            return ()
+                    except (AssetError, OSError):
+                        pass
+        if not matches:
+            return ()
+        settings = self.mounts.model_settings()
+        if settings is None:
+            return ()
+        return tuple(
+            location.id
+            for location in settings.locations
+            if matches.intersection(mount.id for mount in location.mounts(0))
+        )
 
     def _target(self, need: AssetNeed, project: str) -> MountDef | None:
         table = self.mounts.table

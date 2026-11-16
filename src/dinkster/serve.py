@@ -1742,6 +1742,7 @@ def main(argv: list[str] | None = None) -> None:
             mounts_config,
             allow_changes=args.allow_mount_changes,
             restart_for_changes=args.sandbox_packs,
+            shared_models=args.allow_mount_changes or args.generation is not None,
         )
         mount_service.projects.initialize(
             mount_service.mount_ids(),
@@ -2117,6 +2118,9 @@ def main(argv: list[str] | None = None) -> None:
                 import_mount=import_mount,
                 acquire_model=model_downloads.acquire if model_downloads else None,
                 model_destination=model_downloads.destination if model_downloads else None,
+                disabled_model_locations=(
+                    model_downloads.disabled_locations if model_downloads else None
+                ),
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.

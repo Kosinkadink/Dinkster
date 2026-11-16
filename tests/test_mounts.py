@@ -1455,6 +1455,9 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
                     assert str(tmp_path) not in await response.text()
                 for method, path, body in (
                     ("GET", "/api/mounts/locations", None),
+                    ("GET", "/api/models/settings", None),
+                    ("PUT", "/api/models/settings", {}),
+                    ("PUT", "/api/models/locations/models/projects/default", {"enabled": True}),
                     (
                         "POST",
                         "/api/mounts/resolve-path",

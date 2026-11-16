@@ -325,3 +325,640 @@ def test_huggingface_refuses_unverified_provider_metadata(
     monkeypatch.setattr(huggingface, "open_model_response", respond)
     with pytest.raises(AssetError):
         select_huggingface_file("https://huggingface.co/acme/model/resolve/main/model.safetensors")
+
+
+def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountTable
+    from dinkster_values.asset_folders import use_asset_folders
+
+    from dinkster.model_settings import ModelSettings
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    settings = tmp_path / "settings"
+    settings.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(settings))
+    document = {
+        "version": 1,
+        "downloadLocation": "common",
+        "locations": [
+            {
+                "id": name,
+                "path": str(tmp_path / name),
+                "mode": "readwrite" if name == "common" else "read",
+                "visibility": mode,
+            }
+            for name, mode in (
+                ("required", "always-on"),
+                ("common", "default-on"),
+                ("private", "opt-in"),
+            )
+        ],
+    }
+    path = settings / "model-settings.json"
+    path.write_text(json.dumps(document))
+    model_settings = ModelSettings.load()
+    table = MountTable()
+    for mount in model_settings.prepare():
+        table.add(mount, source="shared-models")
+    private = tmp_path / "private" / "checkpoints"
+    private.mkdir(parents=True)
+    payload = b"opt-in checkpoint, intentionally not indexed"
+    (private / "private.safetensors").write_bytes(payload)
+    service = MountService(
+        table, tmp_path / "library" / "mounts.toml", allow_changes=True, shared_models=True
+    )
+    categories = (
+        "checkpoint",
+        "lora",
+        "vae",
+        "text-encoder",
+        "diffusion",
+        "controlnet",
+        "upscale",
+        "upscaler",
+        "embedding",
+        "clip-vision",
+        "clip",
+    )
+    required = tuple(f"required-{category}" for category in categories)
+    common = tuple(f"common-{category}" for category in categories)
+    optional = tuple(f"private-{category}" for category in categories)
+    for project in ("first", "second"):
+        assert set(service.project_context(project).mounts) == set(required + common)
+        with use_asset_folders(service.project_context(project)):
+            assert table.bind_name("private.safetensors", "model/checkpoint") is None
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            # An always-on location cannot be silently disabled by the old folder editor.
+            response = await client.put(
+                "/api/mounts/projects/first", json={"mounts": list(common), "outputMount": None}
+            )
+            assert response.status == 400
+            assert "always-on" in (await response.json())["error"]
+            response = await client.put(
+                "/api/mounts/projects/first",
+                json={"mounts": list(required + optional[:1]), "outputMount": None},
+            )
+            assert response.status == 400
+            assert "complete model location" in (await response.json())["error"]
+            chosen = list(required + optional)
+            response = await client.put(
+                "/api/mounts/projects/first", json={"mounts": chosen, "outputMount": None}
+            )
+            assert response.status == 200
+            assert [row["id"] for row in (await response.json())["mounts"]] == chosen
+            assert set(service.project_context("second").mounts) == set(required + common)
+            with use_asset_folders(service.project_context("first")):
+                ref = table.bind_name("private.safetensors", "model/checkpoint")
+                assert ref is not None and ref.read_bytes() == payload
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+    restarted = MountService(
+        table, tmp_path / "library" / "mounts.toml", allow_changes=True, shared_models=True
+    )
+    assert restarted.project_context("first").mounts == required + optional
+    assert set(restarted.project_context("second").mounts) == set(required + common)
+    # Shared mode edits take effect in both running project libraries, not only on restart.
+    document["locations"][1]["visibility"] = "always-on"
+    document["locations"][2]["visibility"] = "default-on"
+    path.write_text(json.dumps(document))
+    for owner in (service, restarted):
+        assert set(owner.project_context("first").mounts) == set(required + common + optional)
+        assert set(owner.project_context("second").mounts) == set(required + common + optional)
+    assert (private / "private.safetensors").read_bytes() == payload
+
+
+@pytest.mark.parametrize("invalid", ["visibility", "duplicate-path"])
+def test_invalid_model_folder_modes_leave_existing_bytes_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    from dinkster_assets import MountsError
+
+    from dinkster.model_downloads import shared_model_mounts
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    (existing / "keep.bin").write_bytes(b"do not change")
+    rows = [
+        {"id": "first", "path": str(existing), "mode": "readwrite", "visibility": "default-on"},
+        {
+            "id": "second",
+            "path": str(existing if invalid == "duplicate-path" else tmp_path / "uncreated"),
+            "mode": "readwrite",
+            "visibility": "hidden" if invalid == "visibility" else "opt-in",
+        },
+    ]
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps({"version": 1, "downloadLocation": "first", "locations": rows})
+    )
+    with pytest.raises(MountsError):
+        shared_model_mounts()
+    assert sorted(path.name for path in existing.iterdir()) == ["keep.bin"]
+    assert (existing / "keep.bin").read_bytes() == b"do not change"
+    assert not (tmp_path / "uncreated").exists()
+
+
+def test_explicit_digest_requires_enabled_folder_before_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import AssetVault, LibraryStore, MountDef, MountTable
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import ServerLibrary
+    from dinkster_server.preflight import asset_preflight
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "checkpoints"
+    root.mkdir()
+    payload = b"model in an opt-in folder"
+    (root / "model.safetensors").write_bytes(payload)
+    digest = digest_bytes(payload)
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {
+                        "id": "studio",
+                        "path": str(root),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "opt-in",
+                    }
+                ],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models", kind="model/checkpoint")
+        table.scan(mount.id)
+    service = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
+    store = LibraryStore(tmp_path / "library.sqlite")
+    library = ServerLibrary(
+        vault=AssetVault(tmp_path / "bytes"),
+        store=store,
+        local_resolver=table,
+        disabled_model_locations=downloads.disabled_locations,
+    )
+    try:
+        expected = [
+            {
+                "digest": digest,
+                "name": "model.safetensors",
+                "status": "missing",
+                "sources": [],
+                "fetchable": False,
+                "disabledLocations": ["studio"],
+                "detail": "Folder not enabled for this project",
+            }
+        ]
+        for consent in (set(), {digest}):
+            assert (
+                asset_preflight(library, {digest: "model.safetensors"}, consent, {}, project="work")
+                == expected
+            )
+        service.update_project("work", ["studio-checkpoint"], None)
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="work") == []
+        )
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == expected
+        )
+        duplicate = tmp_path / "enabled-copy"
+        duplicate.mkdir()
+        (duplicate / "same.safetensors").write_bytes(payload)
+        table.add(MountDef("copy", duplicate, "read"))
+        table.scan("copy")
+        service.update_project("other", ["copy"], None)
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == []
+        )
+        (duplicate / "same.safetensors").unlink()
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == expected
+        )
+        (duplicate / "same.safetensors").write_bytes(payload)
+        table.scan("copy")
+        snapshot = table.ready_snapshot
+
+        def rescan_after_snapshot():
+            captured = snapshot()
+            (duplicate / "same.safetensors").write_bytes(b"different model")
+            table.scan("copy")
+            return captured
+
+        with monkeypatch.context() as patch:
+            patch.setattr(table, "ready_snapshot", rescan_after_snapshot)
+            assert downloads.disabled_locations(digest, "other") == ("studio",)
+        table.remove("copy")
+        with library.vault.writer(digest) as writer:
+            writer.write(payload)
+            writer.commit()
+        assert (
+            asset_preflight(library, {digest: "model.safetensors"}, set(), {}, project="other")
+            == []
+        )
+        assert (root / "model.safetensors").read_bytes() == payload
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("visibility", ["opt-in", "default-on"])
+def test_model_layout_edits_preserve_whole_location_project_choices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, visibility: str
+) -> None:
+    from dinkster_assets import MountTable
+
+    from dinkster.model_settings import ModelSettings
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    location = {
+        "id": "studio",
+        "path": str(tmp_path / "models"),
+        "mode": "read",
+        "kind": "model/checkpoint",
+        "visibility": visibility,
+    }
+    settings_path = tmp_path / "model-settings.json"
+
+    def configure(kind: str) -> None:
+        location["kind"] = kind
+        settings_path.write_text(
+            json.dumps({"version": 1, "downloadLocation": None, "locations": [location]})
+        )
+
+    configure("model/checkpoint")
+    service = MountService(MountTable(), tmp_path / "mounts.toml", shared_models=True)
+    service.refresh_models()
+    service.update_project("enabled", ["studio-checkpoint"], None)
+    service.update_project("disabled", [], None)
+    for kind in ("", "model/vae", "model/checkpoint", ""):
+        configure(kind)
+        expected = {mount.id for mount in ModelSettings.load().mounts()}
+        assert set(service.project_context("enabled").mounts) == expected
+        assert service.project_context("disabled").mounts == ()
+        assert set(service.project_context("untouched").mounts) == (
+            expected if visibility == "default-on" else set()
+        )
+        restarted = MountService(MountTable(), tmp_path / "mounts.toml", shared_models=True)
+        assert set(restarted.project_context("enabled").mounts) == expected
+        assert restarted.project_context("disabled").mounts == ()
+
+
+def test_model_group_refresh_preserves_similarly_named_config_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountDef, MountTable
+
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    settings = {
+        "version": 1,
+        "downloadLocation": None,
+        "locations": [
+            {
+                "id": "studio",
+                "path": str(tmp_path / "models"),
+                "kind": "model/checkpoint",
+                "mode": "read",
+                "visibility": "opt-in",
+            }
+        ],
+    }
+    path = tmp_path / "model-settings.json"
+    path.write_text(json.dumps(settings))
+    table = MountTable()
+    table.add(MountDef("studio-vae", tmp_path / "unrelated", "read"))
+    service = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    service.refresh_models()
+    service.update_project("model-only", ["studio-checkpoint"], None)
+    service.update_project("config-only", ["studio-vae"], None)
+    settings["downloadLocation"] = "studio"
+    path.write_text(
+        json.dumps({**settings, "locations": [{**settings["locations"][0], "mode": "readwrite"}]})
+    )
+    assert service.project_context("model-only").mounts == ("studio-checkpoint",)
+    assert service.project_context("config-only").mounts == ("studio-vae",)
+
+
+@pytest.mark.parametrize("sandboxed", [False, True])
+@pytest.mark.parametrize("change", ["remove", "layout", "narrow", "visibility"])
+def test_model_settings_preserve_fixed_project_authority_until_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool, change: str
+) -> None:
+    from dinkster_assets import MountTable
+    from dinkster_assets.provenance import ProvenanceStore
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "keep.safetensors").write_bytes(b"keep the original model")
+    location = {
+        "id": "studio",
+        "path": str(root),
+        "kind": "model/checkpoint",
+        "mode": "read",
+        "visibility": "default-on",
+    }
+    if change == "narrow":
+        del location["kind"]
+        (root / "checkpoints").mkdir()
+        (root / "checkpoints" / "keep.safetensors").write_bytes(b"keep the original model")
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    other = {
+        "id": "other",
+        "path": str(other_root),
+        "kind": "model/checkpoint",
+        "mode": "read",
+        "visibility": "default-on",
+    }
+    settings = {"version": 1, "downloadLocation": None, "locations": [location, other]}
+    (tmp_path / "model-settings.json").write_text(json.dumps(settings))
+
+    def start() -> MountService:
+        table = MountTable()
+        for mount in shared_model_mounts():
+            table.add(mount, source="shared-models")
+            if mount.path.is_dir():
+                table.scan(mount.id)
+        return MountService(
+            table,
+            tmp_path / "mounts.toml",
+            allow_changes=True,
+            restart_for_changes=sandboxed,
+            shared_models=True,
+        )
+
+    service = start()
+    service.refresh_models()
+    service.update_project(
+        "enabled",
+        [mount_id for mount_id in service.mount_ids() if mount_id != "other-checkpoint"],
+        None,
+    )
+    service.update_project("disabled", [], None)
+    before = {
+        project: service.project_context(project).mounts for project in ("enabled", "disabled")
+    }
+    if change == "remove":
+        settings["locations"] = [other]
+    elif change == "layout":
+        del location["kind"]
+    elif change == "narrow":
+        location["kind"] = "model/checkpoint"
+    else:
+        location["visibility"] = "always-on"
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            current = await (await client.get("/api/models/settings")).json()
+            response = await client.put(
+                "/api/models/settings", json={"settings": settings, "revision": current["revision"]}
+            )
+            assert response.status == 200
+            saved = await response.json()
+            assert saved["settings"] == settings
+            assert saved["restartRequired"] is sandboxed
+            if change != "remove":
+                assert saved["locations"][0]["active"] is (not sandboxed)
+            for project in before:
+                active = service.project_context(project).mounts
+                if sandboxed:
+                    assert active == before[project]
+                elif change == "remove":
+                    assert active == ()
+                elif change == "visibility":
+                    assert active == ("studio-checkpoint",)
+            if sandboxed:
+                for project in before:
+                    response = await client.put(
+                        f"/api/models/locations/other/projects/{project}", json={"enabled": True}
+                    )
+                    assert response.status == 409
+                    assert "restart" in (await response.json())["error"]
+                    response = await client.put(
+                        f"/api/mounts/projects/{project}",
+                        json={"mounts": ["other-checkpoint"], "outputMount": None},
+                    )
+                    assert response.status == 409
+                    assert service.project_context(project).mounts == before[project]
+                downloads = ModelDownloads(service, ProvenanceStore(tmp_path / "provenance.json"))
+                digest = digest_bytes(b"keep the original model")
+                assert downloads.disabled_locations(digest, "enabled") == ()
+                assert downloads.disabled_locations(digest, "disabled") == ("studio",)
+            if change != "layout":
+                for project, expected in (("enabled", 200), ("disabled", 403)):
+                    response = await client.get(
+                        f"/api/mounts/studio-checkpoint/entries?project={project}"
+                    )
+                    assert response.status == (
+                        expected
+                        if sandboxed or change == "narrow"
+                        else 404
+                        if change == "remove"
+                        else 200
+                    )
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+    restarted = start()
+    if change == "remove":
+        assert restarted.project_context("enabled").mounts == ()
+    elif change == "visibility":
+        assert restarted.project_context("disabled").mounts == ("studio-checkpoint",)
+    else:
+        enabled = restarted.project_context("enabled").mounts
+        assert (len(enabled) > 1) if change == "layout" else enabled == ("studio-checkpoint",)
+        assert restarted.project_context("disabled").mounts == ()
+    restarted.update_project(
+        "enabled", [*restarted.project_context("enabled").mounts, "other-checkpoint"], None
+    )
+    assert "other-checkpoint" in restarted.project_context("enabled").mounts
+    assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
+
+
+@pytest.mark.parametrize("sandboxed", [False, True])
+def test_model_management_shares_locations_without_deleting_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool
+) -> None:
+    from dinkster_assets import MountTable
+
+    from dinkster.model_settings import ModelSettings
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    home = tmp_path / "settings"
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    home.mkdir()
+    (home / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [],
+            }
+        )
+    )
+    first = MountService(
+        MountTable(),
+        tmp_path / "first" / "mounts.toml",
+        allow_changes=True,
+        restart_for_changes=sandboxed,
+        shared_models=True,
+    )
+    second = MountService(
+        MountTable(),
+        tmp_path / "second" / "mounts.toml",
+        allow_changes=True,
+        restart_for_changes=sandboxed,
+        shared_models=True,
+    )
+    models = tmp_path / "existing-comfy" / "checkpoints"
+    models.mkdir(parents=True)
+    original = models / "existing.safetensors"
+    original.write_bytes(b"existing model stays in place")
+
+    async def scenario() -> None:
+        a, b = await make_client(first), await make_client(second)
+        try:
+            empty = await (await a.get("/api/models/settings?project=work")).json()
+            settings = {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {
+                        "id": "existing",
+                        "path": str(models),
+                        "kind": "model/checkpoint",
+                        "mode": "read",
+                        "visibility": "opt-in",
+                    }
+                ],
+            }
+            response = await a.put(
+                "/api/models/settings?project=work",
+                json={
+                    "settings": settings,
+                    "revision": empty["revision"],
+                },
+            )
+            assert response.status == 200
+            added = await response.json()
+            assert added["settings"] == settings
+            assert added["locations"][0]["mounts"] == ["existing-checkpoint"]
+            assert added["locations"][0]["enabled"] is False
+            assert added["locations"][0]["active"] is (not sandboxed)
+            assert added["restartRequired"] is sandboxed
+            assert not (models / "checkpoints").exists()
+            for client in (a, b):
+                response = await client.get("/api/models/settings?project=work")
+                assert response.status == 200
+                state = await response.json()
+                assert state["settings"] == settings
+                assert state["locations"][0]["enabled"] is False
+            if not sandboxed:
+                first.table.scan("existing-checkpoint")
+                second.table.scan("existing-checkpoint")
+                for route in ("entries?q=existing", "list?path="):
+                    response = await a.get(f"/api/mounts/existing-checkpoint/{route}&project=work")
+                    assert response.status == 403
+                    assert (await response.json())["error"] == "folder-not-enabled"
+            response = await a.put(
+                "/api/models/locations/existing/projects/work", json={"enabled": True}
+            )
+            assert response.status == (409 if sandboxed else 200)
+            if sandboxed:
+                assert "restart" in (await response.json())["error"]
+            else:
+                assert (await response.json())["locations"][0]["enabled"] is True
+            assert (await (await b.get("/api/models/settings?project=work")).json())["locations"][
+                0
+            ]["enabled"] is False
+            if not sandboxed:
+                for route in ("entries?q=existing", "list?path="):
+                    response = await a.get(f"/api/mounts/existing-checkpoint/{route}&project=work")
+                    assert response.status == 200
+                    assert [row["name"] for row in (await response.json())["entries"]] == [
+                        "existing.safetensors"
+                    ]
+                    for client, project in ((a, "other"), (b, "work")):
+                        response = await client.get(
+                            f"/api/mounts/existing-checkpoint/{route}&project={project}"
+                        )
+                        assert response.status == 403
+                response = await a.put(
+                    "/api/models/locations/existing/projects/work", json={"enabled": False}
+                )
+                assert response.status == 200
+                response = await a.get("/api/mounts/existing-checkpoint/entries?project=work")
+                assert response.status == 403
+            # A stale editor must not create its requested folder or overwrite the newer settings.
+            stale = {
+                "version": 1,
+                "downloadLocation": "late",
+                "locations": [
+                    {
+                        "id": "late",
+                        "path": str(tmp_path / "must-not-exist"),
+                        "mode": "readwrite",
+                    }
+                ],
+            }
+            response = await b.put(
+                "/api/models/settings", json={"settings": stale, "revision": empty["revision"]}
+            )
+            assert response.status == 409
+            assert not (tmp_path / "must-not-exist").exists()
+            assert ModelSettings.load().to_wire() == settings
+            response = await a.put(
+                "/api/models/settings",
+                json={
+                    "settings": {"version": 1, "downloadLocation": None, "locations": []},
+                    "revision": added["revision"],
+                },
+            )
+            assert response.status == 200
+            assert (await response.json())["settings"]["locations"] == []
+            assert original.read_bytes() == b"existing model stays in place"
+            assert ModelSettings.load().locations == ()
+            for client in (a, b):
+                response = await client.get("/api/models/settings?project=work")
+                assert response.status == 200
+                assert (await response.json())["locations"] == []
+        finally:
+            for service in (first, second):
+                await service.close()
+            for client in (a, b):
+                await client.close()
+
+    run_scenario(scenario())

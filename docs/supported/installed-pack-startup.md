@@ -223,6 +223,10 @@
 - Engine manifests can acquire workspace wheels directly from their exact PyPI
   file URLs, verify the published size and SHA-256, and reuse verified cached
   bytes offline. Release mirrors remain optional wheel fallback sources.
+- Nightly advances automatically at most once per UTC day. An extra publication
+  can be requested through the release workflow with a landed main commit and
+  an issue explaining who will test it. It uses the ordinary verified, signed
+  release path and never selects an older or diverged engine commit.
 - Independent supervisor development wheels and native tools use the supervisor's
   own next-patch public development version, with the same exact wheel bytes as
   the engine release at that source commit. Supervisor-only changes can publish
@@ -993,9 +997,12 @@ a prior plan; return-to-release uses the existing history restore contract.
 `source add URL --frontend --ref REF` and `source update --frontend` select
 browser assets without replacing the release base or engine. Official frontend
 commits use an unexpired, successful CI bundle verified against GitHub's artifact
-digest and the bundle's commit/hash/size metadata. Public nightly.link transport
-requires no login. Missing CI bundles and forks use a local frozen-lockfile pnpm
-build only when Node and pnpm are installed; missing tools are named, and invalid
+digest and the bundle's commit/hash/size metadata. GitHub metadata requests use
+`GITHUB_TOKEN` when set; the token is not sent to artifact downloads or redirects.
+Metadata HTTP failures name the request and rate-limit recovery action.
+Public nightly.link transport requires no login. Missing CI bundles and forks use
+a local frozen-lockfile pnpm build only when Node and pnpm are installed; missing
+tools are named, and invalid
 CI bytes refuse without a build fallback. The source API range must include the
 installed engine API. Exact build origin, source identity and retained wheel bytes
 are disclosed as unpublished/non-reproducible and survive updates and rollback.
