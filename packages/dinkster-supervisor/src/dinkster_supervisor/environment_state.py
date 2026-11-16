@@ -38,8 +38,7 @@ def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None)
     operation = operation or writer_operation.get()
     started = time.monotonic()
     deadline = started + _MAINTENANCE_WAIT_SECONDS
-    holder: dict[str, object] = {}
-    with (root / ".lock").open("a+b") as handle:
+    with (root / ".lock").open("a+b", buffering=0) as handle:
         if os.name == "nt":
             import msvcrt
 
@@ -62,6 +61,7 @@ def writer_lock(root: Path, *, wait: bool = False, operation: str | None = None)
                     raise
                 # Windows locks byte zero; metadata starts after it and remains readable.
                 handle.seek(1)
+                holder: dict[str, object] = {}
                 try:
                     value: object = json.loads(handle.read(4096))
                     if isinstance(value, dict) and value:

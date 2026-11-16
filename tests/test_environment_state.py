@@ -62,6 +62,60 @@ def test_writer_lock_serializes_processes_and_survives_owner_exit(tmp_path: Path
     assert subprocess.run(command, capture_output=True, text=True, timeout=10).stdout == "locked\n"
 
 
+@pytest.mark.parametrize("replacement_record", [b"", b"{", b"[]"])
+def test_writer_lock_does_not_keep_maintenance_identity_after_holder_changes(
+    tmp_path: Path, replacement_record: bytes
+):
+    command = [
+        sys.executable,
+        "-c",
+        """
+import sys
+import time
+from pathlib import Path
+from dinkster_supervisor import environment_state as state
+sleep = time.sleep
+
+def pause(seconds):
+    print('waiting', flush=True)
+    sys.stdin.readline()
+    sleep(0.15)
+
+state.time.sleep = pause
+try:
+    with state.writer_lock(Path(sys.argv[1]), operation='update'):
+        print('entered', flush=True)
+except state.EnvironmentError as exc:
+    print(str(exc), flush=True)
+""",
+        str(tmp_path),
+    ]
+    with subprocess.Popen(
+        command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    ) as process:
+        try:
+            assert process.stdin is not None and process.stdout is not None
+            with writer_lock(tmp_path, operation="maintenance"):
+                assert process.stdout.readline() == "waiting\n"
+            with writer_lock(tmp_path, operation="update"):
+                # Pause the replacement owner between truncation and metadata publication.
+                with (tmp_path / ".lock").open("r+b", buffering=0) as metadata:
+                    metadata.seek(1)
+                    metadata.truncate(1)
+                    metadata.write(replacement_record)
+                process.stdin.write("continue\n")
+                process.stdin.flush()
+                refused = process.stdout.readline()
+                assert "another environment writer holds" in refused
+                assert "operation=unknown" in refused
+                assert "maintenance" not in refused
+                assert process.wait(timeout=10) == 0
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+
+
 @pytest.mark.parametrize("operation", ["maintenance", "update"])
 def test_writer_lock_bounds_maintenance_wait_and_refuses_explicit_writer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
