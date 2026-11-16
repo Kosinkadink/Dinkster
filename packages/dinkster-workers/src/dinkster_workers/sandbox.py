@@ -412,7 +412,7 @@ def _launch_environment(spec: LaunchSpec, policy: SandboxPolicy) -> dict[str, st
     environment = {
         name: os.environ[name]
         for name in passthrough
-        if name not in HOST_OWNED_ENVIRONMENT and name in os.environ
+        if name.upper() not in HOST_OWNED_ENVIRONMENT and name in os.environ
     }
     environment.update(
         {

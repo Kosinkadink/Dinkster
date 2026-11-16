@@ -214,8 +214,11 @@ def test_windows_readiness_refuses_tampered_or_routed_executors(
     )
     readiness = detect_windows_sandbox()
     assert readiness.available
-    assert "On native Windows 11, DNS lookups can still resolve" in readiness.detail
-    assert "packs with network access" in readiness.detail
+    assert "On native Windows 11, DNS lookups can leave the sandbox" in readiness.detail
+    assert (
+        "even when HTTPS destinations are restricted (Microsoft MXC issue 1666)."
+        in readiness.detail
+    )
     executable.write_bytes(b"changed-host-test-executor")
     assert not detect_windows_sandbox().available
     executable.write_bytes(b"trusted-host-test-executor")
@@ -247,15 +250,19 @@ def worker_failure(error: str, stderr_path: Path) -> AssertionError:
     return AssertionError(f"{error}\nworker stderr:\n{stderr_path.read_text(encoding='utf-8')}")
 
 
-def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
+@pytest.mark.parametrize("mxc_key", ["DINKSTER_MXC_EXECUTABLE", "dinkster_mxc_executable"])
+def test_plain_launcher_strips_host_executor_but_preserves_explicit_scratch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mxc_key: str,
 ) -> None:
     monkeypatch.setenv("DINKSTER_PACK_SCRATCH", "/inherited/untrusted")
+    monkeypatch.setenv(mxc_key, "/host/executor")
     absent_result = tmp_path / "absent.txt"
     trusted_result = tmp_path / "trusted.txt"
     script = (
         "import os, sys; from pathlib import Path; "
+        "assert not any(key.upper() == 'DINKSTER_MXC_EXECUTABLE' for key in os.environ); "
         "Path(sys.argv[1]).write_text(os.environ.get('DINKSTER_PACK_SCRATCH', '<absent>'))"
     )
 
@@ -273,7 +280,7 @@ def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
             make_spec(
                 tmp_path,
                 command=(sys.executable, "-c", script, str(trusted_result)),
-                env={"DINKSTER_PACK_SCRATCH": "/host-owned"},
+                env={"DINKSTER_PACK_SCRATCH": "/host-owned", mxc_key: "/explicit/executor"},
             )
         )
         assert await trusted.wait() == 0

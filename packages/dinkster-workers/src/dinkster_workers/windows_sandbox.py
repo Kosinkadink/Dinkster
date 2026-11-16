@@ -87,8 +87,8 @@ def detect_windows_sandbox() -> WindowsSandboxCapability:
     return WindowsSandboxCapability(
         True,
         str(executable),
-        "Pack sandboxing is available. On native Windows 11, DNS lookups can still "
-        "resolve for packs with network access until Microsoft fixes MXC issue 1666.",
+        "Pack sandboxing is available. On native Windows 11, DNS lookups can leave "
+        "the sandbox even when HTTPS destinations are restricted (Microsoft MXC issue 1666).",
     )
 
 
