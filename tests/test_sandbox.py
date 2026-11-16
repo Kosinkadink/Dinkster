@@ -597,6 +597,140 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    @pytest.mark.parametrize("sandbox,granted", [(False, False), (True, False), (True, True)])
+    @pytest.mark.parametrize("catalog", [False, True])
+    @pytest.mark.parametrize("parts", [False, True])
+    def test_cpu_group_survives_ungranted_gpu_member(
+        self, tmp_path: Path, sandbox: bool, granted: bool, catalog: bool, parts: bool
+    ) -> None:
+        from dinkster_workers.doctor import prepare_catalog
+
+        from dinkster.compose import CompositionError, PackSpec, ServingComposer
+
+        manifests = []
+        for name, gpu in (
+            ("cpu-one", False),
+            ("cpu-two", False),
+            ("gpu-only", True),
+            ("gpu-denied", True),
+        ):
+            root = tmp_path / name
+            root.mkdir()
+            module = name.replace("-", "_")
+            manifest = root / "dinkster-pack.toml"
+            manifest.write_text(
+                f'[pack]\nname="{name}"\npublisher="dinkster"\nnamespaces=["{module}"]\n'
+                f"[pack.sandbox]\ngpu={str(not gpu if parts else gpu).lower()}\n"
+                f'[pack.entry]\nnodes="{module}:NODES"\n'
+                + (
+                    '[[pack.parts]]\nname="selected"\n'
+                    f"[pack.parts.sandbox]\ngpu={str(gpu).lower()}\n"
+                    f'[pack.parts.entry]\nnodes="{module}:NODES"\n'
+                    if parts
+                    else ""
+                ),
+                encoding="ascii",
+            )
+            (root / f"{module}.py").write_text(
+                "import json, os\n"
+                "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+                "class Probe(Node):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                f"        return NodeSchema(node_type='{module}.echo', outputs=(\n"
+                "            OutputSpec('report', TypeExpr.concrete('STRING')),))\n"
+                "    @classmethod\n"
+                "    def execute(cls):\n"
+                "        report = {key: os.readlink('/proc/self/ns/' + key) "
+                "for key in ('user', 'pid', 'net')}\n"
+                "        report['process'] = os.getpid()\n"
+                "        report['gpu_device'] = os.path.exists('/dev/nvidiactl')\n"
+                f"        report['value'] = '{name}: Pack sandbox | 966'\n"
+                "        return cls.outputs(report=json.dumps(report))\n"
+                "NODES=(Probe,)\n",
+                encoding="ascii",
+            )
+            manifests.append(manifest)
+        part = "selected" if parts else None
+        if catalog:
+            for manifest in manifests:
+                assert prepare_catalog(manifest, part=part).ok
+        specs = tuple(
+            PackSpec(
+                manifest,
+                part=part,
+                worker_group="inference",
+                group_manifests=tuple(manifests),
+                group_parts=(part,) * len(manifests),
+                require_catalog=catalog,
+            )
+            for manifest in manifests
+        )
+        host = {key: os.readlink("/proc/self/ns/" + key) for key in ("user", "pid", "net")}
+
+        async def scenario() -> None:
+            composer = ServingComposer(
+                sandbox_policy=SandboxPolicy() if sandbox else None,
+                sandbox_gpu_grants=("gpu-only",) if granted else (),
+                worker_env={"CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+            )
+            try:
+                if sandbox:
+                    with pytest.raises(CompositionError, match="not a member of worker group"):
+                        await composer.add_pack(
+                            replace(
+                                specs[0],
+                                group_manifests=tuple(manifests[1:]),
+                                group_parts=(part,) * (len(manifests) - 1),
+                            )
+                        )
+                if granted or not sandbox:
+                    await composer.add_pack(specs[2])
+                else:
+                    with pytest.raises(
+                        CompositionError,
+                        match=f"not granted for: gpu-only{'~selected' if parts else ''}$",
+                    ):
+                        await composer.add_pack(specs[2])
+                if sandbox:
+                    with pytest.raises(
+                        CompositionError,
+                        match=f"not granted for: gpu-denied{'~selected' if parts else ''}$",
+                    ):
+                        await composer.add_pack(specs[3])
+                else:
+                    await composer.add_pack(specs[3])
+                for spec in specs[:2]:
+                    await composer.add_pack(spec)
+                for _ in range(2):
+                    engine = composer.composition.make_engine(lambda _event: None)
+                    names = (
+                        ("cpu_one", "cpu_two", "gpu_only")
+                        if granted or not sandbox
+                        else ("cpu_one", "cpu_two")
+                    )
+                    nodes = {name: GraphNode(name + ".echo", {}) for name in names}
+                    result = await engine.run(Graph(nodes=nodes), list(nodes))
+                    reports = []
+                    for name in nodes:
+                        report = result.outputs[name]["report"].resolve()
+                        assert isinstance(report, str)
+                        reports.append(json.loads(report))
+                    assert reports[0]["value"] == "cpu-one: Pack sandbox | 966"
+                    assert reports[1]["value"] == "cpu-two: Pack sandbox | 966"
+                    assert len({report["process"] for report in reports}) == 1
+                    if len(reports) == 3:
+                        assert reports[2]["value"] == "gpu-only: Pack sandbox | 966"
+                    for report in reports:
+                        assert all((report[key] != host[key]) == sandbox for key in host)
+                        if sandbox and not granted:
+                            assert report["gpu_device"] is False
+                    await composer.reload_pack("cpu-one~selected" if parts else "cpu-one", specs[0])
+            finally:
+                await composer.close()
+
+        run_scenario(scenario())
+
     def test_kernel_interfaces_are_denied_but_dataloader_and_shared_memory_work(
         self, tmp_path: Path
     ) -> None:

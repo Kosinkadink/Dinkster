@@ -1606,6 +1606,300 @@ NODES = [Touch, Plain]
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("refusal", [None, "conflict", "network", "optout"])
+def test_generation_admits_multipart_pack_atomically_and_runs_selected_parts(
+    tmp_path: Path, refusal: str | None
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
+
+    protected = [
+        _wheel(tmp_path, name, version, module, "VALUE = 1\n")
+        for name, version, module in (
+            ("torch", "2.14.1+cpu", "torch"),
+            ("dinkster-inference", "0.1.2", "dinkster_inference"),
+            ("comfy-aimdo", "0.6.0", "comfy_aimdo"),
+            ("dinkster-api", "0.0.8", "dinkster_api"),
+        )
+    ]
+    generation = tmp_path / "managed"
+    parent = _generation(generation / "python", protected)
+    if os.name != "nt":
+        (parent.parent / "python3").symlink_to(parent.name)
+    store = tmp_path / "wheels"
+    for wheel in protected:
+        fetch_wheel(wheel, store)
+    entries = []
+    artifacts = {}
+    for name in ("owner", "helper"):
+        root = tmp_path / name
+        root.mkdir()
+        (root / f"{name}_nodes.py").write_text(
+            """import os
+from dinkster_schema import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr
+from dinkster_values import register_resident_type
+STATE = TypeExpr.concrete("owner.STATE")
+INT = TypeExpr.concrete("INT")
+def register_types(registry): register_resident_type(registry, "owner.STATE")
+class Source(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(node_type="owner.source", outputs=(
+            OutputSpec("state", STATE), OutputSpec("pid", INT)))
+    @classmethod
+    def execute(cls): return cls.outputs(state={"weight": 7}, pid=os.getpid())
+class Touch(Node):
+    factor = 3
+    node_type = "helper.touch"
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(node_type=cls.node_type, inputs=(
+            InputSpec("state", STATE), InputSpec("plain", INT)), outputs=(
+            OutputSpec("value", INT), OutputSpec("pid", INT)))
+    @classmethod
+    def execute(cls, state, plain):
+        return cls.outputs(value=state["weight"] * cls.factor + plain, pid=os.getpid())
+class Patch(Touch):
+    factor = 5
+    node_type = "helper.patch"
+class Plain(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(node_type="helper.plain", outputs=(
+            OutputSpec("value", INT), OutputSpec("pid", INT)))
+    @classmethod
+    def execute(cls): return cls.outputs(value=11, pid=os.getpid())
+SOURCE = (Source,)
+MAIN = (Touch,)
+PATCH = (Patch,)
+PLAIN = (Plain,)
+"""
+        )
+        text = (
+            f'[pack]\nname="{name}"\npublisher="'
+            + ("dinkster" if name == "owner" else "example")
+            + f'"\nnamespaces=["{name}"]\n'
+            + ('type-namespaces=["owner.STATE"]\n' if name == "owner" else "")
+            + "[pack.entry]\n"
+            + (
+                'nodes="nodes:SOURCE"\ntypes="nodes:register_types"\n'
+                if name == "owner"
+                else 'nodes="nodes:MAIN"\n'
+            )
+        )
+        if name == "helper":
+            text += '[[pack.parts]]\nname="patch"\n'
+            if refusal == "conflict":
+                text += 'requires=["comfy-aimdo>=0.7"]\n'
+            text += '[pack.parts.entry]\nnodes="nodes:PATCH"\n'
+            if refusal == "network":
+                text += "[pack.parts.sandbox]\nnetwork=true\n"
+            text += '[[pack.parts]]\nname="plain"\n[pack.parts.entry]\nnodes="nodes:PLAIN"\n'
+        (root / "dinkster-pack.toml").write_text(text.replace("nodes:", name + "_nodes:"))
+        archive = tmp_path / f"{name}.zip"
+        digest = build_artifact(root, archive)
+        entries.append(
+            LockedPack(
+                name,
+                "1.0",
+                digest,
+                "dinkster" if name == "owner" else "example",
+                (name,),
+                "registry",
+            )
+        )
+        artifacts[name] = archive
+        for part in (None,) if name == "owner" else (None, "patch", "plain"):
+            dependency = PackLock(
+                name,
+                "linux-cpu",
+                ">=3.12",
+                ("comfy-aimdo>=0.7",) if part == "patch" and refusal == "conflict" else (),
+                (),
+                (),
+                part=part,
+            )
+            environment = generation / "packs" / dependency.execution_id
+            subprocess.run(
+                ["uv", "venv", "--python", str(parent), "--system-site-packages", str(environment)],
+                check=True,
+                capture_output=True,
+            )
+            dependency.write(environment / "pack-lock.json")
+    stage_generation_packs(generation, Lockfile.of(entries), artifacts)
+    for entry in entries:
+        for part in (None,) if entry.pack == "owner" else (None, "patch", "plain"):
+            report = prepare_catalog(
+                generation / "pack-sources" / entry.pack / "dinkster-pack.toml",
+                part=part,
+                interpreter=sys.executable,
+            )
+            assert report.ok, report.findings
+    arguments = [
+        sys.executable,
+        "-m",
+        "dinkster.manager",
+        "--root",
+        "",
+        "prepare-inference",
+        "--generation",
+        str(generation),
+        "--wheel-store",
+        str(store),
+        "--uv-cache",
+        str(tmp_path / "cache"),
+    ]
+    if refusal == "optout":
+        arguments += ["--isolated-inference-pack", "helper"]
+    result = subprocess.run(arguments, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    record = json.loads((generation / "inference-process.json").read_text())
+    assert set(record["members"]) == (
+        {"owner", "helper", "helper~patch"} if refusal is None else {"owner"}
+    )
+    runtime_site = Path(
+        subprocess.check_output(
+            [str(parent), "-c", "import site; print(site.getsitepackages()[0])"], text=True
+        ).strip()
+    )
+    (runtime_site / "runtime.pth").write_text(f"import sys; sys.path[:0] = {sys.path!r}\n")
+    if refusal is not None:
+        assert set(record["refusals"]) == {"helper", "helper~patch"}
+        reason = {
+            "conflict": "comfy-aimdo",
+            "network": "pack.sandbox.network",
+            "optout": "per-pack inference switch",
+        }[refusal]
+        for name, node in (("helper", "helper.touch"), ("helper~patch", "helper.patch")):
+            assert name in record["refusals"][name]["reason"]
+            assert reason in record["refusals"][name]["reason"]
+            if refusal != "optout":
+                assert "helper~patch" in record["refusals"][name]["reason"]
+            assert record["refusals"][name]["nodes"] == [node]
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "isolatedInferencePacks": ["helper"] if refusal == "optout" else [],
+            }
+        )
+    )
+    _, specs = load_generation_packs(generation)
+    assert len(specs) == 4
+    assert {spec.part for spec in specs if Path(spec.manifest).parent.name == "helper"} == {
+        None,
+        "patch",
+        "plain",
+    }
+    assert {name for spec in specs for name in spec.packs or {}} == {"owner", "helper"}
+    for spec in specs:
+        name = Path(spec.manifest).parent.name
+        execution = name if spec.part is None else name + "~" + spec.part
+        assert (spec.worker_group is not None) == (execution in record["members"])
+        if spec.worker_group is not None:
+            assert spec.group_parts == ((None, None, "patch") if refusal is None else (None,))
+        else:
+            assert Path(str(spec.python)).parent.parent.name == execution
+
+    async def scenario() -> None:
+        from dinkster_graph import Graph, GraphNode, Link
+
+        from dinkster.compose import ServingComposer
+
+        composer = ServingComposer()
+        try:
+            for spec in composer.order_pack_entries(specs):
+                await composer.add_pack(spec)
+            assert set(composer.composition.packs) == {"owner", "helper"}
+            assert set(composer.pack_specs()) == {"owner", "helper", "helper~patch", "helper~plain"}
+            for _ in range(2):
+                graph = Graph(
+                    nodes={
+                        "source": GraphNode("owner.source"),
+                        "plain": GraphNode("helper.plain"),
+                        "touch": GraphNode(
+                            "helper.touch",
+                            {"state": Link("source", "state"), "plain": Link("plain", "value")},
+                        ),
+                        "patch": GraphNode(
+                            "helper.patch",
+                            {"state": Link("source", "state"), "plain": Link("plain", "value")},
+                        ),
+                    }
+                )
+                engine = composer.composition.make_engine(lambda _event: None)
+                targets = (
+                    ["plain"] if refusal is not None else ["source", "plain", "touch", "patch"]
+                )
+                run = await engine.run(graph, targets)
+                assert run.outputs["plain"]["value"].resolve() == 11
+                if refusal is None:
+                    assert run.outputs["touch"]["value"].resolve() == 32
+                    assert run.outputs["patch"]["value"].resolve() == 46
+                    assert (
+                        run.outputs["touch"]["pid"].resolve()
+                        == run.outputs["source"]["pid"].resolve()
+                    )
+                    assert (
+                        run.outputs["patch"]["pid"].resolve()
+                        == run.outputs["source"]["pid"].resolve()
+                    )
+                    assert (
+                        run.outputs["plain"]["pid"].resolve()
+                        != run.outputs["source"]["pid"].resolve()
+                    )
+                else:
+                    from aiohttp.test_utils import TestClient, TestServer
+                    from dinkster_graph import graph_to_wire
+                    from dinkster_server import STATE_KEY, create_app
+
+                    app = create_app(composer.composition.make_engine, composer.composition.schemas)
+                    async with TestClient(TestServer(app)) as client:
+                        for target, name in (("touch", "helper"), ("patch", "helper~patch")):
+                            response = await client.post(
+                                "/api/jobs",
+                                json={
+                                    "clientId": "multipart",
+                                    "jobId": target,
+                                    "graph": graph_to_wire(
+                                        Graph(
+                                            nodes={
+                                                key: node
+                                                for key, node in graph.nodes.items()
+                                                if key in {"source", "plain", target}
+                                            }
+                                        )
+                                    ),
+                                    "targets": [target],
+                                },
+                            )
+                            refused = await response.json()
+                            assert response.status == 400, refused
+                            assert refused["message"] == record["refusals"][name]["reason"]
+                            assert app[STATE_KEY].queue.get("multipart", target) is None
+                await composer.reload_pack("helper~plain")
+                await composer.reload_pack("owner")
+        finally:
+            await composer.close()
+
+    from tests.async_scenarios import run_scenario
+
+    run_scenario(scenario())
+    if refusal is None:
+        from dinkster.compose import CompositionError
+
+        recorded = generation / "inference-process.json"
+        original = recorded.read_bytes()
+        record["members"].remove("helper~patch")
+        recorded.write_text(json.dumps(record))
+        with pytest.raises(CompositionError, match="partially admits.*helper.*helper~patch"):
+            load_generation_packs(generation)
+        recorded.write_bytes(original)
+
+
 def test_direct_local_wheel_wins_over_same_version_retained_wheel(tmp_path: Path) -> None:
     older, selected = tmp_path / "older", tmp_path / "selected"
     older.mkdir()
