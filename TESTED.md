@@ -1,3 +1,12 @@
+# CPU sandbox shared groups
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Non-GPU members of a group containing ungranted GPU requesters | X570 Linux CPU, Python 3.14.10 | Live and cold-catalog nodes execute in one sandboxed child before and after reload, with distinct user/PID/network namespaces and no NVIDIA control device. Denied GPU packs refuse individually; an explicit pack grant admits only its requester. Unsandboxed grouping remains shared. |
+
+- Sandbox, composition, reload and activation controls: 126 passed. Ruff format/lint and Linux/Windows-target Pyright pass.
+- This validates source-engine execution, not published Stable or Desktop acceptance.
+
 # Exact model-file reuse
 
 | Scenario | Host | Result |
