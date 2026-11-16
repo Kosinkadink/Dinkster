@@ -1159,6 +1159,7 @@ def test_shared_inference_resolves_requirements_without_changing_parent(tmp_path
             "format": "dinkster.inference-process/2",
             "members": ["model-consumer"] if number >= 3 else ["model-consumer", "model-owner"],
             "environment": "inference/shared-inference",
+            "engineApiVersion": "0.0.8",
         }
         shared = managed / "inference/shared-inference"
         assert subprocess.check_output(

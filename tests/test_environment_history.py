@@ -1654,6 +1654,7 @@ def test_fresh_install_engine_update_pack_install_and_exact_restore(
                 "format": "dinkster.inference-process/2",
                 "members": ["healthy"],
                 "environment": "inference/shared-inference",
+                "engineApiVersion": version("dinkster-api"),
             }
             if pack_route == "command"
             else {"format": "dinkster.inference-process/1", "members": [], "environment": None},

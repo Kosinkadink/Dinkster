@@ -1,3 +1,8 @@
+# Shared inference API restore identity
+
+- Shared-process metadata records the observed parent engine API version. Restore checks it against declared parent versions and validates child compatibility against that recorded identity when a legacy parent manifest omits the API wheel.
+- Three public source/update/rollback controls failed with the synthetic API fallback and pass with the recorded identity. These checks do not establish a full-suite pass; the contributor setup case separately exceeded its deadline downloading dependency wheels.
+
 # Offline shared inference environments
 
 - Compatible published closures reuse verified private wheels without resolving or requiring retained protected baseline wheels. Private transitive requirements are checked against the combined closure and exact protected parent versions before reuse; the incompatible comfy-aimdo control still refuses.

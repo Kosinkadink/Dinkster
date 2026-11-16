@@ -386,6 +386,15 @@ def _pack_missing_inputs(
         for row in selected:
             if row["name"] not in cast("list[str]", base["replaces"]):
                 versions[cast("str", row["name"])] = cast("str", row["version"])
+    if "inference-process.json" in metadata:
+        process = parse_metadata(metadata["inference-process.json"].encode("utf-8"))
+        api = process.get("engineApiVersion")
+        if api is not None:
+            if not isinstance(api, str) or (
+                "dinkster-api" in versions and Version(api) != Version(versions["dinkster-api"])
+            ):
+                raise EnvironmentError("recorded inference API differs from its snapshot")
+            versions["dinkster-api"] = str(Version(api))
     missing: list[dict[str, object]] = []
     in_process = cast("list[str]", snapshot["inProcessPacks"])
     for path, lock in sorted(locks, key=lambda item: item[1]["pack"] not in in_process):
