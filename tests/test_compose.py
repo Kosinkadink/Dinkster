@@ -1169,6 +1169,42 @@ def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Pat
     run_scenario(scenario())
 
 
+def test_remote_catalog_pack_announces_live_nodes_instead_of_prepared_schemas(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname="remote-catalog"\npublisher="dinkster"\nnamespaces=["live"]\n'
+        'node-source="remote-gateway-catalog"\n[pack.entry]\nnodes="remote_catalog:NODES"\n'
+    )
+    (tmp_path / "remote_catalog.py").write_text(
+        "import os\nfrom dinkster_api.v1 import Node, NodeSchema\n"
+        "class Prepared(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls): return NodeSchema(node_type='live.prepared')\n"
+        "NODES = [] if os.environ.get('REFUSE_REMOTE') == '1' else [Prepared]\n"
+    )
+    environment = {"PYTHONPATH": str(tmp_path)}
+    assert prepare_catalog(manifest, environment=environment).ok
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    manifest,
+                    require_catalog=True,
+                    env={**environment, "REFUSE_REMOTE": "1"},
+                )
+            )
+            assert "remote-catalog" in composer.composition.packs
+            assert "live.prepared" not in composer.composition.schemas
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
 @pytest.mark.parametrize("replica_cuda_indices", [(), (0, 1)], ids=["lazy", "replica-pool"])
 def test_cold_catalog_pack_renditions_relay_through_composed_registry(
