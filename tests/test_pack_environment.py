@@ -70,6 +70,73 @@ def _wheel(
     )
 
 
+@pytest.mark.parametrize("engine", [None, ">=0.1,<0.2"])
+def test_execution_part_lock_preserves_release_identity_and_roundtrips(engine: str | None) -> None:
+    main = PackLock("example", "linux-cpu", ">=3.12", ("humanize==4.13.0",), (), (), engine)
+    part = replace(main, requirements=("humanize==4.12.3",), part="face")
+    main_data = json.loads(main.to_json())
+    part_data = json.loads(part.to_json())
+    assert main_data["format"] == (
+        "dinkster.pack-lock/1" if engine is None else "dinkster.pack-lock/2"
+    )
+    assert "part" not in main_data
+    assert part_data["format"] == "dinkster.pack-lock/3"
+    assert part_data["part"] == "face"
+    assert part_data["pack"] == main_data["pack"] == "example"
+    assert PackLock.from_json(main.to_json()) == main
+    assert PackLock.from_json(part.to_json()) == part
+    assert main.requirements != part.requirements
+
+
+@pytest.mark.parametrize("part", [None, "", "main", "../face", "Face", 7])
+def test_execution_part_lock_rejects_missing_or_invalid_selectors(part: object) -> None:
+    data = json.loads(PackLock("example", "linux-cpu", ">=3.12", (), (), ()).to_json())
+    data.update(format="dinkster.pack-lock/3", part=part)
+    with pytest.raises(ProvisionError, match="execution part"):
+        PackLock.from_json(json.dumps(data))
+
+
+def test_lock_cli_resolves_only_selected_part_without_importing_pack(tmp_path: Path) -> None:
+    wheel = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "VALUE = 23\n")
+    (tmp_path / "dinkster-pack.toml").write_text(
+        '[pack]\nname="example"\nrequires=["fixture-extra==2.0"]\n'
+        '[pack.entry]\nnodes="example.main:NODES"\n'
+        '[[pack.parts]]\nname="face"\nrequires=["fixture-extra==1.2"]\n'
+        '[pack.parts.entry]\nnodes="example.face:NODES"\n'
+    )
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("fixture-extra==1.2\n")
+    output = tmp_path / "face-lock.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_workers.pack_lock",
+            str(tmp_path),
+            "--part",
+            "face",
+            "--variant",
+            "linux-cpu",
+            "--generation-python",
+            sys.executable,
+            "--constraints",
+            str(constraints),
+            "--find-links",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    lock = PackLock.read(output)
+    assert lock.pack == "example" and lock.part == "face"
+    assert lock.requirements == ("fixture-extra==1.2",)
+    assert lock.packages == (LockedDistribution("fixture-extra", "1.2", (wheel,)),)
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 def test_wheel_cache_keeps_same_filename_contents_distinct_and_reuses_offline(
     tmp_path: Path, legacy: bool

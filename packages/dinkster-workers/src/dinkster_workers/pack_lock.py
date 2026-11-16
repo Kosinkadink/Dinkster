@@ -132,10 +132,15 @@ class PackLock:
     indexes: tuple[str, ...]
     packages: tuple[LockedDistribution, ...]
     engine: str | None = None
+    part: str | None = None
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", self.pack):
             raise ProvisionError("invalid pack identity")
+        if self.part is not None and (
+            re.fullmatch(r"[a-z0-9][a-z0-9-]*", self.part) is None or self.part == "main"
+        ):
+            raise ProvisionError("invalid pack execution part")
         SpecifierSet(self.requires_python)
         if self.engine is not None:
             if not self.engine:
@@ -164,8 +169,14 @@ class PackLock:
                 if wheel["registry"] is None:
                     wheel.pop("registry")
         data["format"] = (
-            "dinkster.pack-lock/2" if self.engine is not None else "dinkster.pack-lock/1"
+            "dinkster.pack-lock/3"
+            if self.part is not None
+            else "dinkster.pack-lock/2"
+            if self.engine is not None
+            else "dinkster.pack-lock/1"
         )
+        if self.part is None:
+            data.pop("part")
         if self.engine is None:
             data.pop("engine")
         data["requiresPython"] = data.pop("requires_python")
@@ -186,11 +197,26 @@ class PackLock:
                 raise ValueError("dependency lock must be an object")
             data = cast("dict[str, Any]", raw)
             format = data.pop("format")
-            if format not in {"dinkster.pack-lock/1", "dinkster.pack-lock/2"}:
+            if format not in {
+                "dinkster.pack-lock/1",
+                "dinkster.pack-lock/2",
+                "dinkster.pack-lock/3",
+            }:
                 raise ValueError("unsupported dependency lock format")
-            engine = data["engine"] if format == "dinkster.pack-lock/2" else None
-            if format == "dinkster.pack-lock/2" and not isinstance(engine, str):
+            engine = (
+                data["engine"]
+                if format == "dinkster.pack-lock/2"
+                else data.get("engine")
+                if format == "dinkster.pack-lock/3"
+                else None
+            )
+            if (format == "dinkster.pack-lock/2" or engine is not None) and not isinstance(
+                engine, str
+            ):
                 raise ValueError("engine compatibility range must be a string")
+            part = data["part"] if format == "dinkster.pack-lock/3" else None
+            if format == "dinkster.pack-lock/3" and not isinstance(part, str):
+                raise ValueError("execution part must be a string")
             return cls(
                 pack=data["pack"],
                 variant=data["variant"],
@@ -206,6 +232,7 @@ class PackLock:
                     for item in data["packages"]
                 ),
                 engine=engine,
+                part=part,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ProvisionError(f"invalid dependency lock: {exc}") from exc
@@ -532,6 +559,7 @@ def resolve_pack_lock(
     find_links: Sequence[Path] = (),
     requires_python: str = ">=3.12",
     engine: str | None = None,
+    part: str | None = None,
     uv: str = "uv",
     offline: bool = False,
 ) -> PackLock:
@@ -686,7 +714,7 @@ def resolve_pack_lock(
     else:
         engine = None
     return PackLock(
-        pack, variant, requires_python, normalized, tuple(indexes), tuple(packages), engine
+        pack, variant, requires_python, normalized, tuple(indexes), tuple(packages), engine, part
     )
 
 
@@ -695,6 +723,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pack_root", type=Path)
     parser.add_argument("--variant", required=True)
+    parser.add_argument("--part")
     parser.add_argument("--generation-python", type=Path, required=True)
     parser.add_argument("--constraints", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -704,9 +733,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--accelerator")
     parser.add_argument("--uv", default="uv")
     args = parser.parse_args(argv)
-    manifest = load_manifest(args.pack_root / "dinkster-pack.toml")
+    manifest = load_manifest(args.pack_root / "dinkster-pack.toml", part=args.part)
     lock = resolve_pack_lock(
         pack=manifest.name,
+        part=manifest.part,
         variant=args.variant,
         requirements=(
             manifest.requires_for(args.accelerator) if args.accelerator else manifest.requires

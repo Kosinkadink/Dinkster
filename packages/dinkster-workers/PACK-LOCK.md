@@ -13,6 +13,15 @@ The publisher/local-checkout CLI is `python -m dinkster_workers.pack_lock
 or `--find-links <directory>` for an offline wheel source. `--requires-python`
 records the pack's Python constraint; `--accelerator` selects its manifest extras.
 
+`--part <name>` selects a named `[[pack.parts]]` execution declaration in the
+same manifest. Each part declares its own `[pack.parts.entry]`, `requires`,
+`extra-requires` and `[pack.parts.sandbox]`; main-entry dependencies and grants
+are not inherited. Release name, publisher, version, engine range and contracts
+remain those of the parent pack. A part may narrow the parent's node/type claims,
+but cannot expand them. Part names use lowercase letters, digits and hyphens;
+`main` is reserved and duplicate names refuse manifest loading. Manifest selection
+reads data only and never imports the selected entry.
+
 `PackLock.write` writes JSON with these fields:
 
 | Field | Value |
@@ -48,6 +57,11 @@ for this representation. Both formats use the
 distributions.
 The official builder takes the range from the node manifest, or from
 `[tool.dinkster] engine` for an ordinary official library.
+
+Part-specific locks use `dinkster.pack-lock/3`, with a required `part` selector
+and the unchanged parent `pack` identity. The optional `engine` range retains
+the format-2 meaning. Main-entry locks keep their existing format and omit
+`part`; separate part requirements never alter their closure.
 
 ## Alias table
 
