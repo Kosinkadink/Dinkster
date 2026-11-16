@@ -1,3 +1,9 @@
+# Published frontend services markers
+
+- Pinned Frontend 0.1.1.dev423 wheel: verified permanent URL, SHA256, size, embedded accepted source commit and engine API 1 compatibility.
+- Real production, QA and custom-endpoint engines served the extracted wheel. Main and Problems-panel browser assertions passed with the status bar hidden; all six captures were inspected. This does not claim installed Desktop or hosted paid-service acceptance.
+- Ruff check/format, Pyright and both frontend artifact tests pass on X570 Linux CPU. [Executed evidence and inspected captures](https://ampcode.com/artifacts/qa-services-markers-f6bdc73b-34c1-4ca8-8332-c255b274bdd0).
+
 # Offline shared inference security inventory
 
 - Sealed membership is read and hash-checked inside the security inventory shared by composition, offline status and repair. Callers do not supply independent shared membership.
