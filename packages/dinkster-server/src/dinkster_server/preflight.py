@@ -151,7 +151,11 @@ def bind_model_names(
                         "kind": kind,
                         "status": "missing",
                         "verification": "unverified",
-                        "sources": [],
+                        "sources": (
+                            list(library.model_sources_for_name(value, kind))
+                            if library is not None and library.model_sources_for_name is not None
+                            else []
+                        ),
                         "fetchable": False,
                         "nodeId": node_id,
                         "inputId": spec.id,

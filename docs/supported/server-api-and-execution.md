@@ -271,6 +271,12 @@
   mount hashing. Bindings remain explicitly unverified and omit content
   hashes until a scan verifies the same file revision. Missing names return
   `409 assets-missing`; submission does not hash or download model bytes.
+  Missing bare model names include category-matched source leads declared in
+  official workflow templates, including nested graphs. Equivalent download
+  URLs are deduplicated and conflicting sources remain ambiguous. These leads
+  are advisory and non-fetchable, without a fabricated content digest; local
+  selections and explicit hashes take precedence. Unknown names and unsupported
+  categories have no inferred source.
   Digest-backed public model download plans include `destination` when the host
   has a writable model folder for the project. Without one, the plan is not
   fetchable. Downloading still requires consent to each exact digest.

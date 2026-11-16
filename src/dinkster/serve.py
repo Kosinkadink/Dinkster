@@ -170,6 +170,7 @@ from .resolver_api import add_resolver_index_routes
 from .services import Services, resolve_services
 from .setup import ensure_default_mounts
 from .storelock import hold_lock
+from .template_model_sources import TemplateModelSources
 from .watch import PackWatcher
 from .workflow_requirements_api import add_workflow_requirement_routes
 
@@ -2118,6 +2119,7 @@ def main(argv: list[str] | None = None) -> None:
                 import_mount=import_mount,
                 acquire_model=model_downloads.acquire if model_downloads else None,
                 model_destination=model_downloads.destination if model_downloads else None,
+                model_sources_for_name=TemplateModelSources().for_name,
                 disabled_model_locations=(
                     model_downloads.disabled_locations if model_downloads else None
                 ),

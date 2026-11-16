@@ -9,6 +9,7 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_assets import (
@@ -420,6 +421,71 @@ def test_text_encoder_relative_preflight_preserves_ranked_file_authority(
     next_ref = table.bind_name("vendor/encoder.bin", "model/text-encoder")
     assert next_ref is not None and next_ref.read_bytes() == b"fallback/vendor"
     assert table.bind_name("vendor/encoder.bin", "model/checkpoint") is None
+
+
+def test_missing_model_names_offer_template_leads_without_download_authority(
+    tmp_path: Path,
+) -> None:
+    from dinkster_graph import RegionNode
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names
+
+    from dinkster.template_model_sources import TemplateModelSources
+
+    sources = TemplateModelSources()
+    table = MountTable(tmp_path / "mounts.json")
+    root = tmp_path / "vae"
+    root.mkdir()
+    (root / "ae.safetensors").write_bytes(b"local model wins over remote leads")
+    table.add(MountDef("vae", root, kind="model/vae"))
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"),
+        LibraryStore(tmp_path / "library.sqlite"),
+        resolver=table,
+        model_sources_for_name=sources.for_name,
+    )
+    schemas = {
+        kind: NodeSchema(
+            kind,
+            inputs=(
+                InputSpec("file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind=kind)),
+            ),
+        )
+        for kind in ("model/vae", "model/diffusion", "model/text-encoder", "model/checkpoint")
+    }
+    explicit = {"digest": digest_bytes(b"explicit identity"), "name": "flux1-dev.safetensors"}
+    inner = Graph(
+        {
+            "unique": GraphNode("model/diffusion", {"file": "flux1-dev.safetensors"}),
+            "local": GraphNode("model/vae", {"file": "ae.safetensors"}),
+            "hash": GraphNode("model/diffusion", {"file": explicit}),
+            "alias": GraphNode("model/text-encoder", {"file": "clip_l.safetensors"}),
+            "wrong-kind": GraphNode("model/checkpoint", {"file": "flux1-dev.safetensors"}),
+            "relative": GraphNode("model/diffusion", {"file": "vendor/flux1-dev.safetensors"}),
+            "unknown": GraphNode("model/vae", {"file": "not-declared.safetensors"}),
+        }
+    )
+    graph = Graph({"region": RegionNode(kind="map", body=inner, ports={}, inputs={})})
+    bound, missing = bind_model_names(graph, schemas, library)
+    region = bound.nodes["region"]
+    assert isinstance(region, RegionNode)
+    assert region.body.nodes["hash"].inputs["file"] == explicit
+    local = region.body.nodes["local"].inputs["file"]
+    assert isinstance(local, dict) and local["verification"] == "unverified"
+    rows = {row["nodeId"]: row for row in missing}
+    assert set(rows) == {"unique", "alias", "wrong-kind", "relative", "unknown"}
+    assert rows["unique"]["sources"] == [
+        "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev.safetensors"
+    ]
+    assert len(cast("list[str]", rows["alias"]["sources"])) == 1
+    for node in ("wrong-kind", "relative", "unknown"):
+        assert rows[node]["sources"] == []
+    assert all("digest" not in row and row["fetchable"] is False for row in missing)
+    table.remove("vae")
+    _, missing = bind_model_names(graph, schemas, library)
+    ambiguous = next(row for row in missing if row["nodeId"] == "local")
+    assert len(cast("list[str]", ambiguous["sources"])) == 3
+    assert ambiguous["fetchable"] is False and "digest" not in ambiguous
 
 
 @pytest.mark.parametrize("change", ("replace", "revoke", "escape"))
