@@ -329,12 +329,6 @@ def generation_pack_specs(
     if (project / "security.sqlite3").is_file() or (project / "security.toml").is_file():
         security = SecurityHost(project)
         security.refresh()
-        shared_inference_packs = tuple(
-            load_manifest(spec.manifest).name
-            for spec in _group_first_party_packs(generation, list(specs))
-            if spec.worker_group is not None
-            and spec.python == str(venv_python(generation / "inference/shared-inference"))
-        )
         record = generation / "generation.json"
         if record.is_file():
             files = json.loads(record.read_text(encoding="utf-8"))["files"]
@@ -345,15 +339,16 @@ def generation_pack_specs(
                 "installed-wheels.json",
                 *(f"packs/{entry.pack}/installed-wheels.json" for entry in lock.packs),
             ]
-            if shared_inference_packs:
-                receipts.append("inference/shared-inference/installed-wheels.json")
+            process = generation / "inference-process.json"
+            if process.is_file():
+                receipts.append(process.name)
+                if json.loads(process.read_bytes()).get("format") == "dinkster.inference-process/2":
+                    receipts.append("inference/shared-inference/installed-wheels.json")
             files = {
                 name: "sha256:" + hashlib.sha256((generation / name).read_bytes()).hexdigest()
                 for name in receipts
             }
-        libraries = generation_dependencies(
-            generation, files, tuple(entries), in_process_packs, shared_inference_packs
-        )
+        libraries = generation_dependencies(generation, files, tuple(entries), in_process_packs)
 
         def issuing_registry(entry: LockedPack) -> str:
             if entry.source.startswith(("registry:http://", "registry:https://")):

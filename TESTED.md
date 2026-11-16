@@ -1,3 +1,8 @@
+# Offline shared inference security inventory
+
+- Sealed membership is read and hash-checked inside the security inventory shared by composition, offline status and repair. Callers do not supply independent shared membership.
+- The public status/repair regression distinguishes the shared child closure, shadowed member receipts and an unrelated isolated pack's parent closure. All four notice cases fail before the repair and pass after it; modified child metadata still refuses inspection.
+
 # Inherited shared inference requirements
 
 - Reusing compatible closures checks inherited runtime requirements against private child overrides. Protected lock entries retain the actual parent versions rather than different publication pins.
