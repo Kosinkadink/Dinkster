@@ -295,7 +295,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 if path.is_file() and not path.is_symlink()
             }
             try:
-                refused = subprocess.run(
+                refused = run_with_diagnostics(
                     [
                         str(python),
                         "-I",
@@ -307,10 +307,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         *args,
                         "--yes",
                     ],
+                    label=f"pack {args[0]} generation {number}: combined unavailable inputs",
                     cwd=tmp_path,
                     stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
                     timeout=120,
                 )
                 assert refused.returncode != 0
@@ -332,7 +331,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     )
                 if number == 2:
                     external_plan = tmp_path / "refused-pack-plan"
-                    external_refusal = subprocess.run(
+                    external_refusal = run_with_diagnostics(
                         [
                             str(python),
                             "-I",
@@ -345,10 +344,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             str(root),
                             str(external_plan),
                         ],
+                        label=f"pack {args[0]} generation {number}: external planner refusal",
                         cwd=tmp_path,
                         stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=120,
                     )
                     assert external_refusal.returncode != 0
@@ -374,12 +372,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         if path.is_file() and not path.is_symlink()
                     }
                     try:
-                        partial_base = subprocess.run(
+                        partial_base = run_with_diagnostics(
                             refused.args,
+                            label=f"pack {args[0]} generation {number}: base interpreter missing",
                             cwd=tmp_path,
                             stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                            text=True,
                             timeout=120,
                         )
                         assert partial_base.returncode != 0
@@ -413,12 +410,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                         if path.is_file() and not path.is_symlink()
                     }
                     try:
-                        unavailable_engine = subprocess.run(
+                        unavailable_engine = run_with_diagnostics(
                             refused.args,
+                            label=f"pack {args[0]} generation {number}: target interpreter missing",
                             cwd=tmp_path,
                             stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                            text=True,
                             timeout=120,
                         )
                         assert unavailable_engine.returncode != 0
@@ -457,12 +453,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                 for path in directory.rglob("*")
                                 if path.is_file() and not path.is_symlink()
                             }
-                            malformed_host = subprocess.run(
+                            malformed_host = run_with_diagnostics(
                                 refused.args,
+                                label=f"pack {args[0]} generation {number}: malformed host",
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert malformed_host.returncode != 0
@@ -499,12 +494,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     if path.is_file() and not path.is_symlink()
                 }
                 try:
-                    damaged = subprocess.run(
+                    damaged = run_with_diagnostics(
                         refused.args,
+                        label=f"pack {args[0]} generation {number}: damaged metadata",
                         cwd=tmp_path,
                         stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=120,
                     )
                     assert damaged.returncode != 0
@@ -538,12 +532,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             if path.is_file() and not path.is_symlink()
                         }
                         try:
-                            no_history = subprocess.run(
+                            no_history = run_with_diagnostics(
                                 refused.args,
+                                label=f"pack {args[0]} generation {number}: history absent",
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert no_history.returncode != 0
@@ -579,12 +572,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                             if path.is_file() and not path.is_symlink()
                         }
                         try:
-                            corrupt_history = subprocess.run(
+                            corrupt_history = run_with_diagnostics(
                                 refused.args,
+                                label=f"pack {args[0]} generation {number}: corrupt history",
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert corrupt_history.returncode != 0
@@ -618,12 +610,11 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 )
                 lock_bytes = files.pop(lock_url)
                 try:
-                    missing_lock = subprocess.run(
+                    missing_lock = run_with_diagnostics(
                         refused.args,
+                        label=f"pack {args[0]} generation {number}: requested lock absent",
                         cwd=tmp_path,
                         stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=120,
                     )
                     assert missing_lock.returncode != 0
@@ -656,17 +647,16 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     corrupt_bytes = files[corrupt_url]
                     files[corrupt_url] = b"x" * len(corrupt_bytes)
                     try:
-                        siblings = subprocess.run(
+                        siblings = run_with_diagnostics(
                             [
                                 *refused.args[:-1],
                                 "a-unlocked@2.0.0",
                                 "z-badlock@3.0.0",
                                 "--yes",
                             ],
+                            label=f"pack {args[0]} generation {number}: sibling locks unavailable",
                             cwd=tmp_path,
                             stdin=subprocess.DEVNULL,
-                            capture_output=True,
-                            text=True,
                             timeout=120,
                         )
                         assert siblings.returncode != 0
@@ -702,12 +692,14 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                                 for path in directory.rglob("*")
                                 if path.is_file() and not path.is_symlink()
                             }
-                            retained_failure = subprocess.run(
+                            retained_failure = run_with_diagnostics(
                                 refused.args,
+                                label=(
+                                    f"pack {args[0]} generation {number}: retained lock "
+                                    + ("absent" if damaged is None else "invalid")
+                                ),
                                 cwd=tmp_path,
                                 stdin=subprocess.DEVNULL,
-                                capture_output=True,
-                                text=True,
                                 timeout=120,
                             )
                             assert retained_failure.returncode != 0
@@ -741,7 +733,7 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     (held_wheels / str(index)).rename(path)
                 files[source_url] = source_bytes
                 dependency.write_bytes(dependency_bytes)
-            command = subprocess.run(
+            command = run_with_diagnostics(
                 [
                     str(python),
                     "-I",
@@ -753,10 +745,9 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                     *args,
                     "--yes",
                 ],
+                label=f"pack {args[0]} generation {number}: healthy command",
                 cwd=tmp_path,
                 stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
                 timeout=120,
                 env={
                     **os.environ,
@@ -781,16 +772,18 @@ def test_installed_wheel_pack_add_and_update_without_index_resolution(
                 / "packs/healthy"
                 / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
             )
-            observed = subprocess.check_output(
+            imported = run_with_diagnostics(
                 [
                     str(pack_python),
                     "-I",
                     "-c",
                     "import healthy, fixture_helper; print(healthy.VALUE, fixture_helper.VALUE)",
                 ],
-                text=True,
+                label=f"pack {args[0]} generation {number}: exact import",
+                timeout=None,
             )
-            assert observed.strip() == f"{value} {value + 7}"
+            assert imported.returncode == 0, imported.stdout + imported.stderr
+            assert imported.stdout.strip() == f"{value} {value + 7}"
             assert _run(root, "stop", "--yes")[0] == 0
         commands = [json.loads(line) for line in log.read_text().splitlines()]
         assert any(row[:2] == ["pip", "sync"] for row in commands), commands
