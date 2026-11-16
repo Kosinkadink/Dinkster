@@ -532,6 +532,23 @@ def test_cli_native_windows_sandbox_readiness(
     }
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("mxc_key", ["DINKSTER_MXC_EXECUTABLE", "dinkster_mxc_executable"])
+def test_import_probe_never_exposes_host_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool, mxc_key: str
+) -> None:
+    monkeypatch.setenv(mxc_key, "/host/executor")
+    source = (
+        HEALTHY_NODES
+        + "\nimport os\n"
+        + "assert not any(key.upper() == 'DINKSTER_MXC_EXECUTABLE' for key in os.environ)\n"
+    )
+    manifest = write_pack(tmp_path / "host-only", HEALTHY_MANIFEST, "healthy_nodes", source)
+    environment = {mxc_key: "/explicit/executor"} if explicit else None
+    report = diagnose(manifest, environment=environment)
+    assert report.ok, render_text(report)
+
+
 # -- sandboxed probe (DESIGN M8: publish-probe isolation) ----------------------
 #
 # The jail changes what a hostile import can DO, never what the report
@@ -591,13 +608,17 @@ class TestLiveJailedProbe:
             HEALTHY_NODES
             + "\nimport os\n"
             + "expected = {'DINKSTER_EXPLICIT_SENTINEL': 'delivered'}\n"
-            + "assert dict(os.environ) == expected, repr(dict(os.environ))\n"
+            + "assert dict(os.environ) == expected\n"
         )
         manifest = write_pack(tmp_path / "explicit", HEALTHY_MANIFEST, "healthy_nodes", source)
         report = diagnose(
             manifest,
             probe_jail=detect_probe_jail(),
-            environment={"DINKSTER_EXPLICIT_SENTINEL": "delivered"},
+            environment={
+                "DINKSTER_EXPLICIT_SENTINEL": "delivered",
+                "DINKSTER_MXC_EXECUTABLE": "/explicit/executor",
+                "dinkster_mxc_executable": "/case-variant/executor",
+            },
         )
         assert report.ok, render_text(report)
 

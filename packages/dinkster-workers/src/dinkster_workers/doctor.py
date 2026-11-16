@@ -951,7 +951,11 @@ def _run_probe(
                 text=True,
                 errors="replace",
                 timeout=_PROBE_TIMEOUT_S,
-                env=None if environment is None else {**os.environ, **environment},
+                env={
+                    name: value
+                    for name, value in {**os.environ, **(environment or {})}.items()
+                    if name.upper() != "DINKSTER_MXC_EXECUTABLE"
+                },
             )
         else:
             with tempfile.TemporaryFile() as environment_file:

@@ -652,7 +652,11 @@ _PROBE_RLIMIT_STUB = (
 
 def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     if environment is not None:
-        return dict(environment)
+        return {
+            name: value
+            for name, value in environment.items()
+            if name.upper() != "DINKSTER_MXC_EXECUTABLE"
+        }
     return {
         **{name: os.environ[name] for name in _BASE_ENV_PASSTHROUGH if name in os.environ},
         "HOME": "/tmp",
