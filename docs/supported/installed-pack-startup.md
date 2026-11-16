@@ -376,7 +376,9 @@
   entry. Grouped composition carries one selector per manifest, including on
   cold catalog activation and reload, and refuses mismatched selections before
   launch. Reload preserves the selector, and nodes retain the parent pack
-  attribution. Simultaneous sibling composition is not supported.
+  attribution. Declared siblings compose simultaneously with separate node/type
+  ownership. Generation admission keeps all resident siblings shared or all
+  isolated, while plain-value siblings can run in their own processes.
 - Published lock preparation inspects the whole selected set before creating
   lock output, reporting all missing or invalid bindings together. Its
   `--offline --index-snapshot PATH` form uses retained index and lock metadata
