@@ -1,0 +1,10 @@
+[pack]
+name = "versionconflict"
+version = "0.0.1"
+engine = ">=0.0.3,<0.1"
+publisher = "example"
+namespaces = ["versionconflict"]
+requires = ["humanize==4.12.3"]
+
+[pack.entry]
+nodes = "versionconflict:NODES"

@@ -25,7 +25,7 @@ from dinkster_registry import (
     build_artifact,
     unpack_artifact,
 )
-from dinkster_schema import canonical_claim, canonical_name
+from dinkster_schema import TypeExpr, canonical_claim, canonical_name
 from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.host import SecurityHost
 from dinkster_security.inventory import generation_dependencies
@@ -407,6 +407,36 @@ def generation_pack_specs(
     return _group_first_party_packs(generation, specs)
 
 
+def _resident_nodes(specs: Sequence[PackSpec]) -> dict[str, tuple[str, ...]]:
+    catalogs = {
+        manifest.name: catalog
+        for spec in specs
+        if (catalog := read_catalog(manifest := load_manifest(spec.manifest))) is not None
+    }
+    resident_types = frozenset(
+        tid for catalog in catalogs.values() for tid in catalog.resident_types
+    )
+
+    def resident(expr: TypeExpr) -> bool:
+        if expr.kind == "asset":
+            return False
+        return (
+            bool(resident_types.intersection(expr.types))
+            or (expr.element is not None and resident(expr.element))
+            or any(resident(element) for element in expr.elements)
+        )
+
+    return {
+        name: tuple(
+            node_type
+            for node_type, schema in catalog.schemas.items()
+            if any(resident(output.type) for output in schema.outputs)
+            or any(not item.lazy and resident(item.type) for item in schema.inputs)
+        )
+        for name, catalog in catalogs.items()
+    }
+
+
 def prepare_inference_process(
     generation: Path,
     *,
@@ -432,6 +462,68 @@ def prepare_inference_process(
     members = [
         load_manifest(spec.manifest).name for spec in grouped if spec.worker_group is not None
     ]
+    for spec in specs:
+        manifest = load_manifest(spec.manifest)
+        if not spec.trust_reserved and read_catalog(manifest) is None:
+            if spec.require_catalog:
+                raise CompositionError(
+                    f"{manifest.name}: admission requires a current schema catalog"
+                )
+            from dinkster_workers.doctor import prepare_catalog
+
+            report = prepare_catalog(spec.manifest, interpreter=spec.python, environment=spec.env)
+            if not report.ok:
+                raise CompositionError(
+                    f"{manifest.name}: admission catalog preparation failed: {report.findings}"
+                )
+    resident_nodes = _resident_nodes(specs)
+    refusals: dict[str, str] = {}
+    selected_plan = None
+    if wheel_store is not None:
+        parent_python = generation / (
+            "python/python.exe" if os.name == "nt" else "python/bin/python3"
+        )
+        for spec in specs:
+            manifest = load_manifest(spec.manifest)
+            name = manifest.name
+            if name in members or not resident_nodes.get(name):
+                continue
+            reason = None
+            if name in isolated_inference_packs:
+                reason = "kept isolated by the per-pack inference switch"
+            elif spec.in_process:
+                reason = "selected for in-process hosting, not the shared inference process"
+            elif spec.asset_vault_write:
+                reason = "requests asset-vault write authority"
+            elif manifest.sandbox.network:
+                reason = "requests pack.sandbox.network"
+            elif manifest.sandbox.writable_mounts:
+                reason = "requests pack.sandbox.writable-mounts"
+            if reason is None:
+                locks = tuple(
+                    PackLock.read(generation / "packs" / member / "pack-lock.json")
+                    for member in (*members, name)
+                )
+                try:
+                    candidate_plan = plan_inference(
+                        locks,
+                        python=parent_python,
+                        variant=locks[0].variant,
+                        find_links=tuple(
+                            sorted({path.parent for path in wheel_store.rglob("*.whl")})
+                        ),
+                        wheel_store=wheel_store,
+                        offline=offline,
+                        uv=uv,
+                    )
+                    candidate_plan.require_layering()
+                except ProvisionError as exc:
+                    reason = str(exc)
+                else:
+                    selected_plan = candidate_plan
+                    members.append(name)
+            if reason is not None:
+                refusals[name] = f"Pack {name!r} is not admitted to shared inference: {reason}"
     python = next((spec.python for spec in grouped if spec.worker_group is not None), None)
     environment = next(
         (
@@ -509,6 +601,8 @@ def prepare_inference_process(
                 plan_pack(
                     lock, available, variant=variant, own_environment_size=0
                 ).require_layering()
+        elif selected_plan is not None:
+            plan = selected_plan
         else:
             plan = plan_inference(
                 locks,
@@ -574,6 +668,16 @@ def prepare_inference_process(
                 "members": members,
                 "environment": environment,
                 **({"parentVersions": parent_versions} if parent_versions else {}),
+                **(
+                    {
+                        "refusals": {
+                            name: {"reason": reason, "nodes": resident_nodes[name]}
+                            for name, reason in refusals.items()
+                        }
+                    }
+                    if refusals
+                    else {}
+                ),
             },
             sort_keys=True,
             indent=2,
@@ -622,6 +726,25 @@ def _group_first_party_packs(
             or (not members and environment is not None)
         ):
             raise CompositionError("invalid recorded inference process membership")
+        refusals = data.get("refusals", {})
+        if not isinstance(refusals, dict):
+            raise CompositionError("invalid recorded inference refusals")
+        for name, refusal in refusals.items():
+            if (
+                name not in names
+                or name in members
+                or not isinstance(refusal, dict)
+                or not isinstance(refusal.get("reason"), str)
+                or not refusal["reason"]
+                or not isinstance(refusal.get("nodes"), list)
+                or any(not isinstance(node, str) for node in refusal["nodes"])
+            ):
+                raise CompositionError("invalid recorded inference refusal")
+            index = names[name]
+            specs[index] = replace(
+                specs[index],
+                node_unavailability=dict.fromkeys(refusal["nodes"], refusal["reason"]),
+            )
         if not members:
             return tuple(specs)
         dedicated = data["format"] == "dinkster.inference-process/2"

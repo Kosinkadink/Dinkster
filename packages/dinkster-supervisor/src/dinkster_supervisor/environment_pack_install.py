@@ -844,9 +844,11 @@ def apply_pack_install(root: Path, inputs: Path, approval: str) -> dict[str, obj
             replace(Journal.read(journal), error=str(exc)).write(journal)
             recover_activation(root, journal)
             raise
+    admission = root / "generations" / str(target) / "inference-process.json"
     return {
         "current": target,
         "status": "applied",
         "plan": [],
         "engines": list(engine_status(root)),
+        **({"inferenceAdmission": read_document(admission)} if admission.is_file() else {}),
     }
