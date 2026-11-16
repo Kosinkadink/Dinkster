@@ -429,11 +429,11 @@ def _pack_missing_inputs(
     if "dependencies" in engine:
         provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
         variant = cast("str", provenance.get("dependencyVariant", base["variant"]))
-        selected = dependency_wheels(
+        dependency_rows = dependency_wheels(
             provenance.get("inference")
             or cast("dict[str, object]", engine["dependencies"]).get(variant)
         )
-        for row in selected:
+        for row in dependency_rows:
             if row["name"] not in cast("list[str]", base["replaces"]):
                 versions[cast("str", row["name"])] = cast("str", row["version"])
     missing: list[dict[str, object]] = []

@@ -1922,7 +1922,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
             missing = missing_inputs(candidate, store)
             assert (not missing) is allowed, (direct, transitive, platform, missing)
             if not allowed:
-                assert any("does not satisfy" in item.get("error", "") for item in missing)
+                assert any("does not satisfy" in str(item.get("error", "")) for item in missing)
             assert {
                 item.relative_to(store).as_posix(): item.read_bytes()
                 for item in store.rglob("*")
