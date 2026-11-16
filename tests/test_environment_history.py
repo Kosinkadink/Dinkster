@@ -1796,7 +1796,7 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         },
     )
     assert _run(root, "stop", "--yes")[0] == 0
-    source = wheel(tmp_path, "required_extra", "1.0", 73)
+    source = wheel(tmp_path, "required_extra", "1.0", 73, requirements=("fixture-base>=1,<2",))
     payload = source.read_bytes()
     sha = hashlib.sha256(payload).hexdigest()
     required = LockedWheel(source.name, len(payload), sha, source.as_uri())
@@ -1812,10 +1812,10 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         "example",
         Generation.read(generation / "generation.json").variant,
         ">=3.12",
-        (),
+        ("fixture-base>=1,<2",),
         (),
         (
-            LockedDistribution("fixture-base", "1.0", ()),
+            LockedDistribution("fixture-base", "0.9", ()),
             LockedDistribution("required-extra", "1.0", (incompatible, required)),
         ),
         engine=engine_requirement,
@@ -1855,11 +1855,12 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     assert unavailable["restorePlan"]["missing"] == [
         {
             "kind": "pack dependency",
-            "identity": "zzz" if in_process else "example",
+            "identity": name,
             "artifact": source.name,
             "sha256": sha,
             "locations": [source.as_uri()],
         }
+        for name in (["zzz", "example"] if in_process else ["example"])
     ]
     assert {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -1875,6 +1876,160 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         assert planned["restorePlan"]["exact"] is exact
         assert (root / "current").read_text() == "1\n"
         assert (root / "history/00000000000000000002.json").read_bytes() == preserved
+
+    if not in_process and engine_requirement == ">=0":
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+
+        for direct, transitive, platform, allowed in (
+            ((), "fixture-base>=1,<2", "win32", True),
+            (("fixture-base<1",), "fixture-base>=1,<2", "win32", False),
+            ((), "fixture-base<1", "win32", False),
+            ((), 'fixture-base<1; sys_platform == "win32"', "win32", False),
+            ((), 'fixture-base<1; sys_platform == "win32"', "linux", True),
+            (("required-extra[gpu]",), 'fixture-base<1; extra == "gpu"', "win32", False),
+            (("required-extra",), 'fixture-base<1; extra == "gpu"', "win32", True),
+            (("fixture-base @ https://example.org/base.whl",), "fixture-base>=1", "win32", False),
+        ):
+            candidate = json.loads(json.dumps(entry["snapshot"]))
+            candidate["host"]["markers"]["sys_platform"] = platform
+            source = wheel(tmp_path, "required_extra", "1.0", 73, requirements=(transitive,))
+            payload = source.read_bytes()
+            candidate_lock = replace(
+                PackLock.read(path),
+                requirements=direct,
+                packages=(
+                    LockedDistribution("fixture-base", "0.9", ()),
+                    LockedDistribution(
+                        "required-extra",
+                        "1.0",
+                        (
+                            LockedWheel(
+                                source.name,
+                                len(payload),
+                                hashlib.sha256(payload).hexdigest(),
+                                source.as_uri(),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            candidate["metadata"]["packs/example/pack-lock.json"] = candidate_lock.to_json()
+            before_store = {
+                item.relative_to(store).as_posix(): item.read_bytes()
+                for item in store.rglob("*")
+                if item.is_file()
+            }
+            missing = missing_inputs(candidate, store)
+            assert (not missing) is allowed, (direct, transitive, platform, missing)
+            if not allowed:
+                assert any("does not satisfy" in str(item.get("error", "")) for item in missing)
+            assert {
+                item.relative_to(store).as_posix(): item.read_bytes()
+                for item in store.rglob("*")
+                if item.is_file()
+            } == before_store
+
+        receipt_path = "packs/example/installed-wheels.json"
+        receipt = {
+            "format": "dinkster.installed-wheels/1",
+            "wheels": [
+                {key: getattr(required, key) for key in ("filename", "size", "sha256", "registry")}
+            ],
+            "inherited": ["dinkster-api", "fixture-base"],
+        }
+        candidate = json.loads(json.dumps(entry["snapshot"]))
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert not missing_inputs(candidate, store)
+        # Replacement parents must preserve the recorded private/inherited partition.
+        former_private = wheel(tmp_path, "fixture_base", "0.9", 21)
+        cast("list[dict]", receipt["wheels"]).append(
+            {
+                "filename": former_private.name,
+                "size": former_private.stat().st_size,
+                "sha256": hashlib.sha256(former_private.read_bytes()).hexdigest(),
+                "registry": None,
+            }
+        )
+        receipt["inherited"] = ["dinkster-api"]
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert any(
+            "receipt differs" in str(item.get("error", ""))
+            for item in missing_inputs(candidate, store)
+        )
+
+        frontend = wheel(tmp_path, "dinkster_frontend", "0.2.0", 22)
+        frontend_sha = hashlib.sha256(frontend.read_bytes()).hexdigest()
+        frontend_cached = object_path(store / "wheels", "sha256:" + frontend_sha) / frontend.name
+        frontend_cached.parent.mkdir(parents=True)
+        frontend_cached.write_bytes(frontend.read_bytes())
+        candidate = json.loads(json.dumps(entry["snapshot"]))
+        provenance = json.loads(candidate["metadata"]["artifact-sources.json"])
+        provenance["channel"]["frontend"] = {
+            "version": "0.2.0",
+            "sha256": frontend_sha,
+            "size": frontend.stat().st_size,
+            "url": f"https://files.pythonhosted.org/packages/{frontend.name}",
+            "engineApi": {"min": 1, "max": 1},
+        }
+        candidate["metadata"]["artifact-sources.json"] = json.dumps(provenance)
+        engine = json.loads(candidate["metadata"]["engine-manifest.json"])
+        engine["schemaApi"] = 1
+        candidate["metadata"]["engine-manifest.json"] = json.dumps(engine)
+        candidate["engine"]["release"] = (
+            "sha256:"
+            + hashlib.sha256(
+                candidate["metadata"]["engine-manifest.json"].encode("utf-8")
+            ).hexdigest()
+        )
+        recorded = json.loads(candidate["metadata"]["packs/example/pack-lock.json"])
+        recorded["requirements"].append("dinkster-frontend>=0.2,<0.3")
+        recorded["packages"].append(
+            {
+                "name": "dinkster-frontend",
+                "version": "0.2.0",
+                "wheels": [
+                    {
+                        "filename": frontend.name,
+                        "size": frontend.stat().st_size,
+                        "sha256": frontend_sha,
+                        "url": frontend.as_uri(),
+                    }
+                ],
+            }
+        )
+        candidate["metadata"]["packs/example/pack-lock.json"] = json.dumps(recorded)
+        receipt["wheels"] = [
+            {key: getattr(required, key) for key in ("filename", "size", "sha256", "registry")}
+        ]
+        receipt["inherited"] = ["dinkster-api", "dinkster-frontend", "fixture-base"]
+        candidate["metadata"][receipt_path] = json.dumps(receipt)
+        assert not missing_inputs(candidate, store)
+
+        from test_environment_downloads import artifact_server
+
+        query = "/required_extra-1.0-py3-none-any.whl?token=a/b"
+        query_payload = cached.read_bytes()
+        cached.unlink()
+        with artifact_server(query_payload, head_path=query) as mirror:
+            candidate = json.loads(json.dumps(entry["snapshot"]))
+            recorded = json.loads(candidate["metadata"]["packs/example/pack-lock.json"])
+            recorded["packages"][1]["wheels"] = [
+                {
+                    "filename": required.filename,
+                    "size": required.size,
+                    "sha256": required.sha256,
+                    "url": mirror + query,
+                }
+            ]
+            candidate["metadata"]["packs/example/pack-lock.json"] = json.dumps(recorded)
+            assert not missing_inputs(candidate, store)
+            assert not cached.exists()
+            with monkeypatch.context() as offline:
+                offline.setattr(
+                    "dinkster_supervisor.environment_downloads.build_opener",
+                    lambda *args: pytest.fail("offline planning contacted a remote source"),
+                )
+                assert missing_inputs(candidate, store, offline=True)
 
     journal = next((root / "journal").glob("*.json"))
     replace(Journal.read(journal), history_entry=None).write(journal)
@@ -2170,6 +2325,27 @@ def test_local_restore_reuses_retained_inputs_without_checkout_resolution(
         activate(root, journal, revalidate=lambda: None)
         before = history(root)
         assert cast("dict[str, object]", before[-1]["snapshot"])["source"] == "local"
+        from dinkster_supervisor.environment_restore_plan import missing_inputs
+        from dinkster_workers.pack_lock import LockedDistribution, PackLock
+
+        candidate = json.loads(json.dumps(before[-1]["snapshot"]))
+        assert "artifact-sources.json" not in candidate["metadata"]
+        candidate["metadata"]["packs/example/pack-lock.json"] = PackLock(
+            "example",
+            first.variant,
+            ">=3.12",
+            ("fixture-base>=1,<2",),
+            (),
+            (LockedDistribution("fixture-base", "1.0", ()),),
+        ).to_json()
+        candidate["metadata"]["packs/example/installed-wheels.json"] = json.dumps(
+            {
+                "format": "dinkster.installed-wheels/1",
+                "wheels": [],
+                "inherited": ["fixture-base"],
+            }
+        )
+        assert not missing_inputs(candidate, store, offline=True)
         code, result = _run(root, "restore", "1", "--yes")
         assert code == 0 and result["current"] == 3, result
         shutil.rmtree(root / "generations/2")

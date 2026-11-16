@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import email
 import hashlib
 import json
 import os
@@ -10,11 +11,13 @@ import signal
 import subprocess
 import tempfile
 import tomllib
+import zipfile
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
 
 from dinkster_store import object_path
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.tags import parse_tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -36,7 +39,7 @@ from .environment_constraints import (
     installed_wheel_origins,
     selected_wheel_rows,
 )
-from .environment_downloads import artifact_available, read_metadata
+from .environment_downloads import artifact_available, fetch_artifact, read_metadata
 from .environment_frontend import frontend_filename, frontend_requirements, select_frontend
 from .environment_generations import ACQUIRE_PACK_SOURCES, retained_pack_archive, verify_base_inputs
 from .environment_history import history, validate_import
@@ -341,7 +344,54 @@ def missing_inputs(
             (str(cached.parent) if offline else cast("str", frontend["url"]).rsplit("/", 1)[0],),
             cached,
         )
-    return [*missing, *_pack_missing_inputs(snapshot, store)]
+    return [*missing, *_pack_missing_inputs(snapshot, store, offline=offline)]
+
+
+def _pack_wheel_requirements(
+    row: dict[str, object], roots: tuple[str, ...], store: Path, *, offline: bool
+) -> tuple[str, ...]:
+    filename, sha, size = (
+        cast("str", row["filename"]),
+        cast("str", row["sha256"]),
+        cast("int", row["size"]),
+    )
+    with tempfile.TemporaryDirectory(prefix="dinkster-restore-metadata-") as directory:
+        source = None
+        for candidate in (
+            object_path(store / "wheels", "sha256:" + sha) / filename,
+            store / "wheels" / filename,
+        ):
+            if not candidate.is_symlink() and candidate.is_file():
+                with candidate.open("rb") as stream:
+                    if (
+                        candidate.stat().st_size == size
+                        and hashlib.file_digest(stream, "sha256").hexdigest() == sha
+                    ):
+                        source = candidate
+                        break
+        if source is None:
+            if offline:
+                raise EnvironmentError(f"offline pack wheel missing or corrupt: {filename}")
+            source = fetch_artifact(
+                roots,
+                filename,
+                Path(directory) / filename,
+                sha,
+                size,
+                source_url=cast("str", row["url"])
+                if urlparse(cast("str", row["url"])).scheme != "file"
+                else None,
+            )
+        with zipfile.ZipFile(source) as archive:
+            names = [
+                name
+                for name in archive.namelist()
+                if name.endswith(".dist-info/METADATA") and len(name.split("/")) == 2
+            ]
+            if len(names) != 1 or archive.getinfo(names[0]).file_size > 8 * 1024 * 1024:
+                raise EnvironmentError(f"wheel requires bounded distribution metadata: {filename}")
+            metadata = email.message_from_bytes(archive.read(names[0]))
+        return tuple(metadata.get_all("Requires-Dist", []))
 
 
 def _pack_missing_inputs(
@@ -376,14 +426,17 @@ def _pack_missing_inputs(
                 name, version, _, _ = parse_wheel_filename(filename)
                 if document is base or name not in cast("list[str]", base["replaces"]):
                     versions[name] = str(version)
+    provenance = parse_metadata(metadata.get("artifact-sources.json", "{}").encode("utf-8"))
+    frontend = select_frontend(engine, cast("dict[str, object]", provenance.get("channel", {})))
+    if frontend is not None:
+        versions["dinkster-frontend"] = cast("str", frontend["version"])
     if "dependencies" in engine:
-        provenance = parse_metadata(metadata["artifact-sources.json"].encode("utf-8"))
         variant = cast("str", provenance.get("dependencyVariant", base["variant"]))
-        selected = dependency_wheels(
+        dependency_rows = dependency_wheels(
             provenance.get("inference")
             or cast("dict[str, object]", engine["dependencies"]).get(variant)
         )
-        for row in selected:
+        for row in dependency_rows:
             if row["name"] not in cast("list[str]", base["replaces"]):
                 versions[cast("str", row["name"])] = cast("str", row["version"])
     missing: list[dict[str, object]] = []
@@ -406,6 +459,7 @@ def _pack_missing_inputs(
         packages = lock.get("packages")
         if not isinstance(packages, list):
             raise EnvironmentError("pack dependency packages must be an array")
+        effective: dict[str, str] = {}
         for item in cast("list[object]", packages):
             if not isinstance(item, dict):
                 raise EnvironmentError("pack dependency must be an object")
@@ -413,8 +467,19 @@ def _pack_missing_inputs(
             name, version = package.get("name"), package.get("version")
             if not isinstance(name, str) or not isinstance(version, str):
                 raise EnvironmentError("pack dependency requires a name and version")
+            effective[name] = version
+        changed = any(
+            name in versions and Version(versions[name]) != Version(version)
+            for name, version in effective.items()
+        )
+        effective.update(versions)
+        selected: dict[str, tuple[dict[str, object], tuple[str, ...]]] = {}
+        pack_missing = len(missing)
+        requirements: dict[str, tuple[str, ...]] = {}
+        for package in cast("list[dict[str, object]]", packages):
+            name, version = cast("str", package["name"]), cast("str", package["version"])
             inherited = versions.get(name)
-            if inherited is not None and Version(inherited) == Version(version):
+            if inherited is not None:
                 continue
             wheels = artifact_rows(package.get("wheels"), "filename")
             selected_wheel = next(
@@ -425,7 +490,7 @@ def _pack_missing_inputs(
                 ),
                 None,
             )
-            if inherited is not None or selected_wheel is None:
+            if selected_wheel is None:
                 missing.append(
                     {
                         "kind": "pack dependency",
@@ -454,7 +519,12 @@ def _pack_missing_inputs(
                     source_path = source_path.removeprefix("/")
                 roots = (str(Path(source_path).parent),)
             else:
-                roots = (url.rsplit("/", 1)[0],)
+                roots = (
+                    parsed._replace(
+                        path=parsed.path.rsplit("/", 1)[0], query="", fragment=""
+                    ).geturl(),
+                )
+            selected[name] = (row, roots)
             wheel_store = store / "wheels"
             wheel_root = object_path(wheel_store, "sha256:" + sha)
             if wheel_store.is_symlink() or wheel_root.is_symlink():
@@ -479,13 +549,93 @@ def _pack_missing_inputs(
                         "locations": [url],
                     }
                 )
-        if pack in in_process:
-            versions.update(
-                {
-                    cast("str", row["name"]): cast("str", row["version"])
-                    for row in cast("list[dict[str, object]]", packages)
-                }
-            )
+        pending = [(name, "") for name in selected] if changed else []
+        pending.extend((text, "") for text in cast("list[str]", lock["requirements"]))
+        visited: set[tuple[str, str]] = set()
+        while pending:
+            text, extra = pending.pop()
+            if (text, extra) in visited:
+                continue
+            visited.add((text, extra))
+            try:
+                requirement = Requirement(text)
+                name = canonicalize_name(requirement.name)
+                if name in {
+                    "opencv-python",
+                    "opencv-python-headless",
+                    "opencv-contrib-python",
+                    "opencv-contrib-python-headless",
+                }:
+                    name = "opencv-contrib-python-headless"
+                    requirement.extras.discard("ffmpeg")
+                if requirement.marker and not requirement.marker.evaluate(
+                    {
+                        **cast("dict[str, str]", cast("dict[str, object]", host)["markers"]),
+                        "extra": extra,
+                    }
+                ):
+                    continue
+                version = effective.get(name)
+                if (
+                    version is None
+                    or not requirement.specifier.contains(version, prereleases=True)
+                    or requirement.url is not None
+                    and name in versions
+                ):
+                    raise EnvironmentError(
+                        f"{text}: {name}=={version or 'absent'} does not satisfy the requirement"
+                    )
+                # Only private wheels can add constraints to the installed parent's closure.
+                if changed and len(missing) == pack_missing and name in selected:
+                    row, roots = selected[name]
+                    if name not in requirements:
+                        requirements[name] = _pack_wheel_requirements(
+                            row, roots, store, offline=offline
+                        )
+                    pending.extend(
+                        (dependency, context)
+                        for dependency in requirements[name]
+                        for context in ("", *sorted(requirement.extras))
+                    )
+            except (OSError, ValueError, zipfile.BadZipFile) as exc:
+                missing.append(
+                    {
+                        "kind": "pack dependency",
+                        "identity": pack,
+                        "artifact": text,
+                        "locations": [],
+                        "error": str(exc),
+                    }
+                )
+        receipt = metadata.get(f"packs/{pack}/installed-wheels.json")
+        if receipt is not None and len(missing) == pack_missing:
+            expected = {
+                "format": "dinkster.installed-wheels/1",
+                "wheels": [
+                    {key: row.get(key) for key in ("filename", "size", "sha256", "registry")}
+                    for row, _ in selected.values()
+                ],
+                "inherited": sorted(
+                    {
+                        cast("str", row["name"])
+                        for row in cast("list[dict[str, object]]", packages)
+                        if row["name"] in versions
+                    }
+                    | ({"dinkster-api"} if lock.get("engine") is not None else set())
+                ),
+            }
+            if parse_metadata(receipt.encode("utf-8")) != expected:
+                missing.append(
+                    {
+                        "kind": "pack dependency",
+                        "identity": pack,
+                        "artifact": "installed-wheels.json",
+                        "locations": [],
+                        "error": "recorded pack wheel receipt differs from the generation",
+                    }
+                )
+        if pack in in_process and len(missing) == pack_missing:
+            versions.update(effective)
     return missing
 
 

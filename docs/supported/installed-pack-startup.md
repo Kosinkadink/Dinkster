@@ -259,8 +259,12 @@
   and requirement markers. Replacement previews identify the exact selected
   engine/base wheels; reconstruction must retain those identities.
   Restore planning reports missing pack dependency wheels before activation,
-  honors inherited base/engine and in-process dependencies, and verifies retained
-  wheel bytes without creating project or cache files.
+  honors compatible inherited base/engine and in-process dependencies even when
+  their versions differ from publication pins, and verifies retained wheel bytes
+  without creating project or cache files. Declared and private-wheel transitive
+  requirements still constrain inherited versions using the recorded markers.
+  Replacement previews refuse candidates whose private/inherited wheel partition
+  cannot reproduce the recorded pack receipts.
 - Local-development software snapshots rebuild from their recorded manifests,
   retained interpreter and hash-pinned wheels, without resolving a checkout again.
   Missing local interpreter files or wheels are disclosed before activation.

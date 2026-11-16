@@ -39,6 +39,9 @@ def artifact_server(
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
+            if head_path is not None and self.path != head_path:
+                self.send_error(403)
+                return
             if ranges is not None:
                 ranges.append(self.headers.get("Range"))
             if self.headers.get("User-Agent") != "dinkster-env":
@@ -141,7 +144,16 @@ def test_availability_preserves_locked_source_query_without_writing(tmp_path: Pa
             len(payload),
             source_url=mirror + "/wheel.whl?signature=fixture",
         )
-    assert not destination.parent.exists()
+        assert not destination.parent.exists()
+        fetch_artifact(
+            (mirror,),
+            "wheel.whl",
+            destination,
+            digest(payload),
+            len(payload),
+            source_url=mirror + "/wheel.whl?signature=fixture",
+        )
+        assert destination.read_bytes() == payload
 
 
 def test_falls_back_after_corrupt_local_mirror(tmp_path: Path) -> None:
