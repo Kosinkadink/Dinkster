@@ -42,6 +42,10 @@
   identities; a rejected replacement preserves the active owners.
   Built-in identities remain owned by the engine (`core`) independently of the
   official pack that provides their codec and survive pack removal.
+- With sandboxing enabled, a shared group excludes members requesting GPU
+  access that the host has not granted. Non-GPU packs can still run in that
+  sandboxed group; each excluded pack refuses with its own GPU-grant reason.
+  Reload preserves this separation. Unsandboxed placement is unchanged.
 - Managed installed and development generations share one worker by default
   for first-party packs. Newly prepared shared environments resolve their
   requirement ranges together without changing the generation's exact torch,

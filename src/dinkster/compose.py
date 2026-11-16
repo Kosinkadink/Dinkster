@@ -2485,6 +2485,41 @@ class ServingComposer:
             environment.pop(_PACK_SCRATCH_ENV, None)
         return environment
 
+    def _sandbox_gpu_host_grant(self, spec: PackSpec, env: Mapping[str, str]) -> bool:
+        assert self._sandbox_policy is not None
+        visible_devices = env.get(
+            "CUDA_VISIBLE_DEVICES", os.environ.get("CUDA_VISIBLE_DEVICES", "")
+        )
+        return self._sandbox_policy.gpu or bool(
+            spec.replica_cuda_indices
+            or spec.single_job_cuda_indices
+            or spec.vram_budgets
+            or spec.aimdo != "off"
+            or visible_devices not in ("", "-1")
+        )
+
+    def _sandbox_group_spec(self, spec: PackSpec) -> PackSpec:
+        if self._sandbox_policy is None or spec.worker_group is None:
+            return spec
+        if self._sandbox_gpu_host_grant(spec, {**self._worker_env, **spec.env}):
+            return spec
+        allowed = tuple(
+            path
+            for path in spec.group_manifests
+            if not (manifest := load_manifest(path)).sandbox.gpu
+            or canonical_name(manifest.name) in self._sandbox_gpu_grants
+        )
+        if len(allowed) == len(spec.group_manifests):
+            return spec
+        selected = resolve_manifest_path(spec.manifest).resolve()
+        if selected not in {resolve_manifest_path(path).resolve() for path in spec.group_manifests}:
+            raise CompositionError(
+                f"worker group {spec.worker_group!r} does not contain selected manifest {selected}"
+            )
+        if selected not in {resolve_manifest_path(path).resolve() for path in allowed}:
+            return replace(spec, worker_group=None, group_manifests=())
+        return replace(spec, group_manifests=allowed)
+
     def _sandbox_launcher(
         self,
         spec: PackSpec,
@@ -2564,16 +2599,7 @@ class ServingComposer:
             ]
             rw_binds.extend(self._sandbox_writable_mounts)
 
-        visible_devices = effective_env.get(
-            "CUDA_VISIBLE_DEVICES", os.environ.get("CUDA_VISIBLE_DEVICES", "")
-        )
-        gpu_host_grant = base.gpu or bool(
-            spec.replica_cuda_indices
-            or spec.single_job_cuda_indices
-            or spec.vram_budgets
-            or spec.aimdo != "off"
-            or visible_devices not in ("", "-1")
-        )
+        gpu_host_grant = self._sandbox_gpu_host_grant(spec, effective_env)
         if not gpu_host_grant and not gpu_requesters.issubset(self._sandbox_gpu_grants):
             denied = ", ".join(sorted(gpu_requesters - self._sandbox_gpu_grants))
             raise CompositionError(f"sandbox GPU access requested but not granted for: {denied}")
@@ -5015,6 +5041,7 @@ class ServingComposer:
         composition = self.composition
         spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
         self.validate_specs((spec,))
+        spec = self._sandbox_group_spec(spec)
         manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
         catalog = read_catalog(manifest) if spec.require_catalog else None
         if (
@@ -6220,6 +6247,7 @@ class ServingComposer:
                     vram_budgets=cuda_vram_budgets(memory_budgets),
                     comfy_args=comfy_args,
                 )
+            spec = self._sandbox_group_spec(spec)
             self._check_security(spec)
             if record.spec.worker_group is not None:
                 if spec.worker_group != record.spec.worker_group:
