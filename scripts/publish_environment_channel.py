@@ -290,10 +290,10 @@ def mirror_engine(client, release: Path, work: Path) -> None:
 def recover_engine_mirrors(report_path: Path) -> None:
     if (
         os.environ.get("GITHUB_REPOSITORY") != "Kosinkadink/Dinkster"
-        or os.environ.get("GITHUB_EVENT_NAME") != "push"
+        or os.environ.get("GITHUB_EVENT_NAME") not in {"push", "workflow_dispatch"}
         or os.environ.get("GITHUB_REF") != "refs/heads/main"
     ):
-        raise ValueError("engine mirror recovery requires the owning repository main push")
+        raise ValueError("engine mirror recovery requires the owning repository main release")
     report = json.loads(report_path.read_bytes())
     pins = [
         pin
@@ -408,13 +408,19 @@ def publish(
     identity = content_digest(release / "release-manifest.json")
     _, tag = engine_publication_names(engine, identity, channel)
     expected_ref = "refs/heads/main" if channel == "nightly" else f"refs/tags/{tag}"
+    extra_nightly = (
+        channel == "nightly" and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    )
+    source_commit = os.environ.get("DINKSTER_RELEASE_COMMIT" if extra_nightly else "GITHUB_SHA")
     if (
         os.environ.get("GITHUB_REPOSITORY") != "Kosinkadink/Dinkster"
-        or os.environ.get("GITHUB_EVENT_NAME") != "push"
+        or (os.environ.get("GITHUB_EVENT_NAME") != "push" and not extra_nightly)
         or os.environ.get("GITHUB_REF") != expected_ref
-        or os.environ.get("GITHUB_SHA") != engine["commit"]
+        or source_commit != engine["commit"]
     ):
-        raise ValueError("channel publication requires the exact repository push")
+        raise ValueError(
+            "channel publication requires the exact repository push or Nightly request"
+        )
     if not all(
         os.environ.get(name)
         for name in (
@@ -432,6 +438,14 @@ def publish(
     github_token = os.environ.get("GITHUB_TOKEN")
     if not github_token:
         raise ValueError("GITHUB_TOKEN is required for channel publication")
+    if extra_nightly:
+        request = Request(
+            f"https://api.github.com/repos/Kosinkadink/Dinkster/compare/{engine['commit']}...main",
+            headers={"Authorization": f"Bearer {github_token}"},
+        )
+        with urlopen(request, timeout=120) as response:
+            if json.load(response)["status"] not in {"ahead", "identical"}:
+                raise ValueError("extra Nightly publication requires a landed main commit")
     public = os.environ["R2_PUBLIC_BASE_URL"].rstrip("/")
     with tempfile.TemporaryDirectory(prefix="engine-channel-") as directory:
         work = Path(directory)
@@ -576,7 +590,9 @@ def publish(
                         or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", previous_date) is None
                     ):
                         raise ValueError("published Nightly date must be YYYY-MM-DD")
-                    if previous_date >= publication_date:
+                    if previous_date > publication_date or (
+                        previous_date == publication_date and not extra_nightly
+                    ):
                         client.delete_object(
                             Bucket=os.environ["R2_BUCKET"], Key="channels/main.json"
                         )

@@ -223,6 +223,10 @@
 - Engine manifests can acquire workspace wheels directly from their exact PyPI
   file URLs, verify the published size and SHA-256, and reuse verified cached
   bytes offline. Release mirrors remain optional wheel fallback sources.
+- Nightly advances automatically at most once per UTC day. An extra publication
+  can be requested through the release workflow with a landed main commit and
+  an issue explaining who will test it. It uses the ordinary verified, signed
+  release path and never selects an older or diverged engine commit.
 - Independent supervisor development wheels and native tools use the supervisor's
   own next-patch public development version, with the same exact wheel bytes as
   the engine release at that source commit. Supervisor-only changes can publish
