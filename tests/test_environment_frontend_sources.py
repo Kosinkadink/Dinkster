@@ -6,7 +6,10 @@ import hashlib
 import io
 import json
 import zipfile
+from http.client import HTTPMessage
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler
 
 import pytest
 from dinkster_supervisor import environment_frontend_sources as frontend
@@ -144,6 +147,96 @@ def test_ci_selection_does_not_use_another_commit_or_untrusted_run(monkeypatch, 
         assert selected == {**artifact, "run": 12}
     else:
         assert selected is None
+
+
+@pytest.mark.parametrize("token", [None, "", "fixture-job-token"])
+def test_ci_metadata_authentication_stays_on_github_requests(monkeypatch, token):
+    if token is None:
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_TOKEN", token)
+    commit = "a" * 40
+    run = {
+        "id": 73,
+        "head_sha": commit,
+        "conclusion": "success",
+        "path": ".github/workflows/ci.yml",
+        "event": "push",
+        "head_repository": {"full_name": "Kosinkadink/Dinkster-Frontend"},
+    }
+    artifact = {
+        "id": 97,
+        "expired": False,
+        "name": "dinkster-frontend-" + "b" * 64,
+        "digest": "sha256:" + "c" * 64,
+    }
+    requests = []
+
+    def read(request, *, timeout):
+        requests.append(request)
+        payload = (
+            {"artifacts": [artifact]}
+            if "/artifacts?" in request.full_url
+            else {"workflow_runs": [run]}
+        )
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(frontend, "urlopen", read)
+    assert frontend.frontend_ci_artifact(
+        {"url": "https://github.com/Kosinkadink/Dinkster-Frontend.git", "commit": commit}
+    ) == {**artifact, "run": 73}
+    assert len(requests) == 2
+    for request in requests:
+        assert request.get_header("Authorization") == (f"Bearer {token}" if token else None)
+        redirected = HTTPRedirectHandler().redirect_request(
+            request,
+            io.BytesIO(),
+            302,
+            "Found",
+            HTTPMessage(),
+            "https://artifact.example/bundle.zip",
+        )
+        assert redirected is not None and redirected.get_header("Authorization") is None
+
+
+@pytest.mark.parametrize("endpoint", ["runs", "artifacts"])
+def test_ci_lookup_failure_identifies_request_without_disclosing_token(monkeypatch, endpoint):
+    monkeypatch.setenv("GITHUB_TOKEN", "fixture-private-token")
+    commit = "d" * 40
+    base = "https://api.github.com/repos/Kosinkadink/Dinkster-Frontend/actions/runs"
+    url = (
+        f"{base}?head_sha={commit}&per_page=100&page=1"
+        if endpoint == "runs"
+        else f"{base}/73/artifacts?per_page=100&page=1"
+    )
+
+    def read(request, *, timeout):
+        if request.full_url == url:
+            raise HTTPError(url, 403, "rate limit exceeded", HTTPMessage(), None)
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "workflow_runs": [
+                        {
+                            "id": 73,
+                            "head_sha": commit,
+                            "conclusion": "success",
+                            "path": ".github/workflows/ci.yml",
+                            "event": "push",
+                            "head_repository": {"full_name": "Kosinkadink/Dinkster-Frontend"},
+                        }
+                    ]
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(frontend, "urlopen", read)
+    with pytest.raises(EnvironmentError) as failure:
+        frontend.frontend_ci_artifact(
+            {"url": "https://github.com/Kosinkadink/Dinkster-Frontend.git", "commit": commit}
+        )
+    assert url in str(failure.value) and "HTTP 403" in str(failure.value)
+    assert "fixture-private-token" not in str(failure.value)
 
 
 def test_local_fallback_packages_built_files(tmp_path, monkeypatch):
