@@ -1,3 +1,9 @@
+# Windows engine dependency preflight
+
+- Both Windows validation job families use the contributor-generation action to check installed kitchen and aimdo modules and versions against the checkout's declared requirements, printing actual and required versions before refusing a mismatch.
+- Bounded execution of the exact check accepts matching metadata and a changed matching declaration, and refuses stale kitchen, wrong aimdo, either missing module and a changed declaration with old metadata. The local contributor generation reports kitchen 0.2.41 and aimdo 0.6.0; this is not natural Windows execution evidence.
+- Workflow/action YAML and shell syntax checks pass. No dependency pin, test assertion, deadline or test selection changes.
+
 # Managed supervisor session lifetime
 
 - Public start/status/health/stop regression: the managed engine remains ready after its launcher exits and the old POSIX process group receives a hangup. The unchanged launch loses its listener and refuses authenticated stop; the detached launch passes.

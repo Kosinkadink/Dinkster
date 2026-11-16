@@ -115,12 +115,6 @@ jobs:
               for distribution in distributions()
           )
           PY
-      - name: Verify published Windows engine dependencies
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          python scripts/develop.py run -- python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: python scripts/develop.py run -- ruff format --check .
         if: matrix.run_checks
       - run: python scripts/develop.py run -- ruff check .
@@ -243,11 +237,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - uses: ./.github/actions/prepare-contributor-generation
-      - name: Verify published Windows engine dependencies
-        shell: pwsh
-        run: |
-          python scripts/develop.py run -- python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create a disposable ReFS clone-test volume
         shell: pwsh
         run: |

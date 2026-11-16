@@ -24,3 +24,28 @@ runs:
           python scripts/develop.py run -- python -c 'import subprocess, sys, sysconfig; subprocess.run(["uv", "pip", "install", "--python", sys.executable, "--target", sysconfig.get_path("purelib"), "--no-deps", "--no-sources", sys.argv[1]], check=True)' \
             "$DINKSTER_EVIDENCE_ROOT/packages/dinkster-acceptance"
         fi
+    - name: Verify published Windows engine dependencies
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        python scripts/develop.py run -- python - <<'PY'
+        import tomllib
+        from importlib.metadata import version
+        from importlib.util import find_spec
+        from pathlib import Path
+
+        from packaging.requirements import Requirement
+
+        project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        requirements = {
+            requirement.name: requirement
+            for value in project["project"]["dependencies"]
+            if (requirement := Requirement(value)).name in {"comfy-kitchen", "comfy-aimdo"}
+        }
+        for name in ("comfy-kitchen", "comfy-aimdo"):
+            requirement = requirements[name]
+            assert find_spec(name.replace("-", "_")) is not None, f"{name}: module absent"
+            installed = version(name)
+            print(f"{name}: installed {installed}, required {requirement.specifier}", flush=True)
+            assert installed in requirement.specifier, f"{name}: installed version mismatch"
+        PY
