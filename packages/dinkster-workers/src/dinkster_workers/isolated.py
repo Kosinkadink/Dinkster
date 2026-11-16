@@ -165,7 +165,7 @@ class IsolatedWorker:
         self._session = BoundarySession(
             registry,
             role="isolated worker",
-            pack=self._manifest.name,
+            pack=self._manifest.execution_id,
             codec=ValueCodec(registry, shm_threshold=shm_threshold, use_shm=use_shm),
             on_diagnostic=on_diagnostic,
             reservations=reservations,

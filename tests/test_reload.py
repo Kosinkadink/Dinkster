@@ -336,9 +336,10 @@ def test_group_member_reload_swaps_every_route_transactionally(
             assert old_owner._extra_env["DINKSTER_PACK_SCRATCH"] == expected_scratch
 
             write_group_pack(tmp_path / "alpha", "alpha", "version-two", part=part)
-            result = await composer.reload_pack("alpha")
+            target = "alpha" if part is None else f"alpha~{part}"
+            result = await composer.reload_pack(target)
             new_owner = composer._group_owners["models"]
-            assert result.reloaded_packs == ("alpha", "beta")
+            assert result.reloaded_packs == (target, "beta")
             assert set(result.delta.schemas) == {
                 "alpha.echo",
                 "alpha.exit",
@@ -347,7 +348,7 @@ def test_group_member_reload_swaps_every_route_transactionally(
             }
             assert new_owner is not old_owner
             assert new_owner._extra_env["DINKSTER_PACK_SCRATCH"] == expected_scratch
-            assert composer._records["alpha"].worker._group is new_owner
+            assert composer._records[target].worker._group is new_owner
             assert composer._records["beta"].worker._group is new_owner
             assert await invoke(engine, "alpha.echo", "new-a") == "new-a-version-two"
             assert await invoke(engine, "beta.echo", "new-b") == "new-b-v1"

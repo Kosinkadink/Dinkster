@@ -37,6 +37,10 @@
   The node catalog publishes process affinity for pre-run diagnostics.
   Host-declared unavailable nodes retain their exact refusal in the catalog
   and are refused at submit before any job is queued.
+- Explicitly selected parts of one pack can compose together, in a shared worker
+  or separate processes. Their node and type owners remain distinct across
+  reload while the catalog retains one parent-pack attribution. Shared namespace
+  claims do not permit two parts to own the same node or concrete type.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.

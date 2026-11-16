@@ -418,7 +418,7 @@ def load_pack(
             register_core_types(registry)
         previous_types = frozenset(registry.type_ids())
         with registry.registering_pack(
-            manifest.name,
+            manifest.execution_id,
             manifest.type_namespaces,
             allow_bare=manifest.publisher == "dinkster",
         ):
@@ -799,7 +799,7 @@ async def serve(
         await serve_connection(
             reader,
             writer,
-            pack_name=manifest.name,
+            pack_name=manifest.execution_id,
             worker=worker,
             schemas=schemas,
             planner=planner,
