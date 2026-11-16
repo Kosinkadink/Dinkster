@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 import ssl
@@ -151,6 +152,36 @@ def _isolate_remote_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     # CLI startup removes service settings from the parent environment.
     monkeypatch.setenv("DINKSTER_REMOTE_CATALOG_BASE", "")
     monkeypatch.setenv("DINKSTER_REMOTE_GATEWAY_BASE", "")
+
+
+@pytest.fixture
+def shared_model_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    settings = tmp_path / "model-settings"
+    settings.mkdir()
+    models = tmp_path / "shared-models"
+    (settings / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": "shared",
+                "locations": [{"id": "shared", "path": str(models), "mode": "readwrite"}],
+            }
+        )
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(settings))
+    return {
+        "shared-checkpoint": models / "checkpoints",
+        "shared-lora": models / "loras",
+        "shared-vae": models / "vae",
+        "shared-text-encoder": models / "text_encoders",
+        "shared-diffusion": models / "diffusion_models",
+        "shared-controlnet": models / "controlnet",
+        "shared-upscale": models / "upscale_models",
+        "shared-upscaler": models / "upscale_models",
+        "shared-embedding": models / "embeddings",
+        "shared-clip-vision": models / "clip_vision",
+        "shared-clip": models / "clip",
+    }
 
 
 @pytest.fixture

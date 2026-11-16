@@ -11,10 +11,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import aiohttp
@@ -109,6 +111,58 @@ def pairs(argv: list[str], flag: str) -> list[tuple[str, str]]:
 
 
 class TestBuildBwrapCommand:
+    def test_wsl_gpu_grant(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        exists = os.path.exists
+        isdir = os.path.isdir
+        glob = Path.glob
+        monkeypatch.setattr(os.path, "exists", lambda p: p == "/dev/dxg" or exists(p))
+        monkeypatch.setattr(os.path, "isdir", lambda p: p == "/usr/lib/wsl" or isdir(p))
+        monkeypatch.setattr(
+            Path,
+            "glob",
+            lambda p, pattern: (
+                iter((Path("/dev/dxg"),))
+                if p == Path("/dev") and pattern == "dxg"
+                else glob(p, pattern)
+            ),
+        )
+        spec = make_spec(tmp_path)
+        granted = build_bwrap_command(spec, SandboxPolicy(gpu=True))
+        assert ("/dev/dxg", "/dev/dxg") in pairs(granted, "--dev-bind")
+        assert ("/usr/lib/wsl", "/usr/lib/wsl") in pairs(granted, "--ro-bind")
+        denied = build_bwrap_command(spec, SandboxPolicy())
+        assert ("/dev/dxg", "/dev/dxg") not in pairs(denied, "--dev-bind")
+        assert ("/usr/lib/wsl", "/usr/lib/wsl") not in pairs(denied, "--ro-bind")
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="requires Linux WSL mount semantics")
+    def test_wsl_refuses_windows_drives_and_interop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        drive = tmp_path / "Windows drive"
+        drive.mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(drive, target_is_directory=True)
+        read_text = Path.read_text
+        monkeypatch.setattr(platform, "release", lambda: "6.6.87.2-microsoft-standard-WSL2")
+        escaped_drive = str(drive).replace(" ", r"\040")
+        monkeypatch.setattr(
+            Path,
+            "read_text",
+            lambda p, *a, **kw: (
+                (f"C: {escaped_drive} 9p rw,aname=drvfs;path=C: 0 0\n/dev/sdc / ext4 rw 0 0\n")
+                if p == Path("/proc/mounts")
+                else read_text(p, *a, **kw)
+            ),
+        )
+        spec = make_spec(tmp_path)
+        for path in (str(drive), str(alias / "models"), "/run/WSL/123_interop", "/init"):
+            for grant in (SandboxPolicy(ro_binds=(path,)), SandboxPolicy(rw_binds=(path,))):
+                with pytest.raises(SandboxError, match="Windows drive or WSL interop"):
+                    build_bwrap_command(spec, grant)
+            with pytest.raises(SandboxError, match="Windows drive or WSL interop"):
+                build_bwrap_command(make_spec(tmp_path, env={"PYTHONPATH": path}), SandboxPolicy())
+        build_bwrap_command(spec, SandboxPolicy(ro_binds=(str(tmp_path / "pack"),)))
+
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
     def test_pythonpath_cannot_dissolve_the_jail(self, tmp_path: Path) -> None:
         spec = make_spec(tmp_path, env={"PYTHONPATH": "/", "DINKSTER_BOUNDARY_TOKEN": "s"})
@@ -162,6 +216,58 @@ class TestBuildBwrapCommand:
         grant.symlink_to(root)
         with pytest.raises(SandboxError, match="dissolve the sandbox"):
             build_bwrap_command(make_spec(tmp_path), SandboxPolicy(ro_binds=(str(grant),)))
+
+    @pytest.mark.skipif(os.name != "posix", reason="requires POSIX interpreter symlinks")
+    def test_managed_interpreter_mounts_do_not_expose_the_protected_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        editable = tmp_path / "editable-source"
+        editable.mkdir()
+        monkeypatch.syspath_prepend(str(editable))
+        generation = tmp_path / "generation"
+        runtime = generation / "python"
+        pack = generation / "packs" / "example"
+        for prefix in (runtime, pack):
+            (prefix / "bin").mkdir(parents=True)
+        (runtime / "bin" / "python3").touch()
+        python = pack / "bin" / "python"
+        python.symlink_to(runtime / "bin" / "python3")
+        policy = SandboxPolicy(
+            protected_roots=(str(generation),),
+            protected_ro_exceptions=(str(pack),),
+        )
+        spec = make_spec(tmp_path, python=str(python), pack_root=pack)
+        argv = build_bwrap_command(spec, policy)
+        binds = pairs(argv, "--ro-bind")
+        assert (str(runtime), str(runtime)) in binds
+        assert (str(editable), str(editable)) in binds
+        assert (str(pack), str(pack)) in binds
+        assert (str(generation), str(generation)) not in binds
+        settings = generation / "settings"
+        settings.mkdir()
+        for field in ("ro_binds", "rw_binds"):
+            with pytest.raises(SandboxError, match="protected root"):
+                build_bwrap_command(spec, replace(policy, **{field: (str(settings),)}))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, replace(policy, ro_binds=(str(generation),)))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, replace(policy, rw_binds=(str(runtime),)))
+        secret = runtime / "auth.token"
+        secret.touch()
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(
+                spec, replace(policy, protected_roots=(str(generation), str(secret)))
+            )
+        monkeypatch.setenv("PYTHONPATH", str(settings))
+        monkeypatch.syspath_prepend(str(settings))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(replace(spec, env={"PYTHONPATH": str(settings)}), policy)
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, policy)
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if entry != str(settings)])
+        monkeypatch.syspath_prepend(str(generation))
+        with pytest.raises(SandboxError, match="protected root"):
+            build_bwrap_command(spec, policy)
 
     def test_protected_roots_and_read_only_grants_cannot_be_overridden(
         self, tmp_path: Path

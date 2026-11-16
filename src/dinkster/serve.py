@@ -160,6 +160,7 @@ from .generation_api import GenerationModel, GenerationService, add_generation_r
 from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
+from .model_downloads import QUICKSTART_CHECKPOINT, ModelDownloads, shared_model_mounts
 from .mounts_api import MountService, add_mount_routes
 from .pack_install_api import add_pack_install_routes
 from .reload_api import add_reload_routes, apply_reload
@@ -1711,6 +1712,12 @@ def main(argv: list[str] | None = None) -> None:
                 redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         except MountsError as exc:
             raise SystemExit(str(exc)) from exc
+        if args.allow_mount_changes or args.generation is not None:
+            for mount in shared_model_mounts():
+                if mount_table.get(mount.id) is None:
+                    mount_table.add(mount, source="shared-models")
+                    sandbox_mounts.append(mount)
+                    redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         if mount_table.output_mount is None:
             output_mount = mount_table.get("output")
             if output_mount is not None and output_mount.mode == "readwrite":
@@ -1720,6 +1727,14 @@ def main(argv: list[str] | None = None) -> None:
             mounts_config,
             allow_changes=args.allow_mount_changes,
             restart_for_changes=args.sandbox_packs,
+        )
+        mount_service.projects.initialize(
+            mount_service.mount_ids(),
+            shared_defaults=tuple(
+                mount_id
+                for mount_id in mount_service.mount_ids()
+                if mount_table.source(mount_id) == "shared-models"
+            ),
         )
         # Publish the (initially empty - nothing has scanned yet) snapshot
         # and point THIS process at it: media I/O save nodes run in-process, and
@@ -1960,12 +1975,14 @@ def main(argv: list[str] | None = None) -> None:
                 protected_ro_exceptions.append(str(mounts_snapshot.parent))
             for mount in sandbox_mounts:
                 sandbox_ro_binds.append(str(mount.path))
+                protected_ro_exceptions.append(str(mount.path))
                 if mount.mode == "readwrite":
                     sandbox_writable_mounts.append(str(mount.path))
             sandbox_policy = SandboxPolicy(
                 ro_binds=tuple(dict.fromkeys(sandbox_ro_binds)),
                 protected_roots=tuple(dict.fromkeys(protected_roots)),
                 protected_ro_exceptions=tuple(dict.fromkeys(protected_ro_exceptions)),
+                protected_rw_exceptions=tuple(dict.fromkeys(sandbox_writable_mounts)),
             )
 
         schema_reload_requests: asyncio.Queue[str] = asyncio.Queue()
@@ -2063,6 +2080,7 @@ def main(argv: list[str] | None = None) -> None:
                         (mount.id for mount in configured if mount.path == root / "imports"),
                         "imports",
                     )
+            model_downloads = ModelDownloads(mount_service, provenance) if mount_service else None
             library = ServerLibrary(
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
@@ -2074,12 +2092,15 @@ def main(argv: list[str] | None = None) -> None:
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
                 import_mount=import_mount,
+                acquire_model=model_downloads.acquire if model_downloads else None,
+                model_destination=model_downloads.destination if model_downloads else None,
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.
                 provenance=provenance,
                 receipts=receipts,
                 public_sources_for=resolver_indexes.public_sources,
+                asset_needs={QUICKSTART_CHECKPOINT.digest: QUICKSTART_CHECKPOINT},
                 # Pack-declared assets ([[pack.assets]]): the composer
                 # maintains this catalog across add/reload/remove; the
                 # library reads it for job preflight and the sources

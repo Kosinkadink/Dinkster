@@ -157,6 +157,7 @@ def _resume(root: Path, journal: Journal) -> None:
                 cast("str", binding["name"]),
                 cast("int", binding["port"]),
                 tuple(cast("list[str]", binding["gpus"])),
+                sandbox_packs=binding.get("sandboxPacks") is True,
             )
 
 

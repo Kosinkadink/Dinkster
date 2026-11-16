@@ -1,3 +1,31 @@
+# Stable recovery release versions
+
+- Engine/API/workspace 0.0.9 and supervisor 0.0.7 pass isolated Linux CPU contributor setup, generated checks, Ruff format/lint and Linux/Windows Pyright.
+- The existing release installation and channel signature suites pass: 20 tests. Tagged and development wheels retain exact workspace pins, complete packaged contents, provenance and unchanged-lock checks.
+- The offline lock refresh changes only workspace versions. Public Stable publication and packaged Windows/Linux recovery are not established by these source checks.
+
+# Published pack rollback
+
+- Published snapshot restore with compatibility-range pack locks failed on unchanged main for isolated and shared in-process packs. The repaired six-case CLI regression passes, including incompatible-engine refusal without mutation.
+- The complete environment history suite passed: 23 tests on Linux CPU. Generated extension checks, Ruff format/lint and Linux/Windows Pyright passed.
+- Public pack lock bytes were verified against registry size/digest and reconstructed installed metadata matched the sealed Linux/Windows generation hashes. Packaged Desktop rollback after tools publication remains unverified.
+
+# Published catalog bootstrap authentication
+
+- The focused bootstrap check fails on unchanged main when a token is set; the exporter now authenticates that API request. Absent and empty tokens preserve unauthenticated behavior. Draft, prerelease, invalid-tag and missing-digest refusals remain intact.
+- An authenticated public bootstrap downloaded supervisor 0.0.6 and verified its published SHA-256 and size (265380 bytes). This checks release discovery and wheel integrity, not complete catalog export or packaged Desktop recovery.
+
+# Public Hugging Face model downloads
+
+| Scenario | Host | Result |
+| --- | --- | --- |
+| Public SD 1.5 consent, cancel, verified named download and full native quickstart | X570 Linux CPU, Python 3.14.10, torch 2.14.1+cpu | [Real browser and native receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901157634): HTTP 409/409/202, no download before consent or after Cancel, all seven nodes executed with no cached/skipped nodes, real 512x512 RGB PNG. Provider SHA-256, declared BLAKE3 and persisted source/license verified. |
+| Stock ComfyUI loads the same downloaded file from the same folder | X570 Linux CPU, inherited ComfyUI af89add63f71, Python 3.12.13, torch 2.15.0+cpu | [Same-file receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/496#issuecomment-6901213963): actual Run completed decode/save and a real 512x512 RGB PNG without copying or renaming the checkpoint. Not a numerical or performance-parity claim. |
+
+- Whole Ruff check/format and pyright passed; 196 targeted acquisition/writer/model/mount/receipt tests passed.
+- Managed folder-grant restart, runtime grant/browse/revoke and mounted save tests use isolated shared model settings and assert the complete configured model mount set. All four cases reproduce the obsolete two-mount expectation, then pass while retaining path/mode/source, restart, real saved bytes, digest-streaming and revocation checks.
+- Gated credentials, Civitai, folder visibility management, byte-progress jobs and export/output model hashes are not accepted by these public-download receipts.
+
 # Production service addresses
 
 - Real sandboxed serving preserves explicit external bearer precedence over a selected account, observes atomic replacement and source removal without restarting the worker, and hides neighboring credentials. The same serving test covers account bearer rotation and logout. Before the repair, the explicit-file worker failed its protected-bind check; both cases pass after dedicated-directory binding.
@@ -58,3 +86,10 @@
 - Full contributor setup with explicit Python 3.12 and isolated port 15971 passed; its engine was stopped through the managed CLI.
 - Full Ruff format/check passed. Managed contributor Pyright on Linux and Windows targets: zero errors.
 - No tests removed, new skips/retries, relaxed deadlines or Actions reruns.
+
+# WSL2 pack GPU isolation
+
+- [SidePC real-worker receipt](https://github.com/Kosinkadink/comfy-vibe-station/issues/968#issuecomment-6902825259): RTX 4090, driver 591.86, Python 3.14.10, torch 2.14.1+cu130. Three plain, GPU-granted and denied-GPU workers exercised CUDA, WSL-disk safetensors loading and filesystem/network/interop exclusions at the receipt's exact source head.
+- Median float16 8192x8192 matmul: plain 145.836/s, sandbox 144.516/s. Warm safetensors-to-CUDA load median: plain 1.693s, sandbox 1.678s, 453 tensors each. Denied-GPU workers could not perform either CUDA operation. This is not inference or numerical-parity evidence.
+- Driver filesystem was read-only in granted workers and its digest stayed unchanged. Windows-drive, live interop socket, /init, host-loopback and external-TCP exclusions had successful plain controls.
+- Desktop private-distribution provisioning and sandbox-toggle integration remain separate validation; these receipts do not establish that experience.

@@ -10,6 +10,7 @@ immediately, before any rescan.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -23,6 +24,7 @@ from typing import BinaryIO, Protocol, cast
 import pytest
 from dinkster_assets import (
     AssetError,
+    AssetRef,
     AssetWriter,
     IndexedAssetResolver,
     LocalAssetLibrary,
@@ -876,6 +878,49 @@ def test_written_digest_resolves_before_any_rescan(tmp_path: Path) -> None:
     assert resolver.resolve(ref.digest) == root / "fresh_00001.bin"
     # The scanning library resolves it too, without rescanning.
     assert library.resolve(ref.digest) == root / "fresh_00001.bin"
+
+
+@pytest.mark.parametrize("failure", ["", "sha256", "digest", "short", "long", "revoked"])
+def test_verified_model_publication_preserves_collisions(tmp_path: Path, failure: str) -> None:
+    writer, root = make_writer(tmp_path)
+    old, new = b"old-model-ABCDE", b"new-model-xyz-987654"
+    (root / "model.safetensors").write_bytes(old)
+    LocalAssetLibrary(root, namespace="mounts/out").scan()
+    sha256 = hashlib.sha256(new).hexdigest()
+    digest = digest_bytes(new)
+
+    class Stream(io.BytesIO):
+        def seek(self, *_args: object) -> int:
+            raise OSError("network streams cannot seek")
+
+    def revoke(_ref: object) -> None:
+        if failure == "revoked":
+            one_mount_snapshot(tmp_path, root, "read")
+
+    def publish() -> AssetRef:
+        return writer.save_model_stream(
+            {"mount": "out", "prefix": "model.safetensors"},
+            Stream(new[:-1] if failure == "short" else new + b"!" if failure == "long" else new),
+            sha256=hashlib.sha256(old).hexdigest() if failure == "sha256" else sha256,
+            size=len(new),
+            digest=digest_bytes(old) if failure == "digest" else digest,
+            before_publish=revoke,
+        )
+
+    if failure:
+        with pytest.raises(AssetError):
+            publish()
+        assert sorted(path.name for path in root.iterdir() if not path.name.startswith(".")) == [
+            "model.safetensors"
+        ]
+    else:
+        ref = publish()
+        assert ref.name == f"model-{sha256[:8]}.safetensors"
+        assert (root / ref.name).read_bytes() == new
+        assert publish() == ref
+        assert IndexedAssetResolver(root).resolve(digest) == root / ref.name
+    assert (root / "model.safetensors").read_bytes() == old
+    assert not list(root.glob(".dinkster-save-*"))
 
 
 def test_written_asset_is_listed_before_any_rescan(tmp_path: Path) -> None:

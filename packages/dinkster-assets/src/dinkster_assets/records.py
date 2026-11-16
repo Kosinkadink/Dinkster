@@ -45,16 +45,11 @@ from types import MappingProxyType
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
-import sqlalchemy as sa
-from alembic import command
-from sqlalchemy.pool import StaticPool
-
 from .catalog import validate_virtual_path
 from .identity import AssetError, digest_bytes, digest_file, require_digest
 from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
 from .model import AssetRef
-from .schema import migration_config
 from .vault import AssetVault
 
 DEFAULT_SCOPE = "local"
@@ -400,6 +395,12 @@ class LibraryStore:
     lock (sqlite serializes anyway; the lock keeps transactions whole)."""
 
     def __init__(self, path: Path | str, *, read_only: bool = False) -> None:
+        import sqlalchemy as sa
+        from alembic import command
+        from sqlalchemy.pool import StaticPool
+
+        from .schema import migration_config
+
         if not read_only:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         database = Path(path).resolve().as_uri() + "?mode=ro" if read_only else str(path)

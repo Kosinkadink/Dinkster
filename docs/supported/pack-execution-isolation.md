@@ -94,6 +94,16 @@
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
+- WSL2 Linux pack sandboxes support GPU grants through the WSL GPU device
+  and read-only driver libraries. Windows drive mounts and WSL interop paths
+  cannot be granted to pack workers; copy models and packs to the WSL disk.
+- `dinkster-env start --sandbox-packs` requests the same isolation for a managed
+  local engine. Changing the selection requires stopping the engine first;
+  environment updates, recovery and moves preserve the selection.
+- `dinkster-doctor --sandbox-readiness --json` reports whether full pack
+  sandboxing is available and explains missing prerequisites without importing
+  pack code. `dinkster-env doctor --sandbox --json` asks the selected engine
+  for that report. An engine without the probe cannot enable sandboxing.
 - `dinkster-doctor --sandbox` provides a Linux-only, network-isolated import
   probe jail. It refuses instead of running a requested probe unjailed when
   bubblewrap is unavailable.
