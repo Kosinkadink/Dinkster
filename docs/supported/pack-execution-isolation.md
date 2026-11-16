@@ -93,6 +93,9 @@
   and can still run CPU operations. Sandboxed packs use separate Metal compile
   caches; when a private cache is unavailable, they compile operations at startup
   without accessing the user's shared cache.
+- WSL2 Linux pack sandboxes support GPU grants through the WSL GPU device
+  and read-only driver libraries. Windows drive mounts and WSL interop paths
+  cannot be granted to pack workers; copy models and packs to the WSL disk.
 - `dinkster-env start --sandbox-packs` requests the same isolation for a managed
   local engine. Changing the selection requires stopping the engine first;
   environment updates, recovery and moves preserve the selection.

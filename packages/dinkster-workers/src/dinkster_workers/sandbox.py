@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -88,6 +89,7 @@ GPU_DEVICE_PATTERNS: tuple[str, ...] = (
     "nvidia-uvm",
     "nvidia-uvm-tools",
     "dri",
+    "dxg",
 )
 
 #: Roots that may never be bound wholesale - granting any of these would
@@ -348,8 +350,34 @@ def _forbidden_root_targets() -> frozenset[str]:
     return FORBIDDEN_BIND_ROOTS | {os.path.realpath(root) for root in FORBIDDEN_BIND_ROOTS}
 
 
+def _wsl_host_paths() -> tuple[str, ...]:
+    if sys.platform != "linux" or "microsoft" not in platform.release().lower():
+        return ()
+    try:
+        mounts = Path("/proc/mounts").read_text().splitlines()
+    except OSError as exc:
+        raise SandboxUnavailable("cannot inspect WSL Windows drive mounts") from exc
+    windows_mounts: list[str] = []
+    for line in mounts:
+        fields = line.split()
+        if len(fields) >= 4 and (
+            fields[2] == "drvfs" or (fields[2] == "9p" and "aname=drvfs" in fields[3])
+        ):
+            mount = fields[1]
+            for escaped, value in (
+                (r"\040", " "),
+                (r"\011", "\t"),
+                (r"\012", "\n"),
+                (r"\134", "\\"),
+            ):
+                mount = mount.replace(escaped, value)
+            windows_mounts.append(mount)
+    return ("/init", "/run/WSL", *windows_mounts)
+
+
 def _validated(paths: tuple[str, ...], *, role: str) -> list[str]:
     forbidden = _forbidden_root_targets()
+    wsl_host_paths = _wsl_host_paths()
     checked: list[str] = []
     for path in paths:
         normalized = os.path.abspath(path)
@@ -357,6 +385,11 @@ def _validated(paths: tuple[str, ...], *, role: str) -> list[str]:
         if normalized in forbidden or resolved in forbidden:
             raise SandboxError(
                 f"{role} bind '{path}' would dissolve the sandbox; grant a specific subpath instead"
+            )
+        if any(_paths_overlap(normalized, host_path) for host_path in wsl_host_paths):
+            raise SandboxError(
+                f"{role} bind '{path}' exposes a Windows drive or WSL interop; "
+                "copy files to the WSL disk instead"
             )
         checked.append(normalized)
     return _existing(checked)
@@ -511,6 +544,8 @@ def build_bwrap_command(
     gpu_device_binds: list[str] = []
     if policy.gpu:
         gpu_ro_binds.append("/sys")
+        if os.path.exists("/dev/dxg") and os.path.isdir("/usr/lib/wsl"):
+            gpu_ro_binds.append("/usr/lib/wsl")
         gpu_device_binds.extend(
             dict.fromkeys(
                 str(device)
@@ -537,6 +572,12 @@ def build_bwrap_command(
         *gpu_ro_binds,
         *policy_ro_binds,
     ]
+    _validate_protected_binds(
+        [*read_only_binds, *implicit_rw_binds, *policy_rw_binds],
+        protected_roots=_wsl_host_paths(),
+        exceptions=(),
+        role="WSL host exclusion",
+    )
     _validate_protected_binds(
         read_only_binds,
         protected_roots=policy.protected_roots,
